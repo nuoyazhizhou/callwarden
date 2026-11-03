@@ -21,7 +21,7 @@
   },
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-11-03T20:30:00+08:00",
+  "updated_at": "2026-11-03T18:05:00+08:00",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2171,6 +2171,19 @@
       "review_verdict_id": "V-514a4b87113844c71f8a666b",
       "handoff_event_id": "13155",
       "note": "O1 governed 空投影根因收口（backlog §5 C12 / §23.5 / §36）：CLI 曾对 governed 建卡（携带 --parent-id/--identity-policy/--task-contract-envelope/--task-id 任一）把 role_contracts 置空，daemon 又只在 parent-aware 路径拒绝空合同，导致 governed 卡创建成功却无法 bootstrap Task/Role Contract、投影恒 governance_blocked（空投影卡）。处置：(1) cli/main.py 删除 governed 特判，legacy/governed 统一 _build_role_contracts(opts.role_contracts)，缺省即 A' 三角色模板（executor->reviewer->adjudicator->complete）；(2) rust task_collab.rs 新增 ERR_TASK_CONTRACT_REQUIRED（E_TASK_CONTRACT_REQUIRED），在 parent-aware 校验之后、任何 task/steps/contract 写入之前，对「非 parent && 带 task_contract_envelope && role_contracts 为空」fail-closed；(3) 回归：tests/test_task_create_parent_governance.py 新增 governed 缺省三角色断言（roles + handoff 链）并把 test_daemon_error_not_reclassified 断言更新为缺省三角色，Rust 新增 governed_create_without_role_contracts_is_rejected_before_write（断言错误码 + 未落库）。验证：pytest 本文件 18 passed / 2 failed、Rust 定向 1 passed、check_e2e_matrix_closure PASS exit 0、git diff --check 干净；2 条 exits_nonzero（期望 rc=2 实际 rc=1）经 git stash cli/main.py 在 HEAD 基线复现，属 §24.5 既有残差不计入本卡。A' 环：executor 3/3 report -> review_pending -> reviewer verdict V-514a4b87113844c71f8a666b pass findings=0（snapshot f295a06b5f848e10，view_manifest 5332b432…）-> reviewer_pass handoff（event 13155）-> adjudicator reviewer-scope lease L-289da409ee77c0e8 f5 apply（13158）/ close（13159）-> closed/completed/COMPLETE，assignment 收口为 null。lease：reviewer L-68521f1fb33a5cc7 f3 与 L-5435b64e103b643c f4 均因 token 遗失由 daemon stale-holder recovery（holder_heartbeat_stale）置 expired，裁决租约 L-289da409ee77c0e8 f5 主动 release。裁决期 info 残留：(a) review 阶段只要 reviewer-scope lease active，next_action 即投影 review_pending 且不读取已持久化 verdict；(b) lease.acquire 可在 holder 心跳超 15 分钟时回收未过期租约（这是两次 token 遗失得以恢复的机制，也意味着长期无心跳 holder 的租约会被静默回收）；(c) daemon 兜底仅以 task_contract_envelope 为 governed 信号，仅带 task_id/identity_policy 的直接 RPC 仍可空建（§36.4）；(d) 仅跑 Rust 定向用例未跑全量。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793698457533-6371b038",
+      "commit_id": "3fe13d40ea9133eb6ce41f6aea4dce77df1cf74d",
+      "status": "new_in_master",
+      "source": "backlog_6_5_workspace_scope_20261103",
+      "scope": "db/db_query.py, tests/test_p28b_qualified_name.py, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "df81a0715a512e3a",
+      "evidence_sha256": "326C0EC919D2ED92957DA29BA31B2B8AEBA5AEB6151CFA4599D42A89E953080B",
+      "view_manifest_sha256": "a1f2c63baa2657d3972696481ad6e706d07736d5bcf30edb73927c792620005a",
+      "review_verdict_id": "V-fd838de3cc11dc22fbf21f04",
+      "handoff_event_id": "13185",
+      "note": "backlog §6.5 收口（C2）：Python 本地 SQL 降级 get_callers 短名分支、get_callees QN 与短名两分支缺 file_instances.workspace_id 谓词，enterprise 回退时跨 ws 泄漏。按 §6.3 方案 A 补 JOIN file_instances fi ON s.file_instance_id = fi.id + fi.workspace_id 过滤，保持短名文本语义（不做方案 B 的 callee_id 解析）；get_callers QN 分支原有 ws 过滤未改动。新增 TestWorkspaceScopedSqlFallback（ws1 alpha.py / ws2 beta.py 同名 helper/main，强制 _get_graph_store → None 走 SQL 降级）4 条用例：短名 callers、短名 callees、跨 ws callees QN、自动 QN 降级，均断言不出现另一 ws 调用边。验证：pytest tests/test_p28b_qualified_name.py tests/test_p7_callee_id_index.py → 19 passed；check_e2e_matrix_closure PASS exit 0；git diff --check 干净。A′ 环：executor 4/4 report -> review -> reviewer verdict V-fd838de3cc11dc22fbf21f04 pass findings=0（snapshot df81a0715a512e3a，view_manifest a1f2c63b…）-> reviewer_pass handoff（event 13185）-> adjudicator reviewer-scope lease L-bf73e5d77bb739aa f4 apply（13188）/ close（13189）-> closed/completed，assignment 全部 completed，租约主动 release。裁决期 info 残留：(a) Rust 短路路径未改动，本卡仅覆盖本地 SQL 回退；(b) 未跑全量 pytest；(c) 4 步 report 完成后 routing 即入 review，此后 executor 身份 task.handoff 被 E_LEASE_REQUIRED 拒绝，executor→reviewer handoff 事件未落库（verdict/reviewer_pass/adjudicator 链完整）；(d) closed 投影为 next_role=complete / next_action=finalize。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
@@ -2188,6 +2201,7 @@
       "2f845f2683d364ee21b9a843965427fe70ccf0bc",
       "341bb2e1efe2ffd0a397da0c50cec2f547f2f770",
       "3d289e236664b719cb8de4b604fd16e0861cde16",
+      "3fe13d40ea9133eb6ce41f6aea4dce77df1cf74d",
       "40b1daac3e06e6d6400c7bfa67ba8c4efe4aa829",
       "4358b547bd624fb217f5d69d8228aab21e3ab02a",
       "4b834e5243fc3283e285826fbea84884739e92a2",
