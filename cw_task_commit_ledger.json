@@ -21,7 +21,7 @@
   },
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-11-03T21:44:54+08:00",
+  "updated_at": "2026-11-03T21:57:43+08:00",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2223,6 +2223,19 @@
       "review_verdict_id": "V-71db71a496ce09e6fce7c030",
       "handoff_event_id": "13284",
       "note": "backlog §27.5 收口：i18n.t()/t_list() 此前用单一 except (KeyError, ValueError, IndexError) 静默返回原值，『值不可格式化』与『占位符/缺参拼写不一致』运行时可观察面完全等价。新增 _format_or_raw(value, kwargs) -> (text, kind)：KeyError 且键为标识符 → missing_field；其余 KeyError / ValueError / IndexError → unsafe_value。t() 的 catalog/default 分支与 t_list() 的 str 分支统一复用，对外兜底输出零变化。门禁：7 类分类参数化、分类常量区分、全量双语 catalog 无 unsafe_value 不变量、t() 缺参与不可格式化两向兜底回归。验证：pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q → 116 passed / 0 failed；py_compile 通过；check_e2e_matrix_closure.py PASS exit 0。A′ 环：executor 4/4 report -> review -> reviewer verdict V-71db71a496ce09e6fce7c030 pass findings=0（snapshot 93aa4658a948f80e，view_manifest 59516ae5…）-> reviewer_pass handoff（event 13284）-> adjudicator reviewer-scope lease L-58f09c5f8e6a0421 f2 apply（13287）/ close（13288）-> closed/completed，租约主动 release。裁决期 info 残留：(a) 分类仅用于诊断/门禁，t() 仍不抛异常；(b) 动态 key 的 kwargs 形状静态校验仍属 §32 冻结范围；(c) 未跑 Python 全量 pytest。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793712595158-0f973814",
+      "commit_id": "8be4aeefcb1e45efff1dd047d557f8de9d1d9f3a",
+      "status": "new_in_master",
+      "source": "backlog_33_no_emit_key_cleanup_20261103",
+      "scope": "i18n/zh_CN.json, i18n/en_US.json, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "51365f91bdaefafc",
+      "evidence_sha256": "6385F040C0FD666F1596AEB12FF4BAEA50F245BA851303B87620801A15FCD0CF",
+      "view_manifest_sha256": "e7a078f7f1ad7c9be3f210d36a89f193475ce6b37f34f22b7a07bb615b0d85d8",
+      "review_verdict_id": "V-f311719039e685a0233671a2",
+      "handoff_event_id": "13315",
+      "note": "backlog §33 收口：删除双语 catalog 中无 emit 点的 mcp.messages.collab_query_failed（§20.2 引入，随 §33.5/§33.6 删除 _collab_error_response 后失去唯一 emit 点）。删除后双语叶子 key 集合 2294 == 2294 零差异；生产代码 0 引用（剩余命中仅历史台账/证据/文档）。文档同步：§20.2 引入表该行标注已删除；§33.5 保留问题指向 §37；§33.6 残留说明改为已删除；新增 §33.7 记录清理与验证。验证：pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q → 116 passed / 0 failed；check_e2e_matrix_closure.py PASS exit 0。A′ 环：executor 4/4 report -> review -> reviewer verdict V-f311719039e685a0233671a2 pass findings=0（snapshot 51365f91bdaefafc，view_manifest e7a078f7…）-> reviewer_pass handoff（event 13315）-> adjudicator reviewer-scope lease L-d510762db2a9332f f2 apply（13318）/ close（13319）-> closed/completed，两条 reviewer-scope 租约均已释放。裁决期 info 残留：(a) docs/mcp_tools.md 的 error.collab_query_failed 属不同命名空间且为既有陈旧文档项，不在本卡范围；(b) 未跑 Python 全量 pytest。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
@@ -2300,7 +2313,8 @@
       "f9544aa06e890e8054cf0266aa7bfbc49223493f",
       "ffcd61fbe6f071d8d74b680cc988da89325fb423",
       "a2591fd28dafbf801d3737e55da2b048685be2e5",
-      "178afdec04a2bc2ced66a0e01e89b09282469937"
+      "178afdec04a2bc2ced66a0e01e89b09282469937",
+      "8be4aeefcb1e45efff1dd047d557f8de9d1d9f3a"
     ],
     "pruned": [
       "0275a4a25009bbe8d2037a92be2b9f6c7eed74ad",
