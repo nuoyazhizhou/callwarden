@@ -778,6 +778,30 @@ use super::support::*;
     }
 
     #[test]
+    fn governed_create_without_role_contracts_is_rejected_before_write() {
+        // O1（backlog §23.5）：governed 建卡携带 envelope 但 role_contracts 为空时
+        // 必须在任何写入前 fail-closed，避免落库成无法 bootstrap 的空投影任务。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let err = store
+            .handle_task_create(
+                peer,
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-GOV-EMPTY-ROLES",
+                    "title": "governed without role contracts",
+                    "steps": [{"action": "implement", "target_file": "a.rs"}],
+                    "task_contract_envelope": {"contract_id": "TC-T-GOV-EMPTY-ROLES"}
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_TASK_CONTRACT_REQUIRED");
+        assert!(!p0l_task_exists(&store, "T-GOV-EMPTY-ROLES"));
+    }
+
+    #[test]
     fn test_task_create_envelope_policy_mismatch_and_contract_id_binding() {
         let (_dir, db_path) = temp_db();
         let store = TaskCollabStore::new(&db_path).unwrap();

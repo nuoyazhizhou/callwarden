@@ -459,6 +459,7 @@ ignore 契约目录，第二轮全量 `build_graph`（修复版 daemon）归档�
 | C10 | 权威库工作区登记污染：同物理 checkout 多行 active、workspace_id 二义（审计候选 C5） | 正确性/数据治理 | 已修（T-1793353773817-750277f4 步骤#0-#2，见 §10） |
 | C6 | Schema 迁移注册表缺口：`_get_migrations` 缺 v53-v58/v60，`_migrate_schema` 静默跳过导致库被打标 v61 却缺表缺列（审计候选 C6） | 正确性/schema 真相源 | 已修（T-1793368261327-97e8e5fc 步骤#0-#2，见 §11） |
 | C11 | release 验收 evidence 选取按「目录内 mtime 最新 `*.json`」假设，任意运维 evidence 写入 `runtime/evidence/` 即误红（`status=None` / 缺 `binaries` / `KeyError: daemon_runtime`） | 测试信噪比 | 已修（T-1793677837256-5b2e8564，见 §35）：按内容过滤（`status` + `daemon_runtime` + `binaries`），mtime 倒序取首条匹配；无匹配 skip 带目录与最近文件名诊断 |
+| C12 | governed 建卡（`--parent-id` / `--identity-policy` / `--task-contract-envelope` / `--task-id` 任一）未显式传 `--role-contracts` 时被 CLI 置空，daemon 不 bootstrap Task/Role Contract → 空投影卡恒 `governance_blocked` | 正确性/治理投影 | 已修（T-1793690930681-e81b9f40，见 §36）：CLI legacy/governed 统一注入 A′ 三角色模板；daemon 对 envelope + 空合同 `E_TASK_CONTRACT_REQUIRED` fail-closed |
 
 ---
 
@@ -2716,3 +2717,49 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | 非目标 | refresh 脚本证据结构变更、验收断言语义变更、evidence 目录迁移 |
 | 局限 | 判别依赖三键存在性而非显式 schema；未来若 refresh 产物删键需同步更新 `_is_refresh_evidence` |
 | 回滚 | 回退测试文件改动即可；无产品代码、无数据迁移 |
+
+---
+
+## 36. C12 · governed 建卡缺省注入 A′ 三角色合同（2026-11-03）
+
+### 36.1 现象与根因
+
+governed 建卡（`--parent-id` / `--identity-policy` / `--task-contract-envelope` /
+`--task-id` 任一存在）在 CLI 侧把未显式提供的 `role_contracts` 置空；daemon 只在
+`role_contracts` 非空时执行 `task.contract_bootstrap`，于是任务落库时
+`task_contract_revisions` / `role_contracts` / `task_step_role_contract_bindings`
+三表全空，`task.next_action` 恒 `governance_blocked`（空投影卡），无法 claim /
+review / apply，只能手工 `supersede` 收编。
+
+根因两处：
+
+- `cli/main.py`（修复前）：`role_contracts = _build_role_contracts(...) if opts.role_contracts or not governed_create else []`；
+- `rust_ext/src/daemon/task_collab.rs`（修复前）：仅 parent-aware 分支拒绝空
+  `role_contracts`，非 parent governed 无兜底。
+
+### 36.2 处置
+
+| 层 | 改动 |
+| --- | --- |
+| CLI | governed 与 legacy 统一走 `_build_role_contracts(opts.role_contracts)`；缺省即 A′ 三角色模板（executor→reviewer→adjudicator→complete） |
+| daemon | 非 parent-aware 且携带 `task_contract_envelope` 但 `role_contracts` 为空 → `E_TASK_CONTRACT_REQUIRED`，在任何写入前 fail-closed |
+| 测试 | CLI：governed 缺省角色断言（三角色 + handoff 链）；Rust：envelope + 空合同拒绝且任务不存在 |
+| 不改 | parent-aware 的 `E_TASK_PARENT_CONTRACT_REQUIRED` 语义、dispatch `role_worker_v1` 注入路径、默认三角色模板内容 |
+
+### 36.3 验证
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| CLI 定向 | `python -m pytest tests/test_task_create_parent_governance.py -o addopts='' -q` | **18 passed / 2 failed**；2 条 `exits_nonzero`（期望 rc=2、实际 rc=1）在 HEAD 基线同样失败，属 §24.5 既有残差，非本卡引入 |
+| Rust 定向 | `cargo test --manifest-path rust_ext/Cargo.toml governed_create_without_role_contracts` | **1 passed / 0 failed**（`governed_create_without_role_contracts_is_rejected_before_write`） |
+| 矩阵门禁 | `python scripts/check_e2e_matrix_closure.py` | **PASS**，exit 0 |
+| 空白检查 | `git diff --check` | 干净（仅 CRLF→LF 提示） |
+
+### 36.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 本次范围 | `cli/main.py`、`rust_ext/src/daemon/task_collab.rs`、`rust_ext/src/daemon/task_collab_tests_projection.rs`、`tests/test_task_create_parent_governance.py`、backlog §5 C12 / §36 |
+| 非目标 | 默认三角色模板内容调整、退出码统一（§24.5 另行处理）、历史空投影卡数据回填 |
+| 局限 | daemon 兜底以 `task_contract_envelope` 为 governed 信号；仅携带 `task_id`（无 envelope）的直接 RPC 调用仍可空建，依赖 CLI 缺省注入覆盖 |
+| 回滚 | 回退上述四处代码/测试改动即可；无数据迁移 |

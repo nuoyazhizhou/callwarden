@@ -4484,13 +4484,16 @@ def _handle_task(args, db):
                     "yellow",
                 )
 
-        # 角色合同：缺省使用 A' 标准三角色 legacy 模板；显式传入则按传入值（fail closed 校验）。
+        # 角色合同：缺省使用 A' 标准三角色 legacy 模板（legacy / governed 建卡同一口径）；
+        # 显式传入则按传入值（fail closed 校验）。
         # 不允许静默创建无合同任务（否则未来无法 claim/bootstrap）。
         governed_create = any(value is not None for value in (
             opts.parent_id, opts.identity_policy, opts.task_contract_envelope,
             opts.task_id))
-        role_contracts = (_build_role_contracts(opts.role_contracts)
-                          if opts.role_contracts or not governed_create else [])
+        # 曾对 governed 建卡置空 role_contracts，导致 daemon 不 bootstrap Task/Role
+        # Contract、投影恒 governance_blocked（空投影卡，backlog §23.5）。governed 与
+        # legacy 必须共用同一份缺省三角色模板。
+        role_contracts = _build_role_contracts(opts.role_contracts)
         if isinstance(role_contracts, str):
             cprint(  # 错误信息字符串
                 role_contracts, "red")

@@ -162,6 +162,10 @@ pub(crate) fn begin_immediate_with_retry<'a>(
 /// 合成 `ws-{id}`（曾掩盖 A′ phantom binding：`ws-1` 在注册表不存在却可绑定）。
 pub(crate) const ERR_TASK_WORKSPACE_INSTANCE_REQUIRED: &str = "E_TASK_WORKSPACE_INSTANCE_REQUIRED";
 
+/// O1（backlog §23.5）：governed 建卡（携带 `task_contract_envelope`）必须同时携带
+/// 非空 `role_contracts`，禁止创建无法 bootstrap 治理投影的空投影任务。
+pub(crate) const ERR_TASK_CONTRACT_REQUIRED: &str = "E_TASK_CONTRACT_REQUIRED";
+
 /// legacy 合成 instance 形态判定：`ws-<digits>`（不含稳定哈希 instance）。
 fn is_legacy_synthesized_instance(instance: &str) -> bool {
     let body = instance.strip_prefix("ws-").unwrap_or("");
@@ -3241,6 +3245,20 @@ impl TaskCollabStore {
                      （parent={}）；受治理 child 不允许裸建",
                     parent_id
                 ),
+            ));
+        }
+        // O1（backlog §23.5）：governed 建卡携带 task_contract_envelope 但 role_contracts
+        // 为空时，task.contract_bootstrap 没有 legacy 合同可派生 v1 投影，任务会以空投影
+        // 落库并恒 governance_blocked。CLI 已对 legacy / governed 统一注入 A' 三角色模板；
+        // 本处对直接 RPC 调用方做 fail-closed 兜底。
+        if !parent_aware
+            && params.get("task_contract_envelope").is_some()
+            && role_contracts.is_empty()
+        {
+            return Err(DaemonRpcError::new(
+                ERR_TASK_CONTRACT_REQUIRED,
+                "task.create governed：携带 task_contract_envelope 时必须同时提供非空 \
+                 role_contracts，否则无法 bootstrap A' 治理投影；CLI 缺省注入三角色模板",
             ));
         }
 

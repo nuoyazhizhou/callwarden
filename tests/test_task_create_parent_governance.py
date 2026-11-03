@@ -53,8 +53,23 @@ def test_daemon_error_not_reclassified(monkeypatch, message):
     with pytest.raises(RuntimeError) as caught:
         cli._handle_task(BASE + ["--parent-id", "T-parent"], None)
     assert caught.value is error
-    assert calls[0][1]["role_contracts"] == []
+    # O1（§23.5）：governed 建卡同样缺省注入 A' 三角色模板，不再置空 role_contracts。
+    assert [r["role"] for r in calls[0][1]["role_contracts"]] == [
+        "executor", "reviewer", "adjudicator"]
     assert "identity_policy" not in calls[0][1]
+
+
+def test_governed_create_without_explicit_roles_injects_default_trio(monkeypatch):
+    """O1（§23.5）：governed 建卡未显式给 --role-contracts 时注入 A' 三角色合同。"""
+    calls = capture_cli(monkeypatch)
+    envelope = '{"contract_id": "TC-T-child"}'
+    cli._handle_task(BASE + ["--task-id", "T-child",
+                            "--task-contract-envelope", envelope], None)
+    roles = calls[0][1]["role_contracts"]
+    assert [r["role"] for r in roles] == ["executor", "reviewer", "adjudicator"]
+    assert roles[0]["handoff_to"] == "reviewer"
+    assert roles[1]["handoff_to"] == "adjudicator"
+    assert roles[2]["handoff_to"] == "complete"
 
 
 def test_unknown_cli_field_rejected_before_write(monkeypatch):
