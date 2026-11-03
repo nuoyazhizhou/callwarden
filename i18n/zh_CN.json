@@ -2258,7 +2258,6 @@
             "daemon_startup_probe_failed": "[Daemon] 启动期探针失败，首次 RPC 将继续重试: {error}",
             "daemon_rpc_failed": "{code}: daemon RPC 调用失败 ({method}): {error}",
             "active_workspace_required": "没有可用的 active workspace，拒绝复用数据库上下文（fail-closed）；请显式传入 workspace 路径/名称",
-            "collab_query_failed": "只读协同查询失败 ({tool}): {detail}",
             "collab_json_array_required": "{field} 必须是 JSON array",
             "dep_requires_artifact_missing_target": "requires_artifact 依赖缺少 target_task_id (task={task}, ref={ref})",
             "dep_interface_no_provider": "requires_interface '{ref}' 无匹配 provider (task={task})",

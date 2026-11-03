@@ -2258,7 +2258,6 @@
             "daemon_startup_probe_failed": "[Daemon] Startup probe failed; the first RPC will keep retrying: {error}",
             "daemon_rpc_failed": "{code}: daemon RPC call failed ({method}): {error}",
             "active_workspace_required": "No active workspace available; refusing to reuse the database context (fail-closed). Pass a workspace path/name explicitly.",
-            "collab_query_failed": "Read-only collaboration query failed ({tool}): {detail}",
             "collab_json_array_required": "{field} must be a JSON array",
             "dep_requires_artifact_missing_target": "requires_artifact dependency is missing target_task_id (task={task}, ref={ref})",
             "dep_interface_no_provider": "requires_interface '{ref}' has no matching provider (task={task})",

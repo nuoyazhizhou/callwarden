@@ -1529,7 +1529,7 @@ AST 盘点 6 个 MCP 运行时模块的非 docstring 中文字面量，收敛为
 | `daemon_startup_probe_failed` | `server/mcp_server.py` | `[Daemon] 启动期探针失败，首次 RPC 将继续重试: {error}` |
 | `daemon_rpc_failed` | `server/_mcp_common.py` | `{code}: daemon RPC 调用失败 ({method}): {error}` |
 | `active_workspace_required` | `server/_mcp_common.py` | `没有可用的 active workspace，拒绝复用数据库上下文（fail-closed）；请显式传入 workspace 路径/名称` |
-| `collab_query_failed` | `server/tools/tools_collab.py` | `只读协同查询失败 ({tool}): {detail}` |
+| `collab_query_failed` | `server/tools/tools_collab.py`（**已删除，§33.7**） | `只读协同查询失败 ({tool}): {detail}` |
 | `collab_json_array_required` | `server/tools/tools_collab.py` | `{field} 必须是 JSON array`（原 2 处同文案） |
 | `dep_requires_artifact_missing_target` | `server/tools/tools_dependency_graph.py` | `requires_artifact 依赖缺少 target_task_id (task={task}, ref={ref})` |
 | `dep_interface_no_provider` | `server/tools/tools_dependency_graph.py` | `requires_interface '{ref}' 无匹配 provider (task={task})` |
@@ -2643,7 +2643,7 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | --- | --- |
 | 本次范围 | `db/db_task_contracts.py` bundled 1 条 + 两个 catalog 的 `errors.contract_lease_denied` 占位符 + `tests/test_i18n_placeholder_consistency.py` §33 门禁（8 用例）+ backlog §33 |
 | 非目标 | en 文案打磨；`t()` 其它值类型（`int`/`dict`）通用契约 |
-| 保留问题 | 未知 key 仍**原样返回 key**（可观察兜底终点，不升级为 fail-closed）；§27.5「值不可格式化 vs 占位符拼写错误」的静默等价仍未区分；MCP 构造器已删除（§33.6） |
+| 保留问题 | 未知 key 仍**原样返回 key**（可观察兜底终点，不升级为 fail-closed）；§27.5「值不可格式化 vs 占位符拼写错误」的静默等价已由 §37 收口；MCP 构造器已删除（§33.6） |
 | 白名单维护 | `BUNDLED_RESOLVER_SPECS` 的 emit / bundled 数量变更必须同步；新增 `_resolve_*_message` 模块必须纳入清单，否则每个 emit key 失去兜底保证 |
 | 回滚 | 回退 5 文件提交即可；catalog 仅改 1 个 key 的占位符（`{reason}` → `task_id`/`lease_code`/`lease_detail`），无数据迁移、无 key 增删 |
 
@@ -2658,7 +2658,23 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | 动态 key 名单 | `tests/test_i18n_placeholder_consistency.py` 移除 `register._collab_error_response` 条目；`EXPECTED_DYNAMIC_SITES` **15 → 14** | `test_dynamic_key_sites_match_frozen_allowlist` 通过 |
 | 回归用例 | `test_mcp_collab_error_response_has_no_call_sites` → `test_mcp_collab_error_response_is_removed`（断言定义与调用点均不存在） | 通过 |
 | 门禁全量 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q` | **103 passed / 0 failed** |
-| 残留说明 | catalog `mcp.messages.collab_query_failed` 保留（历史 key 文档化，无 emit 点；key 存在性门禁不要求反向引用） | — |
+| 残留说明 | catalog `mcp.messages.collab_query_failed` 保留（历史 key 文档化，无 emit 点；key 存在性门禁不要求反向引用）→ **已删除（§33.7）** | — |
+
+### 33.7 无 emit 点 catalog key 清理（T-1793712595158-0f973814）
+
+§33.6 残留说明登记的最后一项 `mcp.messages.collab_query_failed`
+（§20.2 引入，随 `_collab_error_response` 删除后已无 emit 点）已从双语 catalog 移除：
+
+| 项 | 改动 | 验证 |
+| --- | --- | --- |
+| catalog | `i18n/zh_CN.json` / `i18n/en_US.json` 各删除 1 行 `mcp.messages.collab_query_failed` | 双语叶子 key 集合 **2294 == 2294**，零差异 |
+| 引用扫描 | `collab_query_failed` 全仓库扫描 | 生产代码 **0 引用**；剩余命中仅为历史台账 / 证据 / 文档 |
+| 门禁 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q` | **116 passed / 0 failed** |
+| 文档 | §20.2 引入表该行标注已删除；§33.6 残留说明改为已删除 | — |
+
+> 备注：`docs/mcp_tools.md` 提到的 i18n key 为 `error.collab_query_failed`（与
+> `mcp.messages.*` 不同命名空间），且该文档描述的是已随 §33.5/§33.6 删除的
+> MCP 错误构造器，属既有文档陈旧项，不在本卡范围。
 
 ## 34. close 终局 assignment 收口（T-1793627972400-4a1e4a0c）
 
