@@ -186,5 +186,107 @@ class TestP28QualifiedName(unittest.TestCase):
         self.assertEqual(rust_count, 1, "mod_a.init 应只有 1 个调用者")
 
 
+SHARED_FN_PY = '''"""共享夹具：同名 helper/main 用于跨 workspace 隔离验证。"""
+def helper():
+    """被调用函数。"""
+    return 1
+
+def main():
+    """调用 helper。"""
+    return helper()
+'''
+
+
+class TestWorkspaceScopedSqlFallback(unittest.TestCase):
+    """C2（backlog §6.5）：本地 SQL 降级路径按 workspace 归属过滤
+
+    两个 workspace 各自有同名 `helper`/`main`，强制走 SQL 降级路径后，
+    查询当前 workspace 不得返回另一 workspace 的同名调用边。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from callwarden.db.db import CodeGraphDB
+
+        cls.tmpdir = tempfile.mkdtemp(prefix="cw_c2_ws_test_")
+        ws1_root = os.path.join(cls.tmpdir, "ws1")
+        ws2_root = os.path.join(cls.tmpdir, "ws2")
+        os.makedirs(ws1_root, exist_ok=True)
+        os.makedirs(ws2_root, exist_ok=True)
+        _write_file(ws1_root, "alpha.py", SHARED_FN_PY)
+        _write_file(ws2_root, "beta.py", SHARED_FN_PY)
+
+        cls.db = CodeGraphDB(os.path.join(cls.tmpdir, "callwarden.db"),
+                             workspace_root=ws1_root)
+        cls.ws1 = cls.db.register_workspace("c2-ws1", ws1_root, "C2 ws1")
+        cls.db.set_active_workspace(cls.ws1)
+        cls.db.build_full_graph()
+
+        cls.ws2 = cls.db.register_workspace("c2-ws2", ws2_root, "C2 ws2")
+        cls.db.set_active_workspace(cls.ws2)
+        cls.db.build_full_graph()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.db.close()
+        except Exception:
+            pass
+        import shutil
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    def _sql_only(self, workspace_id):
+        """切到目标 workspace 并强制 SQL 降级路径（禁用 Rust GraphStore 短路）"""
+        self.db.set_active_workspace(workspace_id)
+        original_get = self.db._get_graph_store
+        self.db._get_graph_store = lambda: None
+        self.addCleanup(setattr, self.db, "_get_graph_store", original_get)
+
+    def test_get_callers_short_name_is_workspace_scoped(self):
+        """短名 callers 只返回当前 workspace 的调用边"""
+        self._sql_only(self.ws1)
+        callers = self.db.get_callers("helper")
+        self.assertEqual(len(callers), 1, "ws1 短名 callers 不应包含 ws2 边")
+        self.assertEqual(callers[0]["caller_file"], "alpha.py")
+
+        self.db.set_active_workspace(self.ws2)
+        callers_ws2 = self.db.get_callers("helper")
+        self.assertEqual(len(callers_ws2), 1, "ws2 短名 callers 不应包含 ws1 边")
+        self.assertEqual(callers_ws2[0]["caller_file"], "beta.py")
+
+    def test_get_callees_short_name_is_workspace_scoped(self):
+        """短名 callees 只返回当前 workspace 的调用边"""
+        self._sql_only(self.ws1)
+        callees = self.db.get_callees("main")
+        self.assertEqual(len(callees), 1, "ws1 短名 callees 不应包含 ws2 边")
+        self.assertEqual(callees[0]["callee_name"], "helper")
+
+        self.db.set_active_workspace(self.ws2)
+        callees_ws2 = self.db.get_callees("main")
+        self.assertEqual(len(callees_ws2), 1, "ws2 短名 callees 不应包含 ws1 边")
+
+    def test_get_callees_qn_is_workspace_scoped(self):
+        """QN 分支在非归属 workspace 下返回空（不回退到别 ws 的同名符号）"""
+        self._sql_only(self.ws1)
+        self.assertEqual(
+            self.db.get_callees("main", qualified_name="beta.main"), [],
+            "ws1 查询 ws2 的 QN caller 应返回空")
+
+        self.db.set_active_workspace(self.ws2)
+        self.assertEqual(
+            self.db.get_callees("main", qualified_name="alpha.main"), [],
+            "ws2 查询 ws1 的 QN caller 应返回空")
+
+    def test_get_callers_auto_qn_fallback_stays_in_workspace(self):
+        """自动识别 QN 的短名回退仍受 workspace 约束"""
+        self._sql_only(self.ws1)
+        callers = self.db.get_callers("beta.helper")
+        # 自动识别 QN 允许降级短名（QN 未入库），但降级结果仍只能来自当前 workspace
+        self.assertEqual(
+            {c["caller_file"] for c in callers}, {"alpha.py"},
+            "自动降级短名的结果不得引用其它 workspace 的文件")
+        self.assertEqual(callers, self.db.get_callers("helper"))
+
+
 if __name__ == "__main__":
     unittest.main()

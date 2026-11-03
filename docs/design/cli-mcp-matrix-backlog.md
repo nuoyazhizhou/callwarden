@@ -517,11 +517,21 @@ RPC `mcp.daemon_client.sql_fallback_get_callers/get_callees` 已在
   `main` 的 callees 两 ws 同为 15,760 条；修复后 `helper` ws1=0 / ws1720=1，
   callees `main` ws1=10,862 / ws1720=144，与按 ws 过滤的 SQL 期望值逐一相等。
 
-### 6.5 残留（未纳入本卡）
+### 6.5 残留（已收口）
 
-Python 本地 SQL 降级 `db/db_query.py::get_callers/get_callees` 的短名分支仍保留
-旧全局语义；CLI/MCP 正常链经 daemon RPC（本卡已收口），仅 enterprise 回退本地
-SQL 时仍可能跨 ws。列为后续候选。
+Python 本地 SQL 降级 `db/db_query.py::get_callers/get_callees` 的短名分支曾保留
+旧全局语义；CLI/MCP 正常链经 daemon RPC（§6.3 已收口），仅 enterprise 回退本地
+SQL 时仍可能跨 ws。
+
+已修（`T-1793698457533-6371b038`，2026-11-03）：按 §6.3 方案 A 补齐归属收口——
+`get_callers` 短名分支与 `get_callees` QN/短名两分支均 `JOIN file_instances fi
+ON s.file_instance_id = fi.id` 并加 `fi.workspace_id` 谓词，语义保持旧短名文本
+匹配（不做方案 B 的 callee_id 语义变更）。
+
+验证：`pytest tests/test_p28b_qualified_name.py tests/test_p7_callee_id_index.py`
+19 passed；新增 `TestWorkspaceScopedSqlFallback`（ws1 `alpha.py` / ws2 `beta.py`
+同名 `helper`/`main` 夹具，强制 SQL 降级路径）覆盖短名 callers、短名 callees、
+callees QN 与自动 QN 降级四条路径，均断言不出现另一 workspace 的调用边。
 
 ---
 

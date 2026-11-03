@@ -378,14 +378,17 @@ class QueryMixin:
             # QN 查不到 → 仅自动识别 QN 时降级短名（QN 可能未入库或已删除）
             if not auto_qn_fallback:
                 return []  # 显式 QN 未找到 → 返回空，不降级
+        # C2（backlog §6.5）：短名分支必须限定当前 workspace，否则本地 SQL 降级
+        # 会返回其它 workspace 的同名调用边（daemon RPC 路径已在 §6.3 收口）。
+        ws_id = self._get_active_workspace_id()
         cur = self.conn.execute(
             """SELECT c.*, s.name as caller_name, fi.rel_path as caller_file
                FROM calls c
                JOIN symbols s ON c.caller_id = s.id
                JOIN file_instances fi ON s.file_instance_id = fi.id
-               WHERE c.callee_name = ?
+               WHERE fi.workspace_id = ? AND c.callee_name = ?
                ORDER BY fi.rel_path, c.call_line""",
-            (callee_name,),
+            (ws_id, callee_name),
         )
         return [dict(row) for row in cur]
 
@@ -435,15 +438,17 @@ class QueryMixin:
                     return rust_callees
                 except Exception:
                     pass  # Rust 查询异常 → 降级 SQL
-        # P28：传入 qualified_name 时，用 qualified_name 精确定位 caller
+        # C2（backlog §6.5）：QN 与短名两分支都必须限定当前 workspace
+        ws_id = self._get_active_workspace_id()
         if qualified_name is not None:
             cur = self.conn.execute(
                 """SELECT c.callee_name, c.callee_file, c.callee_qualified, c.call_line, c.is_cross_file
                    FROM calls c
                    JOIN symbols s ON c.caller_id = s.id
-                   WHERE s.qualified_name = ?
+                   JOIN file_instances fi ON s.file_instance_id = fi.id
+                   WHERE fi.workspace_id = ? AND s.qualified_name = ?
                    ORDER BY c.call_line""",
-                (qualified_name,),
+                (ws_id, qualified_name),
             )
             result = [dict(row) for row in cur]
             if result:
@@ -455,9 +460,10 @@ class QueryMixin:
             """SELECT c.callee_name, c.callee_file, c.callee_qualified, c.call_line, c.is_cross_file
                FROM calls c
                JOIN symbols s ON c.caller_id = s.id
-               WHERE s.name = ?
+               JOIN file_instances fi ON s.file_instance_id = fi.id
+               WHERE fi.workspace_id = ? AND s.name = ?
                ORDER BY c.call_line""",
-            (caller_name,),
+            (ws_id, caller_name),
         )
         return [dict(row) for row in cur]
 
