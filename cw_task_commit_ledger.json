@@ -21,7 +21,7 @@
   },
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-11-02T22:21:24+08:00",
+  "updated_at": "2026-11-03T14:28:48+08:00",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2145,6 +2145,19 @@
       "review_verdict_id": "V-c17b71e906842536d1c06277",
       "handoff_event_id": "13041",
       "note": "close 终局 assignment 收口（backlog §34）：daemon handle_task_close / handle_task_cascade_close 与 Python task_close 在同一事务内收敛事件投影与物理 task_assignments，closed 卡不再残留 queued/claimed assignment；响应新增 completed_assignments；旧库 no such table 兼容。验证：cargo test finalize_task_assignments 1 passed、cargo test task_close 11 passed、pytest tests/test_task_close.py 24 passed、check_e2e_matrix_closure PASS exit 0；git diff --check 干净。A′ 环：executor 8/8 report -> review_pending -> reviewer verdict V-c17b71e906842536d1c06277 pass findings=0 -> reviewer_pass handoff (event 13041) -> adjudicator reviewer-scope lease L-8cfe49a87671f423 f2 apply/close -> closed/completed/COMPLETE/finalize；lease（executor L-10b7b821ed341667 f2、reviewer L-7173879d6176981d f1、adjudicator L-8cfe49a87671f423 f2）全部主动 release。残留：本卡 close 由旧 daemon（PID 35836，started_at 1793626075）执行，真实库仍保留 A-2ec419c65223e5f140e7eb92（adjudicator/queued）；新代码部署后后续 close 生效，历史残留按非目标不批量清理。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793677837256-5b2e8564",
+      "commit_id": "156011e3bc9695df5e3cf6d4bcce74a688a58064",
+      "status": "new_in_master",
+      "source": "refresh_evidence_filter_20261103",
+      "scope": "tests/test_http_daemon_release_acceptance.py, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "9b01586b0bb19c7d",
+      "evidence_sha256": "2BABBBB8578BF3CB16415298B327B1A5D1EFE7321F21D8ECD6B22F354E912474",
+      "view_manifest_sha256": "3cd186dc3ec50c4e6c7cd0d2eb0bebb0c8aad237d478fc374644a47a083a7da2",
+      "review_verdict_id": "V-45a64ba67fbc5dffca45be34",
+      "handoff_event_id": "13130",
+      "note": "release 验收 evidence 选取按内容过滤（backlog §5 C11 / §35）：旧实现取 runtime/evidence 目录内 mtime 最新的 *.json，假定其必为 refresh_shared_runtime.ps1 产物；数据清理把三份运维 evidence 写入同目录后，验收用例随即误红（status=None、缺 cw-daemon.exe、KeyError: daemon_runtime）。新实现新增 _is_refresh_evidence（status + daemon_runtime + binaries 三键判别）与 _select_refresh_evidence（mtime 倒序逐条读取，跳过不可读/非法 JSON/非 refresh，取首条匹配），_latest_refresh_evidence 无匹配时 skip 并输出目录与最近 5 个文件名；新增 TestRefreshEvidenceSelection 两条单测覆盖「运维 evidence 更新不顶替 refresh」与「仅有运维 evidence 时 skip」。验证：验收文件 10 passed / 5 skipped / 0 failed；定向回归 46 passed / 5 skipped / 0 failed；check_e2e_matrix_closure PASS exit 0；git diff --check 干净。A′ 环：executor 3/3 report -> review_pending -> reviewer verdict V-45a64ba67fbc5dffca45be34 pass findings=0 （snapshot 9b01586b0bb19c7d，view_manifest 3cd186dc…）-> reviewer_pass handoff（event 13130）-> adjudicator apply（13133）/ close（13134）-> closed/completed/COMPLETE，assignment 收口为 null；lease（reviewer L-c0dd191f1b3c1935 f2、executor L-ba962239008342c9 f1、adjudicator reviewer-scope L-e4f1684ae8f672f4 f3）全部主动 release。裁决期发现两处投影语义并记为 info 残留：review 阶段只要 reviewer-scope lease active，next_action 即投影 review_pending 且不读取 verdict（释放后立即翻转为 READY/ADJUDICATE）；无参 cw lease acquire 在该阶段返回 executor 作用域，需显式 --role reviewer。另 verdict 由既有兼容路径写入，role_contract_revision_id 为空但 lineage 存在，有效投影与 provenance 校验不依赖该列，不阻塞。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
