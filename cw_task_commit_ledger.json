@@ -21,7 +21,7 @@
   },
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-11-03T23:05:57+08:00",
+  "updated_at": "2026-11-03T23:13:39+08:00",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2249,6 +2249,19 @@
       "review_verdict_id": "V-9b3390e23602a09824f75603",
       "handoff_event_id": "13348",
       "note": "backlog §36.4 全封堵：governed_signal 扩展为 task_contract_envelope || identity_policy || task_id，非 parent-aware 且 role_contracts 为空时写前 E_TASK_CONTRACT_REQUIRED，直接 RPC 不再存在 task_id-only legacy 空建路径。夹具系统性改造：全部 handle_task_create 补 identity_policy + role_contracts；claim 夹具补 agent.register 身份与 agent_instance_id；需要『已有 binding、无合同』形态的 T-BOUND-NEW/T-G2-REVISE/T-G3-PROJ/T-P0L-CLMN 改用 seed_task_binding + SQL task_steps；T-ROOT-PARITY-2 改为断言 E_TASK_CONTRACT_REQUIRED。文档同步：§36.2 daemon 行、§36.4 局限、新增 §36.5、§5 C12。验证：cargo test --lib daemon::task_collab → 181 passed / 0 failed；check_e2e_matrix_closure.py PASS exit 0。A′ 环：executor 4/4 report -> review -> reviewer verdict V-9b3390e23602a09824f75603 pass findings=0（snapshot df0d262757c3973d，view_manifest 38a36527…）-> reviewer_pass handoff（event 13349）-> adjudicator reviewer-scope lease L-d142dc3e06168dcd f2 apply（13352）/ close（13353）-> closed/completed，executor/reviewer/adjudicator 三条租约均已释放。裁决期 info 残留：task_collab.rs governed 注释措辞可再精确为『信封 / identity_policy 需与配套 role_contracts』，不改变运行时行为。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793712648160-66c03030",
+      "commit_id": "f4b3efe69a79c7b587108ef00b90fa3a19679ddd",
+      "status": "new_in_master",
+      "source": "backlog_35_refresh_evidence_explicit_schema_20261103",
+      "scope": "scripts/refresh_shared_runtime.ps1, tests/test_http_daemon_release_acceptance.py, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "df0d262757c3973d",
+      "evidence_sha256": "C303E846AFE6FCF7602D5B23630C0FF8311BC405FA735F086D53427348526727",
+      "view_manifest_sha256": "08c8688fe30a4739c38086b9636b7ec022aaad0503473fc8d581dc812e664139",
+      "review_verdict_id": "V-12852c54a122e45ea31763cd",
+      "handoff_event_id": "13378",
+      "note": "backlog §35.4 收口：refresh_shared_runtime.ps1 的 $result 首键写入 schema = cw.runtime_refresh.v1；_is_refresh_evidence 由三键存在性改为显式 schema 版本判别（schema 匹配 + status/daemon_runtime/binaries 齐全），缺 schema 或异 schema 一律拒绝；新增三条正负向单测（三键无 schema 拒绝、异 schema 拒绝、显式 schema 接受），原 refresh fixture 补 schema，skip 文案同步。文档同步：§35.2 不改行调整、§35.4 局限改为显式 schema 判别、新增 §35.5 生产方/判别/单测/回归。验证：pytest tests/test_http_daemon_release_acceptance.py -o addopts='' -q → 11 passed / 7 skipped / 0 failed；check_e2e_matrix_closure.py PASS exit 0。A′ 环：executor 4/4 report -> review -> reviewer verdict V-12852c54a122e45ea31763cd pass findings=0（snapshot df0d262757c3973d，view_manifest 08c8688f…）-> reviewer_pass handoff（event 13379）-> adjudicator reviewer-scope lease L-38d4a946fc7b407c f2 apply（13382）/ close（13383）-> closed/completed，executor/reviewer/adjudicator 三条租约均已释放。裁决期 info 残留：(a) 既有真实 refresh evidence 未带 schema，验收用例按前置条件 skip，已在 §35.4 局限记录；(b) step 0 report 文案因 PowerShell 变量展开丢失 $result 前缀，仅影响可读性。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
@@ -2328,7 +2341,8 @@
       "a2591fd28dafbf801d3737e55da2b048685be2e5",
       "178afdec04a2bc2ced66a0e01e89b09282469937",
       "8be4aeefcb1e45efff1dd047d557f8de9d1d9f3a",
-      "827fdf5666074ce7d2d68b901a31909f20281e75"
+      "827fdf5666074ce7d2d68b901a31909f20281e75",
+      "f4b3efe69a79c7b587108ef00b90fa3a19679ddd"
     ],
     "pruned": [
       "0275a4a25009bbe8d2037a92be2b9f6c7eed74ad",
