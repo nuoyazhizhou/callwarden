@@ -2771,5 +2771,5 @@ review / apply，只能手工 `supersede` 收编。
 | --- | --- |
 | 本次范围 | `cli/main.py`、`rust_ext/src/daemon/task_collab.rs`、`rust_ext/src/daemon/task_collab_tests_projection.rs`、`tests/test_task_create_parent_governance.py`、backlog §5 C12 / §36 |
 | 非目标 | 默认三角色模板内容调整、退出码统一（§24.5 另行处理）、历史空投影卡数据回填 |
-| 局限 | daemon 兜底以 `task_contract_envelope` 为 governed 信号；仅携带 `task_id`（无 envelope）的直接 RPC 调用仍可空建，依赖 CLI 缺省注入覆盖 |
+| 局限 | daemon 兜底 governed 信号 = `task_contract_envelope` / `identity_policy`（§36.4 追加，卡 `T-1793699437674-98671280`）：任一存在且 `role_contracts` 为空 → `E_TASK_CONTRACT_REQUIRED` 写前拒绝。仅携带 `task_id`（两者皆无）的直接 RPC 仍按 legacy 空建（保留历史夹具与内部造数路径；生产 CLI legacy 路径同样注入三角色合同，故不构成产品面空洞）；如需彻底封堵需将 20+ 个 legacy 夹具改写为 governed 流程，另行评估 |
 | 回滚 | 回退上述四处代码/测试改动即可；无数据迁移 |

@@ -802,6 +802,46 @@ use super::support::*;
     }
 
     #[test]
+    fn governed_create_with_identity_policy_and_empty_contracts_is_rejected_before_write() {
+        // §36.4：仅携带 identity_policy（无 envelope）且 role_contracts 为空时，
+        // 同样无法 bootstrap A' 投影，必须在任何写入前 fail-closed。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let err = store
+            .handle_task_create(
+                peer,
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-GOV-POLICY-ONLY-EMPTY",
+                    "title": "governed identity policy only",
+                    "steps": [{"action": "implement", "target_file": "a.rs"}],
+                    "identity_policy": "legacy_identity_v1"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_TASK_CONTRACT_REQUIRED");
+        let conn = store.conn.lock().unwrap();
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE id = 'T-GOV-POLICY-ONLY-EMPTY'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0, "governed 空合同必须在任何写入前拒绝");
+        let bindings: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_workspace_bindings WHERE task_id = 'T-GOV-POLICY-ONLY-EMPTY'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(bindings, 0, "拒绝路径不得留下 workspace binding");
+    }
+
+    #[test]
     fn test_task_create_envelope_policy_mismatch_and_contract_id_binding() {
         let (_dir, db_path) = temp_db();
         let store = TaskCollabStore::new(&db_path).unwrap();
@@ -1725,7 +1765,6 @@ use super::support::*;
                     "task_id": task_id,
                     "title": "p0l step3 policy fail-closed",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
-                    "identity_policy": "legacy_identity_v1",
                 }),
             )
             .unwrap();

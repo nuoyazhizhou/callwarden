@@ -3247,18 +3247,20 @@ impl TaskCollabStore {
                 ),
             ));
         }
-        // O1（backlog §23.5）：governed 建卡携带 task_contract_envelope 但 role_contracts
-        // 为空时，task.contract_bootstrap 没有 legacy 合同可派生 v1 投影，任务会以空投影
-        // 落库并恒 governance_blocked。CLI 已对 legacy / governed 统一注入 A' 三角色模板；
-        // 本处对直接 RPC 调用方做 fail-closed 兜底。
-        if !parent_aware
-            && params.get("task_contract_envelope").is_some()
-            && role_contracts.is_empty()
-        {
+        // O1（backlog §23.5 / §36.4）：governed 建卡（task_contract_envelope /
+        // identity_policy 任一存在）但 role_contracts 为空时，task.contract_bootstrap
+        // 没有 legacy 合同可派生 v1 投影，任务会以空投影落库并恒 governance_blocked。
+        // CLI 已对 legacy / governed 统一注入 A' 三角色模板；本处对直接 RPC 调用方做
+        // fail-closed 兜底。仅携带 task_id 的调用仍按 legacy 处理（生产 CLI 的 legacy
+        // 路径同样注入三角色合同；task_id-only 直接 RPC 为 §36.4 记录的已知边界）。
+        let governed_signal = params.get("task_contract_envelope").is_some()
+            || params.get("identity_policy").is_some();
+        if !parent_aware && governed_signal && role_contracts.is_empty() {
             return Err(DaemonRpcError::new(
                 ERR_TASK_CONTRACT_REQUIRED,
-                "task.create governed：携带 task_contract_envelope 时必须同时提供非空 \
-                 role_contracts，否则无法 bootstrap A' 治理投影；CLI 缺省注入三角色模板",
+                "task.create governed：携带 task_contract_envelope / identity_policy 任一时\
+                 必须同时提供非空 role_contracts，否则无法 bootstrap A' 治理投影；\
+                 CLI 缺省注入三角色模板",
             ));
         }
 
