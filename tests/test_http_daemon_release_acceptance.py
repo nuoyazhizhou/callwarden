@@ -138,15 +138,20 @@ def _canonical_schema_version() -> int:
     return py_version
 
 
+REFRESH_EVIDENCE_SCHEMA = "cw.runtime_refresh.v1"
+
+
 def _is_refresh_evidence(data) -> bool:
-    """refresh_shared_runtime.ps1 产物判别：status / daemon_runtime / binaries 三键齐全。
+    """refresh_shared_runtime.ps1 产物判别：显式 schema 版本。
 
     运维 evidence（数据清理、审计）也可能写入同一目录且 mtime 更新，仅凭
-    「目录内最新 *.json」会把它们误当 refresh evidence（曾导致 status=None、
-    缺 binaries、KeyError daemon_runtime 三条误红）。
+    「目录内最新 *.json」或三键存在性会把它们误当 refresh evidence（曾导致
+    status=None、缺 binaries、KeyError daemon_runtime 三条误红）。故只认生产方
+    显式写入的 `schema == cw.runtime_refresh.v1`，缺 schema / 其他 schema 一律拒绝。
     """
     return (
         isinstance(data, dict)
+        and data.get("schema") == REFRESH_EVIDENCE_SCHEMA
         and all(key in data for key in ("status", "daemon_runtime", "binaries"))
     )
 
@@ -176,7 +181,8 @@ def _latest_refresh_evidence() -> dict:
     if data is None:
         recent = [os.path.basename(p) for p in files[:5]]
         pytest.skip(
-            f"未找到 refresh evidence（需 status/daemon_runtime/binaries 三键）: "
+            f"未找到 refresh evidence（需 schema=cw.runtime_refresh.v1 且 "
+            f"status/daemon_runtime/binaries 齐全）: "
             f"{_EVIDENCE_DIR}；最近文件: {recent}"
         )
     return data
@@ -192,6 +198,7 @@ class TestRefreshEvidenceSelection:
 
     def test_newer_cleanup_evidence_does_not_shadow_refresh(self, tmp_path):
         refresh = self._write(tmp_path / "20260101-refresh.json", {
+            "schema": REFRESH_EVIDENCE_SCHEMA,
             "status": "passed",
             "git_head": "a" * 40,
             "binaries": [{"name": "cw-daemon.exe", "sha256": "b" * 64}],
@@ -217,6 +224,34 @@ class TestRefreshEvidenceSelection:
         monkeypatch.setattr(sys.modules[__name__], "_EVIDENCE_DIR", str(tmp_path))
         with pytest.raises(pytest.skip.Exception):
             _latest_refresh_evidence()
+
+    def test_legacy_three_key_payload_without_schema_is_rejected(self):
+        # §35.4：三键存在性不再是 refresh 判据；缺显式 schema 的历史/伪造产物必须拒绝。
+        legacy = {
+            "status": "passed",
+            "binaries": [{"name": "cw-daemon.exe", "sha256": "b" * 64}],
+            "daemon_runtime": {"sha256": "b" * 64},
+        }
+        assert _is_refresh_evidence(legacy) is False
+
+    def test_unknown_schema_is_rejected(self):
+        # 同目录其他运维产物即使恰好带三键，也不能冒充 refresh evidence。
+        impostor = {
+            "schema": "cw.fixture_cleanup.v1",
+            "status": "passed",
+            "binaries": [],
+            "daemon_runtime": {},
+        }
+        assert _is_refresh_evidence(impostor) is False
+
+    def test_explicit_schema_with_three_keys_is_accepted(self):
+        payload = {
+            "schema": REFRESH_EVIDENCE_SCHEMA,
+            "status": "passed",
+            "binaries": [],
+            "daemon_runtime": {},
+        }
+        assert _is_refresh_evidence(payload) is True
 
 
 # ============================================================

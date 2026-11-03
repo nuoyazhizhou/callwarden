@@ -2742,7 +2742,7 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | 选取 | 新增 `_select_refresh_evidence`：mtime 倒序逐条读取，跳过不可读/非 refresh/非法 JSON，取首条匹配 |
 | 入口 | `_latest_refresh_evidence` 改调上述 helper；无匹配时 `pytest.skip` 并输出目录路径与最近 5 个文件名 |
 | 单测 | `TestRefreshEvidenceSelection`：运维 evidence 更新时不顶替 refresh；仅有运维 evidence 时 skip |
-| 不改 | `refresh_shared_runtime.ps1` 产物结构、既有验收断言、evidence 目录结构约定 |
+| 不改 | 既有验收断言、evidence 目录结构约定 |
 
 ### 35.3 验证
 
@@ -2756,10 +2756,19 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 
 | 类别 | 说明 |
 | --- | --- |
-| 本次范围 | `tests/test_http_daemon_release_acceptance.py` + backlog §5 C11 / §35 |
-| 非目标 | refresh 脚本证据结构变更、验收断言语义变更、evidence 目录迁移 |
-| 局限 | 判别依赖三键存在性而非显式 schema；未来若 refresh 产物删键需同步更新 `_is_refresh_evidence` |
-| 回滚 | 回退测试文件改动即可；无产品代码、无数据迁移 |
+| 本次范围 | `scripts/refresh_shared_runtime.ps1`、`tests/test_http_daemon_release_acceptance.py` + backlog §5 C11 / §35 |
+| 非目标 | 验收断言语义变更、evidence 目录迁移、历史 evidence 回填 |
+| 局限 | 判别改为显式 `schema == cw.runtime_refresh.v1`；未带 schema 的历史 refresh 产物将被视为非 refresh（验收用例按前置条件 skip，重跑 refresh 脚本后恢复） |
+| 回滚 | 回退脚本 schema 字段与测试判别改动即可；无数据迁移 |
+
+### 35.5 refresh evidence 显式 schema（T-1793712648160-66c03030）
+
+| 项 | 口径 | 结果 |
+| --- | --- | --- |
+| 生产方 | `refresh_shared_runtime.ps1` 的 `$result` 首键写入 `schema = "cw.runtime_refresh.v1"` | 产物自带版本标识 |
+| 判别 | `_is_refresh_evidence` 改为 `schema == cw.runtime_refresh.v1` + 三键齐全；缺 schema / 异 schema 一律拒绝 | 三键存在性不再单独成立 |
+| 单测 | 新增 3 条：三键但无 schema 拒绝、异 schema 拒绝、显式 schema + 三键接受；原 refresh fixture 补 schema | `TestRefreshEvidenceSelection` 覆盖正负向 |
+| 回归 | `python -m pytest tests/test_http_daemon_release_acceptance.py -o addopts='' -q` | 见 commit 记录 |
 
 ---
 

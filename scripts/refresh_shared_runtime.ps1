@@ -582,6 +582,7 @@ $oldCurrent = $null
 $oldDaemonPath = $null
 $coreDeployed = @()
 $result = [ordered]@{
+    schema = "cw.runtime_refresh.v1"
     task_id = $TaskId; status = "failed"; started_at = [DateTime]::UtcNow.ToString("o")
     finished_at = $null; git_head = $head; configuration = $Configuration
     target_dir = $TargetDir; runtime_version = $version; repository = $RepoRoot
