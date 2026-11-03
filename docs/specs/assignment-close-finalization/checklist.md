@@ -59,8 +59,13 @@
 
 - [x] 明确非目标：历史已 closed 卡残留 assignment 的批量清理；reopen 后
       assignment 重建；`revoked` 语义变更；schema 迁移
-- [x] 已知残留：本卡 close 由旧 daemon（PID 35836，started_at 1793626075）执行，
-      真实库仍保留 `A-2ec419c65223e5f140e7eb92`（adjudicator/queued）；
-      新代码部署后由后续 close 生效，历史残留按非目标不批量清理
+- [x] 本卡残留已清理（2026-11-03）：新 daemon 以 reviewer-scope lease
+      `L-648128600b088541`（fencing=3）重放 close，S6 追加
+      `assignment_completed`（event 13048，`A-2ec419c65223e5f140e7eb92`），
+      `assignment-status` 为 empty；同事务还收敛其余 8 条历史 active 投影
+      （event 13047–13055），lease 已释放。重放 close 追加
+      `closed`（from closed→closed，event 13046）审计事件，`closed_at`
+      更新为收口时间 1793669944.267305
+- [x] 非本卡历史残留仍按非目标不批量清理
 - [x] 复核后变更仅限文档：backlog 尾部空白清理、tasks.md 勾选 T7、新增
       checklist.md；5 个生产/测试文件 sha256 与 reviewer view-manifest 一致
