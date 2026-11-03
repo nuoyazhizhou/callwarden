@@ -763,11 +763,9 @@ DYNAMIC_KEY_CALL_SITES = {
         "A t() 公开入口包装",
     ("i18n/__init__.py", "get_msg", "t", "<fstring>"):
         "A t() 公开入口包装",
-    ("server/tools/tools_collab.py", "register._collab_error_response", "t", "message_key"):
-        "D MCP 协作工具错误 key",
 }
 
-EXPECTED_DYNAMIC_SITES = 15
+EXPECTED_DYNAMIC_SITES = 14
 REGISTRY_KEY_MIN = 56  # 12 title_key + 44 desc_key（backlog §32.2）
 
 
@@ -1112,9 +1110,14 @@ def test_cli_structured_default_keys_resolve_in_daemon_errors(zh_catalog, en_cat
         assert not missing, f"{lang} daemon_errors 缺少: {missing}"
 
 
-def test_mcp_collab_error_response_has_no_call_sites():
-    """MCP 协作错误构造器当前无调用点；新增 emit 点必须同步进入 §33 审计。"""
+def test_mcp_collab_error_response_is_removed():
+    """§33.5：MCP 协作错误构造器已作为死代码删除；重新引入必须纳入 §33 兜底审计。"""
     tree = ast.parse(_load_source("server/tools/tools_collab.py"))
+    defs = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_collab_error_response"
+    ]
     calls = [
         node for node in ast.walk(tree)
         if isinstance(node, ast.Call)
@@ -1123,6 +1126,7 @@ def test_mcp_collab_error_response_has_no_call_sites():
             or (isinstance(node.func, ast.Attribute) and node.func.attr == "_collab_error_response")
         )
     ]
+    assert not defs, "_collab_error_response 已被删除，不得重新引入（必须纳入 §33 兜底审计）"
     assert len(calls) == 0, (
         f"_collab_error_response 出现新调用点，必须纳入 §33 兜底审计: {len(calls)}"
     )

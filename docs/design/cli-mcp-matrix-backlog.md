@@ -2591,7 +2591,7 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | bundled 双语完整性 | 6 模块全部 bundled 条目 `zh_CN` / `en_US` 非空 | **0 缺口** |
 | CLI 结构化默认 | `cli/main.py` `_IDENTITY_REASON_DEFAULTS`（3）+ `_DEFAULTS`（2）→ catalog `daemon_errors` 扁平段 | 27 key，zh/en 集合相等；5/5 可达 |
 | `_t_structured` 解析路径 | `t()` 按点拆分无法处理含点扁平 key（`daemon_errors.error.identity_incomplete`） | 依赖 raw-JSON 扁平查找；未知 key 返回 `default` |
-| MCP 协作工具 | `server/tools/tools_collab.py` `_collab_error_response` | **无调用点**（登记豁免，不在运行时 emit 路径） |
+| MCP 协作工具 | `server/tools/tools_collab.py` `_collab_error_response` | **已删除**（§33.5 死代码清理，T-1793702310418-75497438） |
 | 基线门禁 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q` | **95 passed** |
 
 ### 33.3 处置口径（冻结）
@@ -2616,8 +2616,9 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
    `errors.contract_lease_denied` 的占位符契约（`{reason}` 在调用点不存在，属可读性缺陷
    修复），其余 catalog 文本一律不动。
 
-非目标：`tools_collab._collab_error_response` 死代码清理、en 文案打磨、
-`t()` 其它值类型（`int`/`dict`）通用契约。
+非目标：en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
+（原非目标 `tools_collab._collab_error_response` 死代码清理已由
+`T-1793702310418-75497438` 完成，见 §33.6。）
 
 ### 33.4 验证
 
@@ -2630,7 +2631,7 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | 治理回归 | 上述两文件 + `tests/test_cli_governance_gate.py` | **114 passed** |
 | 负向实验 | 临时删除 `_CONTRACT_BUNDLED_DEFAULTS['errors.contract_lease_denied']` | `cover_all_emitted_keys` 报 `bundled key 数量漂移 11 != 12`、`lease_denied_placeholders` 报 `KeyError`；**2 failed / exit=1**；恢复后 **8 passed** |
 | CLI 默认 key | AST 抽取 `_IDENTITY_REASON_DEFAULTS`（3）+ `_collab_output_structured_reason._DEFAULTS`（2） | 5/5 → catalog `daemon_errors` 扁平段双语可达 |
-| MCP 调用点 | AST 扫描 `server/tools/tools_collab.py` | `_collab_error_response` **0 个调用点**（豁免固定） |
+| MCP 调用点 | AST 扫描 `server/tools/tools_collab.py` | `_collab_error_response` **已删除**（`is_removed` 用例断言定义与调用点均不存在） |
 | 验收矩阵 | `python scripts/check_e2e_matrix_closure.py` | **PASS（收口条件全部满足）** |
 
 ### 33.5 边界
@@ -2638,10 +2639,23 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | 类别 | 说明 |
 | --- | --- |
 | 本次范围 | `db/db_task_contracts.py` bundled 1 条 + 两个 catalog 的 `errors.contract_lease_denied` 占位符 + `tests/test_i18n_placeholder_consistency.py` §33 门禁（8 用例）+ backlog §33 |
-| 非目标 | `tools_collab._collab_error_response` 死代码清理；en 文案打磨；`t()` 其它值类型（`int`/`dict`）通用契约 |
-| 保留问题 | 未知 key 仍**原样返回 key**（可观察兜底终点，不升级为 fail-closed）；§27.5「值不可格式化 vs 占位符拼写错误」的静默等价仍未区分；MCP 构造器保留但无 emit 点 |
+| 非目标 | en 文案打磨；`t()` 其它值类型（`int`/`dict`）通用契约 |
+| 保留问题 | 未知 key 仍**原样返回 key**（可观察兜底终点，不升级为 fail-closed）；§27.5「值不可格式化 vs 占位符拼写错误」的静默等价仍未区分；MCP 构造器已删除（§33.6） |
 | 白名单维护 | `BUNDLED_RESOLVER_SPECS` 的 emit / bundled 数量变更必须同步；新增 `_resolve_*_message` 模块必须纳入清单，否则每个 emit key 失去兜底保证 |
 | 回滚 | 回退 5 文件提交即可；catalog 仅改 1 个 key 的占位符（`{reason}` → `task_id`/`lease_code`/`lease_detail`），无数据迁移、无 key 增删 |
+
+### 33.6 死代码清理（T-1793702310418-75497438）
+
+§33.5 登记的非目标项 `tools_collab._collab_error_response`（全仓库 0 调用点）
+已删除，同步 §32 动态 key 冻结名单与回归用例：
+
+| 项 | 改动 | 验证 |
+| --- | --- | --- |
+| 生产代码 | `server/tools/tools_collab.py` 删除 `register` 内 `_collab_error_response`（L77-L109，33 行）；`t` 导入保留（`collab_json_array_required` 仍在用） | `py_compile` 通过 |
+| 动态 key 名单 | `tests/test_i18n_placeholder_consistency.py` 移除 `register._collab_error_response` 条目；`EXPECTED_DYNAMIC_SITES` **15 → 14** | `test_dynamic_key_sites_match_frozen_allowlist` 通过 |
+| 回归用例 | `test_mcp_collab_error_response_has_no_call_sites` → `test_mcp_collab_error_response_is_removed`（断言定义与调用点均不存在） | 通过 |
+| 门禁全量 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q` | **103 passed / 0 failed** |
+| 残留说明 | catalog `mcp.messages.collab_query_failed` 保留（历史 key 文档化，无 emit 点；key 存在性门禁不要求反向引用） | — |
 
 ## 34. close 终局 assignment 收口（T-1793627972400-4a1e4a0c）
 

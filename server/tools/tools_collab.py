@@ -74,40 +74,6 @@ _WRITE_DAEMON_UNAVAILABLE_CODE = {
 
 
 def register(mcp: FastMCP) -> None:
-    def _collab_error_response(tool_name: str, code: str, message_key: str,
-                               detail: str) -> dict:
-        """构造只读查询失败路径的 Structured_Reason（Req 1.12）。
-
-        稳定错误码 + i18n message key（通过 t(key, default=...) 解析）。
-        文案变化不改变错误码值。
-
-        Args:
-            tool_name: 工具名称
-            code: 稳定错误码（如 E_COLLAB_QUERY_FAILED）
-            message_key: i18n message key
-            detail: 错误详情
-
-        Returns:
-            结构化错误响应 dict
-        """
-        msg = t(
-            message_key,
-            default=t("mcp.messages.collab_query_failed",
-                      tool=tool_name, detail=detail),
-            tool=tool_name,
-            detail=detail,
-        )
-        return {
-            "status": "error",
-            "tool": tool_name,
-            "reason": {
-                "code": code,
-                "message_key": message_key,
-                "message": msg,
-                "detail": detail,
-            },
-        }
-
     @mcp.tool()
     def get_role_view(task_id: str, role: str = "") -> dict:
         """获取指定任务和角色的 Role_View 投影（只读，Req 14.17）
