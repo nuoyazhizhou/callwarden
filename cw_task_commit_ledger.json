@@ -21,7 +21,7 @@
   },
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-11-03T21:57:43+08:00",
+  "updated_at": "2026-11-03T23:05:57+08:00",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2236,6 +2236,19 @@
       "review_verdict_id": "V-f311719039e685a0233671a2",
       "handoff_event_id": "13315",
       "note": "backlog §33 收口：删除双语 catalog 中无 emit 点的 mcp.messages.collab_query_failed（§20.2 引入，随 §33.5/§33.6 删除 _collab_error_response 后失去唯一 emit 点）。删除后双语叶子 key 集合 2294 == 2294 零差异；生产代码 0 引用（剩余命中仅历史台账/证据/文档）。文档同步：§20.2 引入表该行标注已删除；§33.5 保留问题指向 §37；§33.6 残留说明改为已删除；新增 §33.7 记录清理与验证。验证：pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q → 116 passed / 0 failed；check_e2e_matrix_closure.py PASS exit 0。A′ 环：executor 4/4 report -> review -> reviewer verdict V-f311719039e685a0233671a2 pass findings=0（snapshot 51365f91bdaefafc，view_manifest e7a078f7…）-> reviewer_pass handoff（event 13315）-> adjudicator reviewer-scope lease L-d510762db2a9332f f2 apply（13318）/ close（13319）-> closed/completed，两条 reviewer-scope 租约均已释放。裁决期 info 残留：(a) docs/mcp_tools.md 的 error.collab_query_failed 属不同命名空间且为既有陈旧文档项，不在本卡范围；(b) 未跑 Python 全量 pytest。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793712641922-f2e41128",
+      "commit_id": "827fdf5666074ce7d2d68b901a31909f20281e75",
+      "status": "new_in_master",
+      "source": "backlog_36_task_id_legacy_full_lockdown_20261103",
+      "scope": "rust_ext/src/daemon/task_collab.rs, rust_ext/src/daemon/task_collab_tests_core.rs, rust_ext/src/daemon/task_collab_tests_governance.rs, rust_ext/src/daemon/task_collab_tests_lease.rs, rust_ext/src/daemon/task_collab_tests_parent_create.rs, rust_ext/src/daemon/task_collab_tests_projection.rs, rust_ext/src/daemon/task_collab_tests_ws_authority.rs, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "df0d262757c3973d",
+      "evidence_sha256": "835DDF297120F3F49C7A08BCEE249933A49B33F2AD817F541AE7C8F1C48C1BAE",
+      "view_manifest_sha256": "38a36527015a223baee81cb48e91e3b5b88062f5a0519508584d536026e1a8df",
+      "review_verdict_id": "V-9b3390e23602a09824f75603",
+      "handoff_event_id": "13348",
+      "note": "backlog §36.4 全封堵：governed_signal 扩展为 task_contract_envelope || identity_policy || task_id，非 parent-aware 且 role_contracts 为空时写前 E_TASK_CONTRACT_REQUIRED，直接 RPC 不再存在 task_id-only legacy 空建路径。夹具系统性改造：全部 handle_task_create 补 identity_policy + role_contracts；claim 夹具补 agent.register 身份与 agent_instance_id；需要『已有 binding、无合同』形态的 T-BOUND-NEW/T-G2-REVISE/T-G3-PROJ/T-P0L-CLMN 改用 seed_task_binding + SQL task_steps；T-ROOT-PARITY-2 改为断言 E_TASK_CONTRACT_REQUIRED。文档同步：§36.2 daemon 行、§36.4 局限、新增 §36.5、§5 C12。验证：cargo test --lib daemon::task_collab → 181 passed / 0 failed；check_e2e_matrix_closure.py PASS exit 0。A′ 环：executor 4/4 report -> review -> reviewer verdict V-9b3390e23602a09824f75603 pass findings=0（snapshot df0d262757c3973d，view_manifest 38a36527…）-> reviewer_pass handoff（event 13349）-> adjudicator reviewer-scope lease L-d142dc3e06168dcd f2 apply（13352）/ close（13353）-> closed/completed，executor/reviewer/adjudicator 三条租约均已释放。裁决期 info 残留：task_collab.rs governed 注释措辞可再精确为『信封 / identity_policy 需与配套 role_contracts』，不改变运行时行为。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
@@ -2314,7 +2327,8 @@
       "ffcd61fbe6f071d8d74b680cc988da89325fb423",
       "a2591fd28dafbf801d3737e55da2b048685be2e5",
       "178afdec04a2bc2ced66a0e01e89b09282469937",
-      "8be4aeefcb1e45efff1dd047d557f8de9d1d9f3a"
+      "8be4aeefcb1e45efff1dd047d557f8de9d1d9f3a",
+      "827fdf5666074ce7d2d68b901a31909f20281e75"
     ],
     "pruned": [
       "0275a4a25009bbe8d2037a92be2b9f6c7eed74ad",
