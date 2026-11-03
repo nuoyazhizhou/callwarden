@@ -10,7 +10,8 @@ JSON 翻译文件（zh_CN.json / en_US.json）与本文件同目录。
 import json
 import locale
 import os
-from typing import Dict, Optional
+import re
+from typing import Dict, Optional, Tuple
 
 # 支持的语言列表
 SUPPORTED_LANGS = ["zh_CN", "en_US"]
@@ -128,6 +129,36 @@ def _load_lang(lang: str) -> Dict:
 _current_lang = DEFAULT_LANG
 
 
+# 格式化失败分类（backlog §27.5）
+# - missing_field：catalog 占位符与调用 kwargs 形状不一致（缺参 / 拼写错误）；
+# - unsafe_value：值本身不可格式化（裸花括号 / 非法格式说明符 / 越界索引）。
+# 两者此前共用同一 except 分支且输出完全相同；分离后诊断与门禁可区分，
+# 同时保持 t() / t_list() 的兜底输出不变。
+FORMAT_FAILURE_MISSING_FIELD = "missing_field"
+FORMAT_FAILURE_UNSAFE_VALUE = "unsafe_value"
+
+# 合法占位符字段名；KeyError 的键若不符合该形状（如裸 JSON 的 `"raw"` / `'a'`），
+# 说明值本身不可安全格式化，而非调用缺参。
+_FIELD_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _format_or_raw(value: str, kwargs: Dict) -> Tuple[str, Optional[str]]:
+    """格式化 catalog 值；失败时返回原值并附带失败分类。
+
+    Returns:
+        (格式化文本或原值, None 或 FORMAT_FAILURE_* 之一)
+    """
+    try:
+        return value.format(**kwargs), None
+    except KeyError as exc:
+        token = exc.args[0] if exc.args else ""
+        if isinstance(token, str) and _FIELD_IDENTIFIER.match(token):
+            return value, FORMAT_FAILURE_MISSING_FIELD
+        return value, FORMAT_FAILURE_UNSAFE_VALUE
+    except (ValueError, IndexError):
+        return value, FORMAT_FAILURE_UNSAFE_VALUE
+
+
 def t(key: str, default: Optional[str] = None, **kwargs) -> str:
     """翻译文本（支持占位符替换）
 
@@ -153,17 +184,11 @@ def t(key: str, default: Optional[str] = None, **kwargs) -> str:
     if value is None:
         # key 不存在：default 也需要格式化占位符（如 "Symbols: {count}"）
         if default is not None:
-            try:
-                return default.format(**kwargs)
-            except (KeyError, ValueError, IndexError):
-                return default
+            return _format_or_raw(default, kwargs)[0]
         return key
 
     if isinstance(value, str):
-        try:
-            return value.format(**kwargs)
-        except (KeyError, ValueError, IndexError):
-            return value
+        return _format_or_raw(value, kwargs)[0]
 
     return str(value)
 
@@ -202,10 +227,7 @@ def t_list(key: str, default: Optional[list] = None, **kwargs) -> list:
         return list(value)
 
     if isinstance(value, str):
-        try:
-            return [value.format(**kwargs)]
-        except (KeyError, ValueError, IndexError):
-            return [value]
+        return [_format_or_raw(value, kwargs)[0]]
 
     if default is None:
         return []

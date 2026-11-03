@@ -1131,3 +1131,75 @@ def test_mcp_collab_error_response_is_removed():
         f"_collab_error_response 出现新调用点，必须纳入 §33 兜底审计: {len(calls)}"
     )
 
+
+# ---------------------------------------------------------------------------
+# §27.5 格式化失败分类：区分「值不可格式化」与「占位符/缺参形状不一致」
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, kwargs, expected_kind",
+    [
+        ("Hi {name}", {}, "missing_field"),
+        ("Hi {name}", {"nmae": "x"}, "missing_field"),
+        ('{"raw": 1}', {}, "unsafe_value"),
+        ("{'a': 1}", {}, "unsafe_value"),
+        ("Tail {", {}, "unsafe_value"),
+        ("{0}", {}, "unsafe_value"),
+        ("Hi {name}", {"name": "x"}, None),
+    ],
+)
+def test_format_failure_kinds_are_distinct(value, kwargs, expected_kind):
+    """§27.5：KeyError 的键形如标识符 → 缺参/拼写；其余 → 值不可格式化。"""
+    import i18n
+
+    text, kind = i18n._format_or_raw(value, kwargs)
+    assert kind == expected_kind, f"{value!r} 分类应 {expected_kind}，实际 {kind}"
+    if expected_kind is not None:
+        assert text == value, f"{value!r} 失败时必须原样返回"
+
+
+def test_failure_kind_constants_are_distinct():
+    import i18n
+
+    assert i18n.FORMAT_FAILURE_MISSING_FIELD != i18n.FORMAT_FAILURE_UNSAFE_VALUE
+
+
+def test_catalog_values_never_unsafe_value(zh_catalog, en_catalog):
+    """catalog 经 §28/§29 转义后不得再有「不可格式化」值。
+
+    因此生产路径上的任何格式失败只可能是 missing_field（缺参/拼写），
+    与 unsafe_value 在诊断和门禁中可区分。
+    """
+    import i18n
+
+    problems = []
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        for path, value in _iter_leaves(catalog):
+            _, kind = i18n._format_or_raw(value, {})
+            if kind == i18n.FORMAT_FAILURE_UNSAFE_VALUE:
+                problems.append(f"{lang}:{path}")
+    assert not problems, (
+        "catalog 存在不可格式化的值（应转义为 {{ }}）:\n" + "\n".join(problems[:10])
+    )
+
+
+@pytest.mark.parametrize("key", sorted(ESCAPED_HEADER_KEYS))
+def test_t_keeps_raw_value_on_missing_field(key, active_language, zh_catalog):
+    """缺参时 t() 输出保持原值；补参后正常格式化（行为零变化）。"""
+    import i18n
+
+    active_language("zh_CN")
+    raw = _reach(zh_catalog, key)
+    assert i18n.t(key) == raw
+    assert i18n.t(key, hash=HEADER_SAMPLE) == raw.format(hash=HEADER_SAMPLE)
+
+
+def test_t_keeps_raw_default_on_unsafe_value(active_language):
+    """默认值不可格式化时仍原样返回（与缺参走同一兜底输出）。"""
+    import i18n
+
+    active_language("zh_CN")
+    default = '{"raw": 1}'
+    assert i18n.t("no.such.key.for.gate", default=default) == default
+

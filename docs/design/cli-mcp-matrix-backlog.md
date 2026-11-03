@@ -2151,6 +2151,9 @@ en_US 两种语言下均不可读。
 
 ### 27.5 边界与残留
 
+- **静默等价已收口（§37）**：`t()` / `t_list()` 经 `_format_or_raw` 把
+  `missing_field`（KeyError 且键为标识符：缺参 / 拼写不一致）与 `unsafe_value`
+  （裸花括号 / 非法说明符 / 越界索引）分离；对外兜底输出仍原样返回，行为零变化。
 - **非标识符花括号**：6 个 key（`install_agent_hook_script`、`cli_rule_arg_scope`、
   `cli_rule_arg_evidence`、`cli_rule_arg_context`、`cli_task_arg_steps`、
   `task_plan_template`）的值内是 JSON / 计划模板示例。`format()` 因裸 `{` 抛
@@ -2787,3 +2790,39 @@ review / apply，只能手工 `supersede` 收编。
 | 非目标 | 默认三角色模板内容调整、退出码统一（§24.5 另行处理）、历史空投影卡数据回填 |
 | 局限 | daemon 兜底 governed 信号 = `task_contract_envelope` / `identity_policy`（§36.4 追加，卡 `T-1793699437674-98671280`）：任一存在且 `role_contracts` 为空 → `E_TASK_CONTRACT_REQUIRED` 写前拒绝。仅携带 `task_id`（两者皆无）的直接 RPC 仍按 legacy 空建（保留历史夹具与内部造数路径；生产 CLI legacy 路径同样注入三角色合同，故不构成产品面空洞）；如需彻底封堵需将 20+ 个 legacy 夹具改写为 governed 流程，另行评估 |
 | 回滚 | 回退上述四处代码/测试改动即可；无数据迁移 |
+
+---
+
+## 37. §27.5 静默等价分类收口（T-1793712573709-111a8fc4）
+
+### 37.1 现象
+
+`t()` / `t_list()` 对 `value.format(**kwargs)` 的三种异常共用
+`except (KeyError, ValueError, IndexError)` 分支并原样返回，
+「catalog 值不可格式化」与「调用缺参 / 占位符拼写不一致」在运行时可观察面完全等价。
+
+### 37.2 处置
+
+| 层 | 改动 |
+| --- | --- |
+| i18n | 新增 `_format_or_raw(value, kwargs) -> (text, kind)`：`KeyError` 键为标识符 → `missing_field`；其余 `KeyError` / `ValueError` / `IndexError` → `unsafe_value` |
+| 调用方 | `t()` 的 catalog 与 `default` 分支、`t_list()` 的 str 分支统一复用 helper；兜底输出零变化 |
+| 门禁 | `tests/test_i18n_placeholder_consistency.py` §27.5 段：7 类分类参数化、分类常量区分、catalog 无 `unsafe_value` 不变量、`t()` 两条兜底回归 |
+
+### 37.3 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| 分类探针 | 直接调用 `_format_or_raw` | `{name}` 缺参 → `missing_field`；`{"raw":1}` / `{'a':1}` / `Tail {` / `{0}` → `unsafe_value`；补参 → `None` |
+| catalog 不变量 | 全量叶子 × 双语 | **0 个 `unsafe_value`**（§28/§29 转义后不存在不可格式化值） |
+| 定向门禁 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q` | **116 passed** |
+| 语法 | `py_compile i18n/__init__.py` | 通过 |
+
+### 37.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 本次范围 | `i18n/__init__.py`、`tests/test_i18n_placeholder_consistency.py`、backlog §27.5 / §37 |
+| 非目标 | 升级为抛错（fail-closed）；动态 key 的 kwargs 形状静态校验；en 文案打磨 |
+| 语义 | 分类仅用于诊断 / 门禁；`t()` 对外输出与失败兜底保持历史契约（不抛异常） |
+| 回滚 | 回退两文件提交即可；无 catalog 变更、无数据迁移 |
