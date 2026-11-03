@@ -21,7 +21,7 @@
   },
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-11-03T18:05:00+08:00",
+  "updated_at": "2026-11-03T18:42:00+08:00",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2184,6 +2184,19 @@
       "review_verdict_id": "V-fd838de3cc11dc22fbf21f04",
       "handoff_event_id": "13185",
       "note": "backlog §6.5 收口（C2）：Python 本地 SQL 降级 get_callers 短名分支、get_callees QN 与短名两分支缺 file_instances.workspace_id 谓词，enterprise 回退时跨 ws 泄漏。按 §6.3 方案 A 补 JOIN file_instances fi ON s.file_instance_id = fi.id + fi.workspace_id 过滤，保持短名文本语义（不做方案 B 的 callee_id 解析）；get_callers QN 分支原有 ws 过滤未改动。新增 TestWorkspaceScopedSqlFallback（ws1 alpha.py / ws2 beta.py 同名 helper/main，强制 _get_graph_store → None 走 SQL 降级）4 条用例：短名 callers、短名 callees、跨 ws callees QN、自动 QN 降级，均断言不出现另一 ws 调用边。验证：pytest tests/test_p28b_qualified_name.py tests/test_p7_callee_id_index.py → 19 passed；check_e2e_matrix_closure PASS exit 0；git diff --check 干净。A′ 环：executor 4/4 report -> review -> reviewer verdict V-fd838de3cc11dc22fbf21f04 pass findings=0（snapshot df81a0715a512e3a，view_manifest a1f2c63b…）-> reviewer_pass handoff（event 13185）-> adjudicator reviewer-scope lease L-bf73e5d77bb739aa f4 apply（13188）/ close（13189）-> closed/completed，assignment 全部 completed，租约主动 release。裁决期 info 残留：(a) Rust 短路路径未改动，本卡仅覆盖本地 SQL 回退；(b) 未跑全量 pytest；(c) 4 步 report 完成后 routing 即入 review，此后 executor 身份 task.handoff 被 E_LEASE_REQUIRED 拒绝，executor→reviewer handoff 事件未落库（verdict/reviewer_pass/adjudicator 链完整）；(d) closed 投影为 next_role=complete / next_action=finalize。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793699437674-98671280",
+      "commit_id": "c5a64811e0c540d151b986a4c5261e602184af7f",
+      "status": "new_in_master",
+      "source": "backlog_36_4_identity_policy_guard_20261103",
+      "scope": "rust_ext/src/daemon/task_collab.rs, rust_ext/src/daemon/task_collab_tests_projection.rs, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "68941cfae1bd65f3",
+      "evidence_sha256": "1A7633AD8E1EA3487B211EA32FC75ABB4A4F960288F6963F27557092F34253B8",
+      "view_manifest_sha256": "44408d25bdabf6db546d65d15f625a3c5e517f25a312b37cf8b53cceca94c49e",
+      "review_verdict_id": "V-f97a4bac62e9bfd446fe2aa9",
+      "handoff_event_id": "13216",
+      "note": "backlog §36.4 收口（C12，收窄后口径）：daemon task.create 的 governed 空合同兜底此前仅以 task_contract_envelope 为信号，identity_policy + 空 role_contracts 仍可创建空投影任务。改为 governed_signal = task_contract_envelope || identity_policy，非 parent-aware 且 role_contracts 为空时在任何事务写入前返回 E_TASK_CONTRACT_REQUIRED。原口径（含 task_id）实测击穿 21 个依赖 legacy 空建夹具构造 claim/report/p0l 空投影的既有用例，经用户裁决收窄为 identity_policy + envelope；task_id-only 直接 RPC 保留 legacy 空建（生产 CLI legacy/governed 双路径均注入三角色合同，产品面无空洞），作为 §36.4 已知边界写入 backlog。测试：新增 governed_create_with_identity_policy_and_empty_contracts_is_rejected_before_write（断言错误码 + tasks 计数 0 + task_workspace_bindings 计数 0）；p0l step3 policy 基线去掉创建期 identity_policy 以适配。验证：cargo test --lib daemon::task_collab → 181 passed / 0 failed；governed_create_with 定向 2 passed；python -m pytest tests/test_task_create_parent_governance.py → 18 passed / 2 failed（§24.5 既有 rc=1 vs 2 基线，与上卡一致）；check_e2e_matrix_closure PASS exit 0。A′ 环：executor 4/4 report -> review -> reviewer verdict V-f97a4bac62e9bfd446fe2aa9 pass findings=0（snapshot 68941cfae1bd65f3，view_manifest 44408d25…）-> reviewer_pass handoff（event 13216）-> adjudicator reviewer-scope lease L-f8415a37e333216e f3 apply（13219）/ close（13220）-> closed/completed，租约主动 release。裁决期 info 残留：(a) task_id-only 直接 RPC 仍可 legacy 空建（已记 backlog）；(b) 未跑全量 cargo/pytest；(c) executor handoff 在 review 态被 E_LEASE_REQUIRED 拒绝，链由 reviewer/adjudicator 事件完整覆盖。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
@@ -2242,6 +2255,7 @@
       "b9ee30058594982ecb4ce8b2cde6760c76a4c436",
       "bda424746ff6d945a1cf6485c548ef83c1b1f7e8",
       "c0f78ffb07e639608457f6af645989bf8b985a1e",
+      "c5a64811e0c540d151b986a4c5261e602184af7f",
       "c5e5c4ad1740983fbfe15466230808bc44d3c702",
       "c5fded7db4ea88b60b9643fa9ae84b91cd528f3c",
       "cb8cf46c22c9adb4422ff8f525c4f301fb55734d",
