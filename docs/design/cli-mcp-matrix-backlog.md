@@ -453,11 +453,12 @@ ignore 契约目录，第二轮全量 `build_graph`（修复版 daemon）归档�
 | P3-4 | `calls.callee_name` 部分索引（`WHERE callee_id = 0`，raw 边按名字解析/查询） | 性能/schema | 已修（T-1793284203427-56a164bc 步骤#3：SCHEMA_VERSION=61，`idx_calls_callee_name_raw` 部分索引，实测见 §4.6.2） |
 | P3-5 | `get_callers`/`get_callees` 短名降级分支跨 workspace 泄漏 + 全表扫（C2） | 正确性/性能 | 已修（T-1793317538470-c203e6d4 步骤#3，见 §6） |
 | C1 | 权威库 ignored 行归档缺口（`build/` 残留 77 文件 / 1,467 符号，`archived_files=0`） | 正确性/数据治理 | 已修（T-1793317526334-eea45f3c 步骤#1-#2，见 §4.7） |
-| C7 | 全量 pytest 基线恒红：native/LLM 前置缺失时缺 skip 守卫（CLI 验收 568 ERROR、隔离 daemon 管道冲突、`sqlite3.lib`、外部 LLM） | 测试信噪比 | 卡内已修（T-1793318539212-c2db0418 步骤#1-#2，见 §7）；卡外 daemon 失联族 164 / native 构建族 72 / 未归一 44 待后续卡 |
+| C7 | 全量 pytest 基线恒红：native/LLM 前置缺失时缺 skip 守卫（CLI 验收 568 ERROR、隔离 daemon 管道冲突、`sqlite3.lib`、外部 LLM） | 测试信噪比 | 已收口：卡内（T-1793318539212-c2db0418 步骤#1-#2，见 §7）；卡外 daemon 失联族 164 / native 构建族 72 → §12；未归一 44 → §14–§19（2026-11-03 实测 22 文件 181 passed / 5 skipped / 0 failed） |
 | C8 | Rust 内嵌 schema 副本（`SCHEMA_TABLES_SQL` / `SCHEMA_INDEXES_SQL`）仍声明 canonical 已删除的 `idx_calls_callee_name` 等全量索引（审计候选 C3） | 正确性/schema 真相源 | 已修（T-1793342216372-87953754 步骤#1-#2，见 §8） |
 | C9 | Schema 版本文档门禁被弱化为仅存在性检查（`tests/test_architecture_doc.py` / `tests/test_abi_contract.py` 的文档↔代码比对）（审计候选 C4） | 治理/门禁有效性 | 已修（T-1793352736346-e6e623a4 步骤#1-#2，见 §9） |
 | C10 | 权威库工作区登记污染：同物理 checkout 多行 active、workspace_id 二义（审计候选 C5） | 正确性/数据治理 | 已修（T-1793353773817-750277f4 步骤#0-#2，见 §10） |
 | C6 | Schema 迁移注册表缺口：`_get_migrations` 缺 v53-v58/v60，`_migrate_schema` 静默跳过导致库被打标 v61 却缺表缺列（审计候选 C6） | 正确性/schema 真相源 | 已修（T-1793368261327-97e8e5fc 步骤#0-#2，见 §11） |
+| C11 | release 验收 evidence 选取按「目录内 mtime 最新 `*.json`」假设，任意运维 evidence 写入 `runtime/evidence/` 即误红（`status=None` / 缺 `binaries` / `KeyError: daemon_runtime`） | 测试信噪比 | 已修（T-1793677837256-5b2e8564，见 §35）：按内容过滤（`status` + `daemon_runtime` + `binaries`），mtime 倒序取首条匹配；无匹配 skip 带目录与最近文件名诊断 |
 
 ---
 
@@ -2673,3 +2674,45 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | 非目标 | 历史已 closed 卡残留 assignment 的批量清理；reopen 后 assignment 重建；`revoked` 语义变更；schema 迁移 |
 | 幂等 | 重复 close 由既有 S1/S2/verdict 门禁拒绝；`finalize_task_assignments` 对无 active 任务为 no-op（不追加事件） |
 | 回滚 | 回退上述 5 个代码/测试文件提交即可；无数据迁移、无表结构变更 |
+
+---
+
+## 35. release 验收 evidence 选取按内容过滤（T-1793677837256-5b2e8564）
+
+### 35.1 现象与根因
+
+- 实证（2026-11-03）：数据清理把 `fixture-cleanup` / `orphan-dedup-cleanup` /
+  `orphan-card-delete` 三份运维 evidence 写入 `~/.callwarden/runtime/evidence/`，
+  `tests/test_http_daemon_release_acceptance.py` 的 3 条用例随即误红：
+  `status=None`、`evidence 缺少 cw-daemon.exe`、`KeyError: daemon_runtime`。
+- 根因：`_latest_refresh_evidence` 取「目录内 mtime 最新的 `*.json`」，假定它
+  一定是 `scripts/refresh_shared_runtime.ps1` 产物；任何运维 evidence 只要更新
+  就会顶替 refresh evidence。当时以「移入 `evidence/cleanup/` 子目录」临时恢复
+  绿，但时序假设仍在，属测试面可观测性缺陷。
+
+### 35.2 处置（冻结）
+
+| 层 | 改动 |
+| --- | --- |
+| 判别 | 新增 `_is_refresh_evidence`：`status` + `daemon_runtime` + `binaries` 三键齐全才视为 refresh 产物 |
+| 选取 | 新增 `_select_refresh_evidence`：mtime 倒序逐条读取，跳过不可读/非 refresh/非法 JSON，取首条匹配 |
+| 入口 | `_latest_refresh_evidence` 改调上述 helper；无匹配时 `pytest.skip` 并输出目录路径与最近 5 个文件名 |
+| 单测 | `TestRefreshEvidenceSelection`：运维 evidence 更新时不顶替 refresh；仅有运维 evidence 时 skip |
+| 不改 | `refresh_shared_runtime.ps1` 产物结构、既有验收断言、evidence 目录结构约定 |
+
+### 35.3 验证
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| 验收文件 | `python -m pytest tests/test_http_daemon_release_acceptance.py -o addopts='' -q` | **10 passed / 5 skipped / 0 failed**（含 2 条新单测） |
+| 真实目录共存探针 | 临时写入 mtime 最新的 `zz-selftest-ops.json` 后跑 `TestFreshDaemonArtifacts`，finally 删除 | **3 passed / 1 skipped / 0 failed** |
+| 定向回归 | `python -m pytest tests/test_http_daemon_release_acceptance.py tests/test_runtime_policy_gate.py tests/test_http_capability_registry.py -o addopts='' -q` | **46 passed / 5 skipped / 0 failed** |
+
+### 35.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 本次范围 | `tests/test_http_daemon_release_acceptance.py` + backlog §5 C11 / §35 |
+| 非目标 | refresh 脚本证据结构变更、验收断言语义变更、evidence 目录迁移 |
+| 局限 | 判别依赖三键存在性而非显式 schema；未来若 refresh 产物删键需同步更新 `_is_refresh_evidence` |
+| 回滚 | 回退测试文件改动即可；无产品代码、无数据迁移 |

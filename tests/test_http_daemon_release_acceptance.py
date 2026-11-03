@@ -138,15 +138,85 @@ def _canonical_schema_version() -> int:
     return py_version
 
 
+def _is_refresh_evidence(data) -> bool:
+    """refresh_shared_runtime.ps1 产物判别：status / daemon_runtime / binaries 三键齐全。
+
+    运维 evidence（数据清理、审计）也可能写入同一目录且 mtime 更新，仅凭
+    「目录内最新 *.json」会把它们误当 refresh evidence（曾导致 status=None、
+    缺 binaries、KeyError daemon_runtime 三条误红）。
+    """
+    return (
+        isinstance(data, dict)
+        and all(key in data for key in ("status", "daemon_runtime", "binaries"))
+    )
+
+
+def _select_refresh_evidence(files) -> dict:
+    """按 mtime 倒序在 `files` 中取首条 refresh evidence；无匹配返回 None。"""
+    for path in files:
+        try:
+            # 部署脚本 Write-Host 输出落盘为 UTF-8 BOM（PS5.1 默认），
+            # 须 utf-8-sig 解码；非 JSON/不可读候选直接跳过。
+            with open(path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if _is_refresh_evidence(data):
+            return data
+    return None
+
+
 def _latest_refresh_evidence() -> dict:
     """读取最新的 refresh_shared_runtime.ps1 evidence JSON；无则 skip 附诊断。"""
     files = sorted(glob.glob(os.path.join(_EVIDENCE_DIR, "*.json")),
-                   key=os.path.getmtime)
+                   key=os.path.getmtime, reverse=True)
     if not files:
         pytest.skip(f"未找到 runtime refresh evidence: {_EVIDENCE_DIR}")
-    # 部署脚本 Write-Host 输出落盘为 UTF-8 BOM（PS5.1 默认），须 utf-8-sig 解码
-    with open(files[-1], "r", encoding="utf-8-sig") as f:
-        return json.load(f)
+    data = _select_refresh_evidence(files)
+    if data is None:
+        recent = [os.path.basename(p) for p in files[:5]]
+        pytest.skip(
+            f"未找到 refresh evidence（需 status/daemon_runtime/binaries 三键）: "
+            f"{_EVIDENCE_DIR}；最近文件: {recent}"
+        )
+    return data
+
+
+class TestRefreshEvidenceSelection:
+    """evidence 选取口径：按内容判别 refresh 产物，不依赖 mtime 时序假设。"""
+
+    @staticmethod
+    def _write(path, payload) -> str:
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return str(path)
+
+    def test_newer_cleanup_evidence_does_not_shadow_refresh(self, tmp_path):
+        refresh = self._write(tmp_path / "20260101-refresh.json", {
+            "status": "passed",
+            "git_head": "a" * 40,
+            "binaries": [{"name": "cw-daemon.exe", "sha256": "b" * 64}],
+            "daemon_runtime": {"sha256": "b" * 64},
+        })
+        cleanup = self._write(tmp_path / "20260102-cleanup.json", {
+            "schema": "cw.fixture_cleanup.v1",
+            "deleted": {"tasks": 216},
+        })
+        # 显式 mtime：运维 evidence 更新，模拟真实清理产物写入同目录
+        os.utime(refresh, (1000, 1000))
+        os.utime(cleanup, (2000, 2000))
+        files = sorted(glob.glob(str(tmp_path / "*.json")),
+                       key=os.path.getmtime, reverse=True)
+        assert os.path.basename(files[0]) == "20260102-cleanup.json"
+        assert _select_refresh_evidence(files)["status"] == "passed"
+
+    def test_only_cleanup_evidence_skips(self, tmp_path, monkeypatch):
+        self._write(tmp_path / "20260102-cleanup.json", {
+            "schema": "cw.fixture_cleanup.v1",
+            "deleted": {"tasks": 216},
+        })
+        monkeypatch.setattr(sys.modules[__name__], "_EVIDENCE_DIR", str(tmp_path))
+        with pytest.raises(pytest.skip.Exception):
+            _latest_refresh_evidence()
 
 
 # ============================================================
