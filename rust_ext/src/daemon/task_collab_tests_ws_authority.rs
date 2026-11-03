@@ -87,7 +87,7 @@ fn test_live_tuple_canonical_instance_accepted_despite_legacy_latest() {
     let res = store
         .handle_task_create(
             peer,
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1,
                 "workspace_instance_id": "ws-inst-canonical",
                 "task_id": "T-WSA-CANONICAL",
@@ -149,7 +149,7 @@ fn test_unestablished_new_instance_rejected_no_partial_rows() {
     let err = store
         .handle_task_create(
             peer,
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1,
                 "workspace_instance_id": "ws-1-bridge-synthetic-zz",
                 "task_id": "T-WSA-SYNTHETIC",
@@ -234,7 +234,7 @@ fn test_legacy_only_chain_adopts_canonical_instance() {
     store
         .handle_task_create(
             peer,
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1,
                 "workspace_instance_id": canonical,
                 "task_id": "T-WSA-ADOPT",
@@ -291,7 +291,7 @@ fn test_legacy_only_chain_adopts_canonical_instance() {
     store
         .handle_task_create(
             peer,
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1,
                 "workspace_instance_id": canonical,
                 "task_id": "T-WSA-ADOPT-2",
@@ -338,7 +338,7 @@ fn test_legacy_only_chain_rejects_canonical_from_other_root() {
     let err = store
         .handle_task_create(
             peer,
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1,
                 "workspace_instance_id": other,
                 "task_id": "T-WSA-ADOPT-OTHER-ROOT",
@@ -398,7 +398,7 @@ fn test_legacy_only_chain_rejects_canonical_of_other_owner() {
     let err = store
         .handle_task_create(
             peer,
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1,
                 "workspace_instance_id": foreign,
                 "task_id": "T-WSA-ADOPT-OTHER-OWNER",
@@ -542,7 +542,7 @@ fn test_legacy_latest_instance_still_accepted() {
     store
         .handle_task_create(
             peer,
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1,
                 "workspace_instance_id": "ws-1",
                 "task_id": "T-WSA-LEGACY",

@@ -5,7 +5,9 @@ use super::support::*;
     #[test]
     fn test_task_collab_full_lifecycle() {
         let (_dir, db_path) = temp_db();
-        let store = TaskCollabStore::new(&db_path).unwrap();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
         seed_workspace(&store);
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
 
@@ -21,6 +23,8 @@ use super::support::*;
 
         // 2. Task Create
         let create_params = serde_json::json!({
+            "identity_policy": "legacy_identity_v1",
+            "role_contracts": p0l_governance_roles(),
             "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "title": "Fix memory leak in parser",
             "description": "Investigate tree-sitter memory allocation",
@@ -34,9 +38,16 @@ use super::support::*;
         assert_eq!(create_res["status"], "open");
 
         // 3. Task Claim
+        register_agent_with_identity(
+            &store, &peer, "agent-alpha", "agent-alpha-inst", "session-123", "executor",
+        );
+        let mut alpha_identity =
+            lease_identity("agent-alpha", "session-123", "model-test", "executor");
+        alpha_identity["agent_instance_id"] = Value::String("agent-alpha-inst".into());
         let claim_params = serde_json::json!({
             "task_id": "T-TEST-001",
-            "agent_session_id": "session-123"
+            "agent_session_id": "session-123",
+            "identity": alpha_identity,
         });
         let claim_res = store
             .handle_task_claim(peer.clone(), &claim_params)
@@ -46,9 +57,16 @@ use super::support::*;
 
         // Concurrent Claim Conflict Test
         let peer2 = PeerCredential::new_unix(1001, 1001, 5678);
+        register_agent_with_identity(
+            &store, &peer2, "agent-beta", "agent-beta-inst", "session-456", "executor",
+        );
+        let mut beta_identity =
+            lease_identity("agent-beta", "session-456", "model-test", "executor");
+        beta_identity["agent_instance_id"] = Value::String("agent-beta-inst".into());
         let claim2_params = serde_json::json!({
             "task_id": "T-TEST-001",
-            "agent_session_id": "session-456"
+            "agent_session_id": "session-456",
+            "identity": beta_identity,
         });
         let claim2_err = store
             .handle_task_claim(peer2.clone(), &claim2_params)
@@ -1120,6 +1138,8 @@ use super::support::*;
         let store = TaskCollabStore::new(&db_path).unwrap();
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
         let create_params = serde_json::json!({
+            "identity_policy": "legacy_identity_v1",
+            "role_contracts": p0l_governance_roles(),
             "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id": "T-STEPS-CREATE",
             "title": "task with steps",
@@ -1185,7 +1205,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-STEPS-SPLIT",
                     "title": "parent",
                 }),
@@ -1250,7 +1270,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-TREE-ROOT",
                     "title": "parent",
                 }),
@@ -1356,7 +1376,7 @@ tree 回读验证用例。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-PLAN-SPLIT",
                     "title": "parent",
                 }),
@@ -1467,7 +1487,7 @@ plan_file 路径步骤持久化用例乙。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-PLAN-ROLLBACK",
                     "title": "parent",
                 }),
@@ -1523,7 +1543,7 @@ plan_file 路径步骤持久化用例乙。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-COLLIDE-PARENT",
                     "title": "parent",
                 }),
@@ -1601,7 +1621,7 @@ plan_file 路径步骤持久化用例乙。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-ROLLBACK-PARENT",
                     "title": "parent",
                 }),
@@ -1677,7 +1697,7 @@ plan_file 路径步骤持久化用例乙。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-ROUNDTRIP-PARENT",
                     "title": "parent",
                 }),
@@ -1837,6 +1857,8 @@ plan_file 路径步骤持久化用例乙。
         // 5. 完整 task RPC 可用（创建 → 查询）
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
         let create_params = serde_json::json!({
+            "identity_policy": "legacy_identity_v1",
+            "role_contracts": p0l_governance_roles(),
             "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "title": "upgrade from v46",
             "task_id": "T-V46-001"
@@ -1868,6 +1890,8 @@ plan_file 路径步骤持久化用例乙。
         // root_path 计算）；不得自插同名 id=1 的 workspace，否则 identity c14n 重算 mismatch。
 
         let create = serde_json::json!({
+            "identity_policy": "legacy_identity_v1",
+            "role_contracts": p0l_governance_roles(),
             "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id": "T-IDENTITY-001",
             "title": "identity writeback",
@@ -1895,9 +1919,19 @@ plan_file 路径步骤持久化用例乙。
                 .unwrap();
             assert_eq!(step_count, 1);
         }
+        register_agent_with_identity(
+            &store, &peer, "agent-identity", "agent-identity-inst", "session-identity", "executor",
+        );
+        let mut identity_claim =
+            lease_identity("agent-identity", "session-identity", "model-test", "executor");
+        identity_claim["agent_instance_id"] = Value::String("agent-identity-inst".into());
         store.handle_task_claim(
             peer.clone(),
-            &serde_json::json!({"task_id": "T-IDENTITY-001", "agent_session_id": "session-identity"}),
+            &serde_json::json!({
+                "task_id": "T-IDENTITY-001",
+                "agent_session_id": "session-identity",
+                "identity": identity_claim,
+            }),
         ).unwrap();
 
         let report = store
@@ -1978,7 +2012,7 @@ plan_file 路径步骤持久化用例乙。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": workspace_instance_id,
                     "task_id": "T-REPORT-SNAPSHOT-001",
                     "title": "report snapshot binding",
@@ -1995,10 +2029,25 @@ plan_file 路径步骤持久化用例乙。
             )
             .unwrap()
         };
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "snapshot-agent",
+            "snapshot-agent-inst",
+            "snapshot-session",
+            "executor",
+        );
+        let mut snapshot_identity =
+            lease_identity("snapshot-agent", "snapshot-session", "model-test", "executor");
+        snapshot_identity["agent_instance_id"] = Value::String("snapshot-agent-inst".into());
         store
             .handle_task_claim(
                 peer.clone(),
-                &serde_json::json!({"task_id": "T-REPORT-SNAPSHOT-001"}),
+                &serde_json::json!({
+                    "task_id": "T-REPORT-SNAPSHOT-001",
+                    "agent_session_id": "snapshot-session",
+                    "identity": snapshot_identity,
+                }),
             )
             .unwrap();
         store
@@ -2058,17 +2107,32 @@ plan_file 路径步骤持久化用例乙。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": workspace_instance_id,
                     "task_id": "T-REPORT-SNAPSHOT-MISMATCH-001",
                     "title": "reject cross-workspace snapshot",
                 }),
             )
             .unwrap();
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "mismatch-agent",
+            "mismatch-agent-inst",
+            "mismatch-session",
+            "executor",
+        );
+        let mut mismatch_identity =
+            lease_identity("mismatch-agent", "mismatch-session", "model-test", "executor");
+        mismatch_identity["agent_instance_id"] = Value::String("mismatch-agent-inst".into());
         store
             .handle_task_claim(
                 peer.clone(),
-                &serde_json::json!({"task_id": "T-REPORT-SNAPSHOT-MISMATCH-001"}),
+                &serde_json::json!({
+                    "task_id": "T-REPORT-SNAPSHOT-MISMATCH-001",
+                    "agent_session_id": "mismatch-session",
+                    "identity": mismatch_identity,
+                }),
             )
             .unwrap();
         let error = store
@@ -2102,17 +2166,29 @@ plan_file 路径步骤持久化用例乙。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-REPORT-NO-SNAPSHOT-001", "title": "snapshot preflight"
                 }),
             )
             .unwrap();
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "snapshot-owner-agent",
+            "snapshot-owner-inst",
+            "snapshot-owner",
+            "executor",
+        );
+        let mut snapshot_owner_identity =
+            lease_identity("snapshot-owner-agent", "snapshot-owner", "model-test", "executor");
+        snapshot_owner_identity["agent_instance_id"] = Value::String("snapshot-owner-inst".into());
         store
             .handle_task_claim(
                 peer.clone(),
                 &serde_json::json!({
-                    "task_id": "T-REPORT-NO-SNAPSHOT-001", "agent_session_id": "snapshot-owner"
+                    "task_id": "T-REPORT-NO-SNAPSHOT-001", "agent_session_id": "snapshot-owner",
+                    "identity": snapshot_owner_identity,
                 }),
             )
             .unwrap();
@@ -2911,7 +2987,7 @@ plan_file 路径步骤持久化用例乙。
         let err = store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1,
                     "title": "BR-01 missing instance",
                     "task_id": "T-BR01-MISSING",
@@ -2949,7 +3025,7 @@ plan_file 路径步骤持久化用例乙。
         let err = store
             .handle_task_create(
                 peer,
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1,
                     "workspace_instance_id": "   ",
                     "title": "BR-01 blank instance",
@@ -2981,7 +3057,7 @@ plan_file 路径步骤持久化用例乙。
         let err = store
             .handle_task_create(
                 peer,
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1,
                     "workspace_instance_id": "ws-1",
                     "title": "BR-01 phantom ws-1",
@@ -3016,7 +3092,7 @@ plan_file 路径步骤持久化用例乙。
         let create = store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1,
                     "workspace_instance_id": "ws-inst-test",
                     "title": "BR-01 readback",
@@ -3066,7 +3142,7 @@ plan_file 路径步骤持久化用例乙。
         let c2 = store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 2,
                     "workspace_instance_id": "ws-inst-2",
                     "title": "BR-01 ws2",
@@ -3084,7 +3160,7 @@ plan_file 路径步骤持久化用例乙。
         let c1 = store
             .handle_task_create(
                 peer,
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1,
                     "workspace_instance_id": "ws-inst-test",
                     "title": "BR-01 ws1",

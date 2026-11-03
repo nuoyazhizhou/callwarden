@@ -113,7 +113,7 @@ fn parent_aware_task_create_root_request_response_error_parity() {
     let res = store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-ROOT-PARITY-1",
                 "title": "root parity",
@@ -129,8 +129,9 @@ fn parent_aware_task_create_root_request_response_error_parity() {
     assert!(res["workspace_binding_id"].as_str().unwrap().starts_with("tb-"));
     assert!(res["workspace_capture_id"].as_str().unwrap().starts_with("wc-"));
     assert_eq!(task_binding_count(&store, "T-ROOT-PARITY-1"), 1);
-    // root 分支允许空 role_contracts（Gate 前行为，parent-aware 强制检查不启用）。
-    let res2 = store
+    // §36.4 全封堵：root 分支携带 task_id 但无 role_contracts 不再按 legacy 放行，
+    // 必须在任何写入前 fail-closed（与 parent-aware 检查同族语义）。
+    let err = store
         .handle_task_create(
             peer.clone(),
             &serde_json::json!({
@@ -139,13 +140,13 @@ fn parent_aware_task_create_root_request_response_error_parity() {
                 "title": "root parity no contracts",
             }),
         )
-        .unwrap();
-    assert_eq!(res2["task_id"], "T-ROOT-PARITY-2");
+        .unwrap_err();
+    assert_eq!(err.code, "E_TASK_CONTRACT_REQUIRED");
     // root 分支不允许未知字段检查（不启用 parent-aware 拒绝）——白名单外字段被忽略。
     let res3 = store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-ROOT-PARITY-3",
                 "title": "root parity extra field",

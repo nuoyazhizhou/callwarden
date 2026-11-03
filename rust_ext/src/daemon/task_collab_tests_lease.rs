@@ -2,6 +2,23 @@
 
 use super::*;
 use super::support::*;
+
+fn claim_identity(
+    agent: &str,
+    instance: &str,
+    session: &str,
+    model: &str,
+    role: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "agent_id": agent,
+        "agent_instance_id": instance,
+        "session_id": session,
+        "model_id": model,
+        "role": role,
+    })
+}
+
     #[test]
     fn p0e_adjudicator_can_use_distinct_registered_reviewer_lease_only() {
         let (_dir, db_path) = temp_db();
@@ -1488,7 +1505,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-SUB-PARENT", "title": "parent"}),
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-SUB-PARENT", "title": "parent"}),
             )
             .unwrap();
 
@@ -1583,7 +1600,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-SUB-ROLLBACK", "title": "parent"}),
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-SUB-ROLLBACK", "title": "parent"}),
             )
             .unwrap();
 
@@ -1638,7 +1655,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-STEPS",
                     "title": "claim with steps",
                     "steps": [
@@ -1653,11 +1670,18 @@ use super::support::*;
                 }),
             )
             .unwrap();
+        register_agent_with_identity(
+            &store, &peer, "claim-agent", "claim-agent-inst", "session-claim", "executor",
+        );
 
         let claim = store
             .handle_task_claim(
                 peer,
-                &serde_json::json!({"task_id": "T-CLAIM-STEPS", "agent_session_id": "session-claim"}),
+                &serde_json::json!({
+                    "task_id": "T-CLAIM-STEPS",
+                    "agent_session_id": "session-claim",
+                    "identity": claim_identity("claim-agent", "claim-agent-inst", "session-claim", "claim-model", "executor"),
+                }),
             )
             .unwrap();
         assert_eq!(claim["status"], "in_progress");
@@ -1685,14 +1709,21 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-CLAIM-NOSTEPS", "title": "no steps"}),
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-CLAIM-NOSTEPS", "title": "no steps"}),
             )
             .unwrap();
+        register_agent_with_identity(
+            &store, &peer, "claim-agent2", "claim-agent2-inst", "s", "executor",
+        );
 
         let claim = store
             .handle_task_claim(
                 peer,
-                &serde_json::json!({"task_id": "T-CLAIM-NOSTEPS", "agent_session_id": "s"}),
+                &serde_json::json!({
+                    "task_id": "T-CLAIM-NOSTEPS",
+                    "agent_session_id": "s",
+                    "identity": claim_identity("claim-agent2", "claim-agent2-inst", "s", "claim-model", "executor"),
+                }),
             )
             .unwrap();
         assert_eq!(claim["status"], "in_progress");
@@ -1710,18 +1741,22 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-DEDUP",
                     "title": "dedup",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
                 }),
             )
             .unwrap();
+        register_agent_with_identity(
+            &store, &peer, "claim-agent-d", "claim-agent-d-inst", "session-d", "executor",
+        );
 
         let params = serde_json::json!({
             "request_id": "req-dedup-1",
             "task_id": "T-CLAIM-DEDUP",
             "agent_session_id": "session-d",
+            "identity": claim_identity("claim-agent-d", "claim-agent-d-inst", "session-d", "claim-model", "executor"),
         });
         let first = store.handle_task_claim(peer.clone(), &params).unwrap();
         assert!(first["step_id"].as_str().unwrap().starts_with("S-"));
@@ -1739,7 +1774,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-STEPSTATE",
                     "title": "step state",
                     "steps": [
@@ -1749,11 +1784,18 @@ use super::support::*;
                 }),
             )
             .unwrap();
+        register_agent_with_identity(
+            &store, &peer, "claim-agent6", "claim-agent6-inst", "s6", "executor",
+        );
 
         let claim = store
             .handle_task_claim(
                 peer,
-                &serde_json::json!({"task_id": "T-CLAIM-STEPSTATE", "agent_session_id": "s6"}),
+                &serde_json::json!({
+                    "task_id": "T-CLAIM-STEPSTATE",
+                    "agent_session_id": "s6",
+                    "identity": claim_identity("claim-agent6", "claim-agent6-inst", "s6", "claim-model", "executor"),
+                }),
             )
             .unwrap();
         assert_eq!(claim["step_index"], 0, "应领取 step_index=0 的步骤");
@@ -1785,24 +1827,35 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-RESUME",
                     "title": "resume",
                     "steps": [{"action": "audit", "target_file": "a.rs"}, {"action": "fix", "target_file": "b.rs"}],
                 }),
             )
             .unwrap();
+        register_agent_with_identity(
+            &store, &peer, "claim-agent-r", "claim-agent-r-inst", "s-resume", "executor",
+        );
 
         let first = store
             .handle_task_claim(
                 peer.clone(),
-                &serde_json::json!({"task_id": "T-CLAIM-RESUME", "agent_session_id": "s-resume"}),
+                &serde_json::json!({
+                    "task_id": "T-CLAIM-RESUME",
+                    "agent_session_id": "s-resume",
+                    "identity": claim_identity("claim-agent-r", "claim-agent-r-inst", "s-resume", "claim-model", "executor"),
+                }),
             )
             .unwrap();
         let second = store
             .handle_task_claim(
                 peer,
-                &serde_json::json!({"task_id": "T-CLAIM-RESUME", "agent_session_id": "s-resume"}),
+                &serde_json::json!({
+                    "task_id": "T-CLAIM-RESUME",
+                    "agent_session_id": "s-resume",
+                    "identity": claim_identity("claim-agent-r", "claim-agent-r-inst", "s-resume", "claim-model", "executor"),
+                }),
             )
             .unwrap();
 
@@ -1817,32 +1870,49 @@ use super::support::*;
     #[test]
     fn test_task_claim_concurrent_session_conflict() {
         // S8: 已被其他 session claim 的 in_progress 任务，不同 session 再次 claim 必须拒绝（并发 claim 冲突）
+        // §36.4 后 claim 必须携带 identity，跨 session 接管判定需要 daemon authoritative clock。
         let (_dir, db_path) = temp_db();
-        let store = TaskCollabStore::new(&db_path).unwrap();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
         seed_workspace(&store);
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-CONFLICT",
                     "title": "conflict",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
                 }),
             )
             .unwrap();
+        register_agent_with_identity(
+            &store, &peer, "claim-agent-a", "claim-agent-a-inst", "agent-a", "executor",
+        );
+        register_agent_with_identity(
+            &store, &peer, "claim-agent-b", "claim-agent-b-inst", "agent-b", "executor",
+        );
 
         store
             .handle_task_claim(
                 peer,
-                &serde_json::json!({"task_id": "T-CLAIM-CONFLICT", "agent_session_id": "agent-a"}),
+                &serde_json::json!({
+                    "task_id": "T-CLAIM-CONFLICT",
+                    "agent_session_id": "agent-a",
+                    "identity": claim_identity("claim-agent-a", "claim-agent-a-inst", "agent-a", "claim-model", "executor"),
+                }),
             )
             .unwrap();
 
         let err = store
             .handle_task_claim(
                 peer,
-                &serde_json::json!({"task_id": "T-CLAIM-CONFLICT", "agent_session_id": "agent-b"}),
+                &serde_json::json!({
+                    "task_id": "T-CLAIM-CONFLICT",
+                    "agent_session_id": "agent-b",
+                    "identity": claim_identity("claim-agent-b", "claim-agent-b-inst", "agent-b", "claim-model", "executor"),
+                }),
             )
             .unwrap_err();
         assert_eq!(
@@ -1865,7 +1935,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-STALE-SAME-ROLE",
                     "title": "same role takeover",
@@ -1973,7 +2043,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-FRESH-SAME-ROLE",
                     "title": "fresh same role conflict",

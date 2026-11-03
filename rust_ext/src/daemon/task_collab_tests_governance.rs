@@ -73,7 +73,7 @@ fn test_stale_claim_cannot_be_taken_over_by_different_role() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                 "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-CLAIM-STALE-CROSS-ROLE",
                 "title": "cross role must conflict",
@@ -148,7 +148,7 @@ fn test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-CLAIM-RECOVER",
                 "title": "recover",
                 "steps": [
@@ -312,7 +312,7 @@ fn test_orphan_claim_recovery_rejects_fresh_owner() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-CLAIM-RECOVER-FRESH",
                 "title": "recover fresh",
                 "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -415,16 +415,19 @@ fn test_governance_projection_returns_diagnosis_without_lease_token() {
         .with_clock(Arc::new(AuthoritativeClock::new()));
     let peer = PeerCredential::new_unix(1000, 1000, 1234);
     seed_workspace(&store);
-    store
-        .handle_task_create(
-            peer.clone(),
-            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
-                "task_id": "T-G3-PROJ",
-                "title": "g3 projection",
-                "steps": [{"action": "audit", "target_file": "a.rs"}],
-            }),
+    // §36.4 后无法再以 task_id-only 空建；用 SQL seed 复现「无治理投影」任务，
+    // 以验证只读 projection 的稳定 diagnosis。
+    seed_task_binding(&store, "T-G3-PROJ");
+    {
+        let conn = store.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO task_steps (id, task_id, step_index, action, target_file, \
+             target_symbol, check_items, status, result, created_at, completed_at) \
+             VALUES ('T-G3-PROJ-s1', 'T-G3-PROJ', 0, 'audit', 'a.rs', '', '', 'pending', '', 0, NULL)",
+            [],
         )
         .unwrap();
+    }
 
     let proj = store
         .handle_task_governance_projection_get(peer, &serde_json::json!({"task_id": "T-G3-PROJ"}))
@@ -456,16 +459,20 @@ fn test_contract_revise_appends_revision_n_plus_1_via_handler() {
         .with_clock(Arc::new(AuthoritativeClock::new()));
     let peer = PeerCredential::new_unix(1000, 1000, 1234);
     seed_workspace(&store);
-    store
-        .handle_task_create(
-            peer.clone(),
-            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
-                "task_id": "T-G2-REVISE",
-                "title": "g2 revise",
-                "steps": [{"action": "audit", "target_file": "a.rs"}],
-            }),
+    // §36.4 后 task.create 不再允许 task_id-only 无合同空建；本测试需要
+    // 「有 legacy role_contracts、无治理投影」的形态以验证显式 bootstrap，
+    // 故以 SQL seed 复现并随后直接补种三角色合同。
+    seed_task_binding(&store, "T-G2-REVISE");
+    {
+        let conn = store.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO task_steps (id, task_id, step_index, action, target_file, \
+             target_symbol, check_items, status, result, created_at, completed_at) \
+             VALUES ('T-G2-REVISE-s1', 'T-G2-REVISE', 0, 'audit', 'a.rs', '', '', 'pending', '', 0, NULL)",
+            [],
         )
         .unwrap();
+    }
     // task_create 已自动写 workspace binding（instance=ws-1）；不再重复 seed。
     register_agent_with_identity(
         &store,
@@ -684,7 +691,7 @@ fn test_claim_unregistered_identity_fail_closed() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-GHOST", "title": "ghost"}),
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-GHOST", "title": "ghost"}),
         )
         .unwrap();
 
@@ -891,7 +898,7 @@ fn test_role_independence_gate_blocks_shared_instance() {
     store
         .handle_task_create(
             peer_b.clone(),
-            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-INDEP", "title": "indep"}),
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-INDEP", "title": "indep"}),
         )
         .unwrap();
 
@@ -924,7 +931,7 @@ fn test_contract_set_bumps_revision_and_audits() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-CS", "title": "cs"}),
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-CS", "title": "cs"}),
         )
         .unwrap();
 
@@ -1056,7 +1063,7 @@ fn test_task_bound_evidence_and_gate_are_idempotent() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-EVIDENCE-GATE",
                 "title": "evidence gate",
                 "steps": [{"action": "test", "target_file": "rust_ext/src/daemon/task_collab.rs"}]

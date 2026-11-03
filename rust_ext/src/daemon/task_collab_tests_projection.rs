@@ -57,7 +57,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-STATUS-PROJECTION",
                     "title": "status projection",
@@ -109,7 +109,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-PCT-2DEC",
                     "title": "two decimals percent",
@@ -188,18 +188,10 @@ use super::support::*;
         assert_eq!(hist["workflow_status"], "governance_blocked");
         assert!(hist["blocking_reasons"].as_array().unwrap().len() > 0);
 
-        // 新任务：task.create 写入不可变 binding，但缺 contract 时同样不伪造投影。
-        store
-            .handle_task_create(
-                peer.clone(),
-                &serde_json::json!({
-                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
-                    "task_id": "T-BOUND-NEW",
-                    "title": "bound new task",
-                    "steps": [{"action": "implement", "target_file": "a.rs"}]
-                }),
-            )
-            .unwrap();
+        // 新任务：写入不可变 binding，但缺 contract 时同样不伪造投影。
+        // §36.4 后 task.create 不再允许 task_id-only 无合同空建，故以 SQL seed
+        // 模拟「已有 binding、无 contract」的落库形态。
+        seed_task_binding(&store, "T-BOUND-NEW");
         let bound = store
             .handle_task_status(
                 peer,
@@ -263,7 +255,7 @@ use super::support::*;
         let store = TaskCollabStore::new(&db_path).unwrap();
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
         let err = store
-            .handle_task_create(peer, &serde_json::json!({"title": "no workspace"}))
+            .handle_task_create(peer, &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), "title": "no workspace"}))
             .unwrap_err();
         assert_eq!(err.code, "E_TASK_WORKSPACE_UNBOUND");
     }
@@ -337,7 +329,7 @@ use super::support::*;
         let res = store
             .handle_task_create(
                 peer,
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-BIND-001",
                     "title": "bound task",
@@ -1030,17 +1022,19 @@ use super::support::*;
         task_id: &str,
     ) -> serde_json::Value {
         seed_workspace(store);
-        store
-            .handle_task_create(
-                peer.clone(),
-                &serde_json::json!({
-                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
-                    "task_id": task_id,
-                    "title": "p0l step2 branch",
-                    "steps": [{"action": "audit", "target_file": "a.rs"}],
-                }),
+        // §36.4 后 task.create 不再允许 task_id-only 无合同空建；此夹具需要
+        // 「有 legacy role_contracts、无治理投影」的形态，故以 SQL seed 复现。
+        seed_task_binding(store, task_id);
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO task_steps (id, task_id, step_index, action, target_file, \
+                 target_symbol, check_items, status, result, created_at, completed_at) \
+                 VALUES (?1, ?2, 0, 'audit', 'a.rs', '', '', 'pending', '', ?3, NULL)",
+                params![format!("{}-s1", task_id), task_id, 1_700_000_000.0_f64],
             )
             .unwrap();
+        }
         register_agent_with_identity(
             store,
             peer,
@@ -1756,11 +1750,11 @@ use super::support::*;
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
         seed_workspace(&store);
         let task_id = "T-P0L-CLMP";
-        // 显式 legacy 创建（无 role_contracts）：得到带合法 policy 的基线任务。
+        // 显式 legacy 基线任务（§36.4：必须带 identity_policy + role_contracts）。
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({
+                &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), 
                     "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "p0l step3 policy fail-closed",
@@ -1879,17 +1873,19 @@ use super::support::*;
             .unwrap();
         // 2) 无合同 revision 的任务（P0-L 之前历史形态）：无 identity 也保持原路径。
         let bare_id = "T-P0L-CLMN";
-        store
-            .handle_task_create(
-                peer.clone(),
-                &serde_json::json!({
-                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
-                    "task_id": bare_id,
-                    "title": "no contract revision",
-                    "steps": [{"action": "implement", "target_file": "a.rs"}],
-                }),
+        // §36.4 后 handler 不再允许 task_id-only 无合同空建；用 SQL seed 复现
+        // 「无合同 revision 的历史任务」形态（binding 存在、无 role_contracts 行）。
+        seed_task_binding(&store, bare_id);
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO task_steps (id, task_id, step_index, action, target_file, \
+                 target_symbol, check_items, status, result, created_at, completed_at) \
+                 VALUES (?1, ?2, 0, 'implement', 'a.rs', '', '', 'pending', '', ?3, NULL)",
+                params![format!("{}-s1", bare_id), bare_id, 1_700_000_000.0_f64],
             )
             .unwrap();
+        }
         store
             .handle_task_claim(
                 peer,
