@@ -1,7 +1,9 @@
 # HTTP 安全面演进设计：从 dev_loopback_unauthenticated 到身份层（Security Profile v2/v3）
 
 > 来源：`docs/reports/client_convergence_codereview_20260909.md` P2-CR9（登记备忘，不阻塞收敛目标）。
-> 状态：**design-only**（本文档只定义方案与迁移路径，不改变现行行为；实现须按 §7 分期立项）。
+> 状态：**已被 ADR-002 取代（2026-11-04）**。最终裁决为单轨 HTTPS + mTLS，v2
+> `loopback_token_authenticated` 不再实施；本文档仅保留为历史方案对比与威胁模型参考。
+> 现行单源：`docs/design/mtls-remote-plane.md`；验收矩阵：`docs/design/cli-mcp-matrix-backlog.md` §38。
 > 日期：2026-09-09。作者：修复 agent（CR9 承接）。
 
 ## 1. 现状（Profile v1 基线，代码事实）

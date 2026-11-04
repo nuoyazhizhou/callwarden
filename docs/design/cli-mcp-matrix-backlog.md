@@ -2861,3 +2861,90 @@ review / apply，只能手工 `supersede` 收编。
 | 非目标 | 升级为抛错（fail-closed）；动态 key 的 kwargs 形状静态校验；en 文案打磨 |
 | 语义 | 分类仅用于诊断 / 门禁；`t()` 对外输出与失败兜底保持历史契约（不抛异常） |
 | 回滚 | 回退两文件提交即可；无 catalog 变更、无数据迁移 |
+
+---
+
+## 38. HTTPS + mTLS 远端控制面验收矩阵（规划，2026-11-04）
+
+> 设计单源：`docs/design/mtls-remote-plane.md`（ADR-002）。
+> 状态：**规划冻结，未实现**。本节只登记验收口径、负例、命令与证据，供 S1–S4 逐卡引用。
+> 父卡：`[REMOTE] HTTPS+mTLS 远端控制面：删除 pipe/UDS/bridge（S1–S4）`；子卡 S1/S2/S3/S4。
+> 子卡 ID 登记：S1 `T-1793774130685-6acab9d4`、S2 `T-1793774130739-6e096a14`、
+> S3 `T-1793774130800-71aa5b74`、S4 `T-1793774130880-766de4a0`；父卡 `T-1793774104011-34e361b4`。
+
+### 38.1 S1 · mTLS 控制面
+
+| 编号 | 验收项 | 命令 / 操作 | 期望 |
+| --- | --- | --- | --- |
+| S1-01 | 默认 TLS 监听 | 启动 daemon（无参数），读 manifest | `security_profile=https_mtls_v1`、`endpoint` 以 `https://` 开头、`bind_scope=loopback` |
+| S1-02 | 无客户端证书 | `urllib` 不带 cert 调 `/v1/rpc` | TLS 握手失败或 `E_MTLS_CLIENT_CERT_MISSING`；dispatch 未进入 |
+| S1-03 | 错 CA | 用自建 CA 签发客户端证书 | `E_MTLS_UNKNOWN_CA`；无方法执行 |
+| S1-04 | 正确 CA + 正确 SAN | 正常客户端调 `stats`/`task.list` | 200；`PeerCredential.principal_id` 与证书 SAN 一致 |
+| S1-05 | 错 SAN / 无 SAN URI | 合法 CA 签发的无 URI SAN 证书 | `E_MTLS_CLIENT_CERT_REJECTED` 或 `E_PRINCIPAL_UNKNOWN` |
+| S1-06 | 过期证书 | 签发 already-expired 客户端证书 | 握手拒绝；`E_MTLS_CERT_EXPIRED`（日志可见） |
+| S1-07 | 吊销证书 | 先正常调用，`cw pki revoke --serial` 后再调 | 首次成功；吊销后拒绝；`max_conn_age` 内旧连接失效 |
+| S1-08 | 非 loopback 无授权 | `--bind 0.0.0.0:PORT` 不带 `--allow-remote` | `E_HTTP_BIND_REMOTE_NOT_ALLOWED`；无 listener、无 manifest |
+| S1-09 | 非 loopback + mTLS | `--bind 0.0.0.0:PORT --allow-remote` | 启动成功；服务端证书 SAN 覆盖该 IP/DNS；mTLS 可用 |
+| S1-10 | 无明文端口 | `http://<endpoint>` 请求 | 连接失败/协议错误；全仓无明文 listener 分支 |
+| S1-11 | bootstrap token 单次 | 同一 token 连续 enroll 两次 | 第一次成功；第二次 `E_ENROLL_TOKEN_USED` |
+| S1-12 | bootstrap token 过期 | 等待 TTL 后 enroll | `E_ENROLL_TOKEN_EXPIRED`（对外统一 `E_ENROLL_TOKEN_INVALID`） |
+| S1-13 | 跨 workspace | principal 无 grant 时调该 workspace 方法 | `E_PRINCIPAL_WORKSPACE_FORBIDDEN` |
+| S1-14 | principal 授权变更 | grant 后可用；revoke 后不可用 | 立即生效（新连接）；审计事件成对 |
+| S1-15 | `cw-bridge` 删除 | `cargo build --bins`；检查产物 | 无 `cw-bridge`；WSL 场景走 HTTPS |
+| S1-16 | 旧 profile 关闭 | `CW_DAEMON_HTTP_PROFILE=dev_loopback_unauthenticated` | 启动失败（非法配置），不静默降级 |
+| S1-17 | /health 探活 | 无客户端证书 GET `/health` | 200；仅 profile/commit/pid；不含 principal/grant |
+| S1-18 | /capabilities 保护 | 无客户端证书 GET `/capabilities` | 拒绝；持证后 200 |
+| S1-19 | 审计 | 签发/吊销/grant 变更 | 事件含 principal_id、serial、actor、时间；链可校验 |
+| S1-20 | peer_uid 收口 | 静态扫描 + 定向测试 | 授权路径不再读 `peer_uid`/`current_uid`；仅诊断字段保留 |
+
+### 38.2 S2 · 远端只读
+
+| 编号 | 验收项 | 命令 / 操作 | 期望 |
+| --- | --- | --- | --- |
+| S2-01 | 客户端本机 file.read | Windows 客户端 → WSL/Linux daemon | 返回客户端本地文件内容；daemon 未打开该路径 |
+| S2-02 | file.grep / file.list | 同上 | 结果与客户端本地执行一致 |
+| S2-03 | snapshot.upload | 客户端构建 codegraph DB 后上传 | daemon 校验 sha256/大小；导入成功；索引可查 |
+| S2-04 | 远端 db_path 拒绝 | `snapshot.publish` 带本机 `db_path` | `E_REMOTE_DB_PATH_FORBIDDEN`；无文件打开 |
+| S2-05 | 绝对路径拒绝 | `file.read` 带 `C:\...` / `/home/...` | `E_REMOTE_PATH_FORBIDDEN` |
+| S2-06 | 上传篡改 | 修改内容但保留旧 hash | 校验失败；不导入 |
+| S2-07 | 大文件 | 接近 64 MiB body 上限 | 正常或 `E_PAYLOAD_TOO_LARGE`；无截断入库 |
+| S2-08 | 双向矩阵 | Windows↔WSL、Windows↔Linux | 两个方向各 1 次只读链路 PASS |
+| S2-09 | 无本地降级 | 客户端无 daemon 时调只读工具 | 结构化错误；不回退本地 SQLite |
+
+### 38.3 S3 · 远端写治理
+
+| 编号 | 验收项 | 命令 / 操作 | 期望 |
+| --- | --- | --- | --- |
+| S3-01 | grant 正常流 | grant → 本地写 → commit | 成功；审计含 grant_id/base_hash/new_hash |
+| S3-02 | base_hash 不匹配 | 本地先改文件再 commit | `E_WRITE_BASE_HASH_MISMATCH`；索引不变 |
+| S3-03 | grant 过期 | TTL 后 commit | `E_WRITE_GRANT_EXPIRED` |
+| S3-04 | grant 重放 | 同一 grant 二次 commit | `E_WRITE_GRANT_CONSUMED` |
+| S3-05 | 越权路径 | grant allowed_paths 外的路径 | `E_WRITE_PATH_FORBIDDEN` |
+| S3-06 | 跨 principal | A 的 grant 由 B 提交 | `E_WRITE_GRANT_PRINCIPAL_MISMATCH` |
+| S3-07 | 并发写 | 两客户端同路径同 base_hash | 仅一个成功；另一个 `E_WRITE_STALE_BASE` / `E_WRITE_LOCKED` |
+| S3-08 | 任务关闭后写 | task closed 后请求 grant | `E_WRITE_TASK_FORBIDDEN` |
+| S3-09 | 审计回放 | 读取审计链 | grant/commit/拒绝均可回放；无缺口 |
+| S3-10 | daemon 唯一写者 | 静态扫描 + 运行检查 | 客户端不直写 daemon DB；仅 daemon 写 |
+
+### 38.4 S4 · 清理与矩阵
+
+| 编号 | 验收项 | 命令 / 操作 | 期望 |
+| --- | --- | --- | --- |
+| S4-01 | pipe/UDS 代码删除 | 全仓 grep（排除 archive/docs） | 无生产 `NamedPipe`/`UnixDaemonRpcClient` 分支 |
+| S4-02 | bridge 夹具删除 | `pytest tests/test_windows_bridge_e2e.py` | 文件已移除或改为 HTTPS 矩阵 |
+| S4-03 | Python local 分支删除 | `server/mcp_server.py` 扫描 | 无 `daemon_mode=local` 分支 |
+| S4-04 | 发布产物 | 检查 release 目录 | 仅 `cw`、`cw-daemon`、`cw-client`（+ wheel），无 bridge |
+| S4-05 | 矩阵接入 | `python scripts/check_e2e_matrix_closure.py` | PASS，exit 0；含 S1–S3 行 |
+| S4-06 | 跨 OS 回归 | Windows↔WSL、Windows↔Linux | 双向只读 + 写治理链路 PASS |
+| S4-07 | 文档一致 | `docs/design/daemon-deploy-runbook.md` | 删除 pipe/UDS/bridge 部署说明，改为 mTLS |
+
+### 38.5 门禁与边界
+
+| 项 | 口径 |
+| --- | --- |
+| 总门禁 | `python scripts/check_e2e_matrix_closure.py`（exit 0） |
+| 安全负例 | S1-02/03/05/06/07/08/10/11/12/13 全部必须 fail-closed，禁止“跳过”计入 PASS |
+| 证据 | 每条记录命令、退出码、关键响应字段、证书 serial/fingerprint（不得记录私钥） |
+| 非目标 | 不改任务治理语义、不改 codegraph 查询语义、不重写 MCP 工具 |
+| 执行顺序 | **S1 → S2 → S3 → S4 严格串行**，禁止并行 checkout/并行执行。共享文件 `server/daemon_client.py`（S1–S4）、`server/tools/`（S2/S3）、`cli/main.py`（S1/S3）必须由当前阶段独占，前一阶段 adjudicate 闭环后才派发下一张卡；`task_dependencies` 当前库为空，顺序由生命周期与人工派工保证 |
+| 回滚 | S1 保留旧二进制；S4 删除类变更用 revert commit，无数据迁移 |

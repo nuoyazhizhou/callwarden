@@ -39,12 +39,15 @@ Rust 侧路由（禁止改动，零 Rust 改动）：
 
 前置条件（进程级部分，与 test_query_issues_rpc.py 一致）：
 1. Windows 平台
-2. 已构建 `cw-daemon.exe`：`cargo build --release --no-default-features
-   --manifest-path rust_ext/Cargo.toml --bin cw-daemon`
-3. 默认 HTTP endpoint（authority-scoped manifest）未被生产 daemon 占用
-   （占用则 skip）
+2. 已构建**含隔离管道名修复的** `cw-daemon`（`_w3_harness.find_daemon_binary()`
+   按 mtime 取最新构建并打印路径/sha256）：`cargo build --release
+   --no-default-features --manifest-path rust_ext/Cargo.toml --bin cw-daemon`
+3. 隔离 daemon 经 USERPROFILE=data_root/userhome 重定向 manifest/单实例锁，
+   并以 `\\\\.\\pipe\\callwarden-iso-<data_root hash>` 独立管道名启动，可与
+   常驻生产 daemon 并存，不占用默认 HTTP 端口/权威 manifest。
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -56,7 +59,23 @@ import pytest
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
+
+# 二进制解析收敛到 `_w3_harness.find_daemon_binary()`（C-18）：多候选按 mtime
+# 取**最新**构建并显式打印路径/sha256，禁止硬编码 release 路径静默使用陈旧
+# 构建。实测根因：release 构建停在 10-27，早于「隔离 daemon 按 data_root 派生
+# Windows 管道名」修复（fdd6bb4，10-31），仍固定在 `\\.\pipe\callwarden-<sid>`
+# 与常驻 daemon 冲突 → CreateNamedPipe error 5 → daemon 发布 manifest 后立即
+# 退出，客户端全部 E_HTTP_DAEMON_UNAVAILABLE。debug/current 构建含该修复。
+try:
+    from _w3_harness import find_daemon_binary as _find_daemon_binary
+    _DAEMON_BIN = _find_daemon_binary()
+except Exception:  # pragma: no cover - 仅在 harness 不可导入时回退
+    _DAEMON_BIN = None
+if _DAEMON_BIN is None:  # pragma: no cover - 非仓库根 CWD 的回退解析
+    _cands = [p for p in (
+        os.path.join(_REPO_ROOT, "rust_ext", "target", d, "cw-daemon.exe")
+        for d in ("release", "debug")) if os.path.exists(p)]
+    _DAEMON_BIN = max(_cands, key=os.path.getmtime) if _cands else None
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
@@ -64,8 +83,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 requires_binaries = pytest.mark.skipif(
-    not os.path.exists(_DAEMON_BIN),
-    reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
+    _DAEMON_BIN is None,
+    reason="未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）",
 )
 
 
@@ -123,12 +142,19 @@ class TestHttpWorkspaceStatusInjection:
         methods = [m for m, _ in calls]
         assert methods == ["workspace.register", "snapshot.publish", "workspace.status"], \
             f"调用序应为 register→publish→workspace.status，实际 {methods}"
-        # register：client_view_root 默认取进程 cwd（与 legacy 对齐）
+        # register：client_view_root 默认取 `callwarden.config.PROJECT_ROOT`
+        # （MCP 宿主 cwd 可能是 runtime 日志目录，server/daemon_client.py:
+        # 2258-2264 明确禁止以 cwd 作 workspace authority），不是 os.getcwd()。
+        # stale 修正：PROJECT_ROOT 经包解析得 `c:\git_work\callwarden`（小写盘符，
+        # 来自 PYTHONPATH），与本机 os.getcwd() 的 `C:\...` 大小写不同 →
+        # 断言改为 normcase 比较，避免依赖大小写。
+        from callwarden.config import PROJECT_ROOT
+        assert os.path.normcase(calls[0][1]["client_view_root"]) == \
+            os.path.normcase(PROJECT_ROOT)
         # stale 修正：db_path 非空时 _ensure_remote_snapshot 经
         # _workspace_snapshot_metadata（server/daemon_client.py:2114-2116,
         # 1091-1113）附加 git_remote_url/git_head_commit_sha，register params
         # 不再等于仅 client_view_root 的单键 dict（旧断言陈旧）。
-        assert calls[0][1]["client_view_root"] == os.getcwd()
         assert set(calls[0][1]) <= {
             "client_view_root", "git_remote_url", "git_head_commit_sha",
         }
@@ -254,27 +280,36 @@ class TestToolsWorkspaceHttpBranches:
 # ----------------------------------------------------------------------
 
 def _spawn_isolated_daemon(bin_path, data_root, http_bind):
-    """启动隔离 daemon（临时 task DB / registry / 管道），启用 HTTP transport。
+    """启动隔离 daemon（临时 task DB / registry / 独立命名管道），启用 HTTP transport。
 
-    对齐 test_http_native_read_cutover.py _spawn_isolated_daemon：经环境变量
-    配置隔离数据目录，`--http-bind 127.0.0.1:0` 随机端口避免与生产冲突。
-
-    stale 修正（族D，daemon 换实例后 100% 复现）：daemon 的
-    http_manifest_dir() 读 USERPROFILE/HOME（rust_ext/src/daemon/http_server.rs:1624），
-    不读 CW_DAEMON_DATA_ROOT——隔离 daemon 的 manifest 与 single-instance 锁
-    原本固定写真实 ~/.callwarden，与生产 daemon 的 authority 锁冲突 →
-    E_DAEMON_ALREADY_RUNNING → daemon 立即退出 → 「未发布 manifest」。
-    现重定向 USERPROFILE=data_root，manifest 与锁完全隔离到 data_root/.callwarden，
-    生产 daemon 不受影响，无需 skip。
+    stale 修正（本轮实测复现）：仅重定向 USERPROFILE 不足以保证共存——Windows
+    上 daemon 的 named pipe server 以 `FILE_FLAG_FIRST_PIPE_INSTANCE` 绑定
+    （rust_ext/src/daemon/transport_windows.rs:217-238），管道名若非显式覆盖即
+    固定为 `\\\\.\\pipe\\callwarden-<SID>`；常驻生产 daemon 已占用该名 →
+    CreateNamedPipe error 5 → HTTP manifest 已发布但 daemon 立即退出 →
+    客户端 WinError 10054。故须像 `_w3_harness.spawn_isolated_daemon` 一样：
+    1. USERPROFILE 重定向到 data_root/userhome（manifest/单实例锁隔离）；
+    2. CW_DAEMON_SOCKET 显式给 `\\\\.\\pipe\\callwarden-iso-<data_root hash>`
+       （独立管道名，`resolve_pipe_name` 原样采纳）；
+    3. CW_DAEMON_CODEGRAPH_DB_TEMPLATE 与 USERPROFILE 默认单库同路径。
     """
+    home = os.path.join(data_root, "userhome")
+    os.makedirs(os.path.join(home, ".callwarden"), exist_ok=True)
     env = os.environ.copy()
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
-    env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
+    if sys.platform == "win32":
+        iso_tag = hashlib.sha256(data_root.encode("utf-8")).hexdigest()[:12]
+        env["CW_DAEMON_SOCKET"] = rf"\\.\pipe\callwarden-iso-{iso_tag}"
+    else:  # pragma: no cover - 本文件 Windows only
+        env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     # 重定向 manifest/lock 作用域：daemon http_manifest_dir() 读 USERPROFILE
-    env["USERPROFILE"] = data_root
+    env["USERPROFILE"] = home
+    env["CW_DAEMON_CODEGRAPH_DB_TEMPLATE"] = os.path.join(
+        home, ".callwarden", "callwarden.db"
+    )
     proc = subprocess.Popen(
         [bin_path, "--http-bind=" + http_bind],
         env=env,
@@ -285,22 +320,21 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
 
 
 def _wait_isolated_manifest(proc, data_root, timeout=15.0):
-    """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配）。
+    """等待隔离 daemon 发布 authority-scoped manifest。
 
-    stale 修正（族D）：manifest 现写入 data_root/.callwarden（USERPROFILE
-    重定向后），轮询 data_root 而非真实 HOME。
+    返回 `(manifest, manifest_file_path)`；超时或 daemon 退出返回 `(None, None)`。
+    只接受 `pid` 匹配当前进程，且返回文件路径供客户端显式校验（避免
+    `discover()` 读真实 HOME 残留 manifest → E_HTTP_MANIFEST_STALE）。
     """
     from callwarden.config import get_http_authority_id
     authority = get_http_authority_id()
     safe = authority.replace("/", "_").replace("\\", "_").replace(":", "_")
-    manifest_path = os.path.join(
-        data_root, ".callwarden",
-        f"http-daemon.{safe}.manifest.json",
-    )
+    manifest_dir = os.path.join(data_root, "userhome", ".callwarden")
+    manifest_path = os.path.join(manifest_dir, f"http-daemon.{safe}.manifest.json")
     deadline = time.time() + timeout
     while time.time() < deadline:
         if proc.poll() is not None:
-            return None
+            return None, None
         if os.path.isfile(manifest_path):
             try:
                 with open(manifest_path, "r", encoding="utf-8") as f:
@@ -309,9 +343,9 @@ def _wait_isolated_manifest(proc, data_root, timeout=15.0):
                 time.sleep(0.2)
                 continue
             if m.get("pid") == proc.pid:
-                return m
+                return m, manifest_path
         time.sleep(0.2)
-    return None
+    return None, None
 
 
 def _terminate(proc):
@@ -327,36 +361,43 @@ def _terminate(proc):
 
 
 class TestRealDaemonWorkspaceRoundTrip:
-    """真实 daemon 进程级 workspace.status/list round-trip（USERPROFILE 隔离）。
+    """真实 daemon 进程级 workspace.status/list round-trip（隔离管道 + USERPROFILE）。
 
-    隔离 daemon 经 USERPROFILE=data_root 重定向 manifest 与 single-instance 锁
-    到 data_root/.callwarden，与生产 daemon 完全隔离——即使生产 daemon 正在
-    运行（占用默认 HTTP 端口与权威 manifest）也可并行执行，不污染生产
-    registry（daemon_workspaces 表）、不覆盖 ~/.callwarden 权威 manifest。
+    隔离 daemon 经 USERPROFILE=data_root/userhome 重定向 manifest 与
+    single-instance 锁，并以独立命名管道名启动，与生产 daemon 完全隔离——
+    即使生产 daemon 正在运行（占用默认 SID 管道/HTTP 端口/权威 manifest）也可
+    并行执行，不污染生产 registry（daemon_workspaces 表）、不覆盖
+    ~/.callwarden 权威 manifest。
     """
 
     @pytest.fixture
     def real_daemon_client(self, tmp_path):
         bin_path = _DAEMON_BIN
-        if not os.path.exists(bin_path):
-            pytest.skip("cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）")
+        if not bin_path or not os.path.exists(bin_path):
+            pytest.skip("cw-daemon 未构建（需先 cargo build --bin cw-daemon）")
         data_root = str(tmp_path / "data")
         os.makedirs(data_root, exist_ok=True)
         proc = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
         try:
-            manifest = _wait_isolated_manifest(proc, data_root)
+            manifest, manifest_path = _wait_isolated_manifest(proc, data_root)
             if manifest is None:
-                stdout = (proc.stdout.read(4000).decode("utf-8", "replace")
-                          if proc.stdout else "")
-                stderr = (proc.stderr.read(4000).decode("utf-8", "replace")
-                          if proc.stderr else "")
+                try:
+                    out, err = proc.communicate(timeout=5)
+                except Exception:
+                    proc.kill()
+                    out, err = proc.communicate()
                 pytest.fail(
-                    f"隔离 daemon 未在超时内发布 manifest\nstdout={stdout}\nstderr={stderr}")
+                    "隔离 daemon 未在超时内发布 manifest\n"
+                    f"stdout={out.decode('utf-8', 'replace')[-1500:]}\n"
+                    f"stderr={err.decode('utf-8', 'replace')[-2000:]}")
+            from callwarden.config import get_http_authority_id
             from callwarden.server.daemon_client import HttpDaemonRpcClient
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],
                 verify_health=False,
                 timeout=5.0,
+                manifest_path=manifest_path,
+                authority_id=get_http_authority_id(),
             )
             yield client
         finally:
