@@ -173,8 +173,8 @@ TLS peer cert
 ### 5.2 peer_uid 收口
 
 - Rust：`PeerCredential.peer_uid` 保留为**诊断字段**，授权比较改为
-  `principal_id` + `allowed_workspace_ids`；8 个模块、160 处引用逐一审计。
-- Python：48 处 `peer_uid`/`current_uid` 引用改为 principal 断言；`daemon_mode=local`
+  `principal_id` + `allowed_workspace_ids`；实测 186 处 / 10 文件（见 §15.1），逐处处置。
+- Python：服务器侧 48 处 / 4 文件，另有 `cli/main.py` 4 处；`daemon_mode=local`
   分支在 S1 删除（local 模式不再有任何合法传输）。
 - workspace owner 迁移：首次 TLS 启动把既有 `owner_uid` 行映射到 daemon owner principal，
   写审计事件 `pki_owner_migration`；其他 principal 默认无权限，须显式 grant。
@@ -236,7 +236,7 @@ manifest 升级为 `callwarden-http-manifest/v2`：
 
 | 端 | 实现 |
 | --- | --- |
-| daemon | `axum-server`/`tokio-rustls`（新增依赖）；`rustls` 作为唯一 TLS 后端；HTTP/1.1 + ALPN `http/1.1` |
+| daemon | `tokio-rustls` 自定义 accept 循环（`hyper-util` 承载 axum Router）；`rustls` 作为唯一 TLS 后端；HTTP/1.1 + ALPN `http/1.1`；逐连接 `max_conn_age` |
 | Python MCP/CLI | `urllib.request` + `ssl.SSLContext(PROTOCOL_TLS_CLIENT)`：`load_verify_locations(ca)`、`load_cert_chain(cert,key)`、`check_hostname=True`、`minimum_version=TLSv1_2`；证书路径来自 manifest + `CW_PKI_DIR` |
 | Rust `cw`/`cw-client` | 新增 `reqwest`（`rustls-tls`，关闭系统根证书）或 `hyper-rustls`；CA pin 与客户端证书同源 |
 | 证书定位 | 优先 env（`CW_CLIENT_CERT`/`CW_CLIENT_KEY`/`CW_CA_CERT`），其次 `~/.callwarden/pki/identities/<principal>/`，再次 manifest 指定目录；缺失 → `E_MTLS_CLIENT_CERT_MISSING` |
@@ -418,3 +418,144 @@ python scripts/check_e2e_matrix_closure.py
 3. 证书热加载（不重启轮换服务端证书）。
 4. 多租户/多组织 CA 分层（当前单 CA 足够）。
 5. `write.commit` 的 delta 格式（unified diff vs 全量内容 + hash）。
+
+---
+
+## 15. S1 现状盘点与冻结（inventory 证据）
+
+盘点基线：commit `f1aec7b`，工作树 clean（`git status --porcelain` 空输出）。
+
+检索命令（仓库根执行）：
+
+```powershell
+rg -c "peer_uid|current_uid" rust_ext/src   # 186 处 / 10 文件
+rg -c "peer_uid|current_uid" server         # 48 处 / 4 文件
+rg -c "peer_uid|current_uid" cli            # 4 处 / 1 文件
+```
+
+处置代号：
+
+- **A** 授权主语迁移：比较/过滤键从 `peer_uid`/`owner_uid` 改为 `principal_id` +
+  `workspace_principal_grants`
+- **D** 诊断保留：日志、错误消息、ping 元数据、数据库诊断列；不参与任何授权判断（I3）
+- **X** 删除：随 pipe/UDS/memfd/bridge 在 S4 清理，S1 不再新增调用点
+- **P** Python 兼容层：保留函数签名，内部不再以 uid 做授权；S4 随 local daemon 删除
+- **T** 测试夹具：随实现同步改写，不保留 uid 授权断言
+
+### 15.1 peer_uid / current_uid 逐文件处置
+
+Rust（`rust_ext/src`，186 处）：
+
+| 文件 | 处数 | 主要用途 | 处置 |
+| --- | --- | --- | --- |
+| `daemon/workspace.rs` | 63 | `owned_workspace` / `owned_workspace_any_status` / `owned_workspace_by_id` / `check_path_owner` / `validate_owned_path[_any]` 的 owner 比较；测试夹具 | A：4 个授权函数改 principal grant；`check_path_owner` 降级为本地 defense-in-depth（D）；其余 T/D |
+| `daemon/memfd.rs` | 40 | Unix FD `st_uid == peer_uid` 属主校验与测试 | D：校验保留为诊断防线；X：FD 传输路径 S4 删除 |
+| `cli/external.rs` | 19 | ping 取 `peer_uid` → 按 `owner_uid` 过滤候选；`peer_uid==0` / 未知时的 admin 旁路 | A：改为 principal 可见 workspace 集合；删除 admin 旁路（I3）；其余 D |
+| `daemon/task_collab.rs` | 14 | `verify_task_binding_owner` / `verify_registry_owner_for_instance` 的 owner 比较 | A：改 principal + task assignment 归属 |
+| `daemon/server.rs` | 10 | `ping` 响应 `peer_uid` 测试 | T/D：测试断言改 principal |
+| `daemon/snapshot_state.rs` | 10 | `owned_workspace(peer_uid)` 调用、`validate_snapshot_fd` | A：workspace 校验改 principal；X：FD 校验随 FD 路径 S4 删除 |
+| `daemon/dispatch.rs` | 9 | `ping` 返回 `peer_uid`；admin-only 规则 `peer.uid == 0` | D：ping 元数据；A：admin 规则改 owner principal（禁止以 uid==0 授权） |
+| `daemon_query.rs` | 9 | PyO3 导出 `validate_owned_path` / `check_workspace_owner` / `current_uid` | P/D：兼容签名保留，内部改 principal；S4 删除 |
+| `daemon/peercred.rs` | 6 | `current_uid()` 与测试 | D：仅诊断；新增 principal/serial/fingerprint 字段 |
+| `daemon/replicator.rs` | 6 | 会话表 `peer_uid` 列写入 | D：诊断列保留；X：S4 随 replicator 删除 |
+
+Python（`server/` 48 处 + `cli/main.py` 4 处）：
+
+| 文件 | 处数 | 主要用途 | 处置 |
+| --- | --- | --- | --- |
+| `server/daemon_server.py` | 35 | `_owned_workspace*`、`_validate_owned_path`、`_validate_snapshot_fd`、ping uid、dispatch 透传 | P/A：内部改 principal（HTTP 模式不经过此模块）；X：S4 随 pipe/UDS 删除 |
+| `server/ipc_transport.py` | 6 | memfd 属主校验与参数 | D → X（S4） |
+| `server/replicator.py` | 6 | 会话表 `peer_uid` 列 | D → X（S4） |
+| `server/agent_protocol.py` | 1 | 文档字符串示例 | D |
+| `cli/main.py` | 4 | `cw daemon ping` 展示 `peer_uid` | D：仅展示，不参与授权 |
+
+收口结论：**授权路径上的 uid 比较共 7 处函数/分支** —— `owned_workspace`、
+`owned_workspace_any_status`、`owned_workspace_by_id`、`check_path_owner`（含
+`validate_owned_path[_any]`）、`verify_task_binding_owner`、
+`verify_registry_owner_for_instance`，以及 `daemon/dispatch.rs` 的 admin 旁路。
+S1 完成后这些路径只读 `PeerCredential.principal_id` / `allowed_workspace_ids`；
+`peer_uid` 仅出现在日志、错误消息、ping 与诊断列（I3）。
+Review 检查项：授权分支中不得出现 `peer_uid`/`owner_uid` 比较（`rg "peer_uid|owner_uid"`
+逐处确认命中的是诊断/测试/删除代码）。
+
+### 15.2 Cargo 依赖冻结
+
+新增到 `rust_ext/Cargo.toml` `[dependencies]`（版本为本机 registry 实测）：
+
+| crate | 版本 | feature | 用途 |
+| --- | --- | --- | --- |
+| `rustls` | 0.23.44 | `default-features=false`, `ring`, `std`, `tls12`, `logging` | TLS 唯一后端 |
+| `tokio-rustls` | 0.26.5 | `default-features=false`, `ring`, `tls12`, `logging` | async TLS acceptor |
+| `rustls-pemfile` | 2.2 | 默认 | PEM 证书/私钥读取 |
+| `rcgen` | 0.14.10 | 默认（`crypto`,`pem`,`ring`） | CA / 服务端 / 客户端证书签发 |
+| `x509-parser` | 0.18.1 | 默认 | 解析客户端证书 SAN URI / serial / 有效期 |
+| `hyper-util` | 0.1.20 | `server-auto`, `tokio`, `service` | 自定义 accept 循环内的 `serve_connection` |
+
+机械约束：
+
+1. **不引入系统根信任**：不添加 `rustls-platform-verifier`、`webpki-roots`、
+   `openssl`；daemon 只信任 `pki/ca/ca.crt`，客户端只信任 manifest pin 的 CA。
+2. **不引入 `aws-lc-rs`**（避免 Windows 上 cmake/nasm 构建链）：三个 crypto crate
+   全部走 `ring`；进程启动安装一次 `rustls::crypto::ring::default_provider()`，
+   重复安装返回 `AlreadyInstalled` 视为正常。
+3. **不引入 `axum-server`**：`max_conn_age` 与吊销集热更新需要逐连接控制，改用
+   `tokio-rustls` 自定义 accept 循环；HTTP 层仍是现有 axum 0.8 Router。
+4. **S1 不引入 `reqwest`/`hyper-rustls`**：Rust 客户端的第一步（`cw pki enroll`）
+   允许复用 Python/`urllib` 等价实现或薄封装；若后续步骤必须引入，必须
+   `rustls-tls` + `default-features=false` 并关闭系统根证书，且在本表追加记录。
+5. 工具链：本机 `rustc 1.93.1`；rcgen 0.14.10 最低 1.88，满足。
+
+### 15.3 错误码冻结（S1 实施面）
+
+稳定字符串，大小写敏感。S1 实现前五组；路径类两组仅为 S2/S3 预留，
+S1 不得提前返回：
+
+| 组 | 错误码 | S1 |
+| --- | --- | --- |
+| TLS | `E_TLS_REQUIRED`、`E_TLS_HANDSHAKE_FAILED`、`E_TLS_SAN_MISMATCH` | 实现 |
+| mTLS 证书 | `E_MTLS_CLIENT_CERT_MISSING`、`E_MTLS_CLIENT_CERT_REJECTED`、`E_MTLS_CERT_EXPIRED`、`E_MTLS_CERT_REVOKED`、`E_MTLS_UNKNOWN_CA` | 实现 |
+| principal | `E_PRINCIPAL_UNKNOWN`、`E_PRINCIPAL_NOT_AUTHORIZED`、`E_PRINCIPAL_WORKSPACE_FORBIDDEN` | 实现 |
+| 引导 | `E_ENROLL_TOKEN_INVALID`、`E_ENROLL_TOKEN_EXPIRED`、`E_ENROLL_TOKEN_USED`、`E_ENROLL_CSR_INVALID` | 实现 |
+| 绑定 | `E_HTTP_BIND_REMOTE_NOT_ALLOWED` | 实现 |
+| 远端路径 | `E_REMOTE_PATH_FORBIDDEN`、`E_REMOTE_DB_PATH_FORBIDDEN` | 预留（S2/S3） |
+
+- 既有 `E_HTTP_MVP_LOOPBACK_ONLY` 仅保留为旧 profile 的显式非法配置诊断，
+  不再是任何合法路径。
+- 握手失败对外只回 `E_TLS_HANDSHAKE_FAILED`；细分原因写 daemon 审计日志，
+  不回显给调用方（避免 oracle）。
+- `/v1/enroll` 的 token 失败统一回 `E_ENROLL_TOKEN_INVALID`（ADR §4.2）。
+
+### 15.4 manifest v2 字段冻结
+
+`callwarden-http-manifest/v2`，按 authority 分文件、0600 / owner-only ACL、
+临时文件 + 原子 rename：
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `schema` | string | 固定 `"callwarden-http-manifest/v2"`；读到 v1 视为过期客户端，不降级 |
+| `security_profile` | string | 固定 `"https_mtls_v1"` |
+| `endpoint` | string | `https://<host>:<port>`，绑定成功后写入实际端口 |
+| `bind_scope` | string | `loopback` 或 `remote`（后者必须 `--allow-remote`） |
+| `auth` | string | 固定 `"mtls_client_cert_required"` |
+| `tls.min_version` | string | 固定 `"1.2"` |
+| `tls.ca_cert_pem` | string | daemon CA PEM |
+| `tls.ca_fingerprint_sha256` | string | 64 位小写 hex |
+| `tls.server_cert_sha256` | string | 64 位小写 hex |
+| `tls.server_not_after` | string | RFC3339 UTC |
+| `tls.san` | string[] | 覆盖实际绑定地址；缺失 → `E_TLS_SAN_MISMATCH` |
+| `daemon_pid` | number | 当前进程 PID |
+| `git_commit` | string | 运行时 `git rev-parse HEAD` |
+| `capability_registry_revision` | string | 现为 `http-mvp-cap-registry-v1` |
+
+- manifest 不含私钥、principal 列表、grant、workspace 路径。
+- `/health` 仅暴露 profile/commit/pid/capability revision；`/capabilities` 与
+  `/v1/rpc` 需客户端证书。
+- 旧 `CW_DAEMON_HTTP_PROFILE=dev_loopback_unauthenticated` 与任何“关闭 TLS”
+  开关视为非法配置，启动即失败。
+
+### 15.5 盘点结论
+
+- 单轨 mTLS 的依赖面收敛为 6 个 crate，全部 `ring`、无系统根、无 `aws-lc-rs`。
+- uid 授权点共 7 处，S1 必须全部切到 principal；其余 179 处 Rust / 48 处 Python
+  为诊断、测试或待删除代码。
+- 未发现与 ADR §3.1 冲突的额外库存；本盘点不新增威胁面。

@@ -213,6 +213,127 @@ def _ensure_task_contract_v57_columns(conn: sqlite3.Connection) -> None:
         ensure_table_columns(conn, table, columns)
 
 
+# S1（ADR-002 §4/§5）：PKI / principal 授权表属于扩展 schema（与 db_toolchain /
+# db_jobs / db_clone_groups 同策略）：DDL 不进 SCHEMA_SQL、不 bump SCHEMA_VERSION，
+# 由 ensure_pki_schema 在每次启动幂等创建。原因：Rust storage.rs 以 include_str!
+# 嵌入 db/schema.py 的 SCHEMA_SQL 并计算 canonical checksum；把仅 daemon 使用的
+# 扩展表放进 canonical 会强制重建所有已安装二进制，S1 不改 Rust canonical schema。
+#
+# daemon 是这些表的唯一写者；Python 侧只补 schema，不写授权/证书数据。
+# rust_ext/src/daemon/pki_handlers.rs 的 ensure 语句必须与本 DDL 同形。
+#
+# 首次 TLS 启动的 owner 迁移契约（由 daemon 执行，幂等）：
+#   1) 为 daemon owner 建立 pki_principals(kind='service', status='active')；
+#   2) 对每个既有 workspace 插入 workspace_principal_grants(role='owner')，
+#      主键 (workspace_id, principal_id) 保证重复启动不产生新行；
+#   3) 仅对首次插入的 grant 写 audit_chain：
+#      table_name='pki_owner_migration', record_id='ws:<workspace_id>'，
+#      payload 含旧 owner_uid 与新 principal_id；已存在则跳过（不重复审计）。
+PKI_TABLE_NAMES = (
+    "pki_principals",
+    "pki_issued_certs",
+    "pki_revocations",
+    "pki_enrollment_tokens",
+    "workspace_principal_grants",
+)
+
+PKI_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS pki_principals (
+        principal_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK(kind IN ('human','agent','service')),
+        display_name TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        note TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_pki_principals_status "
+    "ON pki_principals(status, kind)",
+    """
+    CREATE TABLE IF NOT EXISTS pki_issued_certs (
+        cert_serial TEXT PRIMARY KEY,
+        principal_id TEXT NOT NULL,
+        fingerprint_sha256 TEXT NOT NULL,
+        issued_at REAL NOT NULL,
+        not_before REAL NOT NULL,
+        not_after REAL NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+        revoked_at REAL NOT NULL DEFAULT 0,
+        issued_by TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'enroll'
+            CHECK(source IN ('enroll','renew','rotate')),
+        subject_san TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_pki_issued_certs_principal "
+    "ON pki_issued_certs(principal_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_pki_issued_certs_not_after "
+    "ON pki_issued_certs(not_after)",
+    "CREATE INDEX IF NOT EXISTS idx_pki_issued_certs_fingerprint "
+    "ON pki_issued_certs(fingerprint_sha256)",
+    """
+    CREATE TABLE IF NOT EXISTS pki_revocations (
+        cert_serial TEXT PRIMARY KEY,
+        principal_id TEXT NOT NULL,
+        revoked_at REAL NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        actor_principal_id TEXT NOT NULL DEFAULT '',
+        audit_record_id TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_pki_revocations_principal "
+    "ON pki_revocations(principal_id, revoked_at)",
+    """
+    CREATE TABLE IF NOT EXISTS pki_enrollment_tokens (
+        token_id TEXT PRIMARY KEY,
+        secret_hash TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        workspace_ids_json TEXT NOT NULL DEFAULT '[]',
+        issued_at REAL NOT NULL,
+        expires_at REAL NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending','consumed','expired','revoked')),
+        consumed_at REAL NOT NULL DEFAULT 0,
+        issued_by TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pki_enrollment_tokens_secret "
+    "ON pki_enrollment_tokens(secret_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_pki_enrollment_tokens_principal "
+    "ON pki_enrollment_tokens(principal_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_pki_enrollment_tokens_expires "
+    "ON pki_enrollment_tokens(expires_at)",
+    """
+    CREATE TABLE IF NOT EXISTS workspace_principal_grants (
+        workspace_id INTEGER NOT NULL,
+        principal_id TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('owner','agent','readonly','governance')),
+        granted_at REAL NOT NULL,
+        granted_by TEXT NOT NULL DEFAULT '',
+        revoked_at REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (workspace_id, principal_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_workspace_principal_grants_principal "
+    "ON workspace_principal_grants(principal_id, role)",
+)
+
+
+def ensure_pki_schema(conn: sqlite3.Connection) -> None:
+    """S1：PKI / principal 授权表幂等补齐（只补 schema，不写授权数据）。
+
+    扩展 schema，可重复执行；daemon 是这些表的数据写者。首次 TLS 启动的
+    owner 迁移（workspace owner_uid → owner principal + audit_chain
+    `pki_owner_migration`）由 daemon 的 pki 启动路径执行，不在 Python 侧落
+    业务行（I6 审计仍走 daemon）。
+    """
+    for statement in PKI_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+    conn.commit()
+
+
 def _migrate_v1_to_v2(conn: sqlite3.Connection):
     """v1 -> v2: 新增 Semgrep 相关表和索引"""
     conn.execute("""
@@ -4091,6 +4212,8 @@ class CodeGraphBase:
                 init_clone_groups_schema(self.conn)
                 # P0-L：Role Worker 三表幂等补齐（与 Rust ensure 同形，只补 schema）。
                 ensure_role_worker_schema(self.conn)
+                # S1：PKI / principal 授权表幂等补齐（辅助 schema，不 bump 版本）。
+                ensure_pki_schema(self.conn)
                 return
 
         # 显式 rollback 或 Rust 扩展不存在时才进入兼容迁移路径。
@@ -4138,6 +4261,8 @@ class CodeGraphBase:
         # P0-L：Python 兼容路径同样幂等补齐 Role Worker 三表（只补 schema，
         # 授权判定不在 Python 侧）。
         ensure_role_worker_schema(self.conn)
+        # S1：PKI / principal 授权表幂等补齐（辅助 schema，不 bump 版本）。
+        ensure_pki_schema(self.conn)
 
         # Phase 6/7 扩展 schema（CREATE IF NOT EXISTS，幂等）
         # 这些 schema 由独立模块管理，不进入 SCHEMA_SQL 的版本化迁移流，
