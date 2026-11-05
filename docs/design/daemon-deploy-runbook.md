@@ -7,9 +7,13 @@
 
 本文档描述 **Rust `cw_daemon` binary**（对应 [rust_ext/src/bin/cw_daemon.rs](../../rust_ext/src/bin/cw_daemon.rs)）的部署/升级/回滚流程。
 
+> **ADR-002 口径提示**：本 runbook 的 §1–§5 仍保留 v1（UDS / Named Pipe）时代的历史步骤，
+> 仅用于旧版本回滚参考。新部署请以「单轨 HTTPS + mTLS（ADR-002）」一节为准；
+> 其中的 `\\\\.\\pipe\\...`、`AF_UNIX`、`callwarden-clients` 组权限等内容不再构成授权面。
+
 ### 二进制
 
-- `cw_daemon`：独立 Rust binary（`cargo build --no-default-features --release --bin cw-daemon`，Linux），提供 UDS JSON-RPC server
+- `cw_daemon`：独立 Rust binary（`cargo build --no-default-features --release --bin cw-daemon`，Linux），按 ADR-002 提供**单轨 HTTPS + mTLS** JSON-RPC server
   - `--no-default-features` 必需：daemon 为独立二进制，不能以 PyO3 `extension-module` 默认特性链接（cdylib 不链接 libpython，bin 链接会缺 `Py_*` 符号），仅 Python 扩展（`.so`/`.pyd`）才用默认特性构建
 - `cw`：Python CLI，内含 `cw daemon <action>` 子命令作为 RPC 客户端，调用运行中的 `cw_daemon`
 
@@ -18,7 +22,7 @@
 | 操作 | 命令 | 说明 |
 | --- | --- | --- |
 | 启动 daemon | `cw_daemon serve` 或 `systemctl start callwarden-daemon` | Rust binary 直接启动 |
-| 健康检查 | `cw_daemon health-check` 或 `cw daemon health` | 前者直接 UDS ping；后者走 Python 客户端 |
+| 健康检查 | `cw_daemon health-check` 或 `cw daemon health` | 前者直接 HTTPS `/health` 探活；后者走 Python 客户端 |
 | schema 检查 | `cw_daemon schema-check --strict` | systemd `ExecStartPre` 调用 |
 | schema 版本 | `cw daemon schema-version` | Python 客户端查询 RPC |
 | 备份 registry | `cw daemon backup --output <PATH>` | Python 客户端调用 `backup` RPC |
@@ -36,6 +40,35 @@ systemd unit 使用 `Type=notify`，`cw_daemon` 启动后通过 `NOTIFY_SOCKET` 
 
 调试时可加 `--no-sd-notify` 禁用，避免 systemd 误判 READY 状态。
 
+### 单轨 HTTPS + mTLS（ADR-002）
+
+ADR-002 起，daemon 只提供一种对外入口：`https_mtls_v1`（loopback 或 remote 绑定）。
+不再有 UDS / Named Pipe / 明文 TCP 作为业务 RPC 入口。
+
+```bash
+# 1. 初始化内置 CA 与服务端证书（写入 <data_root>/pki）
+cw pki init
+
+# 2. 为每个调用方签发 bootstrap token（一次性）
+cw pki token issue --principal pr_ops --workspace 1
+
+# 3. 调用方用 token 完成引导，得到客户端证书（SAN URI = principal）
+cw pki enroll --token <TOKEN> --endpoint https://127.0.0.1:7633
+
+# 4. 校验：必须携带客户端证书才能访问 /health 与 /v1/rpc
+curl --cacert <data_root>/pki/ca/ca.crt \
+     --cert   <pki>/identities/pr_ops/client.crt \
+     --key    <pki>/identities/pr_ops/client.key \
+     https://127.0.0.1:7633/health
+
+# 5. 轮换 / 吊销
+cw pki rotate-server
+cw pki revoke --serial <SERIAL> --reason key_compromise
+```
+
+客户端侧统一通过 `CW_CLIENT_CERT` / `CW_CLIENT_KEY` / `CW_CA_CERT`（或 `CW_PKI_DIR`）
+提供身份；Python 客户端仍使用 `urllib.request` + `ssl.SSLContext`，无新增运行时依赖。
+
 ## 1. 首次安装
 
 ```bash
@@ -46,9 +79,9 @@ cargo build --no-default-features --release --bin cw-daemon
 
 # 2. 创建 callwarden 用户和组
 sudo useradd -r -s /usr/sbin/nologin callwarden
-# 可选：创建 callwarden-clients 组，让其他用户通过 UDS 访问 daemon
-sudo groupadd -r callwarden-clients
-sudo usermod -aG callwarden-clients callwarden
+# 历史：callwarden-clients 组只用于 UDS 时代的文件权限；ADR-002 后访问控制改由
+# mTLS 证书 SAN URI（principal_id）+ workspace grant 决定，不再依赖组。
+# 若仍保留该组，仅用于日志/运维 shell 便利，不影响 RPC 授权。
 
 # 3. 安装二进制和 systemd unit
 sudo cp target/release/cw_daemon /usr/local/bin/cw_daemon
@@ -534,53 +567,48 @@ cw-agent 是 **user service**，cw_daemon 是 **system service**。systemd 不�
 | 场景 | CW_AUTHORITY | CW_DAEMON_TRANSPORT | 端点 | 说明 |
 | --- | --- | --- | --- | --- |
 | Windows 本地 CLI/MCP/Agent | auto（→windows-host） | named-pipe | `\\.\pipe\callwarden-<sid>` | Windows daemon |
-| WSL 访问 Windows authority | windows-host | windows-bridge | `127.0.0.1:<port>` | Windows bridge → Named Pipe |
+| WSL 访问 Windows authority | windows-host | `https` + mTLS 直连 Windows daemon | `https://<windows-host>:<port>` | Windows daemon（ADR-002） |
 | WSL 原生 workspace | wsl-local | uds | `/tmp/callwarden-<uid>.sock` | WSL local daemon |
 | Linux 原生主机 | linux-system | uds | `/run/callwarden/callwarden.sock` | systemd daemon |
 
 **禁止**：WSL 直接打开 `/mnt/c/.../callwarden.db`（SQLite/WAL/SHM）；Windows authority
 不可用时不得偷偷写 WSL 本地库（fail-closed）。
 
-### 10.2 Windows daemon + bridge 部署
+### 10.2 Windows daemon 部署（HTTPS + mTLS）
+
+ADR-002 单轨：不存在明文 listener，也不需要 `cw-bridge`（已删除）。
 
 ```bash
 # 1. 构建（Windows）
-cargo build --release --no-default-features --bin cw-daemon --bin cw-bridge
+cargo build --release --no-default-features --bin cw-daemon
 
-# 2. 生成 bridge token（仅当前用户可读）
-#    Windows PowerShell：
-#    New-Item -Path "$env:USERPROFILE\.callwarden\bridge.token" -ItemType File -Force
-#    Set-Content -Path "$env:USERPROFILE\.callwarden\bridge.token" -Value (New-Guid).ToString()
-#    # ACL 仅当前用户：icacls ... /inheritance:r /grant:r "$env:USERNAME:(R,W)"
+# 2. 初始化 PKI（幂等；生成内置 CA、server 证书与本机 owner 客户端身份）
+cw pki init
 
-# 3. 启动 daemon（Named Pipe）
+# 3. 启动 daemon（HTTPS listener，默认 loopback；跨主机需 allow_remote）
 cw-daemon serve
+#   非 loopback 绑定必须显式：CW_DAEMON_HTTP_ALLOW_REMOTE=1
 
-# 4. 启动 bridge（WSL 共享启用时）
-$env:CW_BRIDGE_ENDPOINT = "127.0.0.1:8456"
-$env:CW_BRIDGE_TOKEN_FILE = "$env:USERPROFILE\.callwarden\bridge.token"
-cw-bridge
-
-# 5. 健康检查
+# 4. 健康检查
 cw daemon health   # 返回 authority_id/transport/task_db_fingerprint
-cw daemon bridge   # bridge transport + downstream daemon 可达（或 cw bridge health 兼容别名）
 ```
 
-### 10.3 WSL client（访问 Windows authority）
+### 10.3 WSL client（直连 Windows authority，HTTPS + mTLS）
 
 ```bash
-# 环境变量（WSL shell）
+# 环境变量（WSL shell）：端点来自 daemon 发布的 manifest v2，
+# 客户端证书/私钥/CA 由 `cw pki token issue` + `cw pki enroll` 取得
 export CW_AUTHORITY=windows-host
-export CW_DAEMON_TRANSPORT=windows-bridge
-export CW_BRIDGE_ENDPOINT=127.0.0.1:8456
-export CW_BRIDGE_TOKEN_FILE=/mnt/c/Users/<user>/.callwarden/bridge.token
+export CW_DAEMON_HTTP_ENDPOINT=https://<windows-host>:<port>
+export CW_CLIENT_CERT=/mnt/c/Users/<user>/.callwarden/identities/<principal_id>/client.crt
+export CW_CLIENT_KEY=/mnt/c/Users/<user>/.callwarden/identities/<principal_id>/client.key
+export CW_CA_CERT=/mnt/c/Users/<user>/.callwarden/pki/ca/ca.crt
 
-# 验证握手（authority pin）
-python -c "from callwarden.server.daemon_client import UnixDaemonRpcClient; \
-  c=UnixDaemonRpcClient(); print(c.hello())"
-# 期望：authority_id 为 windows-host，transport 为 windows-bridge
+# 验证握手（CA pin + 客户端证书）
+python cw.py daemon health
+# 期望：authority_id 为 windows-host，endpoint 为 https://...
 
-# 任务写（经 bridge → Windows daemon，禁止本地 fallback）
+# 任务写（经 HTTPS 直连 Windows daemon，禁止本地 fallback）
 python cw.py task list
 ```
 
@@ -614,14 +642,14 @@ cw daemon health   # authority 为 wsl-local
 
 | 故障 | 行为 | 检查命令 |
 | --- | --- | --- |
-| Windows daemon 不可用 | WSL 写请求 fail-closed（E_AUTHORITY_UNAVAILABLE） | `python cw.py task list`（应报 E_AUTHORITY_UNAVAILABLE） |
-| bridge 重启 | 客户端重连同一 authority；request_id 幂等 | 重发同一 request_id，daemon 返回已提交结果 |
+| HTTPS 端点不可用 | WSL 写请求 fail-closed（E_AUTHORITY_UNAVAILABLE / E_TLS_HANDSHAKE_FAILED） | `python cw.py task list`（应报对应 E_*） |
+| TLS 会话断开 | 客户端重连同一 authority；request_id 幂等 | 重发同一 request_id，daemon 返回已提交结果 |
 | authority 改变 | 客户端 `verify_authority` 拒绝（E_AUTHORITY_MISMATCH） | 检查 client 日志 |
 | 双 daemon 路径冲突 | 启动失败（E_AUTHORITY_STORAGE_CONFLICT） | `cw-daemon serve` exit 1 |
 
 ### 10.7 权限检查清单
 
-1. `bridge.token` 仅当前 Windows 用户可读（ACL 拒绝 Everyone/Users）；
+1. 客户端证书私钥仅当前用户可读（`identities/<principal_id>/client.key`，ACL 拒绝 Everyone/Users）；
 2. WSL 不直连 `/mnt/c` SQLite；
 3. WSL local daemon 的 UDS socket 归属当前用户（`/tmp/callwarden-<uid>.sock`）；
 4. Linux systemd daemon 的 UDS 在 `callwarden-clients` 组（如需多用户）。

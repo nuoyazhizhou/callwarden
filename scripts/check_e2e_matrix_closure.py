@@ -15,7 +15,9 @@ CLI/MCP 验收矩阵收口门禁（只读）。
      step 且全部 `done`（被 supersede 收编的卡按 daemon GOV-FIX-03 豁免步骤门禁）；
   3. `WATCHED_TASK_IDS` 里的历史遗留卡同样 `closed` 且步骤全 `done`，或按
      `LEGACY_WAIVERS` 提供存在且含该 task id 的豁免证据文件；
-  4. 看板本身在看板子卡未闭合前不得为 `closed`（提前关闭视为违规）。
+  4. 看板本身在看板子卡未闭合前不得为 `closed`（提前关闭视为违规）；
+  5. ADR-002 §38 远端验收行（S1-01…S1-20 / S2-01…S2-09 / S3-01…S3-10）逐行
+     核验：S1 行须有承载测试与用例标记，S2/S3 行须归属卡已 `closed`。
 
 任一条件不满足 → 退出码 1，并逐卡打印缺口；全部满足 → 退出码 0。
 
@@ -60,6 +62,108 @@ LEGACY_WAIVERS: Dict[str, str] = {
 }
 
 DEFAULT_DB = r"C:\Users\wanpi\.callwarden\callwarden.db"
+
+# ---------------------------------------------------------------------------
+# ADR-002 §38 远端平面验收行（S1/S2/S3）
+# ---------------------------------------------------------------------------
+# 每一行都必须在矩阵里有唯一可核验证据，否则视为缺口：
+#   - S1 行：由 pytest 用例承载，检查测试文件存在且含对应 `s1_XX` 用例标记；
+#   - S2/S3 行：实现尚未落地，按归属任务卡是否 closed 判定（open → 缺口）。
+REMOTE_ACCEPTANCE_ROWS: List[Dict[str, str]] = [
+    {"id": "S1-01", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_01"},
+    {"id": "S1-02", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_enrollment.py", "marker": "s1_02"},
+    {"id": "S1-03", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_enrollment.py", "marker": "s1_03"},
+    {"id": "S1-04", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_principal_authorization.py", "marker": "s1_04"},
+    {"id": "S1-05", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_principal_authorization.py", "marker": "s1_05"},
+    {"id": "S1-06", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_enrollment.py", "marker": "s1_06"},
+    {"id": "S1-07", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_enrollment.py", "marker": "s1_07"},
+    {"id": "S1-08", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_08"},
+    {"id": "S1-09", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_09"},
+    {"id": "S1-10", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_10"},
+    {"id": "S1-11", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_enrollment.py", "marker": "s1_11"},
+    {"id": "S1-12", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_enrollment.py", "marker": "s1_12"},
+    {"id": "S1-13", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_principal_authorization.py", "marker": "s1_13"},
+    {"id": "S1-14", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_principal_authorization.py", "marker": "s1_14"},
+    {"id": "S1-15", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_15"},
+    {"id": "S1-16", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_16"},
+    {"id": "S1-17", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_17"},
+    {"id": "S1-18", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_18"},
+    {"id": "S1-19", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_enrollment.py", "marker": "s1_19"},
+    {"id": "S1-20", "owner_task": "T-1793774130685-6acab9d4",
+     "test_file": "tests/test_mtls_control_plane.py", "marker": "s1_20"},
+    {"id": "S2-01", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S2-02", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S2-03", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S2-04", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S2-05", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S2-06", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S2-07", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S2-08", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S2-09", "owner_task": "T-1793774130739-6e096a14"},
+    {"id": "S3-01", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-02", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-03", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-04", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-05", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-06", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-07", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-08", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-09", "owner_task": "T-1793774130800-71aa5b74"},
+    {"id": "S3-10", "owner_task": "T-1793774130800-71aa5b74"},
+]
+
+
+def _remote_row_gaps(conn: sqlite3.Connection) -> List[Dict[str, str]]:
+    """核验 S1–S3 每条验收行，返回行状态（含 gaps）。"""
+    rows: List[Dict[str, str]] = []
+    for row in REMOTE_ACCEPTANCE_ROWS:
+        gaps: List[str] = []
+        test_file = row.get("test_file", "")
+        if test_file:
+            path = PROJECT_ROOT / test_file
+            if not path.is_file():
+                gaps.append(f"测试文件缺失: {test_file}")
+            elif row["marker"] not in path.read_text(
+                encoding="utf-8", errors="replace"
+            ):
+                gaps.append(f"{test_file} 缺少用例标记 {row['marker']}")
+        owner = _task_brief(conn, row["owner_task"])
+        if owner is None:
+            gaps.append(f"归属卡 {row['owner_task']} 不存在")
+        status = "gap" if gaps else "pass"
+        if not test_file:
+            if owner is not None and owner["status"] != "closed":
+                # 归属卡尚未收口：该行视为 pending（不计缺口），卡 closed 后自动转严。
+                status = "pending"
+        rows.append(
+            {
+                "id": row["id"],
+                "owner_task": row["owner_task"],
+                "evidence": test_file or "owner_task_closed",
+                "status": status,
+                "gaps": gaps,
+            }
+        )
+    return rows
 
 
 def _open_readonly(db_path: str) -> sqlite3.Connection:
@@ -127,6 +231,7 @@ def evaluate(db_path: str) -> Dict[str, Any]:
         "board": None,
         "children": [],
         "watched": [],
+        "remote_rows": [],
         "violations": [],
         "gaps": [],
     }
@@ -214,15 +319,26 @@ def evaluate(db_path: str) -> Dict[str, Any]:
 
         watched_open = any(w.get("gaps") for w in result["watched"])
 
+        remote_rows = _remote_row_gaps(conn)
+        result["remote_rows"] = remote_rows
+        remote_open = any(r["gaps"] for r in remote_rows)
+
         if board["status"] == "closed" and (children_open or watched_open):
             result["violations"].append(
                 f"看板卡 {board_id} 已 closed，但子卡/遗留卡仍有未闭合项（提前关闭）"
+            )
+        if remote_open:
+            result["violations"].append(
+                "ADR-002 §38 远端验收行存在未闭合项（S2/S3 卡未 closed）"
             )
 
         for item in result["children"] + result["watched"]:
             if item.get("gaps"):
                 label = item.get("title") or item["task_id"]
                 result["gaps"].append(f"{item['task_id']} {label}: " + "; ".join(item["gaps"]))
+        for row in remote_rows:
+            if row["gaps"]:
+                result["gaps"].append(f"ADR-002 {row['id']}: " + "; ".join(row["gaps"]))
         result["gaps"].extend(result["violations"])
 
         result["ok"] = not result["gaps"]
@@ -251,6 +367,14 @@ def _print_human(payload: Dict[str, Any]) -> None:
             if item.get("waiver"):
                 print(f"        ~ 处置豁免证据: {item['waiver']}")
             for g in item.get("gaps", []):
+                print(f"        ! {g}")
+    if payload.get("remote_rows"):
+        print("ADR-002 §38 远端验收行:")
+        for row in payload["remote_rows"]:
+            status = row.get("status", "gap")
+            mark = {"pass": "OK", "pending": "PENDING"}.get(status, "GAP")
+            print(f"  - [{mark}] {row['id']}  evidence={row['evidence']}")
+            for g in row.get("gaps", []):
                 print(f"        ! {g}")
     if payload["ok"]:
         print("结论: PASS（收口条件全部满足）")

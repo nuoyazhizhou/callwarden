@@ -61,11 +61,13 @@ def create_mcp_server():
 
 
 def _start_daemon_for_mcp_startup() -> None:
-    """MCP 启动时异步确保共享 daemon 可用，失败只记录不阻断 stdio。"""
+    """MCP 启动时异步确保共享 daemon 可用，失败只记录不阻断 stdio。
+
+    ADR-002：`daemon_mode=local` 的 HTTP 分支已删除——local 模式不再有任何
+    合法传输，MCP 一律经 HTTPS+mTLS 探活（缺证书即 fail-closed）。
+    """
     try:
-        from ..config import get_daemon_mode, resolve_daemon_endpoint_for_authority
-        if get_daemon_mode() == "local":
-            return
+        from ..config import resolve_daemon_endpoint_for_authority
 
         from .daemon_autostart import ensure_daemon_for_startup
         from .daemon_client import is_http_transport_enabled

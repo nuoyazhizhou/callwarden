@@ -10,9 +10,6 @@ param(
     [ValidateSet("debug", "release")]
     [string]$Configuration = "release",
     [switch]$RestartMcp,
-    [switch]$StartBridge,
-    [switch]$RestartBridge,
-    [string]$BridgeEndpoint = "auto",
     [switch]$RunSmokeTests,
     [switch]$NoPersistDaemonPath,
     [string]$TargetDir = "",
@@ -38,12 +35,6 @@ $RuntimeRoot = Join-Path $env:USERPROFILE ".callwarden\runtime"
 $VersionRoot = Join-Path $RuntimeRoot "versions"
 $CurrentRoot = Join-Path $RuntimeRoot "current"
 $EvidenceRoot = Join-Path $RuntimeRoot "evidence"
-$BridgeRoot = Join-Path $env:USERPROFILE ".callwarden"
-$BridgeTokenPath = Join-Path $BridgeRoot "bridge.token"
-$BridgeManifestPath = Join-Path $BridgeRoot "bridge.manifest.json"
-$BridgeWslEnvPath = Join-Path $BridgeRoot "bridge.wsl.env"
-$BridgePidPath = Join-Path $RuntimeRoot "bridge.pid"
-$BridgeLogPath = Join-Path $EvidenceRoot "bridge.log"
 if ([string]::IsNullOrWhiteSpace($TargetDir)) {
     $TargetDir = Join-Path $RepoRoot "rust_ext\target\stage-refresh"
 }
@@ -340,14 +331,11 @@ function Owned-Processes {
         $mcp = (($normalizedCmd -match "cw\.py[\s\\]+server") -or
             ($normalizedCmd -match "compat_worker\.py")) -and
             ($normalizedCmd -match $repoPattern)
-        $bridge = ($p.Name -match "^cw-bridge(?:\.exe)?$") -and
-            (($normalizedExe -match $repoPattern) -or ($normalizedCmd -match $repoPattern) -or
-             ($normalizedExe -match $runtimePattern) -or ($normalizedCmd -match $runtimePattern))
-        if ($daemon -or $mcp -or $bridge) {
+        if ($daemon -or $mcp) {
             $items += [pscustomobject]@{
                 pid = [int]$p.ProcessId; name = [string]$p.Name
                 executable = $exe; command_line = $cmd
-                kind = if ($daemon) { "daemon" } elseif ($bridge) { "bridge" } else { "mcp" }
+                kind = if ($daemon) { "daemon" } else { "mcp" }
             }
         }
     }
@@ -471,107 +459,6 @@ function Atomic-Json([string]$Path, [object]$Value) {
     Move-Item -LiteralPath $tmp -Destination $Path -Force
 }
 
-function Resolve-BridgeEndpoint {
-    if ($BridgeEndpoint -ne "auto") { return $BridgeEndpoint }
-    try {
-        # 不嵌套 bash/awk，避免 PowerShell 转义破坏 WSL 命令；直接解析 ip route 输出。
-        $routeLines = @(& wsl.exe -d Ubuntu -- ip route 2>$null)
-        $defaultRoute = $routeLines | Where-Object { $_ -match '^default\s+via\s+' } | Select-Object -First 1
-        $gateway = if ($defaultRoute -match '^default\s+via\s+([^\s]+)') { $Matches[1] } else { "" }
-        if ($gateway -match '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$') {
-            return "$gateway`:8456"
-        }
-    } catch {
-        Info "无法探测 WSL 默认网关，bridge 回退 Windows loopback"
-    }
-    return "127.0.0.1:8456"
-}
-
-function Ensure-BridgeToken {
-    New-Item -ItemType Directory -Force -Path $BridgeRoot | Out-Null
-    $existing = if (Test-Path -LiteralPath $BridgeTokenPath -PathType Leaf) {
-        (Get-Content -LiteralPath $BridgeTokenPath -Raw -ErrorAction Stop).Trim()
-    } else { "" }
-    if ([string]::IsNullOrWhiteSpace($existing)) {
-        $bytes = New-Object byte[] 32
-        $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-        try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
-        [Convert]::ToBase64String($bytes) | Set-Content -LiteralPath $BridgeTokenPath -NoNewline -Encoding ascii
-    }
-    try {
-        & icacls.exe $BridgeTokenPath /inheritance:r /grant:r "$($env:USERDOMAIN)\$($env:USERNAME):(R)" | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "icacls exit=$LASTEXITCODE" }
-    } catch {
-        throw "无法为 bridge token 设置当前用户 ACL：$($_.Exception.Message)"
-    }
-    return (Get-Content -LiteralPath $BridgeTokenPath -Raw -ErrorAction Stop).Trim()
-}
-
-function Start-Bridge([string]$BridgePath) {
-    $resolvedEndpoint = Resolve-BridgeEndpoint
-    if ($resolvedEndpoint -match "^tcp://") { $bridgeBind = $resolvedEndpoint.Substring(6) } else { $bridgeBind = $resolvedEndpoint }
-    if ($bridgeBind -notmatch "^[^:]+:[0-9]+$") { throw "BridgeEndpoint 必须是 host:port 或 tcp://host:port" }
-    $token = Ensure-BridgeToken
-    if ([string]::IsNullOrWhiteSpace($token)) { throw "bridge token 为空" }
-    $owned = @(Owned-Processes | Where-Object kind -eq "bridge")
-    if ($RestartBridge) { $owned | ForEach-Object { Stop-Owned $_ } }
-    $existingPid = $null
-    if (Test-Path -LiteralPath $BridgePidPath -PathType Leaf) {
-        $rawPid = (Get-Content -LiteralPath $BridgePidPath -Raw).Trim()
-        if ($rawPid -match '^[0-9]+$') { $existingPid = [int]$rawPid }
-    }
-    $running = $null
-    if ($existingPid) {
-        $candidate = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
-        if ($candidate -and ($candidate.Path -eq $BridgePath)) { $running = $candidate }
-    }
-    if (-not $running) {
-        $owned | Where-Object { $_.pid -ne $existingPid } | ForEach-Object { Stop-Owned $_ }
-        $env:CW_BRIDGE_ENDPOINT = $bridgeBind
-        $env:CW_BRIDGE_LISTEN_ADDR = $bridgeBind
-        $env:CW_BRIDGE_TOKEN_FILE = $BridgeTokenPath
-        $env:CW_BRIDGE_MANIFEST = $BridgeManifestPath
-        $bridgeOut = Join-Path $EvidenceRoot "bridge.stdout.log"
-        $bridgeErr = Join-Path $EvidenceRoot "bridge.stderr.log"
-        $running = Start-Process -FilePath $BridgePath -ArgumentList @() -WorkingDirectory $RepoRoot -WindowStyle Hidden `
-            -RedirectStandardOutput $bridgeOut -RedirectStandardError $bridgeErr -PassThru
-        Set-Content -LiteralPath $BridgePidPath -Value ([string]$running.Id) -Encoding ascii
-        Info "启动 Windows bridge: PID $($running.Id), endpoint tcp://$bridgeBind"
-    } else {
-        Info "复用 Windows bridge: PID $($running.Id), endpoint tcp://$bridgeBind"
-    }
-    for ($i = 0; $i -lt 30; $i++) {
-        Start-Sleep -Milliseconds 250
-        if ($running.HasExited) { throw "cw-bridge 已退出，详见 $BridgeLogPath" }
-        if (Test-Path -LiteralPath $BridgeManifestPath -PathType Leaf) {
-            $manifest = Get-Content -LiteralPath $BridgeManifestPath -Raw | ConvertFrom-Json
-            if ([string]$manifest.endpoint -match ":$([regex]::Escape(($bridgeBind -split ':')[-1]))$") { break }
-        }
-    }
-    if (-not (Test-Path -LiteralPath $BridgeManifestPath -PathType Leaf)) { throw "bridge manifest 未生成: $BridgeManifestPath" }
-    $drive = $BridgeRoot.Substring(0, 1).ToLowerInvariant()
-    $wslBridgeRoot = "/mnt/$drive" + ($BridgeRoot.Substring(2) -replace '\\', '/')
-    @(
-        "# 由 refresh_shared_runtime.ps1 生成；供 WSL MCP/CLI source",
-        "export CW_AUTHORITY=windows-host",
-        "export CW_DAEMON_TRANSPORT=windows-bridge",
-        "export CW_BRIDGE_MANIFEST=$wslBridgeRoot/bridge.manifest.json",
-        "export CW_BRIDGE_TOKEN_FILE=$wslBridgeRoot/bridge.token"
-    ) | Set-Content -LiteralPath $BridgeWslEnvPath -Encoding utf8
-    $oldEndpoint = $env:CW_BRIDGE_ENDPOINT; $oldTokenFile = $env:CW_BRIDGE_TOKEN_FILE
-    try {
-        $env:CW_BRIDGE_ENDPOINT = "tcp://$bridgeBind"
-        $env:CW_BRIDGE_TOKEN_FILE = $BridgeTokenPath
-        $health = @(& $PythonExe (Join-Path $RepoRoot "cw.py") daemon bridge --endpoint "tcp://$bridgeBind" --token-file $BridgeTokenPath 2>&1)
-        $healthCode = $LASTEXITCODE
-        $health | Set-Content -LiteralPath $BridgeLogPath -Encoding utf8
-        if ($healthCode -ne 0) { throw "bridge health 失败，exit=$healthCode；详见 $BridgeLogPath" }
-    } finally {
-        if ($null -eq $oldEndpoint) { Remove-Item Env:CW_BRIDGE_ENDPOINT -ErrorAction SilentlyContinue } else { $env:CW_BRIDGE_ENDPOINT = $oldEndpoint }
-        if ($null -eq $oldTokenFile) { Remove-Item Env:CW_BRIDGE_TOKEN_FILE -ErrorAction SilentlyContinue } else { $env:CW_BRIDGE_TOKEN_FILE = $oldTokenFile }
-    }
-    return [pscustomobject]@{ pid = $running.Id; endpoint = "tcp://$bridgeBind"; token_file = $BridgeTokenPath; manifest = $BridgeManifestPath; wsl_env = $BridgeWslEnvPath; health_log = $BridgeLogPath }
-}
 
 $head = (& git -C $RepoRoot rev-parse HEAD).Trim()
 $version = "{0}-{1}-{2}" -f (Get-Date -Format "yyyyMMdd-HHmmss"), $head.Substring(0, 12), ([guid]::NewGuid().ToString("N").Substring(0, 8))
@@ -608,7 +495,7 @@ try {
     Info "先构建新 runtime，不停止现有 MCP/daemon"
     Set-MsvcBuildEnv
     $cargoArgs = @("build", "--manifest-path", $RustManifest, "--target-dir", $TargetDir,
-        "--lib", "--bin", "cw-daemon", "--bin", "cw", "--bin", "cw-client", "--bin", "cw-bridge")
+        "--lib", "--bin", "cw-daemon", "--bin", "cw", "--bin", "cw-client")
     if ($Configuration -eq "release") { $cargoArgs += "--release" }
     elseif ($Configuration -ne "debug") { $cargoArgs += @("--profile", $Configuration) }
     $buildOutput = @(& cargo @cargoArgs 2>&1); $buildCode = $LASTEXITCODE
@@ -618,7 +505,7 @@ try {
     # Q9（2026-09-17）：第二套 Rust agent（rust_ext/src/bin/cw_agent.rs）已移除——
     # 生产 cw-agent 是 Python（callwarden.cli.agent:main + PyInstaller），rust_ext
     # 那套直连 UDS/Named Pipe 的并行实现从未被任何部署链引用。
-    $names = @("cw-daemon.exe", "cw.exe", "cw-client.exe", "cw-bridge.exe")
+    $names = @("cw-daemon.exe", "cw.exe", "cw-client.exe")
     $built = @()
     foreach ($name in $names) {
         $source = Join-Path $buildDir $name
@@ -702,11 +589,6 @@ try {
         ping_exit_code = $lastPing.exit_code; ping_output = $lastPing.output
     }
 
-    if ($StartBridge) {
-        $bridgePath = Join-Path $CurrentRoot "cw-bridge.exe"
-        $result.bridge = Start-Bridge $bridgePath
-    }
-
     $result.binaries = @($built | ForEach-Object {
         $installed = Join-Path $CurrentRoot $_.name
         [pscustomobject]@{ name = $_.name; path = $installed; sha256 = Digest $installed }
@@ -723,7 +605,7 @@ try {
         }
     }
     $result.processes_after = @(Owned-Processes); $result.status = "passed"
-    Info "runtime 切换成功；daemon/bridge 已就绪，MCP 由 IDE supervisor 重连"
+    Info "runtime 切换成功；daemon 已就绪，MCP 由 IDE supervisor 重连"
 }
 catch {
     $result.error = $_.Exception.Message
