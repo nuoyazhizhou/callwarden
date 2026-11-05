@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -48,14 +49,18 @@ from callwarden.config import (
     E_HTTP_MANIFEST_STALE,
     E_HTTP_REQUEST_TIMEOUT,
     E_MODE_DEPRECATED,
+    E_MTLS_CLIENT_CERT_MISSING,
+    E_MTLS_UNKNOWN_CA,
     E_PROTOCOL_VERSION_UNSUPPORTED,
     E_REQUEST_TOO_LARGE,
+    E_TLS_HANDSHAKE_FAILED,
     get_daemon_mode,
     get_http_authority_id,
     get_task_write_policy,
     http_method_timeout,
     is_daemon_required,
     is_http_transport_enabled,
+    resolve_client_cert_paths,
 )
 from callwarden.server.daemon_protocol import (
     DEFAULT_MAX_MESSAGE_BYTES,
@@ -2330,6 +2335,8 @@ class HttpDaemonRpcClient:
         # 测试/诊断钩子：最近一次出向信封与 request id
         self.last_request_body: Optional[Dict[str, Any]] = None
         self.last_request_id: Optional[str] = None
+        # ADR-002：懒构建的 mTLS 上下文（CA pin + 客户端证书）。
+        self._ssl_ctx: Optional[ssl.SSLContext] = None
 
     # ------------------------------------------------------------------
     # 发现与校验（fail-closed 门禁）
@@ -2393,6 +2400,47 @@ class HttpDaemonRpcClient:
     # 底层 HTTP
     # ------------------------------------------------------------------
 
+    def _ssl_context(self) -> ssl.SSLContext:
+        """构建/复用 mTLS 上下文（ADR-002 §7）。
+
+        - CA pin：优先用 manifest `tls.ca_cert_pem`（权威且已通过 manifest_hash
+          + 指纹自洽校验）；回退到本地 CA 文件。
+        - 客户端证书：`CW_CLIENT_CERT/CW_CLIENT_KEY/CW_CA_CERT` → 身份目录 →
+          manifest 同源；缺失 fail-closed 抛 `E_MTLS_CLIENT_CERT_MISSING`。
+        - `check_hostname=True`（默认）+ `minimum_version=TLSv1_2`。
+        """
+        if self._ssl_ctx is not None:
+            return self._ssl_ctx
+
+        cert, key, ca_file = resolve_client_cert_paths()
+        if not cert or not key:
+            raise DaemonUnavailableError(
+                "mTLS 客户端证书缺失：请先 `cw pki init`/`cw pki enroll`，或用 "
+                "CW_CLIENT_CERT/CW_CLIENT_KEY 指定（ADR-002 单轨，禁止回退明文）",
+                code=E_MTLS_CLIENT_CERT_MISSING,
+            )
+
+        manifest = self._manifest or {}
+        tls_block = manifest.get("tls") if isinstance(manifest, dict) else None
+        ca_pem = tls_block.get("ca_cert_pem") if isinstance(tls_block, dict) else ""
+        if not ca_pem and not ca_file:
+            raise DaemonUnavailableError(
+                "缺少 daemon CA 证书（manifest tls.ca_cert_pem 与本地 CA 均不可得）",
+                code=E_MTLS_UNKNOWN_CA,
+            )
+
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        if ca_pem:
+            ctx.load_verify_locations(cadata=ca_pem)
+        else:
+            ctx.load_verify_locations(cafile=ca_file)
+        ctx.load_cert_chain(certfile=cert, keyfile=key)
+        self._ssl_ctx = ctx
+        return ctx
+
     def _http_get(self, url: str) -> Any:
         """GET 请求；返回解析后的 JSON。连接失败抛 DaemonUnavailableError。"""
         # nosec B310：url 为本地 daemon endpoint（manifest 注册的
@@ -2400,7 +2448,9 @@ class HttpDaemonRpcClient:
         # 客户端为误报，请求经 Request 封装且带超时。
         try:
             req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:  # nosec B310
+            with urllib.request.urlopen(  # nosec B310
+                req, timeout=self._timeout, context=self._ssl_context()
+            ) as resp:
                 raw = resp.read()
             return json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as e:
@@ -2414,6 +2464,10 @@ class HttpDaemonRpcClient:
                 except Exception:
                     pass
             raise DaemonUnavailableError(f"HTTP GET {url} 失败 status={e.code}")
+        except ssl.SSLError as e:
+            raise DaemonUnavailableError(
+                f"TLS 握手失败（GET {url}）: {e}", code=E_TLS_HANDSHAKE_FAILED
+            )
         except OSError as e:
             raise self._connection_error(e, url)
         except (ValueError, UnicodeDecodeError) as exc:
@@ -2494,7 +2548,9 @@ class HttpDaemonRpcClient:
             )
             # nosec B310：url = 本地 daemon endpoint + "/v1/rpc"（见上行拼接），
             # 非用户输入；B310 对本地 RPC 客户端为误报。
-            with urllib.request.urlopen(req, timeout=self._timeout_for(method)) as resp:  # nosec B310
+            with urllib.request.urlopen(  # nosec B310
+                req, timeout=self._timeout_for(method), context=self._ssl_context()
+            ) as resp:
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as e:
@@ -2504,6 +2560,10 @@ class HttpDaemonRpcClient:
             except Exception:
                 raw = b""
             return self._handle_response(status, raw, rid, url)
+        except ssl.SSLError as e:
+            raise DaemonUnavailableError(
+                f"TLS 握手失败（POST {url}）: {e}", code=E_TLS_HANDSHAKE_FAILED
+            )
         except OSError as e:
             raise self._connection_error(e, url)
         return self._handle_response(status, raw, rid, url)
@@ -2588,7 +2648,9 @@ class HttpDaemonRpcClient:
             )
             # nosec B310：url = 本地 daemon endpoint + "/v1/rpc/multipart"（见
             # 上行拼接），非用户输入；B310 对本地 RPC 客户端为误报。
-            with urllib.request.urlopen(req, timeout=self._timeout_for(method)) as resp:  # nosec B310
+            with urllib.request.urlopen(  # nosec B310
+                req, timeout=self._timeout_for(method), context=self._ssl_context()
+            ) as resp:
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as e:
@@ -2603,6 +2665,10 @@ class HttpDaemonRpcClient:
             except Exception:
                 raw = b""
             return self._handle_response(status, raw, rid, url)
+        except ssl.SSLError as e:
+            raise DaemonUnavailableError(
+                f"TLS 握手失败（POST {url}）: {e}", code=E_TLS_HANDSHAKE_FAILED
+            )
         except OSError as e:
             raise self._connection_error(e, url)
         return self._handle_response(status, raw, rid, url)

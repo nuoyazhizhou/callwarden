@@ -1,19 +1,34 @@
-//! H1: Call Warden HTTP MVP transport（frozen contract: HTTP MVP Compatibility Contract §4）.
+//! 单轨 HTTPS + mTLS transport（ADR-002，`docs/design/mtls-remote-plane.md`）。
 //!
 //! - HTTP 栈：axum 0.8.x + hyper 1.x + tokio 1.x，仅 HTTP/1.1（不启用 HTTP/2 / WS / SSE / 压缩）。
-//! - 仅 dev_loopback_unauthenticated：bind 必须 loopback（127.0.0.0/8 或 ::1），
-//!   默认 `127.0.0.1:0` 动态端口；任何非 loopback 在绑定前 fail-closed 返回
-//!   `E_HTTP_MVP_LOOPBACK_ONLY`，且不建立 listener、不发布 manifest。
-//! - 端点：`GET /health`、`GET /capabilities`、`POST /v1/rpc`、`POST /v1/jobs`、
-//!   `GET /v1/jobs/{job_id}`、`POST /v1/jobs/{job_id}/cancel`。
+//! - TLS：rustls + ring，TLS 1.2+（优先 1.3），ALPN `http/1.1`。**不存在关闭 TLS 的开关**
+//!   （旧 `dev_loopback_unauthenticated` profile 视为非法配置）。
+//! - 绑定：默认 loopback（127.0.0.0/8 / ::1）；非 loopback 必须 `allow_remote`
+//!   （env `CW_DAEMON_HTTP_ALLOW_REMOTE=1`），否则 fail-closed
+//!   `E_HTTP_BIND_REMOTE_NOT_ALLOWED`，不建 listener、不发布 manifest。
+//! - 授权主语：客户端证书 SAN URI `spiffe://callwarden.local/principal/<principal_id>`
+//!   （唯一身份来源）；缺失客户端证书的路由返回 403 `E_MTLS_CLIENT_CERT_MISSING`。
+//! - 免客户端证书的仅两个面：`GET /health`（探活）与 `POST /v1/enroll`（引导，需单次 token）。
+//! - 端点：`GET /health`、`GET /capabilities`、`POST /v1/enroll`、`POST /v1/rpc`、
+//!   `POST /v1/rpc/multipart`、`POST /v1/jobs`、`GET /v1/jobs/{job_id}`、
+//!   `POST /v1/jobs/{job_id}/cancel`、`GET /v1/meta/tools`。
 //! - JSON-RPC 2.0 envelope IN/OUT；业务错误保留 `error.data.code`（E_* 字符串）。
-//! - body 上限 8 MiB；Content-Type 必须为 `application/json`（否则 415）。
-//! - mutation request_id 去重（内存 HashMap，跨重启保留推迟到 H3/H4）。
-//! - 身份：合成 local-owner `PeerCredential`（无 OS peer cred over HTTP）。
-//! - 绑定成功后原子发布 `callwarden-http-manifest/v1` manifest。
+//! - body 上限 64 MiB；Content-Type 必须为 `application/json`（否则 415）。
+//! - mutation request_id 去重（SQLite 持久化，跨 restart 保留 ≥24h）。
+//! - 绑定成功后原子发布 `callwarden-http-manifest/v2`（含 CA PEM/指纹、server 指纹、SAN）。
 //!
 //! 本模块对 `S: DaemonStateExt + Send + Sync + 'static` 泛型，持有
 //! `Arc<tokio::sync::Mutex<S>>` + `Arc<SerializationPoint>`。
+
+// PKI 子模块：`mod.rs` 不在本步所有权白名单，沿用 dispatch.rs 的 `#[path]` 内联子模块
+// 先例，在这里声明兄弟文件。
+#[path = "pki_api.rs"]
+pub mod pki_api;
+#[path = "pki_handlers.rs"]
+mod pki_handlers;
+/// ADR-002 §5：principal 身份层与 workspace 授权（含吊销热更新语义）。
+#[path = "auth_principal.rs"]
+pub mod auth_principal;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -23,13 +38,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     body::{Body, Bytes},
-    extract::{Multipart, Path, Request, State},
+    extract::{Extension, Multipart, Path, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::Response,
     routing::{get, post},
     Router,
 };
+use hyper_util::rt::TokioIo;
+use hyper_util::service::TowerToHyperService;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::net::ToSocketAddrs;
@@ -57,8 +74,11 @@ const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// Content-Length 判定）。超过 → 413 `E_PAYLOAD_TOO_LARGE`。
 const MAX_PAYLOAD_PART_BYTES: usize = MAX_BODY_BYTES;
 
-/// 固定 security profile 标识。
-const SECURITY_PROFILE: &str = "dev_loopback_unauthenticated";
+/// 固定 security profile 标识（ADR-002 §15.4：单轨 HTTPS+mTLS）。
+const SECURITY_PROFILE: &str = "https_mtls_v1";
+
+/// manifest schema 标识（ADR-002 §15.4：v1 视为过期客户端，不降级）。
+const MANIFEST_SCHEMA: &str = "callwarden-http-manifest/v2";
 
 /// capability registry revision（H1 冻结标识）。
 const CAPABILITY_REGISTRY_REVISION: &str = "http-mvp-cap-registry-v1";
@@ -67,13 +87,19 @@ const CAPABILITY_REGISTRY_REVISION: &str = "http-mvp-cap-registry-v1";
 // 错误类型
 // ============================================
 
-/// HTTP MVP 绑定/服务错误。
+/// HTTP transport 绑定/服务错误。
 ///
-/// `LoopbackOnly` 对应 `E_HTTP_MVP_LOOPBACK_ONLY`：非 loopback 绑定被拒绝，
-/// listener 未建立，manifest 未发布。
+/// `LoopbackOnly` 对应 `E_HTTP_MVP_LOOPBACK_ONLY`（历史 loopback 校验入口）。
+/// `RemoteNotAllowed` 对应 `E_HTTP_BIND_REMOTE_NOT_ALLOWED`：非 loopback 绑定
+/// 未显式 `allow_remote`，listener 未建立，manifest 未发布。
 #[derive(Debug)]
 pub enum HttpServerError {
     LoopbackOnly,
+    RemoteNotAllowed,
+    /// `CW_DAEMON_HTTP_PROFILE` 显式指定了非 `https_mtls_v1` 的旧 profile
+    /// （如 `dev_loopback_unauthenticated`）→ 启动期非法配置，不静默降级。
+    ProfileInvalid(String),
+    Tls(String),
     Bind(String),
     Manifest(String),
     Serve(String),
@@ -85,6 +111,16 @@ impl std::fmt::Display for HttpServerError {
             HttpServerError::LoopbackOnly => {
                 write!(f, "E_HTTP_MVP_LOOPBACK_ONLY: non-loopback bind rejected")
             }
+            HttpServerError::RemoteNotAllowed => write!(
+                f,
+                "E_HTTP_BIND_REMOTE_NOT_ALLOWED: non-loopback bind requires allow_remote"
+            ),
+            HttpServerError::ProfileInvalid(profile) => write!(
+                f,
+                "E_HTTP_PROFILE_INVALID: {} is not supported (only https_mtls_v1)",
+                profile
+            ),
+            HttpServerError::Tls(e) => write!(f, "{}", e),
             HttpServerError::Bind(e) => write!(f, "E_HTTP_BIND_FAILED: {}", e),
             HttpServerError::Manifest(e) => write!(f, "E_HTTP_MANIFEST_WRITE: {}", e),
             HttpServerError::Serve(e) => write!(f, "E_HTTP_SERVE_FAILED: {}", e),
@@ -129,6 +165,10 @@ pub struct HttpServerConfig {
     pub manifest_id: String,
     /// 绑定成功后的实际 endpoint（由 serve 填充）。
     pub endpoint: String,
+    /// 是否允许非 loopback 绑定（ADR-002 §6：必须显式开启）。
+    pub allow_remote: bool,
+    /// PKI 根目录（`CW_PKI_DIR` 优先，否则 manifest 同目录 `pki/`）。
+    pub pki_dir: PathBuf,
 }
 
 impl HttpServerConfig {
@@ -139,6 +179,8 @@ impl HttpServerConfig {
             .parent()
             .map(|p| p.join("http-dedup-v1.sqlite"))
             .unwrap_or_else(|| PathBuf::from("http-dedup-v1.sqlite"));
+        let pki_dir = pki_api::pki_root(&manifest_path);
+        let allow_remote = remote_bind_allowed_from_env();
         Self {
             bind_spec,
             manifest_path,
@@ -152,8 +194,35 @@ impl HttpServerConfig {
             worker_status: "not_started".to_string(),
             manifest_id: make_id("manifest"),
             endpoint: String::new(),
+            allow_remote,
+            pki_dir,
         }
     }
+}
+
+/// `CW_DAEMON_HTTP_PROFILE`（旧 profile 显式非法，ADR-002 §15.4）。
+pub const HTTP_PROFILE_ENV: &str = "CW_DAEMON_HTTP_PROFILE";
+
+/// 校验 `CW_DAEMON_HTTP_PROFILE`：未设置/空 → 默认 `https_mtls_v1`；
+/// 显式设置且不等于 `https_mtls_v1` → `E_HTTP_PROFILE_INVALID`（不静默降级）。
+pub fn validate_security_profile_from_env() -> Result<(), HttpServerError> {
+    if let Ok(raw) = std::env::var(HTTP_PROFILE_ENV) {
+        let profile = raw.trim();
+        if !profile.is_empty() && profile != SECURITY_PROFILE {
+            return Err(HttpServerError::ProfileInvalid(profile.to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// `CW_DAEMON_HTTP_ALLOW_REMOTE`（`1`/`true`）→ 允许非 loopback 绑定。
+fn remote_bind_allowed_from_env() -> bool {
+    std::env::var("CW_DAEMON_HTTP_ALLOW_REMOTE")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes"
+        })
+        .unwrap_or(false)
 }
 
 // ============================================
@@ -305,6 +374,8 @@ pub struct AppState<S: DaemonStateExt + Send + Sync + 'static> {
     pub jobs: Arc<StdMutex<HashMap<String, JobRecord>>>,
     /// H3: Python compatibility worker adapter（python_compat 方法路由）。
     pub compat: Arc<CompatAdapter>,
+    /// ADR-002 §5：SAN URI → principal 授权（吊销集/workspace grant 热更新）。
+    pub principal_registry: Arc<auth_principal::PrincipalRegistry>,
 }
 
 impl<S: DaemonStateExt + Send + Sync + 'static> Clone for AppState<S> {
@@ -316,6 +387,7 @@ impl<S: DaemonStateExt + Send + Sync + 'static> Clone for AppState<S> {
             dedup: Arc::clone(&self.dedup),
             jobs: Arc::clone(&self.jobs),
             compat: Arc::clone(&self.compat),
+            principal_registry: Arc::clone(&self.principal_registry),
         }
     }
 }
@@ -349,7 +421,27 @@ pub fn validate_loopback_bind(spec: &str) -> Result<(), HttpServerError> {
     resolve_loopback(spec).map(|_| ())
 }
 
-/// 绑定成功后的句柄（listener 已就绪、manifest 已发布）。
+/// 解析绑定地址：loopback 恒允许；非 loopback 仅在 `allow_remote` 时放行
+/// （否则 `E_HTTP_BIND_REMOTE_NOT_ALLOWED`，ADR-002 §6）。
+pub fn resolve_bind(spec: &str, allow_remote: bool) -> Result<SocketAddr, HttpServerError> {
+    let addrs: Vec<SocketAddr> = match spec.to_socket_addrs() {
+        Ok(it) => it.collect(),
+        Err(_) => return Err(HttpServerError::LoopbackOnly),
+    };
+    if addrs.is_empty() {
+        return Err(HttpServerError::LoopbackOnly);
+    }
+    if !allow_remote {
+        for a in &addrs {
+            if !a.ip().is_loopback() {
+                return Err(HttpServerError::RemoteNotAllowed);
+            }
+        }
+    }
+    Ok(addrs[0])
+}
+
+/// 绑定成功后的句柄（listener 已就绪、manifest 已发布、TLS 已装配）。
 ///
 /// CR10：listener 为 std socket——预绑定发生在 tokio runtime 建立之前，
 /// serve 时经 `TcpListener::from_std` 转换后 accept。
@@ -357,9 +449,18 @@ pub struct BoundHttp {
     pub listener: std::net::TcpListener,
     pub local_addr: SocketAddr,
     pub manifest: Value,
+    /// rustls 服务端配置（含客户端证书验证器）。
+    pub tls: Arc<rustls::ServerConfig>,
+    /// 本地 CA（enroll 签发复用）。
+    pub ca: pki_api::LocalCa,
+    /// 服务端叶证书公开信息（manifest 指纹/有效期来源）。
+    pub server_cert: pki_api::ServerCertificate,
 }
 
 /// 绑定 + 发布 manifest（仅在成功 bind 之后）。
+///
+/// ADR-002 顺序：CA / 服务端证书 / SAN 覆盖校验全部在建立 listener **之前**
+/// 完成（fail-closed，不留下半启动的明文或错配端点）。
 ///
 /// CR10（client_convergence_codereview_20260909 §八）：使用 std listener 同步
 /// 预绑定，可在 daemon 重启动步骤（recovery / snapshot 恢复 / TaskCollabStore
@@ -367,7 +468,14 @@ pub struct BoundHttp {
 /// 原子替换，消除重启后旧 manifest（已死 PID）导致的 E_HTTP_MANIFEST_STALE
 /// fail-closed 窗口；listener 先行入内核 backlog，TCP connect 探针即刻成功。
 pub fn bind_http(cfg: &HttpServerConfig) -> Result<BoundHttp, HttpServerError> {
-    let addr = resolve_loopback(&cfg.bind_spec)?;
+    validate_security_profile_from_env()?;
+    let addr = resolve_bind(&cfg.bind_spec, cfg.allow_remote)?;
+    let ca = pki_api::ensure_ca(&cfg.pki_dir).map_err(|e| HttpServerError::Tls(e.to_string()))?;
+    let server_cert =
+        pki_api::ensure_server_cert(&ca, &addr).map_err(|e| HttpServerError::Tls(e.to_string()))?;
+    let tls =
+        pki_api::build_tls_config(&ca, &server_cert).map_err(|e| HttpServerError::Tls(e.to_string()))?;
+
     let listener =
         std::net::TcpListener::bind(addr).map_err(|e| HttpServerError::Bind(e.to_string()))?;
     // CR10：预绑定期即置 nonblocking——serve_prebound 经 from_std 转换时
@@ -378,12 +486,15 @@ pub fn bind_http(cfg: &HttpServerConfig) -> Result<BoundHttp, HttpServerError> {
     let local = listener
         .local_addr()
         .map_err(|e| HttpServerError::Bind(e.to_string()))?;
-    let manifest = build_manifest(cfg, &local);
+    let manifest = build_manifest(cfg, &local, &ca, &server_cert);
     publish_manifest_atomic(&cfg.manifest_path, &manifest)?;
     Ok(BoundHttp {
         listener,
         local_addr: local,
         manifest,
+        tls,
+        ca,
+        server_cert,
     })
 }
 
@@ -435,10 +546,10 @@ where
         }
         config.worker_status = compat.worker_status();
     }
-    config.endpoint = format!("http://{}", local);
+    config.endpoint = format!("https://{}", local);
     // CR10：compat worker 状态回写 manifest（非致命：失败仅影响 manifest 字段新鲜度）
     {
-        let manifest = build_manifest(&config, &local);
+        let manifest = build_manifest(&config, &local, &bound.ca, &bound.server_cert);
         if let Err(e) = publish_manifest_atomic(&config.manifest_path, &manifest) {
             eprintln!(
                 "[cw_daemon][http] manifest worker_status 回写失败（忽略）: {}",
@@ -448,6 +559,10 @@ where
     }
     // P0-2：打开持久化去重存储（与 manifest 同目录，跨 restart 保留 ≥24h）
     let dedup = Arc::new(DedupStore::open(&config.dedup_db_path)?);
+    // ADR-002 §5：principal 授权注册表（磁盘签发台账 + 权威 DB 吊销/授权）。
+    let principal_registry = Arc::new(auth_principal::PrincipalRegistry::from_env(
+        config.pki_dir.clone(),
+    ));
     let app_state = AppState {
         state,
         serialization: sp,
@@ -455,14 +570,61 @@ where
         dedup,
         jobs: Arc::new(StdMutex::new(HashMap::new())),
         compat,
+        principal_registry,
     };
     let router = build_router(app_state);
     let listener = tokio::net::TcpListener::from_std(bound.listener)
         .map_err(|e| HttpServerError::Serve(e.to_string()))?;
-    axum::serve(listener, router)
-        .await
-        .map_err(|e| HttpServerError::Serve(e.to_string()))?;
-    Ok(local)
+    accept_loop(listener, router, bound.tls).await;
+}
+
+/// 逐连接 TLS accept 循环（serve 与测试共用）。
+///
+/// TLS 握手阶段即拒非法/过期/未知 CA 的客户端证书；握手成功后把 peer 身份
+/// （principal_id / SAN / 证书指纹）作为 request extension 注入每份 router 副本，
+/// 再交给 hyper 驱动 axum Router。
+async fn accept_loop(
+    listener: tokio::net::TcpListener,
+    router: Router,
+    tls: Arc<rustls::ServerConfig>,
+) -> ! {
+    let acceptor = tokio_rustls::TlsAcceptor::from(tls);
+    loop {
+        let (stream, _peer_addr) = match listener.accept().await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[cw_daemon][http] accept failed: {}", e);
+                continue;
+            }
+        };
+        let acceptor = acceptor.clone();
+        let router = router.clone();
+        tokio::spawn(async move {
+            let tls_stream = match acceptor.accept(stream).await {
+                Ok(s) => s,
+                Err(e) => {
+                    // ADR §15.3：握手失败对外只给 E_TLS_HANDSHAKE_FAILED，原因写日志。
+                    eprintln!("[cw_daemon][http] E_TLS_HANDSHAKE_FAILED: {}", e);
+                    return;
+                }
+            };
+            let peer = tls_peer_of(tls_stream.get_ref().1);
+            let app = router.layer(Extension(peer));
+            let io = TokioIo::new(tls_stream);
+            let svc = TowerToHyperService::new(app);
+            // ADR-002 §5.3：连接最大存活时间兜底——吊销/授权变更对**旧连接**的
+            // 最迟生效点是 max_conn_age（默认 300s），到期强制断开。
+            let served = hyper::server::conn::http1::Builder::new().serve_connection(io, svc);
+            match tokio::time::timeout(auth_principal::MAX_CONNECTION_AGE, served).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => eprintln!("[cw_daemon][http] connection closed: {}", e),
+                Err(_) => eprintln!(
+                    "[cw_daemon][http] connection closed: max_conn_age ({}s) exceeded",
+                    auth_principal::MAX_CONNECTION_AGE.as_secs()
+                ),
+            }
+        });
+    }
 }
 
 /// 在独立 OS 线程 + tokio runtime 中启动 HTTP transport，与现有 UDS/Named Pipe transport 并行运行。
@@ -525,11 +687,110 @@ async fn enforce_max_body_size(req: Request, next: Next, git: &str) -> Response 
     next.run(req).await
 }
 
+/// TLS 客户端身份（由每连接的 peer 证书解析，注入 request extension）。
+///
+/// 身份唯一来源是 SAN URI `spiffe://callwarden.local/principal/<principal_id>`
+/// （ADR §5.1：不读 CN、不回落到 OS uid/SID）。
+#[derive(Clone, Debug, Default)]
+pub struct TlsPeer {
+    /// 授权主语（`None` = 未提供客户端证书）。
+    pub principal_id: Option<String>,
+    /// 完整 SAN URI（审计用）。
+    pub san_uri: Option<String>,
+    /// 叶证书 SHA-256 指纹（审计/吊销排查用）。
+    pub cert_sha256: Option<String>,
+    /// 叶证书 serial（`pki_revocations` 比对，ADR-002 §5.3 吊销）。
+    pub cert_serial: Option<String>,
+}
+
+/// 从已完成的 TLS 握手读取 peer 身份。
+fn tls_peer_of(conn: &rustls::ServerConnection) -> TlsPeer {
+    let Some(certs) = conn.peer_certificates() else {
+        return TlsPeer::default();
+    };
+    let Some(leaf) = certs.first() else {
+        return TlsPeer::default();
+    };
+    let der = leaf.as_ref();
+    let principal = pki_api::principal_id_from_cert(der);
+    TlsPeer {
+        san_uri: principal
+            .as_ref()
+            .map(|p| format!("{}{}", pki_api::PRINCIPAL_URI_PREFIX, p)),
+        principal_id: principal,
+        cert_sha256: Some(pki_api::cert_fingerprint(der)),
+        cert_serial: Some(pki_api::cert_serial_hex(der)),
+    }
+}
+
+/// 免客户端证书路径（仅探活与引导，其余一律 mTLS）。
+const CLIENT_CERT_EXEMPT_PATHS: [&str; 2] = ["/health", "/v1/enroll"];
+
+/// 已授权的 principal（由 `authorize_principal` 中间件注入 request extension）。
+#[derive(Clone, Copy, Debug)]
+pub struct AuthPrincipal(pub crate::daemon::peercred::PrincipalIdentity);
+
+/// 中间件：除豁免路径外，缺失证书 → `E_MTLS_CLIENT_CERT_MISSING`；
+/// 有证书但 principal 未登记/已吊销 → `E_PRINCIPAL_UNKNOWN` / `E_PRINCIPAL_REVOKED`。
+///
+/// 授权判定只读证书 SAN URI（`principal_id`），与 OS uid/SID 无关（ADR-002 §5.1）。
+async fn authorize_principal(
+    mut req: Request,
+    next: Next,
+    registry: Arc<auth_principal::PrincipalRegistry>,
+) -> Response {
+    if CLIENT_CERT_EXEMPT_PATHS.contains(&req.uri().path()) {
+        return next.run(req).await;
+    }
+    let peer = req
+        .extensions()
+        .get::<TlsPeer>()
+        .cloned()
+        .unwrap_or_default();
+    let Some(principal_id) = peer.principal_id.clone() else {
+        return json_response(
+            StatusCode::FORBIDDEN,
+            json!({
+                "error": {
+                    "code": "E_MTLS_CLIENT_CERT_MISSING",
+                    "message": "client certificate (mTLS) required",
+                }
+            })
+            .to_string(),
+        );
+    };
+    let serial = peer.cert_serial.clone().unwrap_or_default();
+    let fingerprint = peer.cert_sha256.clone().unwrap_or_default();
+    // 每个新连接按最新吊销集/授权判定（DB 按 data_version 热重载，磁盘台账实时读取）。
+    match registry.authorize(&principal_id, &serial, &fingerprint) {
+        Ok(identity) => {
+            req.extensions_mut().insert(AuthPrincipal(identity));
+            next.run(req).await
+        }
+        Err(e) => json_response(
+            StatusCode::FORBIDDEN,
+            json!({
+                "error": {
+                    "code": e.code(),
+                    "message": e.message(),
+                }
+            })
+            .to_string(),
+        ),
+    }
+}
+
 pub fn build_router<S: DaemonStateExt + Send + Sync + 'static>(app: AppState<S>) -> Router {
     let git = app.config.git_commit.clone();
+    let registry = Arc::clone(&app.principal_registry);
     Router::new()
         .route("/health", get(health_handler::<S>))
         .route("/capabilities", get(capabilities_handler::<S>))
+        .route("/v1/enroll", post(pki_handlers::enroll_handler::<S>))
+        .route(
+            "/v1/enroll/renew",
+            post(pki_handlers::renew_handler::<S>),
+        )
         .route("/v1/rpc", post(rpc_handler::<S>))
         .route("/v1/rpc/multipart", post(rpc_multipart_handler::<S>))
         .route("/v1/jobs", post(jobs_handler::<S>))
@@ -539,6 +800,10 @@ pub fn build_router<S: DaemonStateExt + Send + Sync + 'static>(app: AppState<S>)
         .layer(middleware::from_fn(move |req, next| {
             let git = git.clone();
             async move { enforce_max_body_size(req, next, &git).await }
+        }))
+        .layer(middleware::from_fn(move |req, next| {
+            let registry = Arc::clone(&registry);
+            async move { authorize_principal(req, next, registry).await }
         }))
         .with_state(app)
 }
@@ -692,6 +957,7 @@ fn compat_route(method: &str) -> Option<&'static str> {
 /// POST /v1/rpc — JSON-RPC 2.0 dispatch。
 async fn rpc_handler<S: DaemonStateExt + Send + Sync + 'static>(
     State(app): State<AppState<S>>,
+    Extension(auth): Extension<AuthPrincipal>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -843,8 +1109,9 @@ async fn rpc_handler<S: DaemonStateExt + Send + Sync + 'static>(
         }
     }
 
-    // 合成 local-owner peer（无 OS peer cred over HTTP）
-    let peer = synthetic_local_owner_peer();
+    // 合成 peer 承载 mTLS principal（ADR-002 §5.1：授权主语来自证书 SAN URI，
+    // 而非 OS uid；uid 字段仅为该连接保留诊断元数据）。
+    let peer = synthetic_local_owner_peer().with_principal(auth.0);
 
     let result = {
         let mut st = app.state.lock().await;
@@ -969,6 +1236,7 @@ fn validate_rpc_envelope(parsed: &Value, git: &str) -> Result<(String, String, V
 /// daemon 侧 `decompress_gz_bounded` 强制截断。
 async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
     State(app): State<AppState<S>>,
+    Extension(auth): Extension<AuthPrincipal>,
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Response {
@@ -1159,7 +1427,7 @@ async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
         let bg_params = params.clone();
         let bg_id = id.clone();
         let bg_ws = ws.clone();
-        let bg_peer = synthetic_local_owner_peer();
+        let bg_peer = synthetic_local_owner_peer().with_principal(auth.0);
         tokio::spawn(async move {
             // InlinePayload 在 task 内构造，payload Vec 直接 move（零额外拷贝）
             let inline_payload = match (payload_raw.as_deref(), payload_gz.as_deref()) {
@@ -1238,6 +1506,7 @@ async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
 /// POST /v1/jobs — 接受与 /v1/rpc 相同的 envelope，返回 202。
 async fn jobs_handler<S: DaemonStateExt + Send + Sync + 'static>(
     State(app): State<AppState<S>>,
+    Extension(auth): Extension<AuthPrincipal>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -1358,7 +1627,7 @@ async fn jobs_handler<S: DaemonStateExt + Send + Sync + 'static>(
     let sp = Arc::clone(&app.serialization);
     let jobs2 = Arc::clone(&app.jobs);
     let jid = job_id.clone();
-    let peer = synthetic_local_owner_peer();
+    let peer = synthetic_local_owner_peer().with_principal(auth.0);
     tokio::spawn(async move {
         {
             let mut j = jobs2.lock().unwrap();
@@ -1575,7 +1844,7 @@ fn jsonrpc_int_code(e: &str) -> i64 {
 // 身份 / 工具
 // ============================================
 
-/// 构造合成 local-owner peer（dev_loopback_unauthenticated 下无 OS peer cred）。
+/// 构造合成 local-owner peer（HTTP 无 OS peer cred；授权主语由 TLS 证书 SAN 承担）。
 fn synthetic_local_owner_peer() -> PeerCredential {
     let key = current_daemon_owner_key();
     #[cfg(windows)]
@@ -1685,13 +1954,53 @@ fn make_id(prefix: &str) -> String {
 // Manifest
 // ============================================
 
-/// 构造 manifest（callwarden-http-manifest/v1），`manifest_hash` 排除自身。
-fn build_manifest(cfg: &HttpServerConfig, local: &SocketAddr) -> Value {
+/// 构造 manifest（`callwarden-http-manifest/v2`，ADR-002 §15.4）。
+///
+/// `manifest_hash` 排除自身；不含任何私钥、principal 列表、grant 或 workspace 路径。
+fn build_manifest(
+    cfg: &HttpServerConfig,
+    local: &SocketAddr,
+    ca: &pki_api::LocalCa,
+    server_cert: &pki_api::ServerCertificate,
+) -> Value {
     let mut m = std::collections::BTreeMap::new();
     m.insert(
-        "manifest_version".to_string(),
-        Value::String("callwarden-http-manifest/v1".into()),
+        "schema".to_string(),
+        Value::String(MANIFEST_SCHEMA.into()),
     );
+    m.insert(
+        "security_profile".to_string(),
+        Value::String(SECURITY_PROFILE.into()),
+    );
+    m.insert(
+        "endpoint".to_string(),
+        Value::String(format!("https://{}", local)),
+    );
+    m.insert(
+        "bind_scope".to_string(),
+        Value::String(if local.ip().is_loopback() {
+            "loopback".into()
+        } else {
+            "remote".into()
+        }),
+    );
+    m.insert(
+        "auth".to_string(),
+        Value::String("mtls_client_cert_required".into()),
+    );
+    m.insert(
+        "tls".to_string(),
+        json!({
+            "min_version": "1.2",
+            "ca_cert_pem": ca.cert_pem,
+            "ca_fingerprint_sha256": ca.fingerprint_sha256,
+            "server_cert_sha256": server_cert.sha256,
+            "server_not_after": server_cert.not_after,
+            "san": server_cert.san,
+        }),
+    );
+
+    // 诊断/兼容字段（不含敏感数据）
     m.insert(
         "manifest_id".to_string(),
         Value::String(cfg.manifest_id.clone()),
@@ -1699,10 +2008,6 @@ fn build_manifest(cfg: &HttpServerConfig, local: &SocketAddr) -> Value {
     m.insert(
         "authority_id".to_string(),
         Value::String(cfg.authority_id.clone()),
-    );
-    m.insert(
-        "endpoint".to_string(),
-        Value::String(format!("http://{}", local)),
     );
     m.insert("pid".to_string(), Value::Number(std::process::id().into()));
     m.insert(
@@ -1721,10 +2026,6 @@ fn build_manifest(cfg: &HttpServerConfig, local: &SocketAddr) -> Value {
     m.insert(
         "supported_protocol_versions".to_string(),
         Value::Array(vec![Value::String("1".into())]),
-    );
-    m.insert(
-        "security_profile".to_string(),
-        Value::String(SECURITY_PROFILE.into()),
     );
     m.insert(
         "git_commit".to_string(),
@@ -1747,13 +2048,54 @@ fn build_manifest(cfg: &HttpServerConfig, local: &SocketAddr) -> Value {
         Value::String(cfg.worker_status.clone()),
     );
 
-    // 计算 manifest_hash（排除自身）后插入
-    let canonical =
-        serde_json::to_string(&Value::Object(m.clone().into_iter().collect())).unwrap_or_default();
+    // 计算 manifest_hash（排除自身）后插入。
+    //
+    // 必须使用递归 canonical（key 字典序）序列化：Cargo.toml 为 serde_json 启用了
+    // `preserve_order`（对齐 Python dict 插入序），若直接 `to_string` 则嵌套 `tls`
+    // 对象按插入序输出，与 Python `json.dumps(sort_keys=True, separators=(",",":"))`
+    // 的 canonical 结果不一致 → 客户端 `E_HTTP_MANIFEST_HASH_MISMATCH`。
+    let canonical = canonical_json(&Value::Object(m.clone().into_iter().collect()));
     let hash = sha256_hex(canonical.as_bytes());
     m.insert("manifest_hash".to_string(), Value::String(hash));
 
     Value::Object(m.into_iter().collect())
+}
+
+/// 递归 canonical JSON：对象 key 按字典序、紧凑分隔符、UTF-8 原样输出。
+///
+/// 与 Python `json.dumps(..., sort_keys=True, ensure_ascii=False,
+/// separators=(",", ":"))` 逐字节对齐（serde_json 默认不转义非 ASCII，等价
+/// `ensure_ascii=False`）。用于 manifest_hash 计算。
+fn canonical_json(v: &Value) -> String {
+    match v {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = String::from("{");
+            for (i, k) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(*k).unwrap_or_default());
+                out.push(':');
+                out.push_str(&canonical_json(&map[*k]));
+            }
+            out.push('}');
+            out
+        }
+        Value::Array(arr) => {
+            let mut out = String::from("[");
+            for (i, item) in arr.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&canonical_json(item));
+            }
+            out.push(']');
+            out
+        }
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
 }
 
 /// 原子发布 manifest：owner-only 临时文件 → flush/fsync → 原子 replace。
@@ -5040,9 +5382,86 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
-    /// 在当前 tokio runtime 中启动真实 loopback HTTP server（通过 tokio::spawn 驱动
-    /// axum::serve 的 accept loop），返回绑定地址。使用测试运行时可避免独立 runtime
-    /// 中 axum::serve 内部 tokio::spawn 的 accept loop 不被驱动、请求无响应的问题。
+    /// 测试进程内共享的 PKI（一套 CA + 一个 executor 客户端身份）。
+    ///
+    /// 测试是单进程多测试并行：不能改全局 `CW_PKI_DIR`（会串味），因此每个
+    /// `spawn_server` 只覆盖**自己的 config.pki_dir** 指向这套共享 CA。
+    struct TestPki {
+        ca_root: std::path::PathBuf,
+        ca_pem: String,
+        client_config: Arc<rustls::ClientConfig>,
+    }
+
+    fn test_pki() -> &'static TestPki {
+        static CELL: std::sync::OnceLock<TestPki> = std::sync::OnceLock::new();
+        CELL.get_or_init(|| {
+            let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+            let ca = pki_api::ensure_ca(dir.path()).expect("测试 CA 生成失败");
+            let (cert_pem, key_pem) = pki_api::issue_local_client_identity(&ca, "pr_test_executor")
+                .expect("测试客户端身份签发失败");
+            let client_config = pki_api::client_tls_config(&ca.cert_pem, &cert_pem, &key_pem)
+                .expect("测试 TLS client config 构建失败");
+            TestPki {
+                ca_root: dir.path().to_path_buf(),
+                ca_pem: ca.cert_pem.clone(),
+                client_config,
+            }
+        })
+    }
+
+    /// 无客户端证书的 TLS 客户端配置（仅信任测试 CA）。
+    fn anonymous_client_config() -> Arc<rustls::ClientConfig> {
+        static CELL: std::sync::OnceLock<Arc<rustls::ClientConfig>> = std::sync::OnceLock::new();
+        CELL.get_or_init(|| {
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            let mut roots = rustls::RootCertStore::empty();
+            let der = pki_api::pem_decode(&test_pki().ca_pem, "CERTIFICATE")
+                .expect("测试 CA PEM 解析失败");
+            roots
+                .add(rustls::pki_types::CertificateDer::from(der))
+                .expect("测试 CA 装载失败");
+            let cfg = rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .expect("protocol versions")
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            Arc::new(cfg)
+        })
+        .clone()
+    }
+
+    async fn anonymous_connect(addr: &SocketAddr) -> tokio_rustls::client::TlsStream<TcpStream> {
+        let connector = tokio_rustls::TlsConnector::from(anonymous_client_config());
+        let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+            .await
+            .expect("connect timed out")
+            .expect("connect failed");
+        let server_name =
+            rustls::pki_types::ServerName::IpAddress(rustls::pki_types::IpAddr::from(addr.ip()));
+        tokio::time::timeout(Duration::from_secs(5), connector.connect(server_name, stream))
+            .await
+            .expect("tls handshake timed out")
+            .expect("tls handshake failed")
+    }
+
+    /// 建立到测试 server 的 mTLS 连接（信任测试 CA + 携带 executor 客户端证书）。
+    async fn tls_connect(addr: &SocketAddr) -> tokio_rustls::client::TlsStream<TcpStream> {
+        let connector = tokio_rustls::TlsConnector::from(test_pki().client_config.clone());
+        let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+            .await
+            .expect("connect timed out")
+            .expect("connect failed");
+        let server_name =
+            rustls::pki_types::ServerName::IpAddress(rustls::pki_types::IpAddr::from(addr.ip()));
+        tokio::time::timeout(Duration::from_secs(5), connector.connect(server_name, stream))
+            .await
+            .expect("tls handshake timed out")
+            .expect("tls handshake failed")
+    }
+
+    /// 在当前 tokio runtime 中启动真实 loopback HTTPS+mTLS server（通过 tokio::spawn 驱动
+    /// accept loop），返回绑定地址。使用测试运行时可避免独立 runtime 中 axum::serve
+    /// 内部 tokio::spawn 的 accept loop 不被驱动、请求无响应的问题。
     async fn spawn_server() -> SocketAddr {
         // tempdir 必须活得比 server 久：dedup DB 与 http manifest 都落在它下面。
         // 原先 `let dir = tempfile::tempdir()` 是函数局部量，spawn_server 返回时
@@ -5051,18 +5470,21 @@ mod tests {
         // 假红，且只在真正执行时才暴露）。测试进程内泄漏一个临时目录可接受。
         let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
         let manifest = dir.path().join("http-manifest.json");
-        let cfg = HttpServerConfig::new("127.0.0.1:0".into(), manifest);
+        let mut cfg = HttpServerConfig::new("127.0.0.1:0".into(), manifest);
+        // 共享测试 CA（避免每个用例重复生成 10 年 CA）。
+        cfg.pki_dir = test_pki().ca_root.clone();
         let bound = bind_http(&cfg).unwrap();
+        let tls = Arc::clone(&bound.tls);
         let addr = bound.local_addr;
         let mut cfg = cfg;
-        cfg.endpoint = format!("http://{}", addr);
+        cfg.endpoint = format!("https://{}", addr);
         let ds = DaemonState {
             start_time: std::time::Instant::now(),
             schema_version: SCHEMA_VERSION,
             pid: std::process::id(),
             task_collab_store: None,
             authority_id: "test-authority".to_string(),
-            transport: "http-mvp".to_string(),
+            transport: "https-mtls".to_string(),
             task_db_fingerprint: String::new(),
             task_loop_control: None,
         };
@@ -5076,6 +5498,10 @@ mod tests {
         let app_state = AppState {
             state: Arc::new(TokioMutex::new(ds)),
             serialization: Arc::new(SerializationPoint::with_default_timeout()),
+            principal_registry: Arc::new(auth_principal::PrincipalRegistry::new(
+                test_pki().ca_root.clone(),
+                None,
+            )),
             config: Arc::new(cfg),
             dedup,
             jobs: Arc::new(StdMutex::new(HashMap::new())),
@@ -5085,9 +5511,7 @@ mod tests {
         // 在测试运行时中驱动 accept loop；丢弃 JoinHandle 仅分离任务（运行时结束才终止）。
         // CR10：bind_http 返回 std listener，serve 前转 tokio listener。
         let tokio_listener = tokio::net::TcpListener::from_std(bound.listener).unwrap();
-        let _ = tokio::spawn(async move {
-            let _ = axum::serve(tokio_listener, router).await;
-        });
+        let _ = tokio::spawn(accept_loop(tokio_listener, router, tls));
         // 给 accept loop 一点启动时间，避免竞态导致连接被拒。
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         addr
@@ -5104,15 +5528,48 @@ mod tests {
         body: &[u8],
         content_length: usize,
     ) -> (u16, String) {
-        let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
-            .await
-            .expect("connect timed out")
-            .expect("connect failed");
-        let req = format!(
-            "{} {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            method, path, ctype, content_length
-        );
-        let (mut rd, mut wr) = stream.into_split();
+        raw_request_with_conn(addr, method, path, ctype, "", body, content_length, false).await
+    }
+
+    /// 无客户端证书的连接（用于验证 mTLS 缺失 → 403 的负例）。
+    async fn anonymous_request(
+        addr: &SocketAddr,
+        method: &str,
+        path: &str,
+        ctype: &str,
+        body: &[u8],
+        content_length: usize,
+    ) -> (u16, String) {
+        raw_request_with_conn(addr, method, path, ctype, "", body, content_length, true).await
+    }
+
+    async fn raw_request_with_conn(
+        addr: &SocketAddr,
+        method: &str,
+        path: &str,
+        ctype: &str,
+        extra_header: &str,
+        body: &[u8],
+        content_length: usize,
+        anonymous: bool,
+    ) -> (u16, String) {
+        let tls = if anonymous {
+            anonymous_connect(addr).await
+        } else {
+            tls_connect(addr).await
+        };
+        let req = if extra_header.is_empty() {
+            format!(
+                "{} {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                method, path, ctype, content_length
+            )
+        } else {
+            format!(
+                "{} {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: {}\r\n{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                method, path, ctype, extra_header, content_length
+            )
+        };
+        let (mut rd, mut wr) = tokio::io::split(tls);
         let write_req = req.into_bytes();
         let write_body = body.to_vec();
         // 独立任务负责写入（大 body 时即便被服务器重置也无关紧要）。
@@ -5126,14 +5583,14 @@ mod tests {
         let mut buf = vec![0u8; 65536];
         let mut total = Vec::new();
         loop {
-            match tokio::time::timeout(Duration::from_secs(5), rd.read(&mut buf)).await {
+            match tokio::time::timeout(Duration::from_secs(10), rd.read(&mut buf)).await {
                 Ok(Ok(0)) => break, // 服务器关闭连接（Connection: close）→ 完整响应已收到
                 Ok(Ok(n)) => {
                     total.extend_from_slice(&buf[..n]);
                     // 已读到头部与 body 分隔符：再多读一轮以确保 body 完整（小概率分块到达）
                     if total.windows(4).any(|w| w == b"\r\n\r\n") {
                         if let Ok(Ok(n2)) =
-                            tokio::time::timeout(Duration::from_millis(200), rd.read(&mut buf))
+                            tokio::time::timeout(Duration::from_millis(300), rd.read(&mut buf))
                                 .await
                         {
                             if n2 > 0 {
@@ -5143,7 +5600,7 @@ mod tests {
                         break;
                     }
                 }
-                Ok(Err(_)) => break, // 连接被重置（如超 8MiB 被拒）：以已收到的部分数据继续解析
+                Ok(Err(_)) => break, // 连接被重置（如超上限被拒）：以已收到的部分数据继续解析
                 Err(_) => break,     // 读取超时：以已收到的部分数据继续解析
             }
         }
@@ -5169,54 +5626,17 @@ mod tests {
         body: &[u8],
         content_length: usize,
     ) -> (u16, String) {
-        let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
-            .await
-            .expect("connect timed out")
-            .expect("connect failed");
-        let req = format!(
-            "{} {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: {}\r\n{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            method, path, ctype, extra_header, content_length
-        );
-        let (mut rd, mut wr) = stream.into_split();
-        let write_req = req.into_bytes();
-        let write_body = body.to_vec();
-        tokio::spawn(async move {
-            let _ = wr.write_all(&write_req).await;
-            let _ = wr.write_all(&write_body).await;
-            std::future::pending::<()>().await;
-        });
-        let mut buf = vec![0u8; 65536];
-        let mut total = Vec::new();
-        loop {
-            match tokio::time::timeout(Duration::from_secs(10), rd.read(&mut buf)).await {
-                Ok(Ok(0)) => break,
-                Ok(Ok(n)) => {
-                    total.extend_from_slice(&buf[..n]);
-                    if total.windows(4).any(|w| w == b"\r\n\r\n") {
-                        if let Ok(Ok(n2)) =
-                            tokio::time::timeout(Duration::from_millis(300), rd.read(&mut buf))
-                                .await
-                        {
-                            if n2 > 0 {
-                                total.extend_from_slice(&buf[..n2]);
-                            }
-                        }
-                        break;
-                    }
-                }
-                Ok(Err(_)) => break,
-                Err(_) => break,
-            }
-        }
-        let s = String::from_utf8_lossy(&total);
-        let status_line = s.lines().next().unwrap_or("");
-        let status: u16 = status_line
-            .split_whitespace()
-            .nth(1)
-            .and_then(|x| x.parse().ok())
-            .unwrap_or(0);
-        let body_start = s.find("\r\n\r\n").map(|i| i + 4).unwrap_or(s.len());
-        (status, s[body_start..].to_string())
+        raw_request_with_conn(
+            addr,
+            method,
+            path,
+            ctype,
+            extra_header,
+            body,
+            content_length,
+            false,
+        )
+        .await
     }
 
     #[tokio::test]
@@ -5226,7 +5646,7 @@ mod tests {
             raw_request(&addr, "GET", "/health", "application/json", b"", b"".len()).await;
         assert_eq!(status, 200, "status={}", status);
         let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["security_profile"], "dev_loopback_unauthenticated");
+        assert_eq!(v["security_profile"], "https_mtls_v1");
         assert!(v["pid"].as_u64().is_some());
         assert_eq!(v["schema_version"], SCHEMA_VERSION as i64);
         assert!(v["git_commit"].is_string());
@@ -5249,7 +5669,7 @@ mod tests {
         assert_eq!(status, 200);
         let v: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["protocol_version"], "1");
-        assert_eq!(v["server_mode"], "dev_loopback_unauthenticated");
+        assert_eq!(v["server_mode"], "https_mtls_v1");
         assert_eq!(v["methods"]["ping"]["backend"], "rust_native");
         assert_eq!(v["methods"]["ping"]["status"], "available");
         assert_eq!(
@@ -5381,6 +5801,83 @@ mod tests {
         assert_eq!(v["error"]["data"]["code"], "E_PROTOCOL_VERSION_UNSUPPORTED");
     }
 
+    /// ADR-002 §15.3（S1-05/S1-06）：缺客户端证书 → 除 `/health`、`/v1/enroll` 外一律 403。
+    #[tokio::test]
+    async fn test_missing_client_cert_is_forbidden() {
+        let addr = spawn_server().await;
+        let (status, body) = anonymous_request(&addr, "GET", "/health", "", b"", 0).await;
+        assert_eq!(status, 200, "health 必须免 mTLS: {}", body);
+        let (status, body) = anonymous_request(
+            &addr,
+            "POST",
+            "/v1/rpc",
+            "application/json",
+            b"{}",
+            2,
+        )
+        .await;
+        assert_eq!(status, 403, "{}", body);
+        assert!(body.contains("E_MTLS_CLIENT_CERT_MISSING"), "{}", body);
+    }
+
+    /// ADR-002 §15.3（S1-07/S1-08）：token 引导签发客户端证书（SAN=唯一主语），
+    /// 且 token 单次消费（重放统一 `E_ENROLL_TOKEN_INVALID`）。
+    #[tokio::test]
+    async fn test_enroll_issues_certificate_and_token_is_single_use() {
+        let addr = spawn_server().await;
+        let ca = pki_api::load_ca(&test_pki().ca_root)
+            .unwrap()
+            .expect("测试 CA 必须存在");
+        let (token, _rec) =
+            pki_api::issue_enroll_token(&ca, "pr_enroll_test", "ws-test").unwrap();
+
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params =
+            rcgen::CertificateParams::new(vec!["ignored.example".to_string()]).unwrap();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "csr-subject-ignored");
+        let csr_pem = params.serialize_request(&key).unwrap().pem().unwrap();
+        let body = serde_json::json!({"token": token, "csr_pem": csr_pem}).to_string();
+        let (status, resp) = anonymous_request(
+            &addr,
+            "POST",
+            "/v1/enroll",
+            "application/json",
+            body.as_bytes(),
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 200, "{}", resp);
+        let v: Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["principal_id"], "pr_enroll_test");
+        let cert_pem = v["cert_pem"].as_str().unwrap();
+        assert!(cert_pem.contains("BEGIN CERTIFICATE"));
+
+        // 叶证书 SAN 由 daemon 覆盖：CSR 自带的 DNS SAN 被丢弃，只剩 principal URI。
+        let der = pki_api::pem_decode(cert_pem, "CERTIFICATE").unwrap();
+        let sans = pki_api::certificate_sans(&der);
+        assert_eq!(sans.len(), 1, "SAN 必须只保留 principal URI: {:?}", sans);
+        assert_eq!(
+            pki_api::principal_id_from_cert(&der).as_deref(),
+            Some("pr_enroll_test")
+        );
+
+        // token 重放：403 E_ENROLL_TOKEN_INVALID
+        let body2 = serde_json::json!({"token": token, "csr_pem": csr_pem}).to_string();
+        let (status, resp) = anonymous_request(
+            &addr,
+            "POST",
+            "/v1/enroll",
+            "application/json",
+            body2.as_bytes(),
+            body2.len(),
+        )
+        .await;
+        assert_eq!(status, 403, "{}", resp);
+        assert!(resp.contains("E_ENROLL_TOKEN_INVALID"), "{}", resp);
+    }
+
     #[tokio::test]
     async fn test_nonloopback_bind_rejected_no_manifest() {
         let dir = tempfile::tempdir().unwrap();
@@ -5388,10 +5885,10 @@ mod tests {
         // 预校验：非 loopback 必须被拒绝
         let res = validate_loopback_bind("0.0.0.0:0");
         assert!(matches!(res, Err(HttpServerError::LoopbackOnly)));
-        // bind_http 在拒绝时不应发布 manifest
+        // bind_http 在拒绝时不应发布 manifest（ADR-002 §6：无 allow_remote → fail-closed）
         let cfg = HttpServerConfig::new("0.0.0.0:0".into(), manifest.clone());
         let res = bind_http(&cfg);
-        assert!(matches!(res, Err(HttpServerError::LoopbackOnly)));
+        assert!(matches!(res, Err(HttpServerError::RemoteNotAllowed)));
         assert!(
             !manifest.exists(),
             "manifest must NOT be published for non-loopback bind"
@@ -5412,7 +5909,7 @@ mod tests {
         assert!(manifest.exists(), "manifest must be published at pre-bind");
         let m: Value = serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
         assert_eq!(m["pid"], json!(std::process::id()));
-        assert_eq!(m["endpoint"], json!(format!("http://{}", bound.local_addr)));
+        assert_eq!(m["endpoint"], json!(format!("https://{}", bound.local_addr)));
         assert!(m["manifest_hash"]
             .as_str()
             .map(|h| h.len() == 64)

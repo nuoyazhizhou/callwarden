@@ -360,6 +360,25 @@ def _terminate(proc):
             pass
 
 
+def _run_pki_init(bin_path, data_root):
+    """在隔离 PKI 目录执行 `cw-daemon pki init`，签发本机 owner 客户端身份。
+
+    ADR-002 单轨 mTLS 下客户端必须持证书；隔离 daemon 首次启动只生成 CA +
+    服务端证书，owner 身份由 `pki init` 幂等补齐（`identities/pr_owner/`）。
+    返回 `(pki_dir, env)`，供测试进程与客户端复用同一 PKI 根。
+    """
+    home = os.path.join(data_root, "userhome")
+    pki_dir = os.path.join(home, ".callwarden", "pki")
+    env = os.environ.copy()
+    env["USERPROFILE"] = home
+    env["CW_PKI_DIR"] = pki_dir
+    proc = subprocess.run(
+        [bin_path, "pki", "init"], env=env, capture_output=True, text=True, timeout=60
+    )
+    assert proc.returncode == 0, f"pki init 失败: {proc.stderr[-1500:]}"
+    return pki_dir, env
+
+
 class TestRealDaemonWorkspaceRoundTrip:
     """真实 daemon 进程级 workspace.status/list round-trip（隔离管道 + USERPROFILE）。
 
@@ -371,7 +390,7 @@ class TestRealDaemonWorkspaceRoundTrip:
     """
 
     @pytest.fixture
-    def real_daemon_client(self, tmp_path):
+    def real_daemon_client(self, tmp_path, monkeypatch):
         bin_path = _DAEMON_BIN
         if not bin_path or not os.path.exists(bin_path):
             pytest.skip("cw-daemon 未构建（需先 cargo build --bin cw-daemon）")
@@ -390,6 +409,12 @@ class TestRealDaemonWorkspaceRoundTrip:
                     "隔离 daemon 未在超时内发布 manifest\n"
                     f"stdout={out.decode('utf-8', 'replace')[-1500:]}\n"
                     f"stderr={err.decode('utf-8', 'replace')[-2000:]}")
+            # ADR-002：单轨 HTTPS+mTLS——客户端必须有证书；隔离 PKI 中签发 owner 身份。
+            pki_dir, _env = _run_pki_init(bin_path, data_root)
+            monkeypatch.setenv("CW_PKI_DIR", pki_dir)
+            monkeypatch.delenv("CW_CLIENT_CERT", raising=False)
+            monkeypatch.delenv("CW_CLIENT_KEY", raising=False)
+            monkeypatch.delenv("CW_CA_CERT", raising=False)
             from callwarden.config import get_http_authority_id
             from callwarden.server.daemon_client import HttpDaemonRpcClient
             client = HttpDaemonRpcClient(

@@ -1,22 +1,26 @@
-"""H2 manifest 发现 / 校验单元测试（frozen contract §4.1）。
+"""H2 manifest 发现 / 校验单元测试（ADR-002 §6 / §15.4 v2）。
 
 使用内存 dict 与临时 manifest 文件，不启动任何真实 daemon，不打开 SQLite。
-覆盖：loopback 校验、manifest hash / security_profile / authority / 协议交集 /
-stale-PID、endpoint 发现优先级、缺失 manifest fail-closed。
+覆盖：https loopback 校验、manifest hash / schema v2（旧 v1 视为过期）/
+security_profile / authority / 协议交集 / CA pin / stale-PID、
+endpoint 发现优先级、缺失 manifest fail-closed。
 """
 
+import hashlib
 import json
 
 import pytest
 
 from callwarden.config import (
-    HTTP_MANIFEST_SCHEMA_VERSION,
-    HTTP_MVP_TRANSPORT_PROFILE,
     E_HTTP_MVP_LOOPBACK_ONLY,
     E_HTTP_MANIFEST_MISSING,
     E_HTTP_MANIFEST_STALE,
     E_HTTP_MANIFEST_HASH_MISMATCH,
+    E_MTLS_UNKNOWN_CA,
     E_PROTOCOL_VERSION_UNSUPPORTED,
+    E_TLS_REQUIRED,
+    HTTP_MANIFEST_SCHEMA_VERSION_V2,
+    HTTPS_MTLS_TRANSPORT_PROFILE,
     compute_http_manifest_hash,
     is_loopback_host,
 )
@@ -30,24 +34,36 @@ from callwarden.server.daemon_protocol import DaemonRemoteError
 
 AUTHORITY = "unit-test-authority"
 
+# 仅用于 pin 校验（`_pem_sha256` 只做 PEM→DER base64 解码 + SHA-256，不验证证书内容）
+TEST_CA_PEM = "-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n"
+TEST_CA_FINGERPRINT = hashlib.sha256(b"ABC").hexdigest()
 
-def build_manifest_dict(endpoint="http://127.0.0.1:0", authority_id=AUTHORITY, **overrides):
-    """构造一个字段完整、hash 正确的 manifest dict。"""
+
+def build_manifest_dict(endpoint="https://127.0.0.1:0", authority_id=AUTHORITY, **overrides):
+    """构造一个字段完整、hash 正确的 manifest v2 dict。"""
     m = {
-        "manifest_version": HTTP_MANIFEST_SCHEMA_VERSION,
+        "schema": HTTP_MANIFEST_SCHEMA_VERSION_V2,
+        "schema_version": 50,
         "manifest_id": "m-1",
         "authority_id": authority_id,
         "endpoint": endpoint,
+        "bind_scope": "loopback",
+        "security_profile": HTTPS_MTLS_TRANSPORT_PROFILE,
+        "auth": "mtls_client_cert_required",
+        "tls": {
+            "min_version": "1.2",
+            "ca_cert_pem": TEST_CA_PEM,
+            "ca_fingerprint_sha256": TEST_CA_FINGERPRINT,
+            "server_cert_sha256": "deadbeef",
+            "san": ["DNS:localhost", "IP:127.0.0.1"],
+        },
         "pid": None,
         "process_start_time": 0,
         "daemon_executable": "",
         "daemon_binary_sha256": "deadbeef",
         "protocol_version": "1",
         "supported_protocol_versions": ["1"],
-        "security_profile": HTTP_MVP_TRANSPORT_PROFILE,
-        "security_profile_required": HTTP_MVP_TRANSPORT_PROFILE,
         "git_commit": "abc",
-        "schema_version": 50,
         "started_at": "2026-08-14T00:00:00Z",
         "capability_registry_revision": 1,
         "worker_status": "ready",
@@ -76,20 +92,38 @@ def test_loopback_host_rejects_non_loopback():
 
 
 def test_validate_endpoint_loopback_ok():
-    assert da.validate_http_endpoint_loopback("http://127.0.0.1:8123") == "http://127.0.0.1:8123"
+    assert (
+        da.validate_http_endpoint_loopback("https://127.0.0.1:8123")
+        == "https://127.0.0.1:8123"
+    )
 
 
 @pytest.mark.parametrize("endpoint", [
-    "http://192.168.1.5:80",
-    "http://10.0.0.1:80",
-    "http://example.com:80",
-    "https://127.0.0.1:80",
+    "http://127.0.0.1:80",      # 明文一律拒绝（单轨）
     "ftp://127.0.0.1:21",
 ])
-def test_validate_endpoint_loopback_rejects(endpoint):
+def test_validate_endpoint_rejects_plaintext(endpoint):
+    with pytest.raises(DaemonRemoteError) as exc:
+        da.validate_http_endpoint_loopback(endpoint)
+    assert exc.value.code == E_TLS_REQUIRED
+
+
+@pytest.mark.parametrize("endpoint", [
+    "https://192.168.1.5:443",
+    "https://10.0.0.1:443",
+    "https://example.com:443",
+])
+def test_validate_endpoint_rejects_nonloopback(endpoint):
     with pytest.raises(DaemonRemoteError) as exc:
         da.validate_http_endpoint_loopback(endpoint)
     assert exc.value.code == E_HTTP_MVP_LOOPBACK_ONLY
+
+
+def test_validate_endpoint_allows_remote_when_bind_scope_remote():
+    assert (
+        da.validate_http_endpoint_loopback("https://10.0.0.1:443", allow_remote=True)
+        == "https://10.0.0.1:443"
+    )
 
 
 # ----------------------------------------------------------------------
@@ -108,18 +142,49 @@ def test_validate_manifest_hash_mismatch():
     assert exc.value.code == E_HTTP_MANIFEST_HASH_MISMATCH
 
 
-def test_validate_manifest_schema_version():
-    m = build_manifest_dict(manifest_version="other/v9")
+def test_validate_manifest_schema_v1_is_stale():
+    """旧 v1 manifest 视为过期（不降级到明文）。"""
+    m = build_manifest_dict()
+    m.pop("schema", None)
+    m["manifest_version"] = "callwarden-http-manifest/v1"
+    m["manifest_hash"] = compute_http_manifest_hash(m)
     with pytest.raises(DaemonRemoteError) as exc:
         da.validate_http_manifest(m, AUTHORITY)
     assert exc.value.code == E_HTTP_MANIFEST_STALE
 
 
 def test_validate_manifest_security_profile():
-    m = build_manifest_dict(security_profile="enterprise")
+    m = build_manifest_dict(security_profile="dev_loopback_unauthenticated")
     with pytest.raises(DaemonRemoteError) as exc:
         da.validate_http_manifest(m, AUTHORITY)
     assert exc.value.code == E_HTTP_MANIFEST_STALE
+
+
+def test_validate_manifest_ca_pin_mismatch():
+    m = build_manifest_dict(
+        tls={
+            "min_version": "1.2",
+            "ca_cert_pem": TEST_CA_PEM,
+            "ca_fingerprint_sha256": "0" * 64,
+            "server_cert_sha256": "deadbeef",
+            "san": ["IP:127.0.0.1"],
+        }
+    )
+    with pytest.raises(DaemonRemoteError) as exc:
+        da.validate_http_manifest(m, AUTHORITY)
+    assert exc.value.code == E_MTLS_UNKNOWN_CA
+
+
+def test_validate_manifest_endpoint_must_be_loopback():
+    m = build_manifest_dict(endpoint="https://192.168.1.5:443")
+    with pytest.raises(DaemonRemoteError) as exc:
+        da.validate_http_manifest(m, AUTHORITY)
+    assert exc.value.code == E_HTTP_MVP_LOOPBACK_ONLY
+
+
+def test_validate_manifest_remote_bind_scope_allows_nonloopback():
+    m = build_manifest_dict(endpoint="https://192.168.1.5:443", bind_scope="remote")
+    da.validate_http_manifest(m, AUTHORITY)
 
 
 def test_validate_manifest_authority():
@@ -151,11 +216,12 @@ def test_validate_manifest_stale_pid(monkeypatch):
     assert exc.value.code == E_HTTP_MANIFEST_STALE
 
 
-def test_validate_manifest_endpoint_must_be_loopback():
+def test_validate_manifest_rejects_plaintext_endpoint():
+    """单轨：manifest 内明文 endpoint 同样必须 fail-closed（E_TLS_REQUIRED）。"""
     m = build_manifest_dict(endpoint="http://192.168.1.5:80")
     with pytest.raises(DaemonRemoteError) as exc:
         da.validate_http_manifest(m, AUTHORITY)
-    assert exc.value.code == E_HTTP_MVP_LOOPBACK_ONLY
+    assert exc.value.code == E_TLS_REQUIRED
 
 
 # ----------------------------------------------------------------------
@@ -163,18 +229,18 @@ def test_validate_manifest_endpoint_must_be_loopback():
 # ----------------------------------------------------------------------
 
 def test_resolve_explicit_endpoint_skips_manifest(monkeypatch):
-    monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "http://127.0.0.1:8123")
+    monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "https://127.0.0.1:8123")
     monkeypatch.setattr(
         "callwarden.config.get_default_http_manifest_path",
         lambda authority_id: "/nonexistent/http.manifest.json",
     )
     endpoint, manifest = da.resolve_http_endpoint_and_manifest(authority_id=AUTHORITY)
-    assert endpoint == "http://127.0.0.1:8123"
+    assert endpoint == "https://127.0.0.1:8123"
     assert manifest is None
 
 
 def test_resolve_explicit_endpoint_nonloopback_fails(monkeypatch):
-    monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "http://10.0.0.1:80")
+    monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "https://10.0.0.1:443")
     monkeypatch.setattr(
         "callwarden.config.get_default_http_manifest_path",
         lambda authority_id: "/nonexistent/http.manifest.json",
@@ -199,7 +265,7 @@ def test_resolve_missing_manifest_fails_closed(monkeypatch):
 
 
 def test_resolve_valid_manifest_file(tmp_path, monkeypatch):
-    manifest = build_manifest_dict(endpoint="http://127.0.0.1:8888")
+    manifest = build_manifest_dict(endpoint="https://127.0.0.1:8888")
     mpath = tmp_path / "http.manifest.json"
     mpath.write_text(json.dumps(manifest), encoding="utf-8")
     monkeypatch.setattr(
@@ -209,15 +275,15 @@ def test_resolve_valid_manifest_file(tmp_path, monkeypatch):
     endpoint, loaded = da.resolve_http_endpoint_and_manifest(
         manifest_path=str(mpath), authority_id=AUTHORITY
     )
-    assert endpoint == "http://127.0.0.1:8888"
+    assert endpoint == "https://127.0.0.1:8888"
     assert loaded["manifest_id"] == "m-1"
 
 
 def test_resolve_precedence_explicit_over_manifest(tmp_path, monkeypatch):
-    manifest = build_manifest_dict(endpoint="http://127.0.0.1:8888")
+    manifest = build_manifest_dict(endpoint="https://127.0.0.1:8888")
     mpath = tmp_path / "http.manifest.json"
     mpath.write_text(json.dumps(manifest), encoding="utf-8")
-    monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "http://127.0.0.1:9999")
+    monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "https://127.0.0.1:9999")
     monkeypatch.setattr(
         "callwarden.config.get_default_http_manifest_path",
         lambda authority_id: "/nonexistent/http.manifest.json",
@@ -226,7 +292,7 @@ def test_resolve_precedence_explicit_over_manifest(tmp_path, monkeypatch):
         manifest_path=str(mpath), authority_id=AUTHORITY
     )
     # 显式 endpoint 优先级高于 manifest 中的 endpoint
-    assert endpoint == "http://127.0.0.1:9999"
+    assert endpoint == "https://127.0.0.1:9999"
 
 
 def test_resolve_stale_manifest_file_fails(tmp_path, monkeypatch):

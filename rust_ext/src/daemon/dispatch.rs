@@ -10,6 +10,7 @@
 //! 高级方法（workspace.*/snapshot.*/query.*/gc.*/backup/restore）在 R4-R6 实现，
 //! 本模块提供 trait 钩子供后续扩展。
 
+use super::peercred::PrincipalIdentity;
 use super::protocol::{make_error_response, make_ok_response};
 use serde_json::{Map, Value};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -72,7 +73,11 @@ mod stage_toggle_migration_handlers;
 #[path = "staging_log_handlers.rs"]
 mod staging_log_handlers;
 
-/// peer credential（来自 SO_PEERCRED 或 Windows Named Pipe）
+/// peer credential（来自 SO_PEERCRED / Windows Named Pipe / mTLS 客户端证书）。
+///
+/// ADR-002 §5.1：单轨 HTTPS+mTLS 下**授权主语**是 `principal`（证书 SAN URI）。
+/// `uid`/`gid`/`sid` 仅 UDS/管道 legacy transport 的身份来源，在 mTLS 连接上
+/// 仅作诊断/审计元数据，不参与授权判定。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerCredential {
     pub uid: u32,
@@ -80,6 +85,8 @@ pub struct PeerCredential {
     pub pid: i32,
     pub sid_len: u8,
     pub sid_bytes: [u8; 128],
+    /// mTLS principal 身份；legacy UDS/管道连接为 `Default`（未认证）。
+    pub principal: PrincipalIdentity,
 }
 
 impl PeerCredential {
@@ -90,6 +97,7 @@ impl PeerCredential {
             pid,
             sid_len: 0,
             sid_bytes: [0u8; 128],
+            principal: PrincipalIdentity::default(),
         }
     }
 
@@ -104,6 +112,30 @@ impl PeerCredential {
             pid: pid as i32,
             sid_len: len as u8,
             sid_bytes,
+            principal: PrincipalIdentity::default(),
+        }
+    }
+
+    /// 附加 mTLS principal 身份（由 HTTP 层在证书授权通过后调用）。
+    pub fn with_principal(mut self, principal: PrincipalIdentity) -> Self {
+        self.principal = principal;
+        self
+    }
+
+    /// 已认证的 principal_id（legacy UDS/管道连接为 `None`）。
+    pub fn principal_id(&self) -> Option<&str> {
+        if self.principal.is_authenticated() {
+            Some(self.principal.principal_id.as_str())
+        } else {
+            None
+        }
+    }
+
+    /// 授权主语（ADR-002 §5.1）：有 principal 用 principal，否则回退 OS owner key。
+    pub fn auth_subject(&self) -> String {
+        match self.principal_id() {
+            Some(id) => format!("principal:{}", id),
+            None => self.owner_key(),
         }
     }
 
@@ -301,6 +333,13 @@ pub trait DaemonStateExt {
         let mut m = Map::new();
         m.insert("status".to_string(), Value::String("ok".to_string()));
         m.insert("peer_uid".to_string(), Value::Number(peer.uid.into()));
+        // ADR-002 §15.3 S1-04：ping 回显 mTLS principal_id（诊断用，不参与授权）。
+        if let Some(principal_id) = peer.principal_id() {
+            m.insert(
+                "principal_id".to_string(),
+                Value::String(principal_id.to_string()),
+            );
+        }
         m.insert("pid".to_string(), Value::Number(state.pid.into()));
         // 共存契约 §3.1/§5.3：ping/hello 必须返回 authority 身份，供客户端校验。
         m.insert(
@@ -2990,11 +3029,34 @@ fn hostname_or_fallback() -> String {
 /// 上 new_unix 测试 peer（uid=1000）的 owner_key() 是 "1000" 而非 daemon SID，须显式
 /// 补 `peer.uid == current_daemon_uid()` 这条同 uid 判定，窗口才与 Unix 语义对齐。
 pub fn is_admin(peer: &PeerCredential) -> bool {
+    // ADR-002 §5.1：mTLS 连接的授权只读 principal；`kind=service`（daemon owner
+    // 本地引导身份）等价管理员，不再依赖该连接的 OS uid 猜测。
+    if peer.principal.is_authenticated() && peer.principal.is_service() {
+        return true;
+    }
     let key = peer.owner_key();
     if !key.is_empty() && key == current_daemon_owner_key() {
         return true;
     }
     peer.uid == 0 || key == "root" || key == "0" || peer.uid == current_daemon_uid()
+}
+
+/// 请求显式声明的 workspace 范围（`workspace_id`），用于 principal grant 校验。
+///
+/// 仅作为“请求自述范围”；真正的任务归属仍由 `check_task_owner*` /
+/// workspace registry 判定。无 `workspace_id`（或空值）时返回 `None`。
+fn workspace_scope_of(params: &Value) -> Option<String> {
+    let raw = params.get("workspace_id")?;
+    let value = match raw {
+        Value::String(s) => s.trim().to_string(),
+        Value::Number(n) => n.to_string(),
+        _ => return None,
+    };
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 /// dispatch 内部实现（返回 Result<Value, DaemonRpcError>）
@@ -3011,6 +3073,23 @@ fn dispatch_inner<S: DaemonStateExt>(
     received_fds: &[i32],
     inline_payload: Option<InlinePayload<'_>>,
 ) -> Result<Value, DaemonRpcError> {
+    // ADR-002 §5.4：mTLS 连接的 workspace 授权按 principal grant 判定。
+    // 请求显式携带 `workspace_id` 时，principal 必须被授予该 workspace；
+    // 未认证 principal（legacy UDS/管道）不在此拦截，保持既有 OS ACL 语义。
+    if peer.principal.is_authenticated() {
+        if let Some(workspace_id) = workspace_scope_of(params) {
+            if !peer.principal.workspace_allowed(&workspace_id) {
+                return Err(DaemonRpcError::new(
+                    "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
+                    format!(
+                        "principal {} 未获 workspace {} 授权",
+                        peer.principal.principal_id.as_str(),
+                        workspace_id
+                    ),
+                ));
+            }
+        }
+    }
     // 管理员方法授权检查（fail-closed：未授权直接拒绝，不进入 handler）
     //
     // Phase 4-2 implement 状态：
@@ -3655,6 +3734,7 @@ pub fn get_int_param_or(params: &Value, key: &str, default: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::peercred::FixedStr;
     use serde_json::json;
 
     fn make_peer() -> PeerCredential {
@@ -3743,6 +3823,65 @@ mod tests {
             current_daemon_uid().wrapping_add(1)
         );
         assert_eq!(response["result"]["pid"], state.pid);
+    }
+
+    #[test]
+    fn test_ping_echoes_mtls_principal_id() {
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_test_executor").unwrap(),
+            kind: FixedStr::<16>::from_str("service").unwrap(),
+            ..Default::default()
+        });
+        let response = dispatch(&mut state, peer, "ping", &json!({}), &[]);
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["principal_id"], "pr_test_executor");
+    }
+
+    #[test]
+    fn test_principal_without_workspace_grant_is_forbidden() {
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1").unwrap(),
+            ..Default::default()
+        });
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.get",
+            &json!({"workspace_id": "2"}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(
+            response["error"]["code"],
+            "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
+            "principal 无该 workspace grant 时必须 fail-closed"
+        );
+    }
+
+    #[test]
+    fn test_principal_with_granted_workspace_passes_scope_check() {
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1").unwrap(),
+            ..Default::default()
+        });
+        // 授权通过后继续走既有 workspace registry 逻辑（此处只断言不再被
+        // principal scope 拦截：错误码不是 E_PRINCIPAL_WORKSPACE_FORBIDDEN）。
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.get",
+            &json!({"workspace_id": "1"}),
+            &[],
+        );
+        let code = response["error"]["code"].as_str().unwrap_or("");
+        assert_ne!(code, "E_PRINCIPAL_WORKSPACE_FORBIDDEN");
     }
 
     #[test]

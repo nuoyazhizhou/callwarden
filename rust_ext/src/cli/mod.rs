@@ -23,6 +23,7 @@ pub mod grep;
 pub mod impact;
 pub mod issues_tests;
 pub mod output;
+pub mod pki;
 pub mod readonly;
 pub mod refresh;
 pub mod router;

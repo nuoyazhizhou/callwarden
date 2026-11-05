@@ -1775,10 +1775,14 @@ def is_daemon_available(endpoint: Optional[str] = None) -> bool:
 # 详见 docs/design/http-daemon-mvp-compatibility-contract.md §2.1。
 
 # 冻结标识与唯一 profile 名称
+# ADR-002（2026-11-04）：明文 profile `dev_loopback_unauthenticated` 已废止；
+# 唯一合法 profile 为 `https_mtls_v1`（单轨 HTTPS + 双向 TLS）。
 HTTP_MVP_TRANSPORT_PROFILE = "dev_loopback_unauthenticated"
+HTTPS_MTLS_TRANSPORT_PROFILE = "https_mtls_v1"
 HTTP_PROTOCOL_VERSION = "1"
 SUPPORTED_HTTP_PROTOCOL_VERSIONS = ("1",)
 HTTP_MANIFEST_SCHEMA_VERSION = "callwarden-http-manifest/v1"
+HTTP_MANIFEST_SCHEMA_VERSION_V2 = "callwarden-http-manifest/v2"
 
 # 默认同步超时（秒）与请求体上限（8 MiB，以原始 body bytes 计）
 HTTP_DEFAULT_TIMEOUT = 30.0
@@ -1829,6 +1833,20 @@ E_HTTP_DAEMON_UNAVAILABLE = "E_HTTP_DAEMON_UNAVAILABLE"
 E_HTTP_REQUEST_TIMEOUT = "E_HTTP_REQUEST_TIMEOUT"
 E_REQUEST_TOO_LARGE = "E_REQUEST_TOO_LARGE"
 E_REQUEST_ID_REUSE_MISMATCH = "E_REQUEST_ID_REUSE_MISMATCH"
+
+# ADR-002 §7：TLS / mTLS / principal 稳定错误码（客户端 fail-closed 判定）。
+E_TLS_REQUIRED = "E_TLS_REQUIRED"
+E_TLS_HANDSHAKE_FAILED = "E_TLS_HANDSHAKE_FAILED"
+E_TLS_SAN_MISMATCH = "E_TLS_SAN_MISMATCH"
+E_MTLS_CLIENT_CERT_MISSING = "E_MTLS_CLIENT_CERT_MISSING"
+E_MTLS_CLIENT_CERT_REJECTED = "E_MTLS_CLIENT_CERT_REJECTED"
+E_MTLS_CERT_EXPIRED = "E_MTLS_CERT_EXPIRED"
+E_MTLS_CERT_REVOKED = "E_MTLS_CERT_REVOKED"
+E_MTLS_UNKNOWN_CA = "E_MTLS_UNKNOWN_CA"
+E_PRINCIPAL_UNKNOWN = "E_PRINCIPAL_UNKNOWN"
+E_PRINCIPAL_NOT_AUTHORIZED = "E_PRINCIPAL_NOT_AUTHORIZED"
+E_PRINCIPAL_WORKSPACE_FORBIDDEN = "E_PRINCIPAL_WORKSPACE_FORBIDDEN"
+E_HTTP_BIND_REMOTE_NOT_ALLOWED = "E_HTTP_BIND_REMOTE_NOT_ALLOWED"
 
 # 收敛架构错误码（T01，与 rust_ext/src/daemon/error_codes.rs 对齐）
 E_TOOL_DEPRECATED = "E_TOOL_DEPRECATED"
@@ -1895,6 +1913,60 @@ def get_http_manifest_path(authority_id: str = "") -> str:
 def get_default_http_manifest_path() -> str:
     """当前 authority 的默认 HTTP manifest 路径。"""
     return get_http_manifest_path(get_http_authority_id())
+
+
+def get_pki_dir() -> str:
+    """PKI 根目录：`CW_PKI_DIR` 优先，否则 `~/.callwarden/pki`（ADR-002 §4.1）。"""
+    override = os.environ.get("CW_PKI_DIR", "").strip()
+    if override:
+        return override
+    return os.path.join(CALLWARDEN_DIR, "pki")
+
+
+def resolve_client_cert_paths() -> tuple:
+    """解析 mTLS 客户端证书路径 `(cert, key, ca)`（ADR-002 §7 证书定位顺序）。
+
+    1. 环境变量 `CW_CLIENT_CERT` / `CW_CLIENT_KEY` / `CW_CA_CERT`；
+    2. `CW_PRINCIPAL_ID` 指定的 `identities/<principal>/`；
+    3. 扫描 `identities/*/client.crt`（优先 `meta.json` 中 `kind=service` 的 owner 身份）。
+
+    缺任何一项返回空串，由调用方 fail-closed 抛 `E_MTLS_CLIENT_CERT_MISSING`。
+    """
+    cert = os.environ.get("CW_CLIENT_CERT", "").strip()
+    key = os.environ.get("CW_CLIENT_KEY", "").strip()
+    ca = os.environ.get("CW_CA_CERT", "").strip()
+    pki = get_pki_dir()
+    if not ca:
+        candidate = os.path.join(pki, "ca", "ca.crt")
+        if os.path.isfile(candidate):
+            ca = candidate
+    if cert and key:
+        return cert, key, ca
+
+    identities = os.path.join(pki, "identities")
+    dirs: list = []
+    principal = os.environ.get("CW_PRINCIPAL_ID", "").strip()
+    if principal:
+        dirs.append(os.path.join(identities, principal))
+    if os.path.isdir(identities):
+        try:
+            dirs.extend(
+                os.path.join(identities, name)
+                for name in sorted(os.listdir(identities))
+                if os.path.isdir(os.path.join(identities, name))
+            )
+        except OSError:
+            pass
+    for ident_dir in dirs:
+        c = os.path.join(ident_dir, "client.crt")
+        k = os.path.join(ident_dir, "client.key")
+        if os.path.isfile(c) and os.path.isfile(k):
+            if not ca:
+                local_ca = os.path.join(ident_dir, "ca.crt")
+                if os.path.isfile(local_ca):
+                    ca = local_ca
+            return c, k, ca
+    return "", "", ca
 
 
 def compute_http_manifest_hash(manifest: Dict[str, Any]) -> str:

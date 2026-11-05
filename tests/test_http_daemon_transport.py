@@ -22,6 +22,8 @@ import pytest
 from callwarden.server.daemon_client import HttpDaemonRpcClient
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
+import test_mtls_control_plane as _mtls
+
 
 def _find_daemon_binary():
     """定位当前 HEAD 构建的 cw-daemon 二进制。
@@ -93,7 +95,11 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     """
     task_db = os.path.join(data_root, "task.db")
     registry_db = os.path.join(data_root, "registry.db")
-    socket_path = os.path.join(data_root, "pipe")
+    # ADR-002 后 daemon 只接受命名管道（单轨 HTTPS 不再用文件 socket）；
+    # 隔离实例用 data_root 哈希命名，避免与其他 daemon 抢锁/串管道。
+    import hashlib
+    iso_tag = hashlib.sha256(data_root.encode("utf-8")).hexdigest()[:12]
+    socket_path = rf"\\.\pipe\callwarden-http-iso-{iso_tag}"
     home = os.path.join(data_root, "userhome")
     os.makedirs(os.path.join(home, ".callwarden"), exist_ok=True)
     env = os.environ.copy()
@@ -160,8 +166,8 @@ def _seed_task_db_workspace(task_db_path, workspace_id=1):
 
 
 @pytest.fixture
-def http_daemon(tmp_path):
-    """启动隔离 daemon 并返回 (endpoint, manifest, data_root)。"""
+def http_daemon(tmp_path, monkeypatch):
+    """启动隔离 daemon 并返回 (endpoint, manifest, data_root)（HTTPS + mTLS）。"""
     bin_path = _find_daemon_binary()
     if bin_path is None:
         pytest.skip("cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）")
@@ -186,7 +192,16 @@ def http_daemon(tmp_path):
                 f"stderr={err.decode('utf-8', 'replace')}"
             )
         endpoint = manifest["endpoint"]
-        assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+        assert endpoint.startswith("https://127.0.0.1:"), f"非 loopback HTTPS endpoint: {endpoint}"
+        # ADR-002 单轨：Python 客户端必须持 mTLS 证书（从隔离 PKI 取 owner 身份）
+        _mtls.pki_init(data_root)
+        cert, key = _mtls.identity_paths(data_root)
+        monkeypatch.setenv("CW_CLIENT_CERT", cert)
+        monkeypatch.setenv("CW_CLIENT_KEY", key)
+        monkeypatch.setenv("CW_CA_CERT", os.path.join(_mtls.pki_dir_of(data_root), "ca", "ca.crt"))
+        monkeypatch.delenv("CW_PKI_DIR", raising=False)
+        monkeypatch.setenv("CW_DAEMON_TASK_DB", os.path.join(data_root, "task.db"))
+        _mtls.wait_health(endpoint, _mtls.build_ssl_context(data_root, cert, key))
         yield endpoint, manifest, data_root
     finally:
         _terminate(proc)
@@ -196,12 +211,12 @@ def test_health_and_capabilities(http_daemon):
     endpoint, manifest, _ = http_daemon
     client = HttpDaemonRpcClient(endpoint=endpoint, verify_health=False)
     health = client.health()
-    assert health["security_profile"] == "dev_loopback_unauthenticated"
+    assert health["security_profile"] == "https_mtls_v1"
     assert health["pid"] == manifest["pid"]
     assert health["schema_version"] == manifest["schema_version"]
 
     caps = client.capabilities()
-    assert caps["server_mode"] == "dev_loopback_unauthenticated"
+    assert caps["server_mode"] == "https_mtls_v1"
     assert caps["methods"]["ping"]["backend"] == "rust_native"
     assert caps["methods"]["ping"]["status"] == "available"
 
@@ -224,8 +239,10 @@ def test_manifest_authority_scoped_filename(http_daemon):
     names = [f for f in os.listdir(man_dir) if f.startswith("http-daemon.")] if os.path.isdir(man_dir) else []
     assert names, "未发现 authority-scoped manifest 文件名"
     assert manifest["authority_id"] == get_http_authority_id()
-    # manifest schema version 冻结
-    assert manifest["manifest_version"] == "callwarden-http-manifest/v1"
+    # manifest schema version 冻结（v2：单轨 HTTPS + mTLS）
+    assert manifest["schema"] == "callwarden-http-manifest/v2"
+    assert manifest["security_profile"] == "https_mtls_v1"
+    assert manifest["bind_scope"] == "loopback"
 
 
 def test_nonloopback_bind_rejected(tmp_path):
@@ -277,7 +294,7 @@ def test_mutation_dedup_same_request_id(http_daemon, tmp_path):
     assert exc.value.code == "E_REQUEST_ID_REUSE_MISMATCH"
 
 
-def test_restart_dedup_persist(tmp_path):
+def test_restart_dedup_persist(tmp_path, monkeypatch):
     bin_path = _find_daemon_binary()
     if bin_path is None:
         pytest.skip("cw-daemon 二进制不可用")
@@ -302,6 +319,15 @@ def test_restart_dedup_persist(tmp_path):
     try:
         m1 = _wait_manifest(data_root, proc1)
         assert m1 is not None, "第一次启动未发布 manifest"
+        # ADR-002：客户端必须持 mTLS 证书（隔离 PKI，跨 restart 复用同一 CA/身份）
+        _mtls.pki_init(data_root)
+        cert, key = _mtls.identity_paths(data_root)
+        monkeypatch.setenv("CW_CLIENT_CERT", cert)
+        monkeypatch.setenv("CW_CLIENT_KEY", key)
+        monkeypatch.setenv("CW_CA_CERT", os.path.join(_mtls.pki_dir_of(data_root), "ca", "ca.crt"))
+        monkeypatch.delenv("CW_PKI_DIR", raising=False)
+        monkeypatch.setenv("CW_DAEMON_TASK_DB", task_db_path)
+        _mtls.wait_health(m1["endpoint"], _mtls.build_ssl_context(data_root, cert, key))
         c1 = HttpDaemonRpcClient(endpoint=m1["endpoint"], verify_health=False)
         inst = _ensure_workspace(c1, root_path)
         _seed_task_db_workspace(task_db_path)

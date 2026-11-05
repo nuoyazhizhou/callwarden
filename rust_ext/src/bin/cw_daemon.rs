@@ -140,6 +140,11 @@ mod unix {
             #[arg(long, default_value_t = 15)]
             timeout: u64,
         },
+        /// PKI 生命周期管理（init / token issue / enroll / renew / revoke / rotate-server）
+        Pki {
+            #[command(subcommand)]
+            action: callwarden_core::cli::pki::PkiCommand,
+        },
     }
 
     /// 入口：返回进程退出码
@@ -149,6 +154,7 @@ mod unix {
         match &cli.command {
             Some(Command::SchemaCheck { strict }) => schema_check(*strict, &cli),
             Some(Command::HealthCheck { timeout }) => health_check(*timeout, &cli),
+            Some(Command::Pki { action }) => callwarden_core::cli::pki::run(action.clone()),
             Some(Command::Serve) | None => serve(&cli),
         }
     }
@@ -323,6 +329,20 @@ mod unix {
                         eprintln!(
                             "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): E_HTTP_MVP_LOOPBACK_ONLY",
                             spec
+                        );
+                        return 1;
+                    }
+                    Err(callwarden_core::daemon::http_server::HttpServerError::RemoteNotAllowed) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] HTTP MVP bind {} rejected: E_HTTP_BIND_REMOTE_NOT_ALLOWED (需 CW_DAEMON_HTTP_ALLOW_REMOTE=1)",
+                            spec
+                        );
+                        return 1;
+                    }
+                    Err(callwarden_core::daemon::http_server::HttpServerError::ProfileInvalid(profile)) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] HTTP profile {:?} is not supported: E_HTTP_PROFILE_INVALID (only https_mtls_v1)",
+                            profile
                         );
                         return 1;
                     }
@@ -2235,6 +2255,11 @@ mod windows {
             #[arg(long, default_value_t = 15)]
             timeout: u64,
         },
+        /// PKI 生命周期管理（init / token issue / enroll / renew / revoke / rotate-server）
+        Pki {
+            #[command(subcommand)]
+            action: callwarden_core::cli::pki::PkiCommand,
+        },
     }
 
     /// 入口：返回进程退出码
@@ -2244,6 +2269,7 @@ mod windows {
         match &cli.command {
             Some(Command::SchemaCheck { strict }) => schema_check(*strict, &cli),
             Some(Command::HealthCheck { timeout }) => health_check(*timeout, &cli),
+            Some(Command::Pki { action }) => callwarden_core::cli::pki::run(action.clone()),
             Some(Command::Serve) | None => serve(&cli),
         }
     }
@@ -2412,6 +2438,20 @@ mod windows {
                         eprintln!(
                             "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): E_HTTP_MVP_LOOPBACK_ONLY",
                             spec
+                        );
+                        return 1;
+                    }
+                    Err(callwarden_core::daemon::http_server::HttpServerError::RemoteNotAllowed) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] HTTP MVP bind {} rejected: E_HTTP_BIND_REMOTE_NOT_ALLOWED (需 CW_DAEMON_HTTP_ALLOW_REMOTE=1)",
+                            spec
+                        );
+                        return 1;
+                    }
+                    Err(callwarden_core::daemon::http_server::HttpServerError::ProfileInvalid(profile)) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] HTTP profile {:?} is not supported: E_HTTP_PROFILE_INVALID (only https_mtls_v1)",
+                            profile
                         );
                         return 1;
                     }

@@ -48,6 +48,8 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
                 "gc", "doctor", "install-agent", "install-hook", "rule", "audit", "bootstrap",
                 "clone", "fts", "lease", "assignment",
+                # ADR-002：PKI 生命周期（init/token/enroll/renew/revoke/rotate-server）
+                "pki",
                 # 符号查询 / 构建 / 刷新 subcommand 入口
                 "workspace", "refresh", "stats", "status",
                 "search", "grep", "symbol", "file", "query", "issues", "tests",
@@ -1304,6 +1306,12 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
                "impact", "review", "vuln-blast", "symbol-history"}:
         # 这些子命令默认只读（分析/查询类，不写数据库）
         return True
+    if cmd == "pki":
+        # pki 委托 Rust `cw-daemon pki`（ADR-002 §4）：纯 PKI 生命周期，不读写
+        # workspace DB。必须跳过启动期 workspace 注册 —— 否则 `cw pki init`
+        # （引导链第一步）会先探测旧 daemon，被过期 manifest 拖死，
+        # 形成"先有鸡还是先有蛋"的死锁。
+        return True
     if cmd == "guardrail":
         # guardrail scan 是只读（扫描展示），不带写
         return True
@@ -1474,6 +1482,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_audit(argv, db)
         elif cmd == "bootstrap":
             return _handle_bootstrap(argv, db)
+        elif cmd == "pki":
+            return _handle_pki(argv)
         elif cmd == "clone":
             return _handle_clone(argv, db)
         # C8 Step #1: 新增 8 大类 subcommand 调度
@@ -16536,6 +16546,50 @@ def _handle_assignment(args, db):
         print(t("cli.messages.assignment_id_label", default="Assignment ID"),
               ":", result["assignment_id"])
     return True
+
+
+def _resolve_pki_binary():
+    """定位真实 Rust cw-daemon 二进制（用于 `cw pki` 委托）。
+
+    顺序：CW_DAEMON_BIN → PATH（跳过 Python console shim）→ rust_ext/target。
+    """
+    env_bin = os.environ.get("CW_DAEMON_BIN")
+    if env_bin and os.path.isfile(env_bin):
+        return env_bin
+    found = _find_cw_daemon_binary()
+    if found is not None and not _is_python_entry_shim(found):
+        return str(found)
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    exe = "cw-daemon.exe" if sys.platform == "win32" else "cw-daemon"
+    for profile in ("release", "debug"):
+        candidate = os.path.join(repo_root, "rust_ext", "target", profile, exe)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _handle_pki(argv: list) -> bool:
+    """`cw pki <action>`（ADR-002 §4）：委托 Rust cw-daemon 的 `pki` 子命令。
+
+    PKI 私钥生成/CA 签发/吊销台账全部在 Rust 侧（与 daemon 同一实现），
+    Python CLI 只做参数透传，杜绝两套 PKI 语义漂移。
+    """
+    import subprocess as _sp
+
+    binary = _resolve_pki_binary()
+    if binary is None:
+        print(
+            "ERROR: PKI 操作需要 Rust cw-daemon 二进制。\n"
+            "  Development: cargo build --no-default-features --bin cw-daemon（rust_ext/）\n"
+            "  Production: 安装 callwarden-daemon 包，或设置 CW_DAEMON_BIN。",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    env = os.environ.copy()
+    env["CW_DAEMON_MODE"] = "enterprise"
+    env["CW_DAEMON_EXEC_DEPTH"] = "1"
+    proc = _sp.run([str(binary), "pki", *argv], env=env)
+    raise SystemExit(proc.returncode)
 
 
 if __name__ == "__main__":

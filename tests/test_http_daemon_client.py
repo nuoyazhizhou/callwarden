@@ -1,13 +1,14 @@
-"""H2 HTTP client 集成测试（使用 H0-conformant 假 daemon）。
+"""H2 HTTP client 集成测试（使用 H0-conformant 假 daemon，单轨 HTTPS + mTLS）。
 
 重要：本文件不连接真实 cw-daemon，不打开 SQLite，不回退 Named Pipe/UDS。
+假 daemon 一律使用 TLS 监听并接受客户端证书（ADR-002 I1 单轨）；
 所有断言针对 frozen contract §4.2/§4.3：原始出向信封、request_id 复用、
-远程错误透传、超时、经 manifest 发现的端到端调用。真实 daemon round-trip
-属于 H2I 的职责，不在此声明。
+远程错误透传、超时、经 manifest v2 发现的端到端调用。
 """
 
 import json
 import os
+import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,10 +18,12 @@ import pytest
 from callwarden.server.daemon_client import HttpDaemonRpcClient, DaemonUnavailableError
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.config import (
-    HTTP_MVP_TRANSPORT_PROFILE,
+    HTTPS_MTLS_TRANSPORT_PROFILE,
+    HTTP_MANIFEST_SCHEMA_VERSION_V2,
     compute_http_manifest_hash,
-    HTTP_MANIFEST_SCHEMA_VERSION,
 )
+
+from test_mtls_control_plane import make_fake_tls_material
 
 
 # ----------------------------------------------------------------------
@@ -86,8 +89,8 @@ def _make_handler(state):
                     "id": None,
                     "manifest_id": state.get("manifest_id", "mfst-0"),
                     "pid": os.getpid(),
-                    "endpoint": f"http://127.0.0.1:{state['port']}",
-                    "security_profile": HTTP_MVP_TRANSPORT_PROFILE,
+                    "endpoint": f"https://127.0.0.1:{state['port']}",
+                    "security_profile": HTTPS_MTLS_TRANSPORT_PROFILE,
                     "git_commit": "abc",
                     "schema_version": 50,
                     "capability_registry_revision": 1,
@@ -96,7 +99,7 @@ def _make_handler(state):
             elif self.path == "/capabilities":
                 resp = {
                     "protocol_version": "1",
-                    "server_mode": HTTP_MVP_TRANSPORT_PROFILE,
+                    "server_mode": HTTPS_MTLS_TRANSPORT_PROFILE,
                     "methods": {
                         "query.file": {"backend": "rust_native", "status": "available"},
                         "unknown.method": {"backend": "none", "status": "unsupported"},
@@ -116,8 +119,14 @@ def _make_handler(state):
 
 
 @pytest.fixture
-def fake_factory():
+def fake_factory(tmp_path, monkeypatch):
     servers = []
+    tls = make_fake_tls_material(str(tmp_path / "tls"))
+    # Python 客户端证书来自环境变量（与生产 resolve_client_cert_paths 一致）
+    monkeypatch.setenv("CW_CLIENT_CERT", tls["client_cert"])
+    monkeypatch.setenv("CW_CLIENT_KEY", tls["client_key"])
+    monkeypatch.setenv("CW_CA_CERT", tls["ca_cert"])
+    monkeypatch.delenv("CW_PKI_DIR", raising=False)
 
     def make(sleep_seconds=0.0, error=False, manifest_id="mfst-0001"):
         state = {
@@ -127,15 +136,21 @@ def fake_factory():
             "sleep": sleep_seconds,
             "error": error,
             "manifest_id": manifest_id,
+            "tls": tls,
         }
         handler = _make_handler(state)
         srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         srv.daemon_threads = True
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(tls["server_cert"], tls["server_key"])
+        ctx.load_verify_locations(cafile=tls["ca_cert"])
+        ctx.verify_mode = ssl.CERT_OPTIONAL
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
         port = srv.server_address[1]
         state["port"] = port
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         servers.append(srv)
-        return srv, f"http://127.0.0.1:{port}", state
+        return srv, f"https://127.0.0.1:{port}", state
 
     yield make
     for s in servers:
@@ -206,7 +221,8 @@ def test_timeout_fails_closed(fake_factory):
 def test_discovery_via_manifest_file_end_to_end(fake_factory, tmp_path, monkeypatch):
     srv, url, state = fake_factory(manifest_id="mfst-live-1")
     manifest = {
-        "manifest_version": HTTP_MANIFEST_SCHEMA_VERSION,
+        "schema": HTTP_MANIFEST_SCHEMA_VERSION_V2,
+        "manifest_version": 2,
         "manifest_id": "mfst-live-1",
         "authority_id": "e2e-authority",
         "endpoint": url,
@@ -216,7 +232,16 @@ def test_discovery_via_manifest_file_end_to_end(fake_factory, tmp_path, monkeypa
         "daemon_binary_sha256": "deadbeef",
         "protocol_version": "1",
         "supported_protocol_versions": ["1"],
-        "security_profile": HTTP_MVP_TRANSPORT_PROFILE,
+        "security_profile": HTTPS_MTLS_TRANSPORT_PROFILE,
+        "auth": "mtls_client_cert_required",
+        "bind_scope": "loopback",
+        "tls": {
+            "min_version": "1.2",
+            "ca_cert_pem": state["tls"]["ca_pem"],
+            "ca_fingerprint_sha256": state["tls"]["ca_fingerprint_sha256"],
+            "server_cert_sha256": state["tls"]["server_cert_sha256"],
+            "san": ["IP:127.0.0.1"],
+        },
         "git_commit": "abc",
         "schema_version": 50,
         "started_at": "2026-08-14T00:00:00Z",
@@ -244,9 +269,9 @@ def test_health_and_capabilities(fake_factory):
     srv, url, state = fake_factory()
     client = HttpDaemonRpcClient(endpoint=url, verify_health=False)
     health = client.health()
-    assert health["security_profile"] == HTTP_MVP_TRANSPORT_PROFILE
+    assert health["security_profile"] == HTTPS_MTLS_TRANSPORT_PROFILE
     caps = client.capabilities()
-    assert caps["server_mode"] == HTTP_MVP_TRANSPORT_PROFILE
+    assert caps["server_mode"] == HTTPS_MTLS_TRANSPORT_PROFILE
     assert caps["methods"]["query.file"]["backend"] == "rust_native"
 
 
@@ -303,9 +328,10 @@ def test_http_client_has_no_sqlite_fallback():
 
     对应 frozen contract §9 负向矩阵：HTTP client 任意错误时尝试
     CodeGraphDB/sqlite/Named Pipe/UDS fallback 即测试失败并 BLOCKED。
+    单轨 HTTPS：明文 endpoint 直接 E_TLS_REQUIRED，同样 fail-closed。
     """
     client = HttpDaemonRpcClient(
-        endpoint="http://127.0.0.1:1", verify_health=False, timeout=2.0
+        endpoint="https://127.0.0.1:1", verify_health=False, timeout=2.0
     )
     # 结构上不含 SQL fallback 入口
     assert not hasattr(client, "_get_db")

@@ -65,6 +65,123 @@ impl PeerIdentity {
 }
 
 // ============================================
+// principal 身份（ADR-002 §5.1）
+// ============================================
+
+/// 定长、可 `Copy` 的字符串。
+///
+/// `PeerCredential` 在 dispatch/handler 层被大量按值传递（历史契约依赖 `Copy`），
+/// 因此 principal 字段不能引入 `String`/`Vec`——一旦失去 `Copy`，所有
+/// `DaemonStateExt` handler 签名与 peer 复用点都会连锁失效。这里用固定缓冲
+/// 承载：超长（`None`）由调用方按 fail-closed 处理。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct FixedStr<const N: usize> {
+    len: u16,
+    buf: [u8; N],
+}
+
+impl<const N: usize> Default for FixedStr<N> {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            buf: [0u8; N],
+        }
+    }
+}
+
+impl<const N: usize> FixedStr<N> {
+    pub const fn empty() -> Self {
+        Self {
+            len: 0,
+            buf: [0u8; N],
+        }
+    }
+
+    /// 写入字符串；超出容量返回 `None`（调用方必须 fail-closed）。
+    pub fn from_str(s: &str) -> Option<Self> {
+        let bytes = s.as_bytes();
+        if bytes.len() > N || bytes.len() > u16::MAX as usize {
+            return None;
+        }
+        let mut buf = [0u8; N];
+        buf[..bytes.len()].copy_from_slice(bytes);
+        Some(Self {
+            len: bytes.len() as u16,
+            buf,
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.buf[..self.len as usize]).unwrap_or("")
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl<const N: usize> std::fmt::Debug for FixedStr<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.as_str())
+    }
+}
+
+/// mTLS 连接解析出的 principal 身份（ADR-002 §5）。
+///
+/// 授权主语只有 `principal_id`（证书 SAN URI）；`cert_serial`/`cert_sha256`
+/// 仅用于吊销与审计定位，`kind` 决定 workspace 默认范围（`service` = 全部）。
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub struct PrincipalIdentity {
+    /// SAN URI 中的 principal_id（`pr_<32 hex>`）。
+    pub principal_id: FixedStr<48>,
+    /// 叶证书 serial（吊销比对）。
+    pub cert_serial: FixedStr<64>,
+    /// 叶证书 SHA-256（审计/排查）。
+    pub cert_sha256: FixedStr<64>,
+    /// `service` / `agent` / `human`（DB `pki_principals.kind` 投影）。
+    pub kind: FixedStr<16>,
+    /// 逗号分隔的 workspace_id 白名单；`service` 为空表示“全部”。
+    pub allowed_workspace_ids: FixedStr<512>,
+    /// 白名单超出容量：fail-closed，视为无任何 workspace 授权。
+    pub scopes_overflow: bool,
+}
+
+impl PrincipalIdentity {
+    pub fn is_authenticated(&self) -> bool {
+        !self.principal_id.is_empty()
+    }
+
+    pub fn is_service(&self) -> bool {
+        self.kind.as_str() == "service"
+    }
+
+    /// workspace 授权判定（ADR-002 §5.4：无“全局”授权，逐 workspace grant）。
+    ///
+    /// - 未认证 → false；
+    /// - 白名单溢出 → false（fail-closed）；
+    /// - `service` → true（daemon owner 本地引导身份）；
+    /// - 其余 principal → 必须命中显式 grant，空列表即无权限。
+    pub fn workspace_allowed(&self, workspace_id: &str) -> bool {
+        if !self.is_authenticated() {
+            return false;
+        }
+        if self.scopes_overflow {
+            return false;
+        }
+        if self.is_service() {
+            return true;
+        }
+        if self.allowed_workspace_ids.is_empty() {
+            return false;
+        }
+        self.allowed_workspace_ids
+            .as_str()
+            .split(',')
+            .any(|id| !id.is_empty() && id == workspace_id)
+    }
+}
+
+// ============================================
 // Unix 平台：PeerCred + get_peer_cred
 // ============================================
 
@@ -408,6 +525,66 @@ mod tests {
         let id = PeerIdentity::Unix { uid: 501, gid: 20 };
         assert!(id.is_valid());
         assert_eq!(id.owner_key(), "501");
+    }
+
+    // --- principal 身份测试（ADR-002 §5.1） ---
+
+    #[test]
+    fn test_fixed_str_roundtrip_and_overflow() {
+        let v = FixedStr::<48>::from_str("pr_0123456789abcdef").unwrap();
+        assert_eq!(v.as_str(), "pr_0123456789abcdef");
+        assert!(!v.is_empty());
+        assert!(FixedStr::<48>::from_str(&"x".repeat(49)).is_none());
+        // 空串合法（= 未认证）
+        let empty = FixedStr::<48>::from_str("").unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_principal_identity_service_is_unrestricted() {
+        let ident = PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_test").unwrap(),
+            kind: FixedStr::<16>::from_str("service").unwrap(),
+            ..Default::default()
+        };
+        assert!(ident.is_authenticated());
+        assert!(ident.workspace_allowed("1"));
+        assert!(ident.workspace_allowed("42"));
+    }
+
+    #[test]
+    fn test_principal_identity_agent_requires_explicit_grant() {
+        let ident = PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_test").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1,7").unwrap(),
+            ..Default::default()
+        };
+        assert!(ident.workspace_allowed("1"));
+        assert!(ident.workspace_allowed("7"));
+        assert!(!ident.workspace_allowed("2"));
+
+        // 无 grant 的 agent → 全部拒绝（fail-closed）
+        let bare = PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_test").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            ..Default::default()
+        };
+        assert!(!bare.workspace_allowed("1"));
+    }
+
+    #[test]
+    fn test_principal_identity_overflow_and_unauthenticated_fail_closed() {
+        let overflow = PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_test").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1").unwrap(),
+            scopes_overflow: true,
+            ..Default::default()
+        };
+        assert!(!overflow.workspace_allowed("1"));
+
+        assert!(!PrincipalIdentity::default().workspace_allowed("1"));
     }
 
     // --- Unix 平台测试 ---

@@ -238,7 +238,9 @@ def _transport_connect_tcp(endpoint: str) -> Optional[socket.socket]:
     先有鸡先有蛋约束），故保留最小本地 transport 连接——transport 适配
     职责，非 DB/业务 authority（不 open SQLite、不执行业务 SQL）。
     """
-    host_port = endpoint.removeprefix("tcp://")
+    host_port = endpoint
+    for prefix in ("tcp://", "https://", "http://"):
+        host_port = host_port.removeprefix(prefix)
     host, _, port = host_port.rpartition(":")
     if not host or not port.isdigit():
         return None
@@ -938,14 +940,19 @@ def read_http_manifest(path: str) -> Dict[str, Any]:
     return data
 
 
-def validate_http_endpoint_loopback(endpoint: str) -> str:
-    """校验 endpoint 为显式 loopback http；返回规范化 endpoint（去尾斜杠）。
+def validate_http_endpoint_loopback(endpoint: str, allow_remote: bool = False) -> str:
+    """校验 endpoint 为 https（ADR-002 单轨）；返回规范化 endpoint（去尾斜杠）。
+
+    - 明文 `http://` 一律拒绝（`E_TLS_REQUIRED`，单轨不保留降级路径）。
+    - 默认要求 loopback；`allow_remote=True`（manifest `bind_scope=remote`）时
+      允许非 loopback。
 
     Raises:
-        DaemonRemoteError(E_HTTP_MVP_LOOPBACK_ONLY): scheme 非 http 或 host 非 loopback。
+        DaemonRemoteError(E_TLS_REQUIRED / E_HTTP_MVP_LOOPBACK_ONLY)。
     """
     from callwarden.config import (
         E_HTTP_MVP_LOOPBACK_ONLY,
+        E_TLS_REQUIRED,
         is_loopback_host,
         parse_http_endpoint_host,
     )
@@ -953,40 +960,40 @@ def validate_http_endpoint_loopback(endpoint: str) -> str:
     try:
         scheme, host, _port = parse_http_endpoint_host(endpoint)
     except ValueError as exc:
-        raise DaemonRemoteError(E_HTTP_MVP_LOOPBACK_ONLY, str(exc))
-    if scheme != "http":
+        raise DaemonRemoteError(E_TLS_REQUIRED, str(exc))
+    if scheme != "https":
+        raise DaemonRemoteError(
+            E_TLS_REQUIRED,
+            f"仅允许 https（ADR-002 单轨 mTLS），拒绝 scheme={scheme!r}",
+        )
+    if not allow_remote and (not host or not is_loopback_host(host)):
         raise DaemonRemoteError(
             E_HTTP_MVP_LOOPBACK_ONLY,
-            f"HTTP MVP 仅允许 http（dev-loopback profile），拒绝 scheme={scheme!r}",
+            f"默认仅允许 loopback endpoint，拒绝 host={host!r}",
         )
-    if not host or not is_loopback_host(host):
-        raise DaemonRemoteError(
-            E_HTTP_MVP_LOOPBACK_ONLY,
-            f"HTTP MVP 仅允许 loopback endpoint，拒绝 host={host!r}",
-        )
+    if not host:
+        raise DaemonRemoteError(E_TLS_REQUIRED, "endpoint 缺少主机名")
     return endpoint.rstrip("/")
 
 
 def validate_http_manifest(
     manifest: Dict[str, Any], expected_authority_id: str = ""
 ) -> Dict[str, Any]:
-    """联网前完整校验 manifest（frozen contract §4.1）。
+    """联网前完整校验 manifest（ADR-002 §6 / §15.4 v2）。
 
-    依次校验：schema_version / manifest_hash / security_profile /
-    authority / 协议交集 / endpoint loopback / PID 存活 / executable 匹配。
+    依次校验：schema（v2；旧 v1 视为过期而非降级）/ manifest_hash /
+    security_profile / authority / 协议交集 / TLS 块（CA pin 指纹）/
+    endpoint（https + 按 bind_scope 判定 loopback）/ PID 存活 / executable 匹配。
     任一不符抛结构化 DaemonRemoteError（fail-closed，不连接、不删除 manifest）。
-
-    Raises:
-        DaemonRemoteError: 任一校验失败时，code 为 E_HTTP_MANIFEST_* 或
-            E_PROTOCOL_VERSION_UNSUPPORTED / E_HTTP_MVP_LOOPBACK_ONLY。
     """
     from callwarden.config import (
         E_HTTP_MANIFEST_HASH_MISMATCH,
         E_HTTP_MANIFEST_STALE,
+        E_MTLS_UNKNOWN_CA,
         E_PROTOCOL_VERSION_UNSUPPORTED,
-        HTTP_MANIFEST_SCHEMA_VERSION,
-        HTTP_MVP_TRANSPORT_PROFILE,
+        HTTP_MANIFEST_SCHEMA_VERSION_V2,
         HTTP_PROTOCOL_VERSION,
+        HTTPS_MTLS_TRANSPORT_PROFILE,
         compute_http_manifest_hash,
         norm_path,
     )
@@ -994,12 +1001,16 @@ def validate_http_manifest(
     if not isinstance(manifest, dict):
         raise DaemonRemoteError(E_HTTP_MANIFEST_STALE, "manifest 不是 JSON 对象")
 
-    # schema_version
-    if manifest.get("manifest_version") != HTTP_MANIFEST_SCHEMA_VERSION:
+    # schema：只接受 v2；旧 v1（manifest_version / schema_version=1）视为过期。
+    if manifest.get("schema") != HTTP_MANIFEST_SCHEMA_VERSION_V2:
+        legacy = manifest.get("manifest_version") or (
+            "v1" if manifest.get("schema_version") == 1 else None
+        )
         raise DaemonRemoteError(
             E_HTTP_MANIFEST_STALE,
-            f"manifest_version 不符: 期望 {HTTP_MANIFEST_SCHEMA_VERSION!r}, "
-            f"实际 {manifest.get('manifest_version')!r}",
+            "manifest 非 v2（旧 v1 manifest 视为过期，不降级到明文）"
+            if legacy
+            else f"manifest schema 不符: {manifest.get('schema')!r}",
         )
 
     # manifest_hash（排除自身后 canonical JSON 的 SHA-256）
@@ -1009,11 +1020,11 @@ def validate_http_manifest(
             "manifest_hash 校验失败（可能被篡改或写入未落盘）",
         )
 
-    # security_profile 必须严格等于 dev_loopback_unauthenticated
-    if manifest.get("security_profile") != HTTP_MVP_TRANSPORT_PROFILE:
+    # security_profile 必须严格等于 https_mtls_v1
+    if manifest.get("security_profile") != HTTPS_MTLS_TRANSPORT_PROFILE:
         raise DaemonRemoteError(
             E_HTTP_MANIFEST_STALE,
-            f"security_profile 非 {HTTP_MVP_TRANSPORT_PROFILE!r}: "
+            f"security_profile 非 {HTTPS_MTLS_TRANSPORT_PROFILE!r}: "
             f"{manifest.get('security_profile')!r}",
         )
 
@@ -1034,8 +1045,23 @@ def validate_http_manifest(
             f"(E_PROTOCOL_VERSION_UNSUPPORTED)",
         )
 
-    # endpoint 必须为 loopback
-    validate_http_endpoint_loopback(manifest.get("endpoint", ""))
+    # TLS 块：CA PEM + pin 指纹必须自洽（篡改 CA 即可被检出）
+    tls = manifest.get("tls")
+    if not isinstance(tls, dict):
+        raise DaemonRemoteError(E_HTTP_MANIFEST_STALE, "manifest 缺少 tls 块")
+    ca_pem = tls.get("ca_cert_pem") or ""
+    if not ca_pem:
+        raise DaemonRemoteError(E_MTLS_UNKNOWN_CA, "manifest 缺少 tls.ca_cert_pem")
+    fingerprint = (tls.get("ca_fingerprint_sha256") or "").strip().lower()
+    if fingerprint and fingerprint != _pem_sha256(ca_pem):
+        raise DaemonRemoteError(
+            E_MTLS_UNKNOWN_CA,
+            "manifest CA 指纹与 ca_cert_pem 不一致（CA pin 失败）",
+        )
+
+    # endpoint：https；bind_scope=remote 时允许非 loopback。
+    allow_remote = manifest.get("bind_scope") == "remote"
+    validate_http_endpoint_loopback(manifest.get("endpoint", ""), allow_remote=allow_remote)
 
     # PID 存活 + executable 匹配（stale-PID 规则）
     pid = manifest.get("pid")
@@ -1061,6 +1087,19 @@ def validate_http_manifest(
                 )
 
     return manifest
+
+
+def _pem_sha256(pem: str) -> str:
+    """PEM 证书 DER 的 SHA-256（用于 manifest CA pin 校验）。"""
+    import hashlib
+    import ssl
+
+    try:
+        der_b64 = pem.encode("utf-8")
+        der = ssl.PEM_cert_to_DER_cert(der_b64.decode("utf-8", "replace"))
+    except (ValueError, TypeError):
+        return ""
+    return hashlib.sha256(der).hexdigest()
 
 
 def _load_manifest_for_authority(
@@ -1115,9 +1154,10 @@ def resolve_http_endpoint_and_manifest(
     authority_id = authority_id or get_http_authority_id()
     explicit = explicit_endpoint or get_http_daemon_endpoint()
     if explicit:
-        # 显式 endpoint：必须 loopback，manifest 仅作可选权威校验
-        endpoint = validate_http_endpoint_loopback(explicit)
+        # 显式 endpoint：https 必填；manifest 仅作可选权威校验（remote 时允许非 loopback）。
         manifest = _load_manifest_for_authority(manifest_path, authority_id)
+        allow_remote = bool(manifest and manifest.get("bind_scope") == "remote")
+        endpoint = validate_http_endpoint_loopback(explicit, allow_remote=allow_remote)
         if manifest is not None and validate:
             validate_http_manifest(manifest, authority_id)
         return endpoint, manifest
