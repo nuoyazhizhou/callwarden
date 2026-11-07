@@ -145,7 +145,7 @@ def cell(value):
 
 def generate(revision):
     cli_path = "tests/convergence/fixtures/cli_full_params.json"
-    mcp_path = "tests/convergence/fixtures/mcp_full_schema.json"
+    mcp_path = "docs/testing/manifests/mcp/mcp_tools.json"
     matrix_path = "deliverables/software-company/tool_migration_matrix.json"
     cli, mcp, matrix = [strict_json_loads(read(p), p) for p in (cli_path, mcp_path, matrix_path)]
     cli_cats = categories("cli/categories.py", "CommandCategory", "commands")
@@ -158,7 +158,7 @@ def generate(revision):
     schema_drift = {"missing_current_tools": sorted(names - schema_names),
                     "obsolete_schema_tools": sorted(schema_names - names)}
     equal(category_tools, names, "categories vs matrix")
-    if matrix["total_tools"] != len(names) or mcp["total"] != len(names):
+    if matrix["total_tools"] != len(names) or len(mcp["tools"]) != len(names):
         raise ValueError("tool count fields disagree")
     leaves = unique(list(cli["commands"]) + cli["skipped"], "CLI snapshot")
     if cli["total_leaves"] != len(leaves) or cli["extracted"] != len(cli["commands"]):
@@ -232,8 +232,8 @@ def generate(revision):
     cli_category = {n: c["key"] for c in cli_cats for n in c["names"]}
     for name in sorted(leaves):
         spec = cli["commands"].get(name)
-        pos = ", ".join(p["name"] for p in spec["positionals"]) if spec else "未提取"
-        options = ", ".join(o["opt"] for o in spec["options"]) if spec else "未提取"
+        pos = ", ".join((p.get("name") or "").rstrip(",").strip() for p in spec["positionals"]) if spec else "未提取"
+        options = ", ".join((o.get("opt") or "").rstrip(",").strip() for o in spec["options"]) if spec else "未提取"
         lines.append(f"| CLI:{cell(name)} | `{cell(name)}` | {cli_category[name.split()[0]]} | {cell(pos)} | {cell(options)} | 待合同化 |")
     lines += ["", "## 4. MCP逐工具（矩阵声明，不是副作用实测）", "",
               "| 稳定case族ID | 分类 | backend / op_class | 必填快照参数 | 可选快照参数 | 状态 |",
@@ -243,10 +243,14 @@ def generate(revision):
     for tool in sorted(matrix["tools"], key=lambda t: t["name"]):
         name = tool["name"]
         schema = schemas.get(name)
-        schema_status = "快照待复核" if schema else "SCHEMA缺失，阻断"
-        schema = schema or {"params": {}, "required": []}
-        required = schema.get("required") or []
-        optional = sorted(set(schema["params"]) - set(required))
+        schema_status = "wire快照待复核" if schema else "SCHEMA缺失，阻断"
+        if schema:
+            inp = schema.get("inputSchema") or {}
+            props = (inp.get("properties") or {}).keys()
+            required = list(inp.get("required") or [])
+            optional = sorted(set(props) - set(required))
+        else:
+            required, optional = [], []
         lines.append(f"| MCP:{name} | {mcp_category[name]} | {tool['target_backend']} / {tool['op_class']} | {cell(', '.join(required)) if schema_status != 'SCHEMA缺失，阻断' else '未知（schema缺失）'} | {cell(', '.join(optional)) if schema_status != 'SCHEMA缺失，阻断' else '未知（schema缺失）'} | 待合同化；{schema_status} |")
     lines += ["", "## 5. 执行映射与阻断条件", "",
               "现有T1参数骨架、T2进程内MCP、T3源码CLI、M1静态路由、M2纯度、M3并发、M4入口故障、T4 workspace、T5 LLM各有不同深度；不自动折算为上表C1–C6全部完成。",

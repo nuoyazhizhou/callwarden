@@ -1,6 +1,6 @@
 # CallWarden 测试方案（v7 · 真实仓库语义验收与交付门禁）
 
-> 日期：2026-10-10。状态：**方案评审稿，测试尚未实施，产品尚未验收**。
+> 日期：2026-10-10（2026-10-13 同步进展：TP-07~TP-10 已实跑验收零缺陷，见 §12；2026-10-15 同步：E 交付门禁已由 TP-11E/G 实现并接线 CI，见 §8/§10）。状态：**方案评审稿 + 部分验收已完成（CLI 265 入口 / MCP 243 工具 wire 验收 DEFECT=0）；E 交付门禁已由 TP-11E/G 实现并接线 CI（见 §8/§10）**。
 > 本轮用户授权Planner修改文档/文档生成器并委派独立Agent评审；方案通过后再创建task。
 > 本轮不改生产代码、不跑测试、不联网、不调用daemon写面，不构成正式task Handoff。
 > 配套：TEST_CASES.md、COVERAGE_AUDIT.md、BUILD_ENV.md、STATIC_AUDIT.json、SKIP_SITES.json、REVIEW.md。
@@ -38,7 +38,7 @@
 
 case必含稳定ID、入口/profile、requirement/source、风险、前置、仓库revision、真实实体provenance、参数等价类、Act、oracle、允许事件/禁止副作用、timeout、cleanup、selector、实现状态及证据引用。
 
-TEST_CASES是**静态入口/参数规划清单**。目前未完成逐入口case合同和运行证据映射，统一标“待合同化/未计入语义覆盖”；不据此断言已有探测不存在或通过。生成清单不等于可执行测试。
+TEST_CASES是**静态入口/参数规划清单**。目前未完成逐入口case合同和运行证据映射，统一标“待合同化/未计入语义覆盖”；不据此断言已有探测不存在或通过。生成清单不等于可执行测试。注：tests/acceptance 套件（TP-07~TP-10）已实现真实 wire/CLI 验收并实跑零缺陷（见 §12）；TEST_CASES 的「待合同化」指尚未在本文逐行落 C1–C6 合同，不等于产品未验收。
 
 golden来自人工核验样本和冻结契约，不从被测search/stats结果复制预期。API返回ID/hash可定位实体，但业务语义仍由独立oracle验。差分比较不能用同daemon同错误证明正确。
 
@@ -75,7 +75,7 @@ ready gate核验source revision、构建hash、PID/executable、manifest/health�
 
 CLI分别验cw.py源码、安装Python console entrypoint、冻结发布产物；原生Rust CLI如发布，按独立命令树/profile验，不能套Python84顶层。公开面包括子命令、standalone、仍承诺的legacy flag/alias、help/version、格式/i18n/global options。
 
-CLI固化233叶子加server只是起点。重新提取argparse需记录default/choices/nargs/互斥/必填/类型/global继承；现有takes_value快照不足以证明argv正确。server/watch/daemon验启动→ready→真实交互→停止，timeout不是成功。install/setup使用隔离venv/HOME和离线依赖；cw test仅调用受控小模块，防递归验收。help/version按契约验无daemon可用和无业务写入。
+CLI固化232叶子加server只是起点。重新提取argparse需记录default/choices/nargs/互斥/必填/类型/global继承；现有takes_value快照不足以证明argv正确。server/watch/daemon验启动→ready→真实交互→停止，timeout不是成功。install/setup使用隔离venv/HOME和离线依赖；cw test仅调用受控小模块，防递归验收。help/version按契约验无daemon可用和无业务写入。
 
 每case验rc、stdout/stderr、语义、前后状态和cleanup；正常场景缺参/usage不能算通过。T3强制隔离endpoint/manifest，refresh成功和snapshot就绪是硬前置。
 
@@ -126,9 +126,9 @@ LLM选择另设非确定性产品实验，记录模型/配置/样本/成本/阈�
 | 性能 | 冻结硬件/corpus/profile预算通过；未校准不宣称达到SLO |
 | 证据 | 完整/同版本/新鲜；缺报告/selector、空suite不放行 |
 
-运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态447/7133不能称执行skip率。468处站点的reason语法为字面量282、表达式167、缺省19，全部根因尚未复核（GAP-16）；字面量文本不等于已归因。逐站点源码/适用性审查，runtime只补充实际触发的reason和nodeid/collection关联，未触发登记NOT_TRIGGERED及依据，不强行触发skip凑全量。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
+运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态473/7464不能称执行skip率。498处站点的reason语法为字面量292、含表达式183、缺省23（互斥口径），全部根因尚未复核（GAP-16）；字面量文本不等于已归因。逐站点源码/适用性审查，runtime只补充实际触发的reason和nodeid/collection关联，未触发登记NOT_TRIGGERED及依据，不强行触发skip凑全量。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
 
-Python coverage只说明Python层，Rust需独立模块/分支义务。2091为src属性数，非cargo执行数，也非全部integration/bin测试。不得把--lib daemon::称全量Rust。覆盖预算按关键handler/负分支冻结，不以无基线60%总行覆盖代替功能完备。
+Python coverage只说明Python层，Rust需独立模块/分支义务。2163为src属性数，非cargo执行数，也非全部integration/bin测试。不得把--lib daemon::称全量Rust。覆盖预算按关键handler/负分支冻结，不以无基线60%总行覆盖代替功能完备。
 
 ## 9. CI与命令（待实施）
 
@@ -138,7 +138,7 @@ PR跑清单/文档一致性、适用Python/Rust快速测试、真实隔离协议
 
 源码suite、daemon E2E、artifact E2E分job且前置明确。Rust覆盖适用src/integration/bin，singleton敏感先隔离/串行分组，不用临时skip吞义务。全量pytest和convergence不能重复计同case。
 
-check_ci_gates/check_skip_rate当前不存在，仅登记待实现职责。gate需完整结果与expected selector集合，拒绝空/缺/重复/截断/过期/版本不符/collection error。JUnit递归处理testsuites子节点；业务case报告核验入口覆盖，不能只数pytest函数。
+check_ci_gates/check_skip_rate 已由 TP-11E 实现于 `cicd/`（搭配 `artifact_e2e.py`/`check_selector_manifest.py`），接线 `acceptance-gates.yml`。gate 需完整结果与 expected selector 集合，拒绝空/缺/重复/截断/过期/版本不符/collection error；**revision 新鲜度 fail-closed 前置**（`git rev-parse HEAD` 不符即拒，修旧 fail-open）；JUnit 递归处理 testsuites 子节点；业务 case 报告核验入口覆盖，不能只数 pytest 函数。
 
 ## 10. 复杂度、ownership与顺序
 
@@ -150,11 +150,11 @@ check_ci_gates/check_skip_rate当前不存在，仅登记待实现职责。gate�
 |---|---|---|---|
 | A0 静态候选/合同 | 静态源与快照清单扫描、case/参数规划表、逐站点skip账本、profile/corpus候选；纯静态门禁自洽 | docs/testing、生成器与静态账本 | 无 |
 | B0 最小隔离底座 | EphemeralDaemonFixture 最小隔离沙箱（HOME/USERPROFILE/data/socket隔离、daemon bind 0取得endpoint、进程树追踪与安全cleanup）；最低来源/manifest/health核验后供runtime提取，禁止生产发现、自启动和联网规则下载 | 专用测试harness最小隔离子集 | A0 |
-| A1 真实清单冻结 | 基于B0沙箱通过公开协议提取CLI真实argparse/runtime与MCP wire tools/list，核验逐字段一致性，消除GAP-14漂移并正式冻结清单合同 | docs/testing/manifests、提取脚本与测试定义 | B0 |
+| A1 真实清单冻结（已完成 ✓） | 基于B0沙箱通过公开协议提取CLI真实argparse/runtime与MCP wire tools/list，核验逐字段一致性，消除GAP-14漂移并正式冻结清单合同 | docs/testing/manifests、提取脚本与测试定义 | B0 |
 | B1 完整公共初始化 | 扩展隔离底座至空库正式公共接口初始化/迁移、workspace/identity注册、Role Contract/lease绑定与ready gate，无SQL补绿/无生产发现 | 专用tests harness完整集与自验收 | A1 |
-| C 接口验收 | 全量CLI/MCP wire语义、写/常驻/参数/跨端，逐case结果 | 独立CLI/MCP测试目录与fixture；共享文件串行 | B1 |
+| C 接口验收（部分完成 ✓：TP-10M 243-wire / TP-10C 265-CLI 已实跑 DEFECT=0） | 全量CLI/MCP wire语义、写/常驻/参数/跨端，逐case结果 | 独立CLI/MCP测试目录与fixture；共享文件串行 | B1 |
 | D 专项矩阵 | G/I/J/E/W/S/A/X和16语言，正负/恢复/并发 | 按domain冻结测试目录/fixture | B1、相关C |
-| E 交付门禁 | 安装产物、平台/性能、报告硬门禁 | workflows、release验收和独立gate脚本 | C、D |
+| E 交付门禁（已实现 ✓：TP-11E/G） | 安装产物、平台/性能、报告硬门禁 | workflows、release验收和独立gate脚本(cicd/) | C、D |
 
 各合同排除未冻结生产路径和用户权威库。产品前置缺口另冻最小daemon/client修复scope，产品修复后重验公开链路，不能扩充fixture补绿。task号/基线/schema/命令/rollback/角色合同方案通过后绑定，本文不虚构。
 
@@ -173,3 +173,33 @@ TESTING_PLAN维护策略；TEST_CASES生成静态入口/参数和待合同化状
 v6原件与hash保留在`.backups/20261010-153813-before-v7/manifest.json`，更早.bak_v5保留。生成器禁止硬编码通过/历史缺陷/skip率；重复项、计数或源/矩阵/分类集合失配须报错。schema与源的名称漂移允许生成显式带 `planning_inventory_gate=BLOCKED_SCHEMA_DRIFT` 的规划草稿，禁止冻结。当前 `--check` 退出0仅表示生成字节一致，不能解除该阻断；后续清单冻结门禁必须读取该字段并要求schema集合及逐字段核验通过。
 
 独立Agent只读PASS/BLOCKED审查本方案，Task未创建按用户讨论例外，禁止修改/测试/网络/daemon写。Planner归档原结论及finding到REVIEW.md，整改后复评；文档PASS不等于产品PASS或真实注册Reviewer verdict。
+
+## 12. 实施进展同步（2026-10-13）
+
+代码层自 v7 以来已完成 TP-07~TP-10 验收套件并实跑（详见 COVERAGE_AUDIT §6）：
+
+- 清单提取与冻结（TP-08C/M/F）：CLI `cli_tree.json`（84+144）、MCP `mcp_tools.json`（243 真名）、`inventory_frozen.json`（508 入口）—— GAP-14 提取侧 + 收敛侧闭合，生成器静态账本已切换至真名源。
+- 真实 wire/CLI 验收：TP-10M 243 工具 DEFECT=0、TP-10C 265 入口 DEFECT=0（替代旧进程内 call_tool，修复 GAP-05/07）。
+- T3 门禁升级零缺陷（a8b96b2）；新增覆盖率/SAST/SCA/ruff 门禁。
+- GAP-11 已修复（M1 239→243 文案）；P2-1 已修（cli_full_params.json 尾逗号清洗 + 生成器拼接防御）。
+- GAP-14 收敛侧闭合（2026-10-14）：`tests/convergence/fixtures/` 下 `audit_mcp_inventory.json` 与 `mcp_full_schema.json` 两个 fixture 的陈旧名 detect_cycle/detect_cycles 已定点改名为真名 detect_dependency_cycle/detect_call_cycles，与 mcp_tools.json 名字集合 diff=NONE，T2 不再空参调用改名工具；`STATIC_AUDIT.json` 已按当前 HEAD `bd5cd60f`（2026-10-28 重生成，较 `2b638d5`：skip 站点 481→488、python 定义 7309→7374、rust 属性 2106→2119；`605c549`→`d5cfbeb4` 仅 rust +1（2112→2113），`d5cfbeb4`→`0fc6ba2` 再 +1 skip/文件、python +23（7320→7343）、字面量 293→294，`0fc6ba2`→`bd5cd60f` 仅 python +31（7343→7374）、rust +6（2113→2119）、cli 提取 233→232（-1，删 `gc db-migrate-single`）；`bd5cd60f`→`6bd1e9c` 仅 python +9（7374→7383）、rust +19（2119→2138），skip 站点仍 488 不变）刷新，生成器 `--check` 全 PASS。
+- **TP-11G CI 硬化 + F-OWNER-01/02（2026-10-16）**：E 交付门禁之上修复 P0/P1（windows 包装载/golden 重冻结/manifest 漂移守卫/daemon_e2e env 对齐）；Windows 属主/权限校验（I 域）大重写（ownership_allows 双态契约、admin 探针可观测、CheckTokenMembership 修复、owner_check_decision 纯函数、10+ 契约化用例）。I 域精度提升，D 专项矩阵整体仍待完成。
+- **CI-DEBT 技术债清理（2026-10-17，HEAD 83f3604）**：E 门禁已实现后的一次大规模安全/lint/合规持续硬化——CI-DEBT A（quick-xml 修 RUSTSEC、cargo-audit 版本锁）、B1/B2（harness 候选缺失改 pytest.skip、assertion drift 对齐）、CD-1~CD-5（Linux Python job 可导入、F821/ruff/bandit 真修、migrate.py 白名单消 B608、129 处 uses SHA pin、semgrep 去盲区、governance harness daemon 缺失改 skip）、gitleaks 272 findings triage 为假阳性。属 E 门禁已闭合后的维护期工作，非新缺口；CI-DEBT 把已知环境/平台前置（daemon 候选缺失、仅 win32）的失败转 pytest.skip，新增 11 个 skip 站点（468→479），全部 root_cause 仍 UNREVIEWED。
+- **CI-DEBT 续（2026-10-18，HEAD 2b638d5）**：在 10-17 CI-DEBT 之上继续收口——w3 daemon P0-3 fail-closed 20 ERROR（test job 创建 callwarden-clients 组+sg 包裹 pytest）、daemon 早亡 stderr 取证、http-daemon capability matrix / MCP 工具矩阵 source_file 对齐模块重命名（26 条目）基线入库、compat dispatch 补 publish_snapshot 路由、fake daemon 响应信封补 ok:true 对齐生产 wire、db 跨仓检测语言推断自递归缺陷、fuzz 并发写断言自相矛盾修复、hook 诊断断言对齐实现文案、test_cli_consistency 断言逻辑翻转修复、test matrix job fetch-depth:0、tree extraction 隔离 env + 零生产写测试重做、daemon 自递归守卫、convergence daemon 候选 skip + i18n 全局单例连环污染、TP-10M MCP wire harness 无已知散列候选改 skip。新增 2 个 skip 站点（479→481，pytest.skip 222→224），全部 root_cause 仍 UNREVIEWED。
+
+- **CI 取证 + lease 家族测试加固（2026-10-20，HEAD 7d8eb15）**：在 CI-DEBT 续之上继续收口——CI probe job（Probe C/D/E：PYTHONPATH 拼接修复、WAL 双实例 A/B 定性实验、metrics CLI CI-only 失败取证避开日志截断）；lease 家族新增 property_lease_fencing / task_thread_lifecycle（时钟注入）、p4_migration / p4_protected_mutation（默认时钟注入 + finds_via_path 隔离）、lease fixture 默认时钟修复无 daemon 环境失败 + 时钟不可用 fail-closed 把守；phase7 轮询改 executor 加锁访问器、JobExecutor 连接注入消除双连接 WAL Hazard；phase4 daemon 路由隔离 fixture、daemon 存在性断言平台分支；db 跨仓检测模块级语言推断（修复 python 仓 0 命中）；i18n/health/guardrail/dashboard 契约对齐。属 E 门禁已闭合后的维护期，非新缺口。STATIC_AUDIT.json 已按 HEAD 7d8eb15 重生成（481→482 skip 站点、7309→7320 python 定义），`--check` 全 PASS，SKIP_SITES/TEST_CASES 同步。
+
+- **连接池单例 + Bootstrap Gate + 审计白名单（2026-10-21，HEAD 605c549）**：在 lease 家族加固之上继续收口——fix(rust) SQLite 连接池单例化（消除同进程双实例 WAL Hazard）、Bootstrap Gate 补 daemon 生命周期（修复 E_HTTP_MANIFEST_MISSING 长红）；fix(srv-019) audit 白名单陈旧键名 + scanned_files 口径自洽（retired 11→14、finding 87→83）；perf 对比基线口径、lint 账目清理（F541/E401）、Probe F 隔离对照、CW_RUST_POOL_LIFETIME 诊断门。属 E 门禁已闭合后的维护期，非新缺口。STATIC_AUDIT.json 已按 HEAD 605c549 重生成（482→487 skip 站点、rust 属性 2106→2112），`--check` 全 PASS，SKIP_SITES/TEST_CASES 同步。
+
+- **pull 合入 d5cfbeb4（2026-10-22）**：远端 509 文件以测试清理（删未用 `import pytest` 等）+ WAL hazard v2（conn_pool.rs→db_conn.rs）为主；新增 `ci_malformed_bisect_evidence.md`。前轮 11 个未提交改动因 `test_m1_route_matrix.py` 与远端冲突（我改 239→243、远端删 `import pytest`，不重叠）被 merge 中止，经 `git stash`→`git pull`→`git stash pop` 自动合并解清、无冲突。`STATIC_AUDIT.json` 已按 HEAD `d5cfbeb4` 重生成：仅 rust 属性 2112→2113（+1），skip 站点 487/python 定义 7320/MCP 243 等不变，`--check` 全 PASS，SKIP_SITES/TEST_CASES 同步。
+
+- **WAL v4 + macOS 收口 + known-red 隔离（2026-10-27，HEAD 0fc6ba2）**：48 提交质量收口——WAL hazard 正式修法 v4（Linux 链系统 libsqlite3，同进程单实例，malformed 根除、h7/p15 首全绿）、macOS 撕裂面裁决收口（停发布物/门禁、改防回归守卫）、known-red 隔离机制（KR-A/B/C 登记 + deselect/quarantine）、enterprise-release 走 build.py v4、semgrep 移出核心依赖、6 处 env 泄漏改 monkeypatch、5 处未用 import 清理。远端新增 `full_stack_review_20261024.md`（门禁结论：不通过）。`STATIC_AUDIT.json` 已按 HEAD `0fc6ba2` 重生成：pytest.skip 226→227、classic 466→467、文件 142→143、三机制 487→488、python 定义 7320→7343（+23）、字面量 293→294；rust 2113/cfg 122/skipif 240/importorskip 21/子集 46·18·4/parser 44/root_cause 0 不变，`--check` 全 PASS，SKIP_SITES/TEST_CASES 同步。GAP-16 的 488 处 root_cause 仍全 UNREVIEWED。
+- **pull 合入 bd5cd60f（2026-10-28）**：远端删除 CLI 命令 `gc db-migrate-single`（对应 `server/migrate.py` 删除），新增跨项目 workspace 绑定 / db FK 孤儿 / workspace 身份等测试。前轮 11 个未提交改动因 `TEST_CASES.md`（整文件重生成 + 行尾）与 `cli_full_params.json`（仅 autocrlf 翻转、无数据改动）两生成链文件与远端冲突被 merge 中止，经 `git stash`→`git pull`→`git stash pop` 解冲突：两文件直接采用远端 `bd5cd60f` 版本（我的本地版无保留价值），再按新 HEAD 重生成三份账本。`STATIC_AUDIT.json` 已按 HEAD `bd5cd60f` 重生成：仅 python 定义 7343→7374（+31）、rust 属性 2113→2119（+6）、py 文件 699→702（+3）、cli 提取 233→232（-1），MCP 243 / skip 站点 488 / 原因分布 / 子集 46·18·4 / parser 44 / root_cause 0 全部不变，`--check` 全 PASS，SKIP_SITES/TEST_CASES 同步。GAP-16 的 488 处 root_cause 仍全 UNREVIEWED。
+
+- **HEAD 前进 6bd1e9c + 账本失准修复（2026-10-30）**：`bd5cd60f` 以来远端再合入 18 提交（daemon/workspace/schema/perf 收口 + Wave 2~5 E2E 报告），未触碰我的 11 个未提交文件；但工作区账本/文档仍按 `bd5cd60f` 对齐，致 `supplied_source_revision` 与树不符、`--check` 一度 FAIL。已按新 HEAD `6bd1e9c` 重生成三份账本，`--check` 现全 PASS：仅 python 定义 7374→7383（+9）、rust 属性 2119→2138（+19），skip 站点 488 / MCP 243 / 原因分布 / 子集 / parser 44 / root_cause 0 全部不变。再次印证：**每次远端推进 HEAD 后必须重生成账本**，否则 `--check` 会 false-fail（叠加 autocrlf 行尾隐患）。GAP-16 的 488 处 root_cause 仍全 UNREVIEWED。
+
+- **pull 合入 7e178cb（2026-11-05，s4 重构）**：`refactor(s4)` 删除 `cw_bridge.rs` 与 4 个 bridge/WSL 测试（-2546 行），新增 PKI/mTLS 主体授权体系（Rust daemon 侧 `cli/pki.rs` 等 + 3 个新测试 `test_mtls_control_plane.py`/`test_mtls_enrollment.py`/`test_principal_authorization.py`）。已按新 HEAD `7e178cb` 重生成三份账本，`--check` 全 PASS：python 定义 7481→7464（-17）、py 文件 710→709（-1）、rust 属性 2148→2163（+15）、cfg 文件 122→123（+1）、pytest.skip 232→230（-2）、pytest.mark.skipif 240→243（+3）、pytest.importorskip 21→25（+4）、三机制 493→498（+5）、classic 472→473（+1）、字面量 290→292（+2）、含表达式 184→183（-1）、缺省 19→23（+4）、nonliteral_or_absent 194→206（+12）；MCP 243 工具（真源 `mcp_tools.json` 核验一致，server/mcp_server.py +10 行未改计数）/ CLI 84·21·233 / schema 名称漂移 0（GAP-14 仍闭）/ root_cause 0 全部不变。GAP-16 的 498 处 root_cause 仍全 UNREVIEWED。
+
+- **pull 合入 fc8b575（2026-11-04）**：远端以 ADR §15 实施清单 + PKI 五表 schema 落地为主（docs(mtls)+db(pki)）。核心清单零漂移：MCP 243 工具、CLI 84 顶层/21 类/233 叶子、schema 名称漂移 0（GAP-14 仍闭合）。已按新 HEAD `fc8b575` 重生成三份账本，`--check` 全 PASS：python 定义 7383→7481（+98）、rust 属性 2138→2148（+10）、py 文件 702→710（+8）、pytest.skip 227→232（+5）、classic 467→472（+5）、三机制 488→493（+5）、字面量 294→290（-4）；MCP 243 / CLI / 子集 46·18·4 / parser 44 / cfg 122 / root_cause 0 全部不变。GAP-16 的 493 处 root_cause 仍全 UNREVIEWED。
+
+本方案 §10 阶段表中 A0/B0/A1 已完成，C 接口验收主线（wire/CLI）已由 TP-10 覆盖；D 专项矩阵仍待完成；**E 交付门禁已由 TP-11E/G 实现并接线（Linux daemon lib 单测 + Windows daemon 验收/命名管道·身份专项），并经 TP-11G CI 硬化与 CI-DEBT 持续硬化**。治理 GAP-15 仍阻塞治理验收进入。

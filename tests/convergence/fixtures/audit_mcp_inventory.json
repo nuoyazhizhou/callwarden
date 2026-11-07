@@ -116,7 +116,7 @@
       "status": "migrated"
     },
     {
-      "name": "detect_cycle",
+      "name": "detect_dependency_cycle",
       "module": "tools_p2_graph",
       "rpc_method": "detect_cycle",
       "target_backend": "rust_native",
@@ -332,7 +332,7 @@
       "status": "stable"
     },
     {
-      "name": "detect_cycles",
+      "name": "detect_call_cycles",
       "module": "tools_query",
       "rpc_method": "query.detect_cycles",
       "target_backend": "rust_native",

@@ -759,7 +759,7 @@
       }
     },
     {
-      "name": "detect_cycle",
+      "name": "detect_dependency_cycle",
       "description": "检测硬依赖图中的环，返回最小 cycle path（Req 9.7）。\n\n只做无环校验和诊断，不提供自动排程/assignment/抢占（Req 9.10）。\n\nReturns:\n    {\"has_cycle\": bool, \"cycle_path\": list}\n",
       "required": [
         "workspace_id"
@@ -774,7 +774,7 @@
       }
     },
     {
-      "name": "detect_cycles",
+      "name": "detect_call_cycles",
       "description": "检测循环调用\n\nArgs:\n    max_depth: 最大追踪深度（默认 10）\n\nReturns:\n    检测到的循环列表，每个循环是一个函数名列表\n",
       "required": [],
       "params": {

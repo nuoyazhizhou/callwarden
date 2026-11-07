@@ -8,11 +8,11 @@ LLM 有非确定性,故断言用基线阈值(不要求 100%),防可理解性回�
 
 首轮实测(deepseek-v4-flash,2026-09-30):
   - 窄候选选对+参数覆盖:15/15
-  - 全量 243 纯名字候选:9/10(唯一失败 detect_cycle/detect_cycles 命名歧义)
+  - 全量 243 纯名字候选:9/10(历史失败 detect_cycle/detect_cycles 命名歧义;已于 2026-10-14 改名为 detect_dependency_cycle/detect_call_cycles,歧义消除)
   - 易混淆带描述精确区分:7/7
-发现:detect_cycle(硬依赖图环)/detect_cycles(循环调用)命名仅差 1 字母,
+历史发现:detect_cycle(硬依赖图环)/detect_cycles(循环调用)命名仅差 1 字母,
 语义不同(依赖图 vs 调用图),LLM 在纯名字候选下无法区分 → 命名歧义(非缺陷,
-两工具都可用),建议改名或描述加前缀。
+两工具都可用);已于 2026-10-14 改名 detect_dependency_cycle/detect_call_cycles 消除歧义。
 """
 from __future__ import annotations
 
