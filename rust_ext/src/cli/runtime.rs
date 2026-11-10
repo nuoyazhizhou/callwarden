@@ -275,100 +275,14 @@ impl RuntimeOptions {
         }
     }
 
-    /// 调用 daemon RPC。支持 Unix UDS 和 Windows Named Pipe。
-    pub fn daemon_call(&self, method: &str, params: Value) -> Result<Value, String> {
-        let mut params = params;
-        if let Value::Object(ref mut map) = params {
-            if !map.contains_key("request_id") {
-                let pid = std::process::id();
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-                map.insert("request_id".to_string(), Value::String(format!("req-{pid}-{now}")));
-            }
-        }
-        #[cfg(unix)]
-        {
-            let client = crate::daemon::client::unix::UnixDaemonRpcClient::new(
-                &self.socket_path.to_string_lossy(),
-            )
-            .with_timeout(self.timeout);
-            client
-                .call(method, params)
-                .map_err(|error| format!("daemon RPC {method} failed: {error}"))
-        }
-        #[cfg(not(unix))]
-        {
-            use std::io::{Read, Write};
-            use std::os::windows::io::FromRawHandle;
-            use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-            use windows_sys::Win32::Storage::FileSystem::{
-                CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-            };
-            use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
-
-            let generic_read = 0x80000000u32;
-            let generic_write = 0x40000000u32;
-
-            let pipe_name = if self.socket_path.to_string_lossy().starts_with(r"\\.\pipe\") {
-                self.socket_path.to_string_lossy().to_string()
-            } else {
-                let current_sid = crate::daemon::transport_windows::get_current_user_sid()
-                    .unwrap_or_else(|_| "unknown".to_string());
-                format!(r"\\.\pipe\callwarden-{current_sid}")
-            };
-
-            let wide: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
-            unsafe {
-                WaitNamedPipeW(wide.as_ptr(), (self.timeout.as_secs() * 1000) as u32);
-            }
-
-            let handle = unsafe {
-                CreateFileW(
-                    wide.as_ptr(),
-                    generic_read | generic_write,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE,
-                    std::ptr::null(),
-                    OPEN_EXISTING,
-                    0,
-                    std::ptr::null_mut(),
-                )
-            };
-
-            if handle == INVALID_HANDLE_VALUE {
-                return Err(format!("failed to connect to Windows Named Pipe at {}", pipe_name));
-            }
-
-            let mut file = unsafe { std::fs::File::from_raw_handle(handle as _) };
-
-            let req_body = serde_json::json!({
-                "id": 1,
-                "method": method,
-                "params": params,
-            });
-            let payload = serde_json::to_vec(&req_body)
-                .map_err(|e| format!("json encode error: {e}"))?;
-            let len_bytes = (payload.len() as u32).to_be_bytes();
-
-            file.write_all(&len_bytes).map_err(|e| format!("write len error: {e}"))?;
-            file.write_all(&payload).map_err(|e| format!("write payload error: {e}"))?;
-            file.flush().map_err(|e| format!("flush error: {e}"))?;
-
-            let mut len_buf = [0u8; 4];
-            file.read_exact(&mut len_buf).map_err(|e| format!("read len error: {e}"))?;
-            let resp_len = u32::from_be_bytes(len_buf) as usize;
-
-            let mut resp_buf = vec![0u8; resp_len];
-            file.read_exact(&mut resp_buf).map_err(|e| format!("read resp error: {e}"))?;
-
-            let resp_json: Value = serde_json::from_slice(&resp_buf)
-                .map_err(|e| format!("parse resp json error: {e}"))?;
-
-            if resp_json.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-                Ok(resp_json.get("result").cloned().unwrap_or(Value::Null))
-            } else {
-                let err_msg = resp_json.get("error").map(|v| v.to_string()).unwrap_or_else(|| "unknown RPC error".to_string());
-                Err(format!("daemon RPC {method} returned error: {err_msg}"))
-            }
-        }
+    /// 调用 daemon RPC。
+    ///
+    /// ADR-002 单轨 HTTPS+mTLS：Rust legacy RPC 客户端（UDS / Named Pipe）已
+    /// 退役，且本仓库不提供 Rust HTTPS 客户端，因此 fail-closed。
+    pub fn daemon_call(&self, method: &str, _params: Value) -> Result<Value, String> {
+        Err(format!(
+            "daemon RPC {method} unavailable: Rust legacy RPC 客户端已按 ADR-002 退役；请使用 Python `cw-client` / `cw`（经 HTTPS+mTLS 访问 daemon）"
+        ))
     }
 }
 

@@ -6,7 +6,8 @@
 //! - `_inject_workspace_id`：为 RPC params 注入显式 workspace_id（fail-closed）；
 //! - 8 个 `_sql_fallback_*`：local 模式兼容回退的只读权威查询
 //!   （callers/callees/search/symbol/stats/topological_order/call_chain_down/detect_cycles）；
-//! - `call_with_fd`：SCM_RIGHTS FD 传递平台能力探测（RPC 无法传 FD，下沉为能力探测）；
+//! - `call_with_fd`：已退役（ADR-002 单轨 HTTPS+mTLS 不支持 FD 传递），
+//!   统一返回稳定错误码 `E_TRANSPORT_UNSUPPORTED`；
 //! - `publish_snapshot`：checkpoint PASSIVE + 发布 payload 归一化。
 //!
 //! workspace/identity 控制（对齐 db_base._get_active_workspace_id 与 abi-error-code-contract）：
@@ -1042,22 +1043,14 @@ pub fn handle_sql_fallback_detect_cycles(params: &Value) -> Result<Value, Daemon
 // 9. call_with_fd / publish_snapshot
 // ======================================================================
 
-/// `call_with_fd` 下沉：SCM_RIGHTS FD 传递平台能力探测（RPC 无法传 FD，
-/// 对齐 Python win32/无 AF_UNIX 时抛 DaemonUnavailableError 的语义 → supported=false）。
-pub fn handle_call_with_fd(params: &Value) -> Result<Value, DaemonRpcError> {
-    let _method = get_str_param(params, "method").unwrap_or("");
-    #[cfg(unix)]
-    {
-        Ok(json!({"supported": true, "transport": "scm_rights"}))
-    }
-    #[cfg(not(unix))]
-    {
-        Ok(json!({
-            "supported": false,
-            "transport": "",
-            "error": "当前平台不支持 SCM_RIGHTS FD 传递",
-        }))
-    }
+/// `call_with_fd` 已退役：ADR-002 规定唯一 daemon RPC 传输是 HTTPS+mTLS，
+/// 不支持 SCM_RIGHTS FD 传递。保留该路由以返回稳定错误码，供旧 Python
+/// 调用方明确感知能力已移除（而非静默失败）。
+pub fn handle_call_with_fd(_params: &Value) -> Result<Value, DaemonRpcError> {
+    Err(DaemonRpcError::new(
+        "E_TRANSPORT_UNSUPPORTED",
+        "call_with_fd 已退役：ADR-002 单轨 HTTPS+mTLS 不支持 SCM_RIGHTS FD 传递",
+    ))
 }
 
 /// `publish_snapshot` 下沉：checkpoint PASSIVE 双保险（对齐 C4/S8 策略：
@@ -1559,12 +1552,9 @@ mod tests {
     }
 
     #[test]
-    fn test_call_with_fd_platform_probe() {
-        let res = handle_call_with_fd(&json!({"method": "snapshot.publish"})).unwrap();
-        #[cfg(unix)]
-        assert_eq!(res["supported"], json!(true));
-        #[cfg(not(unix))]
-        assert_eq!(res["supported"], json!(false));
+    fn test_call_with_fd_is_transport_unsupported() {
+        let err = handle_call_with_fd(&json!({"method": "snapshot.publish"})).unwrap_err();
+        assert_eq!(err.code, "E_TRANSPORT_UNSUPPORTED");
     }
 
     #[test]

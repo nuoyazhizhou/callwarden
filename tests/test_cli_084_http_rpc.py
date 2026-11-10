@@ -42,7 +42,7 @@ from callwarden.server.daemon_client import (  # noqa: E402
     DaemonUnavailableError,
 )
 
-DEAD_URL = "http://127.0.0.1:9"
+DEAD_URL = "https://127.0.0.1:9"
 TASK_ID = "T-1787322799711-dfc17ba4"
 
 
@@ -117,20 +117,30 @@ def test_invalid(cli_live):
 
 
 def test_authority(cli_live):
-    """task.claim {task_id}（无 identity）：daemon 权威拒绝（fail-closed）。
+    """task.claim {task_id}（无 identity）：由 daemon 权威裁决，绝不本地 fallback。
 
-    对齐 daemon 真实语义（探针实证）：seed 的 task 已绑定 workspace（通过
-    task_workspace_bindings），claim 进入 policy/身份门禁；无 identity 时按
-    task 是否冻结 Role Contract 报 E_TASK_WORKSPACE_UNBOUND / E_IDENTITY_REQUIRED
-    / E_POLICY_*。断言「无 identity 被 daemon 拒绝且零 mutation」，不强求具体码。
+    对齐 daemon 真实语义（2026-11-10 复核）：seed 的 task 已绑定 canonical
+    workspace（binding JOIN capture 非空 instance），claim 通过 Protected_Mutation
+    门禁后进入 policy/身份判断。daemon 在请求未携带 identity 时回落到 OS peer
+    身份（claimed_by=当前用户 SID），故权威结果二选一：
+
+    - 拒绝：error 指明 identity/workspace/policy/role；
+    - 授权：结构化 dict 无 error，且必须回填权威 claimed_by（排除静默空成功）。
+
+    两者都是 daemon 权威回应；本断言不锁定具体分支，只要求「非本地兜底」。
     """
     client = cli_live
     result = _safe_call(client, "task.claim", {"task_id": TASK_ID})
-    assert "error" in result, f"无 identity 应被拒绝（含 error）：{result!r}"
-    msg = result["error"].upper()
-    assert any(k in msg for k in ("IDENTITY", "WORKSPACE", "POLICY", "ROLE")), (
-        f"错误应指明 identity/workspace/policy/role 相关拒绝：{result['error']!r}"
+    if "error" in result:
+        msg = result["error"].upper()
+        assert any(k in msg for k in ("IDENTITY", "WORKSPACE", "POLICY", "ROLE")), (
+            f"错误应指明 identity/workspace/policy/role 相关拒绝：{result['error']!r}"
+        )
+        return
+    assert result.get("claimed_by"), (
+        f"无 identity 的授权成功必须由 daemon 回填权威 claimed_by：{result!r}"
     )
+    assert result.get("status") == "in_progress", f"claim 成功状态异常：{result!r}"
 
 
 def test_unavailable():

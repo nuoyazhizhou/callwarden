@@ -167,12 +167,11 @@ def _agent_start(argv):
     logging.info('PID 文件：%s', pid_file)
 
     # 4. 与 daemon 握手（user_agent_connect）
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
+    from callwarden.server.daemon_client import HttpDaemonRpcClient
     from callwarden.server.agent_protocol import (
         user_agent_connect, user_agent_ping, AgentProtocolError,
     )
-    from callwarden.config import DAEMON_SOCKET_PATH
-    rpc_client = UnixDaemonRpcClient(socket_path=DAEMON_SOCKET_PATH)
+    rpc_client = HttpDaemonRpcClient.get_instance()
 
     try:
         ping_resp = user_agent_ping(rpc_client)

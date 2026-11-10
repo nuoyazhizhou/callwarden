@@ -804,3 +804,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 <!-- CALLWARDEN_RULES_START -->
 <!-- 自动同步区域，请通过 cw rule sync 更新，不要手改 -->
 <!-- CALLWARDEN_RULES_END -->
+
+<!-- cw-agent-rules:start -->
+
+<!-- cw-agent-rules:end -->

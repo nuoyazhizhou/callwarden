@@ -130,6 +130,6 @@ def test_bootstrap_status_ignore_params(rpc):
 
 def test_bootstrap_status_daemon_unavailable_fail_closed():
     """daemon 不可达时必须报错（fail-closed），不得静默返回空。"""
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("bootstrap_status", {})

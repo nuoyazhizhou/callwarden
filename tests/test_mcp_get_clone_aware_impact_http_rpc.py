@@ -68,7 +68,7 @@ def test_clone_aware_custom_depth(rpc):
 
 
 def test_clone_aware_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("get_clone_aware_impact", {"qualified_name": "x"})
 

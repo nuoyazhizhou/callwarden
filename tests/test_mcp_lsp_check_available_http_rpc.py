@@ -52,7 +52,7 @@ def test_lsp_check_available_shape(rpc):
 
 
 def test_lsp_check_available_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("lsp_check_available", {})
 

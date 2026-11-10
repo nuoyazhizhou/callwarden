@@ -167,16 +167,16 @@ enum Commands {
         params: String,
     },
 
-    /// 发布已刷新 DB 为共享 snapshot（含 SCM_RIGHTS FD 传递，Unix-only）
+    /// 发布已刷新 DB 为共享 snapshot（Rust legacy 客户端已退役，fail-closed）
     Publish {
         /// workspace instance ID
         workspace_id: String,
-        /// 本地 DB 路径（将作为 FD 传给 daemon）
+        /// 本地 DB 路径
         db_path: String,
         /// build context hash（可选）
         #[arg(long, default_value = "")]
         build_context: String,
-        /// 跳过 WAL checkpoint（默认执行 PRAGMA busy_timeout=5000; wal_checkpoint(PASSIVE)，C4/S8 统一）
+        /// 跳过 WAL checkpoint（仅 Python 客户端支持）
         #[arg(long)]
         skip_checkpoint: bool,
     },
@@ -365,14 +365,8 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            #[cfg(unix)]
-            {
-                run_rpc_unix(&cli.socket, cli.timeout, &method, &params_val, "rpc")
-            }
-            #[cfg(not(unix))]
-            {
-                run_rpc_windows(&cli.socket, cli.timeout, &method, &params_val, "rpc")
-            }
+            let _ = (&cli.socket, cli.timeout, &method, &params_val);
+            fail_closed("rpc")
         }
         Some(Commands::Publish {
             workspace_id,
@@ -395,16 +389,22 @@ fn main() {
     }
 }
 
+/// Rust legacy RPC 客户端已按 ADR-002 退役。
+///
+/// 唯一 daemon RPC 传输是 HTTPS+mTLS。Rust CLI 不再提供 socket/pipe 通道，
+/// fail-closed 并要求使用 Python `cw-client` / `cw`。
+fn fail_closed(action: &str) -> ! {
+    eprintln!(
+        "cw-client {}: Rust legacy RPC 客户端已按 ADR-002 退役；请使用 Python `cw-client` / `cw`（经 HTTPS+mTLS 访问 daemon）",
+        action
+    );
+    std::process::exit(1);
+}
+
 /// 执行 ping 子命令。
 fn run_ping(socket: &str, timeout_secs: u64) {
-    #[cfg(unix)]
-    {
-        run_ping_unix(socket, timeout_secs)
-    }
-    #[cfg(not(unix))]
-    {
-        run_rpc_windows(socket, timeout_secs, "ping", &serde_json::json!({}), "ping");
-    }
+    let _ = (socket, timeout_secs);
+    fail_closed("ping")
 }
 
 /// 执行 query 子命令。
@@ -419,32 +419,18 @@ fn run_query(
     limit: Option<u32>,
     max_depth: Option<u32>,
 ) {
-    // 构建查询参数（跨平台逻辑）
-    let (method, params) =
-        match callwarden_core::daemon::client::build_query_request(
-            workspace_id,
-            query_type,
-            value,
-            qualified_name,
-            kind,
-            limit,
-            max_depth,
-        ) {
-            Ok((m, p)) => (m, p),
-            Err(e) => {
-                eprintln!("cw-client query: {}", e);
-                std::process::exit(1);
-            }
-        };
-
-    #[cfg(unix)]
-    {
-        run_query_unix(socket, timeout_secs, &method, &params)
-    }
-    #[cfg(not(unix))]
-    {
-        run_rpc_windows(socket, timeout_secs, &method, &params, "query");
-    }
+    let _ = (
+        socket,
+        timeout_secs,
+        workspace_id,
+        query_type,
+        value,
+        qualified_name,
+        kind,
+        limit,
+        max_depth,
+    );
+    fail_closed("query")
 }
 
 /// 执行简单 RPC 子命令（list/status/health/schema-version）。
@@ -454,24 +440,8 @@ fn run_simple(
     action: &str,
     workspace_id: Option<&str>,
 ) {
-    // 构建参数（跨平台逻辑）
-    let (method, params) =
-        match callwarden_core::daemon::client::build_simple_request(action, workspace_id) {
-            Ok((m, p)) => (m, p),
-            Err(e) => {
-                eprintln!("cw-client {}: {}", action, e);
-                std::process::exit(1);
-            }
-        };
-
-    #[cfg(unix)]
-    {
-        run_rpc_unix(socket, timeout_secs, &method, &params, action)
-    }
-    #[cfg(not(unix))]
-    {
-        run_rpc_windows(socket, timeout_secs, &method, &params, action)
-    }
+    let _ = (socket, timeout_secs, workspace_id);
+    fail_closed(action)
 }
 
 /// 执行 mode 子命令（本地处理，不走 RPC）。
@@ -503,32 +473,15 @@ fn run_mode(set: Option<ModeValue>) {
 
 /// 执行剩余 RPC 子命令（register/backup/restore/gc/snapshot）。
 ///
-/// 通用参数构建 + UDS/Pipe 调用，复用 build_rpc_request 做 method 映射。
+/// ADR-002 单轨 HTTPS+mTLS：Rust CLI 的 RPC 传输已退役，fail-closed。
 fn run_rpc_action(
     socket: &str,
     timeout_secs: u64,
     action: &str,
     params: &serde_json::Value,
 ) {
-    // 构建 method 和参数（跨平台逻辑）
-    let params_json = serde_json::to_string(params).unwrap_or_else(|_| "{}".to_string());
-    let (method, final_params) =
-        match callwarden_core::daemon::client::build_rpc_request(action, &params_json) {
-            Ok((m, p)) => (m, p),
-            Err(e) => {
-                eprintln!("cw-client {}: {}", action, e);
-                std::process::exit(1);
-            }
-        };
-
-    #[cfg(unix)]
-    {
-        run_rpc_unix(socket, timeout_secs, &method, &final_params, action)
-    }
-    #[cfg(not(unix))]
-    {
-        run_rpc_windows(socket, timeout_secs, &method, &final_params, action)
-    }
+    let _ = (socket, timeout_secs, params);
+    fail_closed(action)
 }
 
 /// 执行 mount 子命令组（mount register/list/delete）。
@@ -574,13 +527,10 @@ fn run_mount(
     run_rpc_action(socket, timeout_secs, action, &params);
 }
 
-/// 执行 publish 子命令（snapshot.publish + SCM_RIGHTS FD 传递）。
+/// 执行 publish 子命令（fail-closed）。
 ///
-/// 对齐 Python `UnixDaemonRpcClient.publish_snapshot`：
-/// 1. WAL checkpoint（可选，默认执行 PRAGMA busy_timeout=5000; wal_checkpoint(PASSIVE)，C4/S8 统一）
-/// 2. 通过 SCM_RIGHTS 将 db_path 的只读 FD 传给 daemon
-///
-/// Windows 上：UDS 不可用，仅输出参数构建结果（用于验证）
+/// ADR-002：唯一传输是 HTTPS+mTLS，不支持 SCM_RIGHTS FD 传递。Rust legacy
+/// 客户端已退役；请使用 Python `cw-client publish`。
 fn run_publish(
     socket: &str,
     timeout_secs: u64,
@@ -589,346 +539,17 @@ fn run_publish(
     build_context: &str,
     skip_checkpoint: bool,
 ) {
-    let abs_db_path = callwarden_core::daemon::client::to_abspath(db_path);
-
-    // 构建参数（跨平台逻辑，Windows 也可验证）
-    let (method, params) = callwarden_core::daemon::client::build_publish_params(
+    let _ = (
+        socket,
+        timeout_secs,
         workspace_id,
+        db_path,
         build_context,
+        skip_checkpoint,
     );
-
-    #[cfg(unix)]
-    {
-        run_publish_unix(
-            socket,
-            timeout_secs,
-            &method,
-            &params,
-            workspace_id,
-            &abs_db_path,
-            build_context,
-            skip_checkpoint,
-        )
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = skip_checkpoint; // Windows 分支不执行本地 WAL checkpoint（服务端自行处理）
-        // Windows：无 SCM_RIGHTS FD 传递，改用 db_path 参数（服务端 publish handler
-        // 在无 FD 时回退到 db_path 参数并自行 WAL checkpoint）。
-        let mut params_with_path = params.clone();
-        if let Some(obj) = params_with_path.as_object_mut() {
-            obj.insert("db_path".to_string(), serde_json::Value::String(abs_db_path.clone()));
-        }
-        run_rpc_windows(socket, timeout_secs, &method, &params_with_path, "publish")
-    }
+    fail_closed("publish")
 }
 
-/// 执行 Windows Named Pipe RPC（cw-client Windows 分支统一入口）。
-///
-/// 对齐 cw_daemon `health-check` 的管道客户端实现与 daemon 协议：
-/// 1. `WaitNamedPipeW` 等待 daemon 管道实例可用
-/// 2. `CreateFileW` 打开 `\\.\pipe\callwarden-<sid>`
-/// 3. 发送 [4 字节大端长度][JSON 请求] 帧
-/// 4. 读取 [4 字节大端长度][JSON 响应] 帧
-/// 5. `parse_rpc_response` 解析并打印结果
-#[cfg(not(unix))]
-fn run_rpc_windows(
-    socket: &str,
-    timeout_secs: u64,
-    method: &str,
-    params: &serde_json::Value,
-    action: &str,
-) {
-    use std::os::windows::ffi::OsStrExt;
-    use std::time::Duration;
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
-    };
-    use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, ReadFile, WriteFile, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-    };
-    use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
-
-    // ERROR_ACCESS_DENIED（Named Pipe SDDL 拒绝其他用户）
-    const ERROR_ACCESS_DENIED: u32 = 5;
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
-
-    // 1. 构建请求帧：{method, params} → [4 字节大端长度][JSON]
-    let request = callwarden_core::daemon::client::build_request(method, params.clone());
-    let body = serde_json::to_vec(&request).unwrap_or_else(|e| {
-        eprintln!("cw-client {}: 请求序列化失败: {}", action, e);
-        std::process::exit(1);
-    });
-    let mut frame = Vec::with_capacity(4 + body.len());
-    frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
-    frame.extend_from_slice(&body);
-
-    // 2. 宽字符管道名
-    let wide: Vec<u16> = std::path::Path::new(socket)
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-
-    // 3. WaitNamedPipeW 等待管道实例可用（daemon 未启动时管道不存在）
-    loop {
-        if unsafe { WaitNamedPipeW(wide.as_ptr(), 5000) } != 0 {
-            break;
-        }
-        let last_error = unsafe { GetLastError() };
-        // P1 ACL：SDDL 拒绝其他用户时立即上报真实 Win32 错误码（ERROR_ACCESS_DENIED=5）
-        if last_error == ERROR_ACCESS_DENIED {
-            eprintln!(
-                "cw-client {}: Named Pipe 访问被拒绝 (Win32 error {}) 用户无权限连接管道: {}",
-                action, last_error, socket
-            );
-            std::process::exit(1);
-        }
-        if std::time::Instant::now() >= deadline {
-            eprintln!(
-                "cw-client {}: daemon 未响应 (timeout {}s, last Win32 error {}): {}",
-                action, timeout_secs, last_error, socket
-            );
-            std::process::exit(1);
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    // 4. CreateFileW 打开管道
-    let handle: HANDLE = unsafe {
-        CreateFileW(
-            wide.as_ptr(),
-            GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            0,
-            std::ptr::null_mut(),
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        let last_error = unsafe { GetLastError() };
-        eprintln!(
-            "cw-client {}: CreateFileW 失败 (Win32 error {}): {}",
-            action, last_error, socket
-        );
-        std::process::exit(1);
-    }
-
-    // 5. 发送请求帧
-    let mut written: u32 = 0;
-    let ok_write = unsafe {
-        WriteFile(
-            handle,
-            frame.as_ptr(),
-            frame.len() as u32,
-            &mut written,
-            std::ptr::null_mut(),
-        )
-    };
-    if ok_write == 0 {
-        unsafe { CloseHandle(handle) };
-        eprintln!("cw-client {}: WriteFile 失败: {}", action, socket);
-        std::process::exit(1);
-    }
-
-    // 6. 读取 4 字节长度前缀（ReadFile 可能短读，循环补足）
-    let mut header = [0u8; 4];
-    let mut header_read: u32 = 0;
-    while header_read < 4 {
-        let mut n: u32 = 0;
-        let ptr = unsafe { header.as_mut_ptr().add(header_read as usize) };
-        let ok = unsafe {
-            ReadFile(
-                handle,
-                ptr,
-                4 - header_read,
-                &mut n,
-                std::ptr::null_mut(),
-            )
-        };
-        if ok == 0 || n == 0 {
-            unsafe { CloseHandle(handle) };
-            eprintln!("cw-client {}: 读取响应长度失败: {}", action, socket);
-            std::process::exit(1);
-        }
-        header_read += n;
-    }
-    let resp_len = u32::from_be_bytes(header) as usize;
-    let mut resp = vec![0u8; resp_len];
-    let mut resp_read: u32 = 0;
-    while resp_read < resp_len as u32 {
-        let mut n: u32 = 0;
-        let ptr = unsafe { resp.as_mut_ptr().add(resp_read as usize) };
-        let ok = unsafe {
-            ReadFile(
-                handle,
-                ptr,
-                (resp_len as u32) - resp_read,
-                &mut n,
-                std::ptr::null_mut(),
-            )
-        };
-        if ok == 0 || n == 0 {
-            unsafe { CloseHandle(handle) };
-            eprintln!("cw-client {}: 读取响应体失败: {}", action, socket);
-            std::process::exit(1);
-        }
-        resp_read += n;
-    }
-    unsafe { CloseHandle(handle) };
-
-    // 7. 解析并打印结果
-    let parsed: serde_json::Value = match serde_json::from_slice(&resp) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("cw-client {}: 响应 JSON 解析失败: {}: {}", action, e, socket);
-            std::process::exit(1);
-        }
-    };
-    match callwarden_core::daemon::client::parse_rpc_response(&parsed) {
-        Ok(result) => {
-            let pretty = serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
-                format!("{}", result)
-            });
-            println!("{}", pretty);
-            std::process::exit(0);
-        }
-        Err(e) => {
-            eprintln!("cw-client {}: {}", action, e);
-            std::process::exit(1);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn run_ping_unix(socket: &str, timeout_secs: u64) {
-    use callwarden_core::daemon::client::unix::UnixDaemonRpcClient;
-    use std::time::Duration;
-
-    let client = UnixDaemonRpcClient::new(socket).with_timeout(Duration::from_secs(timeout_secs));
-    match client.ping() {
-        Ok(result) => {
-            let pretty = serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
-                format!("{}", result)
-            });
-            println!("{}", pretty);
-            std::process::exit(0);
-        }
-        Err(e) => {
-            eprintln!("cw-client ping: {}", e);
-            std::process::exit(1);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn run_query_unix(
-    socket: &str,
-    timeout_secs: u64,
-    method: &str,
-    params: &serde_json::Value,
-) {
-    use callwarden_core::daemon::client::unix::UnixDaemonRpcClient;
-    use std::time::Duration;
-
-    let client = UnixDaemonRpcClient::new(socket).with_timeout(Duration::from_secs(timeout_secs));
-    match client.call(method, params.clone()) {
-        Ok(result) => {
-            let pretty = serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
-                format!("{}", result)
-            });
-            println!("{}", pretty);
-            std::process::exit(0);
-        }
-        Err(e) => {
-            eprintln!("cw-client query: {}", e);
-            std::process::exit(1);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn run_rpc_unix(
-    socket: &str,
-    timeout_secs: u64,
-    method: &str,
-    params: &serde_json::Value,
-    action: &str,
-) {
-    use callwarden_core::daemon::client::unix::UnixDaemonRpcClient;
-    use std::time::Duration;
-
-    let client = UnixDaemonRpcClient::new(socket).with_timeout(Duration::from_secs(timeout_secs));
-    match client.call(method, params.clone()) {
-        Ok(result) => {
-            let pretty = serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
-                format!("{}", result)
-            });
-            println!("{}", pretty);
-            std::process::exit(0);
-        }
-        Err(e) => {
-            eprintln!("cw-client {}: {}", action, e);
-            std::process::exit(1);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn run_publish_unix(
-    socket: &str,
-    timeout_secs: u64,
-    method: &str,
-    params: &serde_json::Value,
-    workspace_id: &str,
-    db_path: &str,
-    _build_context: &str,
-    skip_checkpoint: bool,
-) {
-    use callwarden_core::daemon::client::unix::UnixDaemonRpcClient;
-    use std::time::Duration;
-
-    // 1. WAL checkpoint（可选）
-    if !skip_checkpoint {
-        match wal_checkpoint(db_path) {
-            Ok(()) => eprintln!("✓ WAL checkpoint 完成: {}", db_path),
-            Err(e) => {
-                eprintln!("cw-client publish: WAL checkpoint 失败: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
-
-    // 2. 通过 SCM_RIGHTS 发布 snapshot
-    let client = UnixDaemonRpcClient::new(socket).with_timeout(Duration::from_secs(timeout_secs));
-    let _ = method; // method 固定为 "snapshot.publish"
-    let _ = params;  // publish_snapshot 内部会重新构建参数
-    match client.publish_snapshot(workspace_id, db_path, _build_context) {
-        Ok(result) => {
-            let pretty = serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
-                format!("{}", result)
-            });
-            println!("{}", pretty);
-            std::process::exit(0);
-        }
-        Err(e) => {
-            eprintln!("cw-client publish: {}", e);
-            std::process::exit(1);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn wal_checkpoint(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use rusqlite::Connection;
-    let conn = Connection::open(db_path)?;
-    // C4/S8 统一：PASSIVE 双保险——busy_timeout 等待后 PASSIVE checkpoint，
-    // busy 时不 fail-fast，剩余 WAL 页由 daemon/内核后续 PASSIVE checkpoint 兜底。
-    conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA wal_checkpoint(PASSIVE);")?;
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

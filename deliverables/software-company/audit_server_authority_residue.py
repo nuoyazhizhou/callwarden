@@ -36,11 +36,9 @@ SQL_EXECUTE_LEAVES = {"execute", "executemany", "executescript"}
 # 接管被回滚，对应条目必须移除并恢复 fail-closed 审计。
 #
 # 每个条目：{相对路径: 退休依据（Rust 接管证据）}
+# 文件被物理删除时（如 server/daemon_server.py 经 ADR-002 单轨下线移除），
+# 对应条目随之移除——retired_files 仅统计磁盘上仍存在的白名单文件。
 RETIRED_LEGACY_FILES: dict[str, str] = {
-    "server/daemon_server.py":
-        "SRV-008 已接管 6 个 Python 权威符号（daemon_server_handlers.rs，"
-        "dispatch.rs mcp.daemon_server.* 6 路由）；文件内 _is_rust_acl_rolled_back/"
-        "_is_rust_health_rolled_back 已改经 RPC，本地 sqlite3 查询退役",
     "server/daemon_config.py":
         "Rust daemon（cw-daemon.exe）配置加载在 Rust 侧（daemon_config.rs 语义）；"
         "本文件 PRAGMA 辅助仅 legacy Python daemon 使用",

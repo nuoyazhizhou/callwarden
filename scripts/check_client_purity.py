@@ -64,6 +64,15 @@ def scan_ast(path: str) -> List[str]:
     # 计算 compat worker 代码行区间（跳过）
     # 覆盖：`_h_*` 处理器、`_bind_readonly_db` 绑定助手，以及仅被它们调用的
     # worker 侧业务助手（compat 过渡期合法窗口，M2 deadline 后随白名单删除）。
+    # S2 sanctioned client-execution window（ADR-002 §16.3，remote profile）：
+    # build_graph/build_directory 在 remote profile 下由客户端用既有 Python
+    # builder 在本机构建临时工作库 → 经 snapshot.upload 上传（契约 §16.4 原文：
+    # "执行位置与路径解析键 = MCP 宿主进程（server/tools/）"）。这是 M2 薄壳
+    # 纯度契约的显式例外（与 compat worker 窗口同级声明，非白名单遗留），
+    # 仅覆盖 tools_workspace.py 的 `_remote_codegraph`（唯一的客户端构建
+    # 入口；实例化的是临时库，不触碰本地权威 SQLite）。
+    s2_client_exec_names = {"_remote_codegraph"}
+
     compat_ranges: List[Tuple[int, int]] = []
     compat_helper_names = {
         "_bind_readonly_db",
@@ -76,7 +85,11 @@ def scan_ast(path: str) -> List[str]:
     }
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name.startswith("_h_") or node.name in compat_helper_names:
+            if (
+                node.name.startswith("_h_")
+                or node.name in compat_helper_names
+                or node.name in s2_client_exec_names
+            ):
                 compat_ranges.append((node.lineno, node.end_lineno or node.lineno))
 
     def in_compat(lineno: int) -> bool:

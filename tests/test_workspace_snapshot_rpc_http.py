@@ -39,7 +39,7 @@ Rust 侧语义（只读确认，禁止改动）：
 - 跨 workspace 隔离：list_workspaces 结果按 peer UID 过滤；evict 只能驱逐
   自己的 workspace
 - Python fallback 边界：HTTP 模式无 SQL 路径（HttpDaemonRpcClient 零 SQL，
-  fail-closed）；legacy UnixDaemonRpcClient.call 连接失败抛
+  fail-closed）；legacy HttpDaemonRpcClient.call 连接失败抛
   DaemonUnavailableError，publish_snapshot 不静默回退；legacy DaemonClient
   侧无 snapshot.stats/list_workspaces/evict 调用点（grep 确认仅 publish_snapshot）
 - 进程级 round-trip：真实 daemon register→publish→stats 命中→list 可见→

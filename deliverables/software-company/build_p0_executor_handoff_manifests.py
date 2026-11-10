@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
-from callwarden.server.daemon_client import UnixDaemonRpcClient  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 OUTPUT_DIR = PROJECT_ROOT / "deliverables" / "software-company"
 TASKS = {
@@ -74,7 +74,7 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def main() -> None:
-    ping = UnixDaemonRpcClient().call("ping", {})
+    ping = HttpDaemonRpcClient().call("ping", {})
     now = datetime.now(timezone.utc).isoformat()
     output = {}
     for task_id, spec in TASKS.items():

@@ -13,15 +13,15 @@
   _get_db 方法整体移除。
 - 接缝与 SRV-005 不同（无模块级统一接缝）：
   * DaemonClient._sql_fallback_* → `self._rpc.call`；
-  * UnixDaemonRpcClient.call_with_fd / publish_snapshot → `self.call`；
+  * HttpDaemonRpcClient.call_with_fd / publish_snapshot → `self.call`；
   * 模块级 _inject_workspace_id → `_get_rpc_client_for_route().call`。
 - 错误语义与下沉前对齐（stable errors）：必填参数缺失 → invalid_params；
   无 active workspace → internal_error（fail-closed，禁止静默回退 workspace 1）。
 - daemon 不可用时 fail-closed 上抛 DaemonUnavailableError，
   绝不回退本地 SQLite/业务 SQL（no business fallback）。
-- `_transport_call_with_fd`（SCM_RIGHTS 物理 FD 发送）为 transport
-  bootstrap：客户端必须自持活 socket 与 fd，无法委托 daemon——
-  同 SRV-005 先例，不在本矩阵的退役扫描目标内。
+- `_transport_call_with_fd`（SCM_RIGHTS 物理 FD 发送）在 ADR-002 单轨下
+  已退休：HttpDaemonRpcClient 保留同名方法但直接抛 DaemonUnavailableError，
+  不得出现任何 socket 代码。`call_with_fd` 仅剩能力探测语义。
 - 本测试用内存态 `FakeDaemonClientDaemon` 模拟 daemon handler 行为，
   不依赖真实 daemon 进程，不打开任何 SQLite 数据库。
 """
@@ -35,7 +35,7 @@ import pytest
 from callwarden.server.daemon_client import (
     DaemonClient,
     DaemonUnavailableError,
-    UnixDaemonRpcClient,
+    HttpDaemonRpcClient,
     _inject_workspace_id,
 )
 
@@ -170,8 +170,8 @@ def client(fake_daemon):
 
 @pytest.fixture
 def unix_client(fake_daemon):
-    """薄客户端 UnixDaemonRpcClient（call 接缝指向内存态 daemon）。"""
-    u = UnixDaemonRpcClient.__new__(UnixDaemonRpcClient)
+    """薄客户端 HttpDaemonRpcClient（call 接缝指向内存态 daemon）。"""
+    u = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
     u.call = fake_daemon
     return u
 
@@ -244,9 +244,9 @@ def test_success_publish_snapshot_checkpoint_delegated(unix_client, fake_daemon)
 
 
 def test_success_call_with_fd_probe_returns_metadata(unix_client):
-    result = unix_client.call_with_fd("query.symbols", {"q": 1}, fd=3)
+    result = unix_client.call_with_fd("query.symbols", fd=3)
     assert result == {"supported": True, "transport": "scm_rights"}
-    result_no = unix_client.call_with_fd("never_supported", {}, fd=3)
+    result_no = unix_client.call_with_fd("never_supported", fd=3)
     assert result_no["supported"] is False
 
 
@@ -297,7 +297,7 @@ def test_authority_all_calls_route_through_daemon(client, unix_client, fake_daem
     client._sql_fallback_get_call_chain_down("mod.alpha")
     client._sql_fallback_detect_cycles()
     _inject_workspace_id({"foo": "bar"})
-    unix_client.call_with_fd("query.symbols", {}, fd=3)
+    unix_client.call_with_fd("query.symbols", fd=3)
     unix_client.publish_snapshot("ws-inst-1", "/tmp/x.db")
     methods = [m for m, _ in fake_daemon.calls]
     assert methods == [
@@ -337,7 +337,7 @@ def test_authority_get_db_removed_and_no_sqlite_module():
     import callwarden.server.daemon_client as dc
     assert not hasattr(dc, "sqlite3")
     # _transport_call_with_fd 保留（transport bootstrap，非 DB authority）
-    assert hasattr(UnixDaemonRpcClient, "_transport_call_with_fd")
+    assert hasattr(HttpDaemonRpcClient, "_transport_call_with_fd")
 
 
 # ============================================================
@@ -367,7 +367,7 @@ def test_unavailable_inject_publish_call_with_fd_raise(unix_client, fake_daemon)
     with pytest.raises(DaemonUnavailableError):
         _inject_workspace_id({"foo": "bar"})
     with pytest.raises(DaemonUnavailableError):
-        unix_client.call_with_fd("query.symbols", {}, fd=3)
+        unix_client.call_with_fd("query.symbols", fd=3)
     with pytest.raises(DaemonUnavailableError):
         unix_client.publish_snapshot("ws-inst-1", "/tmp/x.db")
 
@@ -386,7 +386,7 @@ def test_restart_recovers_after_unavailable(client, unix_client, fake_daemon):
     fake_daemon.available = True
     assert client._sql_fallback_get_stats() == {"total_symbols": 3, "total_files": 2}
     assert _inject_workspace_id({"foo": "bar"})["workspace_id"] == 7
-    result = unix_client.call_with_fd("query.symbols", {}, fd=3)
+    result = unix_client.call_with_fd("query.symbols", fd=3)
     assert result["supported"] is True
 
 

@@ -28,8 +28,8 @@ if str(_PROJECT_ROOT.parent) not in sys.path:
 # test_phase8_metrics_endpoint ×4）发生模块绑定与 patch 目标错位：
 # 那些测试在 collection 期绑定的 run_daemon_command 属**原**模块对象，
 # 运行期 mock.patch("callwarden.cli.daemon_commands.
-# UnixDaemonRpcClient") 却经 sys.modules 解析到**新副本**——patch 打
-# 不中执行体，真 UnixDaemonRpcClient 被使用 → CI 无 daemon →
+# HttpDaemonRpcClient") 却经 sys.modules 解析到**新副本**——patch 打
+# 不中执行体，真 HttpDaemonRpcClient 被使用 → CI 无 daemon →
 # run_daemon_command 返回 rc=2。本 fixture 快照/恢复四个 key 与属性
 # 挂载链，把替换限制在单测试内。
 _SYS_MODULES_KEYS = (

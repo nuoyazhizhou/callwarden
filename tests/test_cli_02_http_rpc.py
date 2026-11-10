@@ -129,7 +129,7 @@ def test_http_rpc_search_daemon_unavailable_fail_closed():
     """HTTP RPC daemon unavailable：E_HTTP_DAEMON_UNAVAILABLE fail-closed。"""
     from callwarden.config import get_http_authority_id
     c = HttpDaemonRpcClient(
-        endpoint="http://127.0.0.1:9", authority_id=get_http_authority_id()
+        endpoint="https://127.0.0.1:9", authority_id=get_http_authority_id()
     )
     with pytest.raises(DaemonUnavailableError) as ei:
         c.call("query.search", {

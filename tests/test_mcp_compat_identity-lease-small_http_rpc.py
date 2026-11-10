@@ -129,7 +129,7 @@ def test_assignment_show_role_filter(live_daemon, bound_task):
     "assignment_show",
 ])
 def test_compat_methods_daemon_unavailable_fail_closed(method):
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     # DaemonUnavailableError 异常类型本身即 fail-closed 证据
     # （错误消息随 client health 探测路径变化：E_HTTP_DAEMON_UNAVAILABLE / 502 等）。

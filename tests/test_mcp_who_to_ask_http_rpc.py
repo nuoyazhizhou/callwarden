@@ -70,7 +70,7 @@ def test_who_to_ask_empty_path(rpc):
 
 def test_who_to_ask_daemon_unavailable_fail_closed():
     """daemon 不可用 → fail-closed（本地连接异常即证据）。"""
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(DaemonUnavailableError):
         c.call("who_to_ask", {"workspace_instance_id": CANONICAL_INSTANCE,
                               "file_path": "server/main.py"})

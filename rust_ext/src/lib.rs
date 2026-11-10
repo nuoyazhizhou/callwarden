@@ -2086,16 +2086,11 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // 契约：docs/design/phase5-1c-stats-vertical-slice-contract.md §3
     m.add_function(wrap_pyfunction!(cli::stats::stats_command_run_py, m)?)?;
 
-    // Phase 5-2 Slice 1: Daemon RPC Client PyO3 暴露（2 个跨平台 + 1 个 Unix-only API）
+    // Phase 5-2 Slice 1: Daemon RPC 协议层 PyO3 暴露（2 个跨平台 API）
     // 跨平台：build_request_py / parse_rpc_response_py（Windows 可测）
-    // Unix-only：daemon_client_call_py（UDS 客户端，仅 Linux/macOS）
     // 契约：docs/design/phase5-2-slice1-daemon-client-contract.md §3
     m.add_function(wrap_pyfunction!(daemon::client::build_request_py, m)?)?;
     m.add_function(wrap_pyfunction!(daemon::client::parse_rpc_response_py, m)?)?;
-    #[cfg(unix)]
-    {
-        m.add_function(wrap_pyfunction!(daemon::client::daemon_client_call_py, m)?)?;
-    }
 
     // Phase 5-2 Slice 2: query RPC 参数构建 PyO3 暴露（1 个跨平台 API）
     // 对齐 Python cli/daemon_commands.py:run_daemon_command 的 query 分支

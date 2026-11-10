@@ -13,16 +13,14 @@
 3. 查询结果记录路由来源（daemon/sql），用于监控和验证
 """
 
+import base64
+import gzip
 import hashlib
-import itertools
 import json
 import logging
 import os
-import socket
 import ssl
 import subprocess
-import sys
-import time
 import urllib.error
 import urllib.request
 import uuid
@@ -31,9 +29,8 @@ from typing import Optional, List, Dict, Any
 
 # 3.28: 自动唤起 + 互斥 + 降级分流接线
 from callwarden.server.daemon_autostart import (
-    ensure_daemon,
+    ensure_http_daemon,
     resolve_http_endpoint_and_manifest,
-    try_connect,
 )
 from callwarden.server.daemon_mutex import DaemonMutex
 from callwarden.server.degraded_mode import (
@@ -62,19 +59,19 @@ from callwarden.config import (
     is_http_transport_enabled,
     resolve_client_cert_paths,
 )
-from callwarden.server.daemon_protocol import (
-    DEFAULT_MAX_MESSAGE_BYTES,
-    DaemonRemoteError,
-    parse_response,
-    recv_message,
-    send_message,
-    send_message_with_fds,
-)
+from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.snapshot_manager import SnapshotManagerService, get_snapshot_service
 from callwarden.server.query_budget import default_budget
 
 logger = logging.getLogger(__name__)
 _NO_REMOTE = object()
+
+# ADR-002 S2 §16.2：snapshot.upload 客户端参数契约（与 daemon 侧上限一致）。
+# hash 契约针对 gunzip 后的原始 SQLite 字节（sha256 + raw_size 双校验）。
+SNAPSHOT_UPLOAD_INLINE_MAX_BYTES = 32 * 1024 * 1024   # gzip 流 ≤32MiB 走内联
+SNAPSHOT_UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024    # 单块上限（total_chunks ≥ 2 时切块）
+SNAPSHOT_UPLOAD_MAX_CHUNKS = 4096                     # 块数上限
+SNAPSHOT_UPLOAD_BODY_MAX_BYTES = 64 * 1024 * 1024     # 上传面 body 口径（覆盖通用 8MiB）
 
 
 class DaemonUnavailableError(RuntimeError):
@@ -163,994 +160,6 @@ def assert_supersede_no_local_fallback(method: str, mode: str):
         raise DaemonUnavailableError(
             f"{method} 仅由 daemon 权威提供；daemon 不可用时禁止回退本地 SQLite（fail-closed）"
         )
-
-
-def _is_bridge_rpc_transport() -> bool:
-    """当前是否使用 windows-bridge transport（经 TCP 转发，不能传 FD）。"""
-    from callwarden.config import is_bridge_transport
-    return is_bridge_transport()
-
-
-# TP-11G 2a 层 4：client 侧归属交叉校验（设计文档 v3.2 §2/§4）。
-# 限频告警标记：creator 查询不可得时只告警一次，不逐请求刷日志。
-_pipe_creator_check_warned = False
-
-
-def _windows_pipe_creator_pid(conn: object) -> Optional[int]:
-    """取命名管道创建者 PID（GetNamedPipeServerProcessId）。
-
-    §A7 实测（2/2）：该 API 对 client/server 句柄均返回**管道最初创建者**
-    PID，与句柄类型无关。非 Windows 或非直连管道连接（bridge/TCP）返回 None。
-    查询不可得（API 失败/句柄不可得）返回 None——由调用方告警放行。
-    """
-    if sys.platform != "win32":
-        return None
-    handle = getattr(conn, "_handle", None)
-    if handle is None:
-        return None
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        kernel32.GetNamedPipeServerProcessId.restype = wintypes.BOOL
-        kernel32.GetNamedPipeServerProcessId.argtypes = [
-            wintypes.HANDLE,
-            ctypes.POINTER(wintypes.DWORD),
-        ]
-        creator = wintypes.DWORD(0)
-        if not kernel32.GetNamedPipeServerProcessId(
-            wintypes.HANDLE(handle), ctypes.byref(creator)
-        ):
-            return None
-        return int(creator.value)
-    except Exception:
-        return None
-
-
-def _verify_pipe_creator_attribution(conn: object, response: Any) -> None:
-    """ping 响应的 daemon_pid 与管道创建者交叉校验（TP-11G 2a 层 4）。
-
-    不变量：daemon_pid（ping 响应现成字段，dispatch.rs:275）== 管道创建者
-    （GetNamedPipeServerProcessId，§A7 实测恒返回最初创建者）。
-    - 失配 → DaemonUnavailableError（双 PID 诊断，fail-closed）：当前连接
-      落在非创建者实例上——共存检出，Unavailable 优于错误归属；
-    - creator 查询不可得 → unknown 告警放行（限频一次），不阻断；
-    - 响应无可用 pid 字段（旧版本 daemon）→ 无从校验，放行。
-    """
-    global _pipe_creator_check_warned
-    if sys.platform != "win32":
-        return
-    result = response.get("result") if isinstance(response, dict) else None
-    daemon_pid = result.get("pid") if isinstance(result, dict) else None
-    if not isinstance(daemon_pid, int) or daemon_pid <= 0:
-        return
-    creator_pid = _windows_pipe_creator_pid(conn)
-    if creator_pid is None:
-        if not _pipe_creator_check_warned:
-            _pipe_creator_check_warned = True
-            logger.warning(
-                "[TP-11G 2a 层4] 管道创建者查询不可得，跳过归属交叉校验"
-                "（限频告警一次）"
-            )
-        return
-    if creator_pid != daemon_pid:
-        raise DaemonUnavailableError(
-            "[TP-11G 2a 层4] 管道归属交叉校验失败（拒绝服务：Unavailable 优于"
-            f"错误归属）: ping.daemon_pid={daemon_pid} != 管道创建者 "
-            f"pid={creator_pid}，当前连接落在非创建者实例上（共存检出）"
-        )
-
-
-class UnixDaemonRpcClient:
-    """每次请求建立一个 IPC 连接（UDS 或 Windows Named Pipe）的轻量 RPC client。"""
-
-    def __init__(self, socket_path: Optional[str] = None,
-                 timeout: float = 30.0,
-                 max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
-                 transport_override: Optional[str] = None,
-                 endpoint_override: bool = False):
-        # 共存契约 §5.2：优先显式 endpoint，其次 authority-aware 解析。
-        # 禁止在 WSL 中回退到 /mnt/c SQLite（resolve_daemon_endpoint_for_authority
-        # 在 windows-host + 非 Windows 无 bridge 时抛 E_AUTHORITY_UNRESOLVED）。
-        from callwarden.config import resolve_daemon_endpoint_for_authority
-        # 显式 endpoint（例如 `cw daemon bridge --endpoint`）必须压过
-        # CW_DAEMON_ENDPOINT，避免健康检查的展示端点与实际连接端点不一致。
-        if endpoint_override and socket_path:
-            self.socket_path = socket_path
-        else:
-            self.socket_path = (
-                socket_path
-                or os.environ.get("CW_DAEMON_ENDPOINT")
-                or resolve_daemon_endpoint_for_authority()
-            )
-        self.timeout = timeout
-        self.max_message_bytes = max_message_bytes
-        # 显式 transport 覆盖（如 bridge health 强制 windows-bridge），
-        # 避免依赖全局 CW_DAEMON_TRANSPORT 环境变量。
-        self.transport_override = transport_override
-        self._ids = itertools.count(1)
-
-    # ------------------------------------------------------------------
-    # Task 协同 RPC 便利包装
-    # ------------------------------------------------------------------
-
-    def task_create(self, title: str, description: str = "", steps: list = None, creator: str = "agent", parent_id: str = "", workspace_id: str = "", workspace_instance_id: str = "", role_contracts: list = None, *, identity_policy=None, task_contract_envelope=None, task_id=None) -> dict:
-        """task.create：显式转发 daemon-returned workspace 配对（BR-02）。
-
-        BR-01 后 daemon 强制要求 `workspace_instance_id` 非空（缺失 →
-        E_TASK_WORKSPACE_INSTANCE_REQUIRED），且必须等于该 workspace 最新
-        authority capture 的 instance（不一致 → E_WORKSPACE_AUTHORITY_MISMATCH）。
-        本方法只做薄转发：workspace_id / workspace_instance_id 均由调用方
-        （CLI resolve_workspace_pair_from_daemon）解析后原样透传，绝不本地
-        推导 / 合成 ws-{id}。
-        """
-        params = {
-            "title": title,
-            "description": description,
-            "steps": steps or [],
-            "creator": creator,
-            "parent_id": parent_id,
-            "workspace_id": workspace_id,
-            "workspace_instance_id": workspace_instance_id,
-        }
-        # A3：Planner 可在 task.create 一次性冻结 Role Contract（revision=1）
-        if role_contracts:
-            params["role_contracts"] = role_contracts
-        if parent_id or any(v is not None for v in (identity_policy, task_contract_envelope, task_id)):
-            params.pop("creator")
-        for key, value in (("identity_policy", identity_policy),
-                           ("task_contract_envelope", task_contract_envelope),
-                           ("task_id", task_id)):
-            if value is not None:
-                params[key] = value
-        return self.call("task.create", params)
-
-    def task_attest_legacy_workspace_binding(
-        self,
-        legacy_task_id: str,
-        anchor_task_id: str,
-        workspace_id: int,
-        workspace_instance_id: str,
-        request_id: str,
-        evidence_path: str,
-        evidence_hash: str,
-        lease_token: str,
-        fencing_counter: int,
-        identity: Any,
-    ) -> dict:
-        """P0-B：daemon-native 历史 task authority attestation/binding。
-
-        该方法只转发给 daemon；daemon 不可用或返回错误时由统一 transport
-        路径 fail-closed，绝不回退到本地 SQLite。
-        """
-        return self.call("task.attest_legacy_workspace_binding", {
-            "legacy_task_id": legacy_task_id,
-            "anchor_task_id": anchor_task_id,
-            "workspace_id": workspace_id,
-            "workspace_instance_id": workspace_instance_id,
-            "request_id": request_id,
-            "evidence_path": evidence_path,
-            "evidence_hash": evidence_hash,
-            "lease_token": lease_token,
-            "fencing_counter": fencing_counter,
-            "identity": identity,
-        })
-
-    def task_contract_bootstrap(
-        self,
-        task_id: str,
-        envelope: dict,
-        workspace_id: int,
-        workspace_instance_id: str,
-        request_id: str,
-        evidence_path: str,
-        evidence_hash: str,
-        lease_token: str,
-        fencing_counter: int,
-        identity: Any,
-    ) -> dict:
-        """P0-C：daemon-native Task/Role/step governance projection bootstrap。
-
-        该方法只转发受保护 RPC；绝不调用旧 task.contract_set 或本地 SQLite
-        作为兼容回退。daemon 的 adjudicator、reviewer lease/fencing、authority、
-        evidence 与 operation ledger 门禁为唯一权威。
-        """
-        return self.call("task.contract_bootstrap", {
-            "task_id": task_id,
-            "envelope": envelope,
-            "workspace_id": workspace_id,
-            "workspace_instance_id": workspace_instance_id,
-            "request_id": request_id,
-            "evidence_path": evidence_path,
-            "evidence_hash": evidence_hash,
-            "lease_token": lease_token,
-            "fencing_counter": fencing_counter,
-            "identity": identity,
-        })
-
-    def task_contract_revise(
-        self,
-        task_id: str,
-        envelope: dict,
-        expected_previous_hash: str,
-        workspace_id: int,
-        workspace_instance_id: str,
-        request_id: str,
-        evidence_path: str,
-        evidence_hash: str,
-        lease_token: str,
-        fencing_counter: int,
-        identity: Any,
-    ) -> dict:
-        """P0-G：append-only Task Contract revision n+1（task.contract_revise）。
-
-        只转发受保护 RPC；绝无 SQL fallback。daemon 端强制：adjudicator identity
-        （agent_id/agent_instance_id/session_id/model_id/role 全非空）、独立
-        Reviewer lease/fencing、workspace authority、expected_previous_hash 连续性，
-        且只追加 revision n+1，禁 UPDATE/DELETE 历史 revision。
-        """
-        return self.call("task.contract_revise", {
-            "task_id": task_id,
-            "envelope": envelope,
-            "expected_previous_hash": expected_previous_hash,
-            "workspace_id": workspace_id,
-            "workspace_instance_id": workspace_instance_id,
-            "request_id": request_id,
-            "evidence_path": evidence_path,
-            "evidence_hash": evidence_hash,
-            "lease_token": lease_token,
-            "fencing_counter": fencing_counter,
-            "identity": identity,
-        })
-
-    def task_bootstrap_executor_evidence(
-        self,
-        task_id: str,
-        steps: list,
-        workspace_id: int,
-        workspace_instance_id: str,
-        request_id: str,
-        identity: Any,
-    ) -> dict:
-        """P0-F：daemon-only Bootstrap Executor Evidence（A′ 冷启动治理死锁修复）。
-
-        只转发受保护 RPC，绝无 SQL fallback。仅当任务完整治理投影为空（无 Task
-        Contract / Role lineage / step binding）且 status 为 open/in_progress 时才
-        被 daemon 接受；由 executor 角色逐项追加 completed-step evidence 并把任务
-        推到 review。daemon 的 authority/identity/ledger/evidence 门禁为唯一权威。
-        """
-        return self.call("task.bootstrap_executor_evidence", {
-            "task_id": task_id,
-            "steps": steps,
-            "workspace_id": workspace_id,
-            "workspace_instance_id": workspace_instance_id,
-            "request_id": request_id,
-            "identity": identity,
-        })
-
-    def task_bootstrap_reviewer_pass(
-        self,
-        task_id: str,
-        workspace_id: int,
-        workspace_instance_id: str,
-        request_id: str,
-        evidence_path: str,
-        evidence_hash: str,
-        identity: Any,
-    ) -> dict:
-        """P0-F：daemon-only Bootstrap Reviewer Pass（A′ 冷启动治理死锁修复）。
-
-        只转发受保护 RPC，绝无 SQL fallback。任务必须处于 review 且存在唯一
-        bootstrap executor evidence event；reviewer 身份须与 executor 三重不同
-        （agent/instance/session）。daemon 同事务签发专用 bootstrap reviewer lease 并
-        追加 verdict-equivalent event，供后续 P0-C 首次发布 Task Contract。
-        """
-        return self.call("task.bootstrap_reviewer_pass", {
-            "task_id": task_id,
-            "workspace_id": workspace_id,
-            "workspace_instance_id": workspace_instance_id,
-            "request_id": request_id,
-            "evidence_path": evidence_path,
-            "evidence_hash": evidence_hash,
-            "identity": identity,
-        })
-
-    def task_governance_projection_get(self, task_id: str) -> dict:
-        """P0-G G3：只读 governance projection（Reviewer 权威投影）。
-
-        返回 Task Contract / current step / Reviewer lineage / 审阅输入 / 规则状态 /
-        诊断；绝不返回 lease raw token。只转发 daemon，无 SQL fallback。
-        """
-        return self.call("task.governance_projection.get", {"task_id": task_id})
-
-    def agent_register(self, agent_id: str = "", agent_name: str = "cw-agent", capabilities: list = None, identity: Any = None, **identity_fields: Any) -> dict:
-        """A2：注册 Agent 身份（含 agent_instance_id/provider/model_id/session_id/role/runtime_hash 等）。
-
-        支持两种形式：
-        1. identity: dict —— 完整 identity JSON 对象（agent_id/session_id/model_id/role 必填）；
-        2. 扁平关键字 —— agent_instance_id/client_id/provider/model_id/model_mode/
-           system_fingerprint/runtime_hash/session_id/role 直接作为参数。
-        """
-        params = {
-            "agent_name": agent_name,
-            "capabilities": capabilities or [],
-        }
-        if identity:
-            params["identity"] = identity
-        elif identity_fields:
-            params.update(identity_fields)
-        if agent_id:
-            params["agent_id"] = agent_id
-        return self.call("agent.register", params)
-
-    def task_claim(self, task_id: str, agent_session_id: str = "", identity: Any = None, contract_claim: dict = None) -> dict:
-        params = {"task_id": task_id, "agent_session_id": agent_session_id}
-        if identity:
-            params["identity"] = identity
-        if contract_claim:
-            params["contract_claim"] = contract_claim
-        return self.call("task.claim", params)
-
-    def task_claim_recover(
-        self,
-        task_id: str,
-        reason: str,
-        request_id: str,
-        lease_token: str,
-        fencing_counter: Any,
-        identity: Any,
-    ) -> dict:
-        """P0-G：受保护 orphan claim recovery（task.claim.recover）。
-
-        只转发 daemon 权威写点；daemon 不可用或返回错误时由统一 transport
-        路径 fail-closed（E_DAEMON_UNAVAILABLE），绝不回退本地 SQLite。
-        调用方必须以 adjudicator 身份携带完整 identity，并持有独立 Reviewer
-        的 lease_token/fencing_counter（跨角色 lease 校验在 daemon 端执行）。
-        同 request_id 重放返回第一次确定性结果（dedup）。
-        """
-        return self.call("task.claim.recover", {
-            "task_id": task_id,
-            "reason": reason,
-            "request_id": request_id,
-            "lease_token": lease_token,
-            "fencing_counter": fencing_counter,
-            "identity": identity,
-        })
-
-    def task_work_next(self, task_id: str) -> dict:
-        return self.call("task.work_next", {"task_id": task_id})
-
-    def task_assignment_status(
-        self, task_id: str, step_id: str = "", role: str = ""
-    ) -> dict:
-        """读取 daemon 权威的 durable assignment 工作队列投影。"""
-        params = {"task_id": task_id}
-        if step_id:
-            params["step_id"] = step_id
-        if role:
-            params["role"] = role
-        return self.call("task.assignment.status", params)
-
-    def task_assignment_heartbeat(
-        self,
-        task_id: str,
-        assignment_id: str,
-        agent_session_id: str = "",
-        identity: Any = None,
-        request_id: str = "",
-        fencing_counter: Any = None,
-    ) -> dict:
-        """续租当前 assignment；状态和 holder 校验完全由 daemon 执行。"""
-        params = {
-            "task_id": task_id,
-            "assignment_id": assignment_id,
-            "agent_session_id": agent_session_id,
-        }
-        if identity:
-            params["identity"] = identity
-        if request_id:
-            params["request_id"] = request_id
-        if fencing_counter is not None:
-            params["fencing_counter"] = fencing_counter
-        return self.call("task.assignment.heartbeat", params)
-
-    def task_next_action(self, task_id: str, workspace_instance_id: str = "") -> dict:
-        # 5B：task.next_action 只读派工查询（薄壳转发 daemon evaluator）。
-        # evaluator 只在 Rust daemon 中实现；local 无 evaluator，daemon 不可达时
-        # fail-closed（E_DAEMON_UNAVAILABLE），客户端不回退本地计算。
-        params = {"task_id": task_id}
-        if workspace_instance_id:
-            params["workspace_instance_id"] = workspace_instance_id
-        return self.call("task.next_action", params)
-
-    def task_report(self, task_id: str, summary: str = "", evidence_path: str = "", evidence_hash: str = "", agent_session_id: str = "", step_id: str = "", success: bool = True, identity: Any = None, snapshot_id: str = "") -> dict:
-        return self.call("task.report", {
-            "task_id": task_id,
-            "summary": summary,
-            "evidence_path": evidence_path,
-            "evidence_hash": evidence_hash,
-            "agent_session_id": agent_session_id,
-            "step_id": step_id,
-            "success": success,
-            "identity": identity,
-            "snapshot_id": snapshot_id,
-        })
-
-    def task_step_resolve(self, task_id: str, failed_step_id: str, remediation_step_id: str,
-                          request_id: str, evidence_path: str, evidence_hash: str,
-                          identity: Any = None, agent_session_id: str = "",
-                          lease_token: str = "", fencing_counter: Any = None) -> dict:
-        # baf7e552 S5：失败步骤 remediation 后合法回审（daemon 权威追加写入）。
-        # append-only task_events ledger；original failed 行不可变；同 request_id
-        # 稳定重放，参数不同返回 E_REQUEST_ID_REUSE_MISMATCH。需 implementer lease。
-        return self.call("task.step.resolve", {
-            "task_id": task_id,
-            "failed_step_id": failed_step_id,
-            "remediation_step_id": remediation_step_id,
-            "request_id": request_id,
-            "evidence_path": evidence_path,
-            "evidence_hash": evidence_hash,
-            "identity": identity,
-            "agent_session_id": agent_session_id,
-            "lease_token": lease_token,
-            "fencing_counter": fencing_counter,
-        })
-
-    def task_status(self, task_id: str) -> dict:
-        return self.call("task.status", {"task_id": task_id})
-
-    def task_events(self, task_id: str) -> dict:
-        return self.call("task.events", {"task_id": task_id})
-
-    def task_list(self, status: str = "", limit: int = 100, parent_id: str = "") -> dict:
-        return self.call("task.list", {"status": status, "limit": limit, "parent_id": parent_id})
-
-    def task_rollback(self, task_id: str, reason: str = "") -> dict:
-        return self.call("task.rollback", {"task_id": task_id, "reason": reason})
-
-    def task_reopen(self, task_id: str, reason: str = "", reviewer: str = "", identity: Any = None) -> dict:
-        return self.call("task.reopen", {"task_id": task_id, "reason": reason, "reviewer": reviewer, "identity": identity})
-
-    def task_apply(self, task_id: str, reviewer: str = "", identity: Any = None, lease_token: str = "", fencing_counter: Any = None) -> dict:
-        # P4 保护写：daemon 权威路径下 apply 必须携带完整 reviewer lease 凭证
-        # （lease_token + fencing_counter），否则 daemon 返回 E_LEASE_REQUIRED。
-        return self.call("task.apply", {
-            "task_id": task_id,
-            "reviewer": reviewer,
-            "identity": identity,
-            "lease_token": lease_token,
-            "fencing_counter": fencing_counter,
-        })
-
-    def task_close(self, task_id: str, reviewer: str = "", identity: Any = None, lease_token: str = "", fencing_counter: Any = None) -> dict:
-        # P4 保护写：daemon 权威路径下 close 必须携带完整 reviewer lease 凭证
-        # （lease_token + fencing_counter），否则 daemon 返回 E_LEASE_REQUIRED。
-        return self.call("task.close", {
-            "task_id": task_id,
-            "reviewer": reviewer,
-            "identity": identity,
-            "lease_token": lease_token,
-            "fencing_counter": fencing_counter,
-        })
-
-    def task_capture_diff(self, task_id: str, step_id: str = "", base: str = "HEAD") -> dict:
-        return self.call("task.capture_diff", {"task_id": task_id, "step_id": step_id, "base": base})
-
-    # ------------------------------------------------------------------
-    # Lease Control Plane RPC（M7）
-    # daemon 权威路径：task+role 单 active lease / raw token 仅返回一次 / sha256 落库 /
-    # fencing counter 单调递增 / 权威时钟 fail-closed（E_LEASE_CLOCK_UNAVAILABLE）。
-    # identity 为 dict（agent_id/session_id/model_id/role），原样透传给 daemon 校验。
-    # ------------------------------------------------------------------
-
-    def lease_acquire(self, task_id: str, role: str, identity: Any = None, ttl_seconds: float = 3600.0) -> dict:
-        """获取 Lease（Raw token 仅在成功响应中返回一次）。"""
-        params = {"task_id": task_id, "role": role, "ttl_seconds": ttl_seconds}
-        if identity:
-            params["identity"] = identity
-        return self.call("lease.acquire", params)
-
-    def lease_extend(self, task_id: str, role: str, token: str, identity: Any = None,
-                     ttl_seconds: float = 3600.0, fencing_counter: Any = None) -> dict:
-        """续租 Lease（幂等：不递增 counter，不创建新 lease）。"""
-        params = {"task_id": task_id, "role": role, "token": token, "ttl_seconds": ttl_seconds}
-        if identity:
-            params["identity"] = identity
-        if fencing_counter is not None:
-            params["fencing_counter"] = fencing_counter
-        return self.call("lease.extend", params)
-
-    def lease_renew(self, task_id: str, role: str, token: str, identity: Any = None,
-                    ttl_seconds: float = 3600.0, fencing_counter: Any = None) -> dict:
-        """lease.renew 是 lease.extend 的兼容别名（daemon 侧同一 handler）。"""
-        return self.lease_extend(
-            task_id, role, token, identity=identity,
-            ttl_seconds=ttl_seconds, fencing_counter=fencing_counter,
-        )
-
-    def lease_release(self, task_id: str, role: str, token: str, identity: Any = None) -> dict:
-        """释放 Lease（幂等：重复 release 返回同一 released 状态）。"""
-        params = {"task_id": task_id, "role": role, "token": token}
-        if identity:
-            params["identity"] = identity
-        return self.call("lease.release", params)
-
-    def lease_status(self, task_id: str, role: str = "") -> dict:
-        """查询 Lease 状态（只读，不返回 raw token）。"""
-        return self.call("lease.status", {"task_id": task_id, "role": role})
-
-    def lease_list_events(self, task_id: str = "", role: str = "") -> dict:
-        """查询 Lease 审计事件（只读，append-only 账本）。"""
-        return self.call("lease.list_events", {"task_id": task_id, "role": role})
-
-    def close(self) -> None:
-        """关闭客户端（单次连接模式无持久连接，为空操作）。"""
-        pass
-
-    def call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        # H6-FIX：与 HttpDaemonRpcClient 对齐——params["request_id"]（CLI 路由
-        # 注入的 uuid）优先作为 envelope id；缺省 uuid4 全局唯一。旧实现
-        # next(self._ids) 从 1 开始，named-pipe 时代 dedup 未持久化未触发，
-        # 切回 named-pipe 后会复发跨进程复用（E_REQUEST_ID_REUSE_MISMATCH）。
-        if isinstance(params, dict):
-            request_id = params.get("request_id") or None
-        else:
-            request_id = None
-        if request_id is None:
-            request_id = str(uuid.uuid4())
-        conn = None
-        try:
-            conn = try_connect(self.socket_path)
-            if conn is None:
-                raise OSError("endpoint 不可连接")
-            with conn:
-                conn.settimeout(_rpc_timeout_for(method, self.timeout))
-                # 共存契约 §4.2：经 windows-bridge 时注入 bridge_token（生产路径）。
-                # bridge 在请求顶层校验并剥离该字段（cw_bridge.rs validate_token），
-                # 转发给 daemon 的是剥离后的 {id, method, params}。
-                # UDS/Named Pipe 直连 daemon 时不注入。
-                from callwarden.config import is_bridge_transport, get_bridge_token
-                request: Dict[str, Any] = {
-                    "id": request_id,
-                    "method": method,
-                    "params": params or {},
-                }
-                # 显式 transport_override 优先（如 bridge health 强制 windows-bridge）
-                effective_bridge = (
-                    self.transport_override == "windows-bridge"
-                    or is_bridge_transport()
-                )
-                if effective_bridge:
-                    token = get_bridge_token()
-                    if not token:
-                        raise DaemonUnavailableError(
-                            "windows-bridge transport 需要 bridge token；"
-                            "CW_BRIDGE_TOKEN_FILE 或 ~/.callwarden/bridge.token 缺失"
-                        )
-                    # 顶层注入（与 cw_bridge.rs validate_token 的 request 顶层匹配）
-                    request["bridge_token"] = token
-                send_message(conn, request, self.max_message_bytes)
-                response = recv_message(conn, self.max_message_bytes)
-                # TP-11G 2a 层 4：ping 响应 daemon_pid 与管道创建者交叉校验
-                # （仅 ping 携带 pid 字段；bridge/TCP 连接无 _handle 自然跳过）
-                if method == "ping":
-                    _verify_pipe_creator_attribution(conn, response)
-        except (OSError, socket.timeout) as exc:
-            raise DaemonUnavailableError(
-                f"无法连接 daemon endpoint {self.socket_path}: {exc}"
-            ) from exc
-        if response.get("id") != request_id:
-            raise DaemonUnavailableError("daemon 响应 request id 不匹配")
-        return parse_response(response)
-
-    def hello(self) -> Dict[str, Any]:
-        """执行共存契约 §5.3 的握手，返回 daemon authority 身份。
-
-        响应包含：protocol_version / authority_id / platform / transport /
-        task_db_fingerprint / workspace_capabilities。客户端据此校验 authority
-        一致性，mismatch 时 fail-closed（不继续请求、不写本地 DB）。
-
-        Raises:
-            DaemonUnavailableError: daemon 不可连接或未返回 authority 信息。
-        """
-        result = self.call("ping", {})
-        if not isinstance(result, dict):
-            raise DaemonUnavailableError("daemon hello 响应不是对象")
-        if "authority_id" not in result:
-            raise DaemonUnavailableError(
-                "daemon 未返回 authority_id（共存契约 §5.3 握手失败）"
-            )
-        return {
-            "protocol_version": result.get("protocol_version", 0),
-            "authority_id": result.get("authority_id", ""),
-            "platform": result.get("platform", ""),
-            "transport": result.get("transport", ""),
-            "task_db_fingerprint": result.get("task_db_fingerprint", ""),
-            "workspace_capabilities": result.get("workspace_capabilities", []),
-        }
-
-    def verify_authority(
-        self,
-        expected_authority_id: Optional[str] = None,
-        expected_fingerprint: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """校验 daemon authority 与期望一致；不一致时 fail-closed。
-
-        Args:
-            expected_authority_id: 期望 authority_id（来自 workspace registry 或配置）。
-                为 None 时不校验 authority_id。
-            expected_fingerprint: 期望 task_db_fingerprint（当前任务上下文）。
-                为 None 时不校验 fingerprint。
-
-        Returns:
-            hello 响应字典（校验通过时）。
-
-        Raises:
-            DaemonRemoteError: authority/fingerprint 不一致（结构化错误）。
-            DaemonUnavailableError: daemon 不可达。
-        """
-        info = self.hello()
-        if expected_authority_id and info["authority_id"] != expected_authority_id:
-            raise DaemonRemoteError(
-                "E_AUTHORITY_MISMATCH",
-                f"authority 不一致: daemon={info['authority_id']}, expected={expected_authority_id}",
-            )
-        if expected_fingerprint and info["task_db_fingerprint"] != expected_fingerprint:
-            raise DaemonRemoteError(
-                "E_AUTHORITY_MISMATCH",
-                f"task_db_fingerprint 不一致: daemon={info['task_db_fingerprint']}, expected={expected_fingerprint}",
-            )
-        return info
-
-    # ----------------------------------------------------------------------
-    # 子任务5：bridge 重启 / request dedup 安全的 mutation 调用
-    # ----------------------------------------------------------------------
-
-    def mutation_call(
-        self,
-        method: str,
-        params: Dict[str, Any],
-        expected_authority_id: Optional[str] = None,
-        expected_fingerprint: Optional[str] = None,
-        reconnect_attempts: int = 2,
-    ) -> Any:
-        """执行一次 mutation，具备 request dedup 与重连后 authority pin 校验。
-
-        幂等契约（共存契约 §6.3）：
-        - 每个 mutation 必须带 `request_id`；同一请求重试复用同一 request_id，
-          使 daemon 侧 `TaskCollabStore.check_dedup` 能返回已提交结果而非重复写入；
-        - 重连（bridge/daemon 重启）后，先用 `hello()` 校验 authority 与
-          `expected_authority_id`/`expected_fingerprint` 一致；不一致 fail-closed；
-        - 提交结果未知（连接中断）时，用同一 request_id 查询再重试，
-          不盲目重复 mutation。
-
-        Args:
-            method: RPC 方法名（如 task.claim / task.report）。
-            params: 请求参数；若缺 request_id 自动生成并复用。
-            expected_authority_id / expected_fingerprint: authority pin。
-            reconnect_attempts: 重连尝试次数（含首次）。
-
-        Returns:
-            daemon 响应 result。
-
-        Raises:
-            DaemonRemoteError: 远端业务错误（原样透传）。
-            DaemonUnavailableError: 重连后仍不可达。
-            E_AUTHORITY_MISMATCH: authority pin 不一致。
-        """
-        import uuid
-
-        if "request_id" not in params or not params.get("request_id"):
-            params["request_id"] = f"req-{uuid.uuid4().hex[:12]}"
-        request_id = params["request_id"]
-
-        last_error: Optional[Exception] = None
-        for attempt in range(max(1, reconnect_attempts)):
-            try:
-                # 重连后 authority pin 校验（fail-closed）
-                self.verify_authority(
-                    expected_authority_id=expected_authority_id,
-                    expected_fingerprint=expected_fingerprint,
-                )
-                result = self.call(method, params)
-                return result
-            except DaemonRemoteError:
-                # 远端业务错误（含 E_AUTHORITY_MISMATCH / task_conflict）原样透传，
-                # 不重试（业务已明确裁决）
-                raise
-            except (DaemonUnavailableError, OSError, socket.timeout) as exc:
-                last_error = exc
-                # task.create 在现有权威 event schema 中尚未持久化 request_id；连接
-                # 中断后无法用 event 精确证明创建是否完成，重放可能产生第二个任务。
-                # 在补齐持久化 request_id 前必须 fail-closed，不能把 task.status 当证明。
-                if method == "task.create":
-                    break
-                if attempt + 1 >= max(1, reconnect_attempts):
-                    break
-                # 契约 §6.3：提交结果未知（连接中断）时，先用 request_id 查询
-                # 该 mutation 是否已提交（daemon 侧 request dedup 缓存了结果）；
-                # 若已提交则直接返回，不盲目重复 mutation。
-                committed = self._query_mutation_outcome(
-                    method,
-                    params,
-                    request_id,
-                    expected_authority_id=expected_authority_id,
-                    expected_fingerprint=expected_fingerprint,
-                )
-                if committed is not None:
-                    return committed
-                # 未提交 → 重连前短暂等待；复用同一 request_id 保证幂等
-                time.sleep(0.3 * (attempt + 1))
-
-        if last_error is not None:
-            raise DaemonUnavailableError(
-                f"mutation {method} 重连 {reconnect_attempts} 次后仍不可达 "
-                f"(request_id={request_id}): {last_error}"
-            ) from last_error
-        raise DaemonUnavailableError(f"mutation {method} 未获得结果 (request_id={request_id})")
-
-    def _query_mutation_outcome(
-        self,
-        method: str,
-        params: Dict[str, Any],
-        request_id: str,
-        expected_authority_id: Optional[str] = None,
-        expected_fingerprint: Optional[str] = None,
-    ) -> Optional[Any]:
-        """查询 mutation 是否已提交（真实 read 优先，其次 request dedup）。
-
-        契约 §6.3：未知提交结果的 mutation 不得盲目重复，必须先用 request_id
-        查询结果。本方法：
-        1. 优先使用**独立 read RPC** 查询 mutation 的效果（如 task.claim → task.status；
-           task.report → task.status），这是真正的 outcome 查询，能区分"已提交"与
-          "尚未处理"；
-        2. 无对应 read RPC 时，回退到用同一 request_id 重新发送 mutation（daemon 侧
-           check_dedup 命中则返回已缓存结果，不重复写入）——等价于查询结果；
-        3. 查询前重新校验 authority pin（fail-closed：authority 变化则不查）。
-
-        返回已提交结果；无法确认（连接仍不可达或非幂等语义）返回 None。
-        """
-        # 映射 mutation → 只读 outcome 查询 RPC（真实 read，非重放）
-        read_rpc = {
-            "task.create": ("task.status", "task_id"),
-            "task.claim": ("task.status", "task_id"),
-            "task.report": ("task.status", "task_id"),
-            "task.close": ("task.status", "task_id"),
-            "task.apply": ("task.status", "task_id"),
-            "task.reopen": ("task.status", "task_id"),
-        }.get(method)
-
-        try:
-            # authority pin 校验（fail-closed）：authority 变化时不查询。
-            # 必须传递原始 expected_authority_id/fingerprint，重连后若 authority
-            # 改变则 fail-closed，不能向错误 authority 发起查询/mutation。
-            if hasattr(self, "verify_authority"):
-                self.verify_authority(
-                    expected_authority_id=expected_authority_id,
-                    expected_fingerprint=expected_fingerprint,
-                )
-            if read_rpc and read_rpc[1] in params:
-                read_method, id_key = read_rpc
-                # 真实 read 查询：不携带 request_id，直接读 daemon 当前状态
-                outcome = self.call(read_method, {"task_id": params[id_key]})
-                if self._mutation_outcome_matches(
-                        method, params, outcome,
-                        expected_authority_id=expected_authority_id,
-                        expected_fingerprint=expected_fingerprint):
-                    # 不能把“任务存在”当作本次 mutation 已提交。只有状态和对应
-                    # task_event 都匹配时才确认；返回结构化确认而非伪装成原 RPC 结果。
-                    return {
-                        "committed": True,
-                        "request_id": request_id,
-                        "outcome": outcome,
-                    }
-            # 回退：用同一 request_id 重新发送（daemon dedup 命中返回已提交结果）
-            result = self.call(method, params)
-            return result
-        except (DaemonUnavailableError, OSError, socket.timeout):
-            return None
-        except DaemonRemoteError:
-            # 业务错误（含 E_AUTHORITY_MISMATCH）说明 mutation 未提交或 authority
-            # 不匹配 → 原样抛出（fail-closed），不静默重试
-            raise
-
-    def _mutation_outcome_matches(
-        self,
-        method: str,
-        params: Dict[str, Any],
-        status: Any,
-        expected_authority_id: Optional[str] = None,
-        expected_fingerprint: Optional[str] = None,
-    ) -> bool:
-        """确认未知提交结果确实是本次 mutation，而非仅看到同名任务存在。"""
-        expected_status = {
-            "task.create": "open",
-            "task.claim": "in_progress",
-            "task.report": "review",
-            "task.apply": "applied",
-            "task.close": "closed",
-            "task.reopen": "in_progress",
-        }.get(method)
-        if not isinstance(status, dict) or status.get("status") != expected_status:
-            return False
-        task_id = params.get("task_id")
-        if not isinstance(task_id, str) or not task_id:
-            return False
-        if method == "task.create" and params.get("title"):
-            if status.get("title") != params["title"]:
-                return False
-        event_reason = {
-            "task.create": "created",
-            "task.claim": "claimed",
-            "task.report": "reported",
-            "task.apply": "applied",
-            "task.close": "closed",
-            "task.reopen": "reopened",
-        }.get(method)
-        try:
-            events_result = self.call("task.events", {"task_id": task_id})
-        except (DaemonUnavailableError, OSError, socket.timeout):
-            return False
-        events = events_result.get("events") if isinstance(events_result, dict) else None
-        if not isinstance(events, list):
-            return False
-        requested_session = params.get("agent_session_id")
-        for event in reversed(events):
-            if not isinstance(event, dict) or event.get("reason_code") != event_reason:
-                continue
-            if requested_session and event.get("agent_session_id") != requested_session:
-                continue
-            if method == "task.report" and params.get("summary"):
-                if event.get("reason") != params["summary"]:
-                    continue
-            return True
-        return False
-
-    def call_with_autostart(
-        self, method: str, params: Optional[Dict[str, Any]] = None
-    ) -> Any:
-        """调用 RPC；连接失败时有界唤起 daemon，不提供本地降级。
-
-        任务写入必须共享 daemon 单写点。并发客户端通过 DaemonMutex 只允许
-        一个进程负责启动，其余客户端等待同一个有界窗口后重试。
-        """
-        try:
-            return self.call(method, params)
-        except DaemonUnavailableError as first_error:
-            endpoint = self.socket_path
-            mutex = DaemonMutex(endpoint)
-            if mutex.try_acquire():
-                try:
-                    conn = ensure_daemon(endpoint, readiness_check=self._probe_connection)
-                finally:
-                    mutex.release()
-            else:
-                conn = ensure_daemon(endpoint, readiness_check=self._probe_connection)
-
-            if conn is None:
-                raise first_error
-            conn.close()
-            return self.call(method, params)
-
-    def get_authoritative_clock(self) -> float:
-        """获取 Daemon 权威时钟时间 (Authoritative_Clock, Req 14.11)"""
-        try:
-            res = self.call("ping")
-            if isinstance(res, dict) and "timestamp" in res:
-                return float(res["timestamp"])
-        except Exception:
-            pass
-        return time.time()
-
-    def _probe_connection(self, conn: object) -> bool:
-        """在 autostart 的现有连接上完成一次协议级 ping。"""
-        request_id = next(self._ids)
-        # readiness 探针必须短于 autostart 窗口，不能继承查询的 30 秒超时。
-        conn.settimeout(min(self.timeout, 1.0))
-        send_message(conn, {
-            "id": request_id,
-            "method": "ping",
-            "params": {},
-        }, self.max_message_bytes)
-        response = recv_message(conn, self.max_message_bytes)
-        if response.get("id") != request_id:
-            raise DaemonUnavailableError("daemon readiness 响应 request id 不匹配")
-        parse_response(response)
-        # TP-11G 2a 层 4：readiness 探针同样做归属交叉校验（失配 → fail-closed）
-        _verify_pipe_creator_attribution(conn, response)
-        return True
-
-    def probe(self) -> bool:
-        """以短超时在独立连接上探测 daemon 协议是否就绪。"""
-        conn = try_connect(self.socket_path)
-        if conn is None:
-            raise DaemonUnavailableError(
-                f"无法连接 daemon endpoint {self.socket_path}"
-            )
-        try:
-            return self._probe_connection(conn)
-        except (OSError, socket.timeout) as exc:
-            raise DaemonUnavailableError(
-                f"daemon endpoint 未就绪 {self.socket_path}: {exc}"
-            ) from exc
-        finally:
-            conn.close()
-
-    def call_with_fd(self, method: str, params: Dict[str, Any], fd: int) -> Any:
-        """FD 传递能力探测（SRV-006：authority 已下沉 Rust daemon）。
-
-        原实现为直接打开 UDS 连接并发送 FD（SCM_RIGHTS）；下沉后改走 daemon
-        RPC `mcp.daemon_client.call_with_fd`，返回能力元数据
-        `{"supported": bool, "transport": ...}`。物理 FD 发送属 transport
-        bootstrap（客户端必须持有自己的 socket），见 `_transport_call_with_fd`。
-        fail-closed：daemon 不可用抛 DaemonUnavailableError（不回退本地判定）。
-        """
-        result = self.call("mcp.daemon_client.call_with_fd", {"method": method})
-        if not isinstance(result, dict):
-            raise RuntimeError(f"call_with_fd: daemon 返回非对象结果 {result!r}")
-        return result
-
-    def _transport_call_with_fd(self, method: str, params: Dict[str, Any], fd: int) -> Any:
-        """Transport bootstrap：发送一个带只读 FD 的请求（SCM_RIGHTS 物理传递）。
-
-        SRV-006：FD 能力判定 authority 已下沉 Rust daemon（见 `call_with_fd`）；
-        物理 FD 发送无法委托 daemon（客户端持有 fd 与 socket），保留原实现。
-        """
-        if sys.platform == "win32" or not hasattr(socket, "AF_UNIX"):
-            raise DaemonUnavailableError("当前平台不支持 SCM_RIGHTS FD 传递")
-        request_id = next(self._ids)
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-                conn.settimeout(_rpc_timeout_for(method, self.timeout))
-                conn.connect(self.socket_path)
-                send_message_with_fds(conn, {
-                    "id": request_id,
-                    "method": method,
-                    "params": params or {},
-                }, [fd], self.max_message_bytes)
-                response = recv_message(conn, self.max_message_bytes)
-        except (OSError, socket.timeout) as exc:
-            raise DaemonUnavailableError(
-                f"无法连接 daemon socket {self.socket_path}: {exc}"
-            ) from exc
-        if response.get("id") != request_id:
-            raise DaemonUnavailableError("daemon 响应 request id 不匹配")
-        return parse_response(response)
-
-    def publish_snapshot(self, workspace_instance_id: str, db_path: str,
-                         build_context_hash: str = "", snapshot_id: str = "") -> Any:
-        """发布快照给 daemon（SRV-006：checkpoint authority 已下沉 Rust daemon）。
-
-        原实现为本地 sqlite3 connect + PASSIVE checkpoint（C4/S8 双保险）；
-        下沉后改走 daemon RPC `mcp.daemon_client.publish_snapshot`：由 daemon
-        权威执行 busy_timeout 等待 + PASSIVE checkpoint，并返回归一化 payload
-        `{"checkpointed", "db_path", "workspace_instance_id",
-        "build_context_hash", "transport"}`。
-
-        传输选择采用 daemon 权威结论：统一 db_path 形式（Windows Named Pipe /
-        windows-bridge / UDS 直连均支持）；FD 物理传递保留在
-        `_transport_call_with_fd`（transport bootstrap，见 finding）。
-        fail-closed：daemon 不可用抛 DaemonUnavailableError（不回退本地 checkpoint）。
-        """
-        payload = self.call("mcp.daemon_client.publish_snapshot", {
-            "workspace_instance_id": workspace_instance_id,
-            "db_path": os.path.abspath(db_path),
-            "build_context_hash": build_context_hash,
-            "snapshot_id": snapshot_id,
-        })
-        if not isinstance(payload, dict):
-            raise RuntimeError(f"publish_snapshot: daemon 返回非对象结果 {payload!r}")
-        effective_db_path = payload.get("db_path") or os.path.abspath(db_path)
-        return self.call("snapshot.publish", {
-            "workspace_instance_id": workspace_instance_id,
-            "build_context_hash": build_context_hash,
-            "db_path": effective_db_path,
-            "snapshot_id": snapshot_id,
-        })
-
-
-DaemonRpcClient = UnixDaemonRpcClient
 
 
 # ----------------------------------------------------------------------
@@ -1251,11 +260,10 @@ class DaemonClient:
 
     def __init__(self, socket_path: Optional[str] = None):
         self._svc: SnapshotManagerService = get_snapshot_service()
-        # 共存契约 §5.2：优先显式 endpoint，否则 authority-aware 解析。
-        # 禁止绕过 authority 解析直连 get_default_endpoint（WSL windows-host+bridge
-        # 可能连接错误端点）。
-        from callwarden.config import resolve_daemon_endpoint_for_authority
-        self._rpc = UnixDaemonRpcClient(socket_path or resolve_daemon_endpoint_for_authority())
+        # 单轨（ADR-002）：唯一 RPC 传输是 HTTPS+mTLS。`socket_path` 参数仅为
+        # 调用点兼容保留——其值现在是 HTTPS endpoint 字符串，而非 socket/pipe 路径；
+        # 缺省时由 HttpDaemonRpcClient.discover() 经 manifest 解析。
+        self._rpc = HttpDaemonRpcClient(endpoint=socket_path)
         self._workspace_instance_id: Optional[str] = None
         self._remote_workspace_id: Optional[str] = None
         self._remote_snapshot_id: Optional[str] = None
@@ -1316,9 +324,9 @@ class DaemonClient:
 
     def is_daemon_ready(self) -> bool:
         """daemon snapshot 是否已就绪（已发布且 Rust 后端可用）。"""
-        if get_daemon_mode() != "local" and os.path.exists(self._rpc.socket_path):
+        if get_daemon_mode() != "local":
             try:
-                self._rpc.probe()
+                self._rpc.verify_health()
                 return self._remote_snapshot_ready
             except Exception:
                 if is_daemon_required():
@@ -1359,15 +367,17 @@ class DaemonClient:
             pass
 
         # 连接失败：尝试自动唤起（带互斥）[Req 14.22, 14.23]
-        endpoint = self._rpc.socket_path
+        try:
+            endpoint = self._rpc.discover()
+        except Exception:
+            endpoint = ""
         mutex = DaemonMutex(endpoint)
         if mutex.try_acquire():
             try:
-                conn = ensure_daemon(
-                    endpoint, readiness_check=self._rpc._probe_connection
+                ready = ensure_http_daemon(
+                    endpoint, readiness_check=lambda ep: self._rpc.verify_health(ep)
                 )
-                if conn is not None:
-                    conn.close()  # ensure_daemon 返回的连接仅用于验证可达性
+                if ready is not None:
                     # daemon 已就绪，重试原请求
                     result = self._rpc.call(method, params)
                     return {"result": result, "degraded": False}
@@ -1375,11 +385,10 @@ class DaemonClient:
                 mutex.release()
         else:
             # 其他会话正在启动 daemon，等待窗口内退避重试
-            conn = ensure_daemon(
-                endpoint, readiness_check=self._rpc._probe_connection
+            ready = ensure_http_daemon(
+                endpoint, readiness_check=lambda ep: self._rpc.verify_health(ep)
             )
-            if conn is not None:
-                conn.close()
+            if ready is not None:
                 result = self._rpc.call(method, params)
                 return {"result": result, "degraded": False}
 
@@ -1415,29 +424,23 @@ class DaemonClient:
     def _ensure_daemon_endpoint(self) -> bool:
         """确认 daemon 可接受请求，auto 模式必要时自动唤起。
 
-        仅检查 socket 路径会把陈旧 socket 当成可用 daemon，也会让 auto
-        模式在 daemon 尚未启动时直接绕过共享 snapshot。这里用 ping 作为
-        活性探针，并复用已有的有界 autostart 窗口。
+        单轨 HTTPS+mTLS：不再检查 socket 路径存在性（不存在该回退），
+        以 HTTP `/health` 交叉核对作为活性探针；不可达时 auto 模式进入
+        Degraded_Mode，enterprise 模式 fail-closed。
         """
         mode = get_daemon_mode()
         if mode == "local":
             return False
 
-        endpoint = self._rpc.socket_path
         try:
-            self._rpc.probe()
+            self._rpc.verify_health()
             return True
         except Exception as exc:
             if mode == "enterprise":
                 raise DaemonUnavailableError(
-                    f"enterprise 模式要求 enterprise daemon，但 endpoint {endpoint} 不可用: {exc}"
+                    f"enterprise 模式要求 enterprise daemon，但 endpoint 不可用: {exc}"
                 ) from exc
-
-        conn = ensure_daemon(endpoint, readiness_check=self._rpc._probe_connection)
-        if conn is None:
-            return False
-        conn.close()
-        return True
+        return False
 
     def _ensure_remote_snapshot(self, db_path: Optional[str]) -> Optional[str]:
         """在 auto/enterprise 模式注册 workspace 并发布 snapshot。"""
@@ -2266,9 +1269,19 @@ class HttpDaemonRpcClient:
             # cwd 作为 workspace authority；显式配置仍优先用于多项目客户端。
             from callwarden.config import PROJECT_ROOT
             root = self._project_root or PROJECT_ROOT
-            register_params = {"client_view_root": root}
-            if db_path:
+            if self.is_remote_profile():
+                # S2 §16.1/§16.3（ADR-002）：remote profile 下 daemon bind_scope=remote，
+                # 绝对路径 client_view_root 会被 §16.1 路径拒绝表挡掉；snapshot.publish
+                # 的 db_path 同样被拒（远端只读面快照入口唯一为 snapshot.upload）。
+                # 以 "." 注册：daemon canonicalize 到其 cwd（属主=daemon owner，
+                # mTLS 流 peer.uid=current_daemon_owner_key()），git provenance
+                # 取客户端本机工作树（非路径字段，不受路径扫描影响）。
+                register_params = {"client_view_root": "."}
                 register_params.update(_workspace_snapshot_metadata(root))
+            else:
+                register_params = {"client_view_root": root}
+                if db_path:
+                    register_params.update(_workspace_snapshot_metadata(root))
             workspace = self.call("workspace.register", register_params)
             if not isinstance(workspace, dict) or "workspace_instance_id" not in workspace:
                 raise DaemonUnavailableError(
@@ -2276,7 +1289,7 @@ class HttpDaemonRpcClient:
                 )
             self._remote_workspace_id = workspace["workspace_instance_id"]
             self._remote_snapshot_id = workspace.get("snapshot_id") or None
-        if db_path and not self._remote_snapshot_ready:
+        if db_path and not self._remote_snapshot_ready and not self.is_remote_profile():
             publish_result = self.call("snapshot.publish", {
                 "workspace_instance_id": self._remote_workspace_id,
                 "build_context_hash": "",
@@ -2488,7 +1501,8 @@ class HttpDaemonRpcClient:
     # ------------------------------------------------------------------
 
     def call(self, method: str, params: Optional[Dict[str, Any]] = None,
-             request_id: Optional[str] = None) -> Any:
+             request_id: Optional[str] = None,
+             max_body_bytes: Optional[int] = None) -> Any:
         """发起一次 JSON-RPC 调用，返回 result。
 
         同一个 request_id 在重连/重试中原样复用，供 daemon 侧 mutation dedup
@@ -2501,6 +1515,8 @@ class HttpDaemonRpcClient:
                 params["request_id"]（CLI 路由注入的 uuid）生成，再缺省 uuid4
                 全局唯一（H6-FIX：杜绝 CLI 短生命周期进程复用 "1" 触发
                 E_REQUEST_ID_REUSE_MISMATCH）。
+            max_body_bytes: 单次请求体上限（默认 HTTP_MAX_BODY_BYTES 8MiB）；
+                S2 §16.2 snapshot.upload 上传面按 64MiB 口径传入。
 
         Returns:
             response 的 result 字段。
@@ -2536,10 +1552,11 @@ class HttpDaemonRpcClient:
 
         url = endpoint.rstrip("/") + "/v1/rpc"
         body = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
-        if len(body) > HTTP_MAX_BODY_BYTES:
+        body_limit = HTTP_MAX_BODY_BYTES if max_body_bytes is None else max_body_bytes
+        if len(body) > body_limit:
             raise DaemonRemoteError(
                 E_REQUEST_TOO_LARGE,
-                f"请求体 {len(body)} 字节超过 8 MiB 上限",
+                f"请求体 {len(body)} 字节超过 {body_limit} 字节上限",
             )
         try:
             req = urllib.request.Request(
@@ -2773,6 +1790,150 @@ class HttpDaemonRpcClient:
     def capabilities(self) -> Dict[str, Any]:
         """GET /capabilities。"""
         return self._http_get(self.discover().rstrip("/") + "/capabilities")
+
+    # ------------------------------------------------------------------
+    # 单轨传输能力（HTTPS+mTLS）：原 UDS/pipe 客户端的公开契约在此保持
+    # ------------------------------------------------------------------
+
+    def publish_snapshot(self, workspace_instance_id: str, db_path: str,
+                         build_context_hash: str = "", snapshot_id: str = "") -> Any:
+        """发布快照给 daemon（纯 HTTP，无本地 checkpoint / 无 FD 传递）。
+
+        先经 `mcp.daemon_client.publish_snapshot` 取得权威归一化 db_path
+        （daemon 侧执行 busy_timeout 等待 + PASSIVE checkpoint），再调用
+        `snapshot.publish` 发布。fail-closed：daemon 不可用抛
+        DaemonUnavailableError（不回退本地 sqlite checkpoint）。
+        """
+        payload = self.call("mcp.daemon_client.publish_snapshot", {
+            "workspace_instance_id": workspace_instance_id,
+            "db_path": os.path.abspath(db_path),
+            "build_context_hash": build_context_hash,
+            "snapshot_id": snapshot_id,
+        })
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"publish_snapshot: daemon 返回非对象结果 {payload!r}")
+        effective_db_path = payload.get("db_path") or os.path.abspath(db_path)
+        return self.call("snapshot.publish", {
+            "workspace_instance_id": workspace_instance_id,
+            "build_context_hash": build_context_hash,
+            "db_path": effective_db_path,
+            "snapshot_id": snapshot_id,
+        })
+
+    def bind_scope(self) -> str:
+        """manifest v2 的 bind_scope（daemon 写入："loopback" / "remote"）。
+
+        S2（ADR-002 §16.1）客户端据此决定只读工具执行位置。manifest 缺失/
+        非 dict 时按 loopback（回滚兼容）。**不触发网络往返**：若从未
+        discover 过，只读 manifest 本地文件（resolve … validate=False），
+        避免远端只读面在 daemon 暂不可达时误判 loopback 回退 RPC（S2-09）。
+        仅缓存 `_manifest`，不设 `_resolved_endpoint`——后续真正 discover
+        仍做完整 health 校验。
+        """
+        manifest = getattr(self, "_manifest", None)
+        if not isinstance(manifest, dict):
+            try:
+                _, manifest = resolve_http_endpoint_and_manifest(
+                    explicit_endpoint=getattr(self, "_explicit_endpoint", None),
+                    manifest_path=getattr(self, "_manifest_path", None),
+                    authority_id=getattr(self, "_authority_id", None),
+                    validate=False,
+                )
+            except Exception:
+                return "loopback"
+            if isinstance(manifest, dict):
+                self._manifest = manifest
+        if not isinstance(manifest, dict):
+            return "loopback"
+        scope = manifest.get("bind_scope")
+        return scope if isinstance(scope, str) and scope else "loopback"
+
+    def is_remote_profile(self) -> bool:
+        """bind_scope == "remote"（远端部署面：只读工具客户端本机执行）。"""
+        return self.bind_scope() == "remote"
+
+    def upload_snapshot(self, workspace_instance_id: str, raw_bytes: bytes,
+                        build_context_hash: str = "",
+                        snapshot_id: Optional[str] = None) -> Any:
+        """§16.2 snapshot.upload 客户端实现：本机工作库字节 → daemon 发布面。
+
+        gzip 流 ≤32MiB 走内联 mode=inline；否则 uuid4().hex 生成 upload_id
+        按 16MiB 切块逐块 chunk → commit。hash 契约针对 gunzip 后原始
+        SQLite 字节（sha256 + raw_size 双校验）。所有调用经
+        max_body_bytes=SNAPSHOT_UPLOAD_BODY_MAX_BYTES（64MiB 上传面口径）。
+        """
+        gz = gzip.compress(raw_bytes)
+        raw_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+        raw_size = len(raw_bytes)
+        extra: Dict[str, Any] = {}
+        if build_context_hash:
+            extra["build_context_hash"] = build_context_hash
+        if snapshot_id:
+            extra["snapshot_id"] = snapshot_id
+        if len(gz) <= SNAPSHOT_UPLOAD_INLINE_MAX_BYTES:
+            return self.call("snapshot.upload", {
+                "workspace_instance_id": workspace_instance_id,
+                "mode": "inline",
+                "content_encoding": "gzip",
+                "payload_b64": base64.b64encode(gz).decode("ascii"),
+                "sha256": raw_sha256,
+                "raw_size": raw_size,
+                **extra,
+            }, max_body_bytes=SNAPSHOT_UPLOAD_BODY_MAX_BYTES)
+        upload_id = uuid.uuid4().hex
+        total = (len(gz) + SNAPSHOT_UPLOAD_CHUNK_MAX_BYTES - 1) // SNAPSHOT_UPLOAD_CHUNK_MAX_BYTES
+        if total > SNAPSHOT_UPLOAD_MAX_CHUNKS:
+            raise DaemonRemoteError(
+                "E_PAYLOAD_TOO_LARGE",
+                f"组装上限 {SNAPSHOT_UPLOAD_MAX_CHUNKS} 块超出"
+                f"（{total} 块，raw {raw_size} 字节）",
+            )
+        for idx in range(total):
+            chunk = gz[idx * SNAPSHOT_UPLOAD_CHUNK_MAX_BYTES:(idx + 1) * SNAPSHOT_UPLOAD_CHUNK_MAX_BYTES]
+            self.call("snapshot.upload.chunk", {
+                "workspace_instance_id": workspace_instance_id,
+                "upload_id": upload_id,
+                "chunk_index": idx,
+                "total_chunks": total,
+                "chunk_b64": base64.b64encode(chunk).decode("ascii"),
+                "chunk_sha256": hashlib.sha256(chunk).hexdigest(),
+            }, max_body_bytes=SNAPSHOT_UPLOAD_BODY_MAX_BYTES)
+        return self.call("snapshot.upload.commit", {
+            "workspace_instance_id": workspace_instance_id,
+            "upload_id": upload_id,
+            "sha256": raw_sha256,
+            "raw_size": raw_size,
+            **extra,
+        }, max_body_bytes=SNAPSHOT_UPLOAD_BODY_MAX_BYTES)
+
+    def ensure_remote_workspace(self) -> str:
+        """S2 §16.3：remote profile 下确保 workspace 已注册并返回 instance id。
+
+        remote profile 快照入口唯一为 snapshot.upload（§16.1 拒绝
+        snapshot.publish 的 db_path），本方法只注册不发布。
+        """
+        ws_id = self._ensure_remote_snapshot(None)
+        if not ws_id:
+            raise DaemonUnavailableError("workspace.register 未返回 workspace_instance_id")
+        return ws_id
+
+    def call_with_fd(self, method: str, **kwargs: Any) -> Dict[str, Any]:
+        """FD 传递能力探测（单轨 HTTPS：仅能力元数据，无 SCM_RIGHTS 物理传递）。
+
+        经 daemon RPC `mcp.daemon_client.call_with_fd` 返回能力元数据
+        `{"supported": bool, "transport": ...}`。物理 FD 发送在 HTTPS 单轨下
+        不可用（见 `_transport_call_with_fd`）。
+        """
+        params: Dict[str, Any] = {"method": method}
+        params.update(kwargs)
+        result = self.call("mcp.daemon_client.call_with_fd", params)
+        if not isinstance(result, dict):
+            raise RuntimeError(f"call_with_fd: daemon 返回非对象结果 {result!r}")
+        return result
+
+    def _transport_call_with_fd(self, method: str, params: Dict[str, Any], fd: int) -> Any:
+        """单轨 HTTPS 不支持 SCM_RIGHTS FD 物理传递（fail-closed）。"""
+        raise DaemonUnavailableError("单轨 HTTPS 不支持 SCM_RIGHTS FD 传递")
 
     # ------------------------------------------------------------------
     # 查询方法（与 DaemonClient 签名对齐，通过 call() 转发到 daemon RPC）
@@ -3840,14 +3001,8 @@ class HttpDaemonRpcClient:
 # ----------------------------------------------------------------------
 
 def _get_rpc_client_for_route():
-    """根据当前 transport 模式获取 RPC client。
-
-    HTTP 模式（is_http_transport_enabled()）返回 HttpDaemonRpcClient 单例，
-    否则返回 UnixDaemonRpcClient 实例。
-    """
-    if is_http_transport_enabled():
-        return HttpDaemonRpcClient.get_instance()
-    return UnixDaemonRpcClient()
+    """获取 RPC client（单轨：唯一传输是 HTTPS+mTLS）。"""
+    return HttpDaemonRpcClient.get_instance()
 
 
 def _inject_workspace_id(params: dict) -> dict:
@@ -4113,7 +3268,13 @@ def route_task_read(rpc_method: str, params: dict, fallback_func):
     # SR-01：task.supersede / task.superseded_by 为 task-scoped authority 请求，
     # 跳过 legacy active workspace 注入（同 route_task_write 内注释），
     # 否则 task.superseded_by 只读投影会按错误 workspace 过滤而漏行。
-    if rpc_method in TASK_SUPERSEDE_ROUTE_POLICY and _is_task_scoped_authority_request(params):
+    # 5D：task.next_action 携带 workspace_instance_id 时同理——daemon 侧按
+    # instance→capture→binding 三重校验解析 workspace，cwd 注入既冗余又可能注入
+    # 不匹配的 workspace_id（未注册 cwd 直接 invalid_params，见 next_action.rs）。
+    if (
+        rpc_method in TASK_SUPERSEDE_ROUTE_POLICY
+        and _is_task_scoped_authority_request(params)
+    ) or params.get("workspace_instance_id"):
         rpc_params = params
     else:
         rpc_params = _inject_workspace_id(params)
@@ -4390,10 +3551,17 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
                 or rpc_method.startswith("query.")
                 or rpc_method.startswith(_WS_SCOPED_MUTATION_PREFIXES)
             )
-            if needs_snapshot:
+            # S2：remote profile 下不解析 daemon db_path（快照改由
+            # snapshot.upload 客户端本机构建上传），上方的 snapshot_db_path
+            # 保持 None，_ensure_remote_snapshot 只注册不发布。
+            if needs_snapshot and not client.is_remote_profile():
                 # 需 snapshot 的 authority projection / query 面 / workspace-scoped
                 # mutation 必须能解析权威 workspace。DB 路径由 daemon 提供,
                 # 避免薄客户端读取本地 SQLite。
+                # S2（ADR-002 §16.1）：remote profile 下快照入口唯一为
+                # snapshot.upload（客户端本机构建上传），不再向 daemon 取
+                # db_path 做 publish（db_path 会被远端拒绝）；query.* 的
+                # 快照由 build_graph 上传面提供（S2-03 链路）。
                 db_result = client.call("mcp.common.get_db_path_for_daemon", {})
                 if not isinstance(db_result, dict) or not db_result.get("db_path"):
                     raise DaemonUnavailableError(
@@ -4490,7 +3658,7 @@ def executor_lease(rpc_client, task_id: str, identity: Any = None,
     （cli/main.py 与 server/ 均无对应 lifecycle entrypoint），本 guard 供
     future runner 与 CLI implementer 写路径使用；不得在缺少对应 runner 时
     扩大范围引入全新 runner。rpc_client 仅需暴露 lease_acquire / lease_release
-    （UnixDaemonRpcClient 与 HttpDaemonRpcClient 均可，raw token 仅返回一次）。
+    （raw token 仅返回一次）。
     """
     acquired = rpc_client.lease_acquire(
         task_id, role, identity=identity, ttl_seconds=ttl_seconds)

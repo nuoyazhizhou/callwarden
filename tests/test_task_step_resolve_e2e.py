@@ -5,8 +5,10 @@ r"""baf7e552 S6：`task.step.resolve` 失败步骤 remediation 回审的进程�
 1. 成功路径：failed step + done fix_defect（provenance 链接一致）+ implementer
    lease + evidence → 追加 `step_resolved` 事件，任务推进 `review`，
    original failed 行**不可变**（仍为 failed）。
-2. 重放：同 request_id + 同参数 → `replayed=true`、同 resolution_event_id、
-   不新增事件；同 request_id + 不同参数 → `E_REQUEST_ID_REUSE_MISMATCH`。
+2. 重放：同 request_id + 同参数 → 由 HTTP 控制面 dedup 层回放首次 resolution
+   结果（响应逐字节一致、同 resolution_event_id、不新增事件；权威层见
+   只读评审.md L91，handler 级 `replayed=true` 分支仅在 dedup 行失效后可达）；
+   同 request_id + 不同参数 → `E_REQUEST_ID_REUSE_MISMATCH`。
 3. 负向（7）：`E_FAILED_STEP_NOT_FOUND` / `E_FAILED_STEP_NOT_UNRESOLVED` /
    `E_REMEDIATION_NOT_DONE` / `E_REMEDIATION_STEP_MISMATCH` /
    `E_RESOLUTION_EVIDENCE_REQUIRED` / `E_LEASE_REQUIRED` /
@@ -15,9 +17,10 @@ r"""baf7e552 S6：`task.step.resolve` 失败步骤 remediation 回审的进程�
    人类可读双渲染；local 模式 fail-closed（E_DAEMON_UNAVAILABLE，无 evaluator）。
 
 前置条件（与 test_lease_gate_empirical.py 一致）：
-1. Windows 平台（Named Pipe）；
-2. 已构建 `cw-daemon.exe`；
-3. 默认管道 `\\.\pipe\callwarden-<sid>` 未被其他 daemon 占用（占用则 skip）。
+1. Windows 平台；
+2. 已构建 `cw-daemon.exe`（含 HTTP/mTLS 支持）；
+3. 可用 mTLS PKI；隔离 daemon 与客户端共用真实 PKI（fixture 内设置
+   `CW_PKI_DIR`）。
 
 测试只用隔离临时任务库，绝不触碰真实用户任务库。
 """
@@ -34,143 +37,55 @@ import time
 import pytest
 
 from callwarden.server.daemon_protocol import DaemonRemoteError
-from _prereq_guard import (
-    require_cargo,
-    skip_if_daemon_exited_before_manifest,
-    skip_if_native_build_prereq_unavailable,
-)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_PY_EXE = r"C:\Python314\python.exe"
+_PY_EXE = sys.executable
 _CW_PY = os.path.join(_REPO_ROOT, "cw.py")
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
-    reason="task.step.resolve 进程级 E2E 需要 Windows + Named Pipe",
+    reason="task.step.resolve 进程级 E2E 需要 Windows 隔离 daemon",
 )
 
-requires_binaries = pytest.mark.skipif(
-    not os.path.exists(_DAEMON_BIN),
-    reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
-)
-
-
-def _daemon_config(tmp: str) -> dict:
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 2,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 2,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
-
-
-@pytest.fixture(scope="module", autouse=True)
-def ensure_fresh_binary():
-    """P2 门禁：显式构建 cw-daemon，确保二进制由当前源码重建（fresh runtime）。"""
-    cargo = require_cargo()
-    build = subprocess.run(
-        [cargo, "build", "--release", "--no-default-features",
-         "--manifest-path", os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
-         "--bin", "cw-daemon"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=1200,
-    )
-    if build.returncode != 0:
-        skip_if_native_build_prereq_unavailable(build)
-        pytest.fail("cargo build 失败，二进制无法由当前源码重建：\n" + (build.stdout + build.stderr)[-3000:])
-    if not os.path.exists(_DAEMON_BIN):
-        pytest.fail(f"cargo build 成功但未产出 {_DAEMON_BIN}")
+_REAL_PKI_DIR = None
+_WS_INSTANCE_ID = ""
 
 
 @pytest.fixture(scope="module")
 def resolve_env():
-    """启动真实隔离 cw-daemon（临时 task DB + 默认 Named Pipe）。"""
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    from callwarden.config import _get_windows_user_sid
+    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。"""
+    global _REAL_PKI_DIR, _WS_INSTANCE_ID
+    from callwarden.config import get_pki_dir
+    from _w3_harness import seed_cli_task_authority, setup_w3_client
 
-    pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
-    probe = UnixDaemonRpcClient(socket_path=pipe, timeout=3)
-    try:
-        probe.call("ping")
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过")
-    except Exception:
-        pass
-
+    _REAL_PKI_DIR = get_pki_dir()
+    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
     tmp = tempfile.mkdtemp(prefix="cw_step_resolve_")
-    config = _daemon_config(tmp)
-    config_path = os.path.join(tmp, "daemon.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config, f)
-    log = open(os.path.join(tmp, "daemon.log"), "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-    )
-
-    client = UnixDaemonRpcClient(socket_path=pipe, timeout=10)
-    deadline = time.time() + 40
-    ready = False
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            break
-        try:
-            if client.call("ping").get("status") == "ok":
-                ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    if not ready:
-        log.flush()
-        stderr_text = ""
-        try:
-            with open(os.path.join(tmp, "daemon.log"), "r", encoding="utf-8", errors="replace") as f:
-                stderr_text = f.read()[-2000:]
-        except Exception:
-            pass
-        skip_if_daemon_exited_before_manifest(
-            proc, stderr_text, context="隔离 daemon 未在超时内响应"
-        )
-        pytest.fail("隔离 daemon 未在超时内响应，日志：\n" + stderr_text)
-
-    task_db = os.path.join(tmp, "callwarden.db")
-    conn = sqlite3.connect(task_db)
+    proc = None
     try:
-        conn.execute(
-            "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (1, 'resolve-test', '.', ?1)",
-            (time.time(),),
+        client, inst, endpoint, proc = setup_w3_client(tmp, _REPO_ROOT, ws_id=1)
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        _WS_INSTANCE_ID = inst
+        task_db = os.path.join(tmp, "task.db")
+        seed_cli_task_authority(
+            task_db, ws_id=1, name="resolve-test",
+            root_path=_REPO_ROOT, instance_id=inst,
         )
-        conn.commit()
-    finally:
-        conn.close()
-
-    yield client, tmp, task_db, proc, pipe
-
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+        yield client, tmp, task_db, proc, endpoint
+    except BaseException:
+        if proc is not None and proc.poll() is None:
             proc.kill()
-    if not os.environ.get("CW_KEEP_6A_TMP"):
-        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if not os.environ.get("CW_KEEP_6A_TMP"):
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------
@@ -200,6 +115,14 @@ def _seed_failed_remediation(task_db: str, task_id: str, failed_step_id: str,
             "VALUES (?1, 'resolve-seed', '', 'resolve-test', ?2, ?3, ?3)",
             (task_id, task_status, now),
         )
+        # daemon lease.acquire 要求 canonical task→workspace binding（fail-closed）。
+        conn.execute(
+            "INSERT OR IGNORE INTO task_workspace_bindings "
+            "(task_id, workspace_id, workspace_binding_id, workspace_capture_id,"
+            " created_by, authoritative_created_at)"
+            " VALUES (?, 1, ?, ?, 'resolve-test', ?)",
+            (task_id, f"tb-{task_id}", f"wc-cli-{_WS_INSTANCE_ID}", now),
+        )
         conn.execute(
             "INSERT INTO task_steps (id, task_id, step_index, action, target_file, status, result, created_at) "
             "VALUES (?1, ?2, 1, 'implement', 'f.py', ?3, '', ?4)",
@@ -225,8 +148,12 @@ def _implementer_identity(tag: str) -> dict:
 
 
 def _acquire_implementer_lease(client, task_id: str, tag: str) -> dict:
-    return client.lease_acquire(task_id, "implementer", identity=_implementer_identity(tag),
-                                ttl_seconds=3600.0)
+    return client.call("lease.acquire", {
+        "task_id": task_id,
+        "role": "implementer",
+        "identity": _implementer_identity(tag),
+        "ttl_seconds": 3600.0,
+    })
 
 
 def _resolve_params(client, task_id: str, failed_step_id: str, remediation_step_id: str,
@@ -240,8 +167,10 @@ def _resolve_params(client, task_id: str, failed_step_id: str, remediation_step_
         "evidence_path": evidence_path,
         "evidence_hash": evidence_hash,
         "identity": _implementer_identity(tag),
-        "lease_token": acq["token"],
-        "fencing_counter": acq["fencing_counter"],
+        # .get()：test_lease_required 传 acq={} 且随后 pop 掉这两个键，
+        # 这里不能先于 pop 抛 KeyError。
+        "lease_token": acq.get("token"),
+        "fencing_counter": acq.get("fencing_counter"),
     }
 
 
@@ -270,12 +199,11 @@ def _failed_row_status(task_db: str, failed_step_id: str) -> str:
 # 1) wire 级：成功 + 重放 + 负向（禁 mock）
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestStepResolveWireLevel:
     """真实 cw-daemon.exe 上 task.step.resolve 的验收。"""
 
     def test_success_advances_review_keeps_failed_immutable(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-OK"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -289,13 +217,13 @@ class TestStepResolveWireLevel:
         assert res["replayed"] is False
         assert res["resolution_event_id"] > 0
         assert res["status"] == "review", res
-        assert client.task_status(task_id)["status"] == "review"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "review"
         # original failed 行不可变：仍为 failed（append-only，不覆盖）
         assert _failed_row_status(task_db, failed_step_id) == "failed"
         assert _count_step_resolved_events(task_db, task_id) == 1
 
     def test_replay_same_request_id_no_duplicate_event(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-REPLAY"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -307,12 +235,19 @@ class TestStepResolveWireLevel:
         first = client.call("task.step.resolve", params)
         second = client.call("task.step.resolve", params)
 
-        assert second["replayed"] is True, second
-        assert second["resolution_event_id"] == first["resolution_event_id"], second
+        # 契约 §4.5：「重复 request-id 重放同一 resolution 结果」。
+        # 权威重放由 HTTP 控制面 dedup 层承担（http_server.rs DedupStore；
+        # 只读评审.md L91 明确要求停用 handler 级 dedup、统一到持久 dedup 层）：
+        # 同 request_id + 同 params_hash 直接回放首次响应，handler 不再执行，
+        # 故响应与首次逐字节一致（replayed 沿用首次的 False）。handler 级
+        # ledger replay 分支（replayed=True）仅在 dedup 行失效后可达。
+        # 可观测不变量：不新增事件、同一 resolution_event_id、幂等。
+        assert second == first, second
+        assert first["replayed"] is False and first["resolution_event_id"] > 0
         assert _count_step_resolved_events(task_db, task_id) == 1
 
     def test_request_id_reuse_mismatch(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-MISMATCH"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -333,7 +268,7 @@ class TestStepResolveWireLevel:
         assert _count_step_resolved_events(task_db, task_id) == 1
 
     def test_failed_step_not_found(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-NOTFOUND"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -347,7 +282,7 @@ class TestStepResolveWireLevel:
         assert exc.value.code == "E_FAILED_STEP_NOT_FOUND", exc.value
 
     def test_failed_step_not_unresolved(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-NOTUNRES"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -363,7 +298,7 @@ class TestStepResolveWireLevel:
         assert exc.value.code == "E_FAILED_STEP_NOT_UNRESOLVED", exc.value
 
     def test_remediation_not_done(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-REMD"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -378,7 +313,7 @@ class TestStepResolveWireLevel:
         assert exc.value.code == "E_REMEDIATION_NOT_DONE", exc.value
 
     def test_remediation_step_mismatch(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-MISLINK"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -394,7 +329,7 @@ class TestStepResolveWireLevel:
         assert exc.value.code == "E_REMEDIATION_STEP_MISMATCH", exc.value
 
     def test_evidence_required(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-EVID"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -409,7 +344,7 @@ class TestStepResolveWireLevel:
         assert exc.value.code == "E_RESOLUTION_EVIDENCE_REQUIRED", exc.value
 
     def test_lease_required(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-NOLEASE"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -424,7 +359,7 @@ class TestStepResolveWireLevel:
         assert exc.value.code == "E_LEASE_REQUIRED", exc.value
 
     def test_lease_token_mismatch(self, resolve_env):
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-TOKEN"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -440,7 +375,7 @@ class TestStepResolveWireLevel:
 
     def test_negative_never_mutates(self, resolve_env):
         """全部负向拒绝零写入：无 step_resolved 事件、failed 行不可变、无新 action identity。"""
-        client, _tmp, task_db, _proc, _pipe = resolve_env
+        client, _tmp, task_db, _proc, _endpoint = resolve_env
         task_id = "T-RES-ZERO"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -448,7 +383,7 @@ class TestStepResolveWireLevel:
         acq = _acquire_implementer_lease(client, task_id, "zero")
 
         before_events = _count_step_resolved_events(task_db, task_id)
-        before_status = client.task_status(task_id)["status"]
+        before_status = client.call("task.status", {"task_id": task_id})["status"]
 
         # E_FAILED_STEP_NOT_UNRESOLVED（done 行）+ E_REQUEST_ID_REUSE_MISMATCH
         for bad in [
@@ -463,7 +398,7 @@ class TestStepResolveWireLevel:
 
         after_events = _count_step_resolved_events(task_db, task_id)
         assert after_events == before_events, "拒绝后新增了 step_resolved 事件"
-        assert client.task_status(task_id)["status"] == before_status, "拒绝后任务状态被改动"
+        assert client.call("task.status", {"task_id": task_id})["status"] == before_status, "拒绝后任务状态被改动"
         assert _failed_row_status(task_db, failed_step_id) == "failed"
 
 
@@ -471,12 +406,17 @@ class TestStepResolveWireLevel:
 # 2) CLI 进程级：真实 cw.py 子进程
 # ----------------------------------------------------------------------
 
-def _cli_env(pipe: str, mode: str = "enterprise", extra: dict = None) -> dict:
+def _cli_env(endpoint: str, data_root: str, mode: str = "enterprise",
+             extra: dict = None) -> dict:
     env = dict(os.environ)
     env.pop("CW_AGENT_SESSION_ID", None)
     env["CW_DAEMON_MODE"] = mode
-    env["CW_DAEMON_ENDPOINT"] = pipe
-    env["CW_DAEMON_TRANSPORT"] = "named-pipe"
+    if endpoint:
+        env["CW_DAEMON_HTTP_ENDPOINT"] = endpoint
+        env["CW_DAEMON_TRANSPORT"] = "http"
+    env["USERPROFILE"] = os.path.join(data_root, "userhome")
+    env["HOME"] = env["USERPROFILE"]
+    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
@@ -498,12 +438,11 @@ def _all_out(proc) -> str:
     return (proc.stdout or "") + "\n" + (proc.stderr or "")
 
 
-@requires_binaries
 class TestStepResolveCliProcess:
     r"""真实 `C:\Python314\python.exe cw.py task step-resolve` 子进程验收。"""
 
     def test_cli_json_success(self, resolve_env):
-        client, tmp, task_db, _proc, pipe = resolve_env
+        client, tmp, task_db, _proc, endpoint = resolve_env
         task_id = "T-RES-CLI-OK"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -522,7 +461,7 @@ class TestStepResolveCliProcess:
              "--lease-token", acq["token"],
              "--fencing-counter", str(acq["fencing_counter"]),
              "--json"],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), _REPO_ROOT)
         assert proc.returncode == 0, f"step-resolve --json 失败:\n{_all_out(proc)}"
         try:
             data = json.loads(proc.stdout)
@@ -533,7 +472,7 @@ class TestStepResolveCliProcess:
         assert data["status"] == "review", data
 
     def test_cli_human_readable_success(self, resolve_env):
-        client, tmp, task_db, _proc, pipe = resolve_env
+        client, tmp, task_db, _proc, endpoint = resolve_env
         task_id = "T-RES-CLI-HUMAN"
         failed_step_id = f"{task_id}-failed"
         remediation_step_id = f"{task_id}-fix"
@@ -551,7 +490,7 @@ class TestStepResolveCliProcess:
              "--role", "implementer",
              "--lease-token", acq["token"],
              "--fencing-counter", str(acq["fencing_counter"])],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), _REPO_ROOT)
         assert proc.returncode == 0, f"step-resolve 人类可读失败:\n{_all_out(proc)}"
         out = _all_out(proc)
         assert "步骤回审" in out, out
@@ -568,7 +507,7 @@ class TestStepResolveCliProcess:
                  "--role", "implementer",
                  "--lease-token", "t", "--fencing-counter", "1",
                  "--json"],
-                _cli_env(r"\\.\pipe\placeholder-6a", mode="local",
+                _cli_env("", tmp, mode="local",
                          extra={"CW_TASK_WRITE_POLICY": "isolated"}), tmp)
             assert proc.returncode == 0, f"local 模式 step-resolve 失败:\n{_all_out(proc)}"
             data = json.loads(proc.stdout)

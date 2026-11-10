@@ -37,6 +37,10 @@ def w3_live(tmp_path_factory):
                "data_root": data_root}
     finally:
         proc.kill()
+        # ADR-002 单轨 mTLS：还原 setup_w3_client 注入的隔离身份 env
+        # （模块级生命周期结束，避免污染同进程后续测试的证书解析）。
+        from _w3_harness import restore_w3_env
+        restore_w3_env()
 
 
 @pytest.fixture(autouse=True)

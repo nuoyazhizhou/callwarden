@@ -103,7 +103,7 @@ use super::staging_log::{StagingEntry, StagingLog};
 const MAX_REFRESH_MANIFEST_FILES: usize = 500_000;
 const MAX_ACTIVE_REFRESH_PLANS: usize = 32;
 const REFRESH_PLAN_TTL: Duration = Duration::from_secs(10 * 60);
-/// canonical_bytes_gz_b64 解压结果的默认容量上限（与 memfd FD 读取上限对齐）。
+/// canonical_bytes_gz_b64 解压结果的默认容量上限（64 MB）。
 /// 仅当 client 未声明 canonical_len 时使用。
 const DEFAULT_MAX_INLINE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -2266,7 +2266,6 @@ impl DaemonStateExt for WorkspaceDaemonState {
         &mut self,
         peer: PeerCredential,
         params: &Value,
-        received_fds: &[i32],
         inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
         // 对应 Python daemon_server.py L376-423
@@ -2319,20 +2318,17 @@ impl DaemonStateExt for WorkspaceDaemonState {
             }
         }
 
-        // G8-T3：提取 canonical_bytes（优先 FD，次选 hex/b64）
+        // G8-T3：提取 canonical_bytes（单轨 HTTPS 不支持 FD，走 inline/hex/b64/gz_b64）
         // 规范：daemon-ipc-security.md §3.2 —— daemon 不信任 agent 提供的 hash，必须重新计算
         // 规范：parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
-        // 六种获取方式（按优先级）：
+        // 五种获取方式（按优先级）：
         // 1. multipart inline payload（Q10 2026-09-17）：二进制不经 JSON 信封，
         //    消除 base64 税；Raw 裸字节 / Gz 按 canonical_len 限解压
-        // 2. FD（仅 Unix，SCM_RIGHTS 传递）：daemon 直接读文件内容，消除 TOCTOU
-        // 3. canonical_bytes_hex（跨平台）：客户端 hex 编码后传入（agent_protocol.py 小文件默认路径）
-        // 4. canonical_bytes_b64（跨平台）：客户端 base64 编码后传入（兼容旧客户端）
-        // 5. canonical_bytes_gz_b64（跨平台，Q9 2026-09-17）：gzip 压缩 + base64，
+        // 2. canonical_bytes_hex（跨平台）：客户端 hex 编码后传入（agent_protocol.py 小文件默认路径）
+        // 3. canonical_bytes_b64（跨平台）：客户端 base64 编码后传入（兼容旧客户端）
+        // 4. canonical_bytes_gz_b64（跨平台，Q9 2026-09-17）：gzip 压缩 + base64，
         //    HTTP 传输的主力大文件路径（生产 cw-agent 走 HttpDaemonRpcClient）
-        // 6. 均无：返回 None，_daemon_parse_and_publish 内降级为 abs_path 读取
-        //
-        // G10/G20: FD 路径用四重校验替代 read_to_end 无界读，避免 OOM 攻击
+        // 5. 均无：返回 None，_daemon_parse_and_publish 内降级为 abs_path 读取
         let canonical_bytes: Option<Vec<u8>> = if let Some(payload) = inline_payload {
             // Q10（2026-09-17）：multipart raw-gz-body —— 最高优先级档。
             // 二进制 canonical_bytes 不经 JSON 信封，消除 base64 税。
@@ -2360,62 +2356,6 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         }
                     }
                 }
-            }
-        } else if !received_fds.is_empty() {
-            #[cfg(unix)]
-            {
-                if received_fds.len() > 1 {
-                    return Err(DaemonRpcError::invalid_params(
-                        "workspace.file.refresh 最多接收 1 个 FD",
-                    ));
-                }
-                let fd = received_fds[0];
-                // G10/G20: 六重校验（P1-3 复审整改 2026-07-21）
-                // 1. FD 类型（fstat S_IFREG）
-                // 2. owner UID 校验（st_uid == peer_uid，root 跳过）
-                // 3. memfd seals 校验（仅 Linux，F_GET_SEALS 包含完整 seals 集合）
-                // 4. 大小预检（st_size 预分配）
-                // 5. 容量上限（DEFAULT_MAX_FD_READ_BYTES = 64MB）
-                // 6. 摘要比对（客户端提供 expected_sha256 时校验）
-                //
-                // from_raw_fd 接管 FD 所有权；校验 + 读取完成后 file drop 会关闭 FD。
-                // server.rs 在 dispatch 后会再次 close_fds，但关闭已关闭 FD 只返回
-                // EBADF 并被忽略，双重关闭是安全的。
-                use crate::daemon::memfd;
-                // G9/G34（2026-07-20 批次7）：字段对齐——
-                // agent_protocol.py 实际传 content_hash（小文件 hex 路径 + 大文件 FD 路径），
-                // 但 Rust 端原读 expected_sha256，导致字段错配 + 摘要校验永远跳过。
-                // 修复：优先 expected_sha256（保留旧路径），fallback content_hash（agent 默认）。
-                let expected_sha256: Option<&str> = params
-                    .get("expected_sha256")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        params
-                            .get("content_hash")
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty())
-                    });
-                match memfd::read_from_fd_with_validation(
-                    fd,
-                    memfd::DEFAULT_MAX_FD_READ_BYTES,
-                    expected_sha256,
-                    peer.uid,
-                ) {
-                    Ok(buf) => Some(buf),
-                    Err(e) => {
-                        return Err(DaemonRpcError::new(
-                            "fd_read_failed",
-                            format!("FD 读取校验失败（fd={}）: {}", fd, e),
-                        ));
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = peer;
-                return Err(DaemonRpcError::invalid_params(
-                    "FD 模式仅 Unix 支持（Windows 请使用 canonical_bytes_b64 参数）",
-                ));
             }
         } else if let Some(hex) = params.get("canonical_bytes_hex").and_then(|v| v.as_str()) {
             // canonical_bytes_hex：agent_protocol.py 小文件默认路径
@@ -5817,7 +5757,7 @@ mod tests {
 
         // 先用 owner 注册
         let params = json!({ "client_view_root": path });
-        let resp = dispatch(&mut state, owner_peer, "workspace.register", &params, &[]);
+        let resp = dispatch(&mut state, owner_peer, "workspace.register", &params);
 
         // #63 / F-OWNER-01 P1-3：tempdir 属主（或 admin 提升跳过）决定 register
         // 能不能成功，也就决定后面「非 owner 查询被拒」这条链还发不发生。
@@ -5832,13 +5772,13 @@ mod tests {
             // 用非 owner 尝试 status 查询
             let other_peer = make_other_peer();
             let params2 = json!({ "workspace_instance_id": &instance_id });
-            let resp2 = dispatch(&mut state, other_peer, "workspace.status", &params2, &[]);
+            let resp2 = dispatch(&mut state, other_peer, "workspace.status", &params2);
             // 应返回错误（workspace_forbidden）
             assert_eq!(resp2["ok"], false, "非 owner 应被拒绝: {:?}", resp2);
             assert_eq!(resp2["error"]["code"].as_str(), Some("workspace_forbidden"));
 
             // 状态不变：owner 仍可查询
-            let resp3 = dispatch(&mut state, owner_peer, "workspace.status", &params2, &[]);
+            let resp3 = dispatch(&mut state, owner_peer, "workspace.status", &params2);
             assert_eq!(resp3["ok"], true, "owner 状态应不变: {:?}", resp3);
         } else {
             assert_eq!(
@@ -5858,7 +5798,6 @@ mod tests {
                 make_other_peer(),
                 "workspace.status",
                 &json!({ "workspace_instance_id": "not-registered" }),
-                &[],
             );
             assert_eq!(other_resp["ok"], false, "未注册 ⇒ 任何 peer 都查不到");
         }
@@ -5929,7 +5868,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer(1000);
         let params = json!({});
-        let response = dispatch(&mut state, peer, "workspace.list", &params, &[]);
+        let response = dispatch(&mut state, peer, "workspace.list", &params);
 
         assert_eq!(response["ok"], true);
         assert!(response["result"].is_array());
@@ -5941,7 +5880,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer(1000);
         let params = json!({});
-        let response = dispatch(&mut state, peer, "workspace.register", &params, &[]);
+        let response = dispatch(&mut state, peer, "workspace.register", &params);
 
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -5954,7 +5893,7 @@ mod tests {
         let params = json!({
             "client_view_root": "/nonexistent/xyz/abc"
         });
-        let response = dispatch(&mut state, peer, "workspace.register", &params, &[]);
+        let response = dispatch(&mut state, peer, "workspace.register", &params);
 
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "path_not_found");
@@ -5975,7 +5914,7 @@ mod tests {
             "git_head_commit_sha": "abc123",
             "toolchain_fingerprint": "rustc-1.75"
         });
-        let response = dispatch(&mut state, peer, "workspace.register", &params, &[]);
+        let response = dispatch(&mut state, peer, "workspace.register", &params);
 
         // #63 / F-OWNER-01 P1-3：原用例隐含「tempdir 属主 == 当前 peer」，
         // Windows runner 上该前提不成立（属主 = S-1-5-32-544）⇒ 整批红。
@@ -6007,7 +5946,7 @@ mod tests {
         let dir_path = tmp.path().to_str().unwrap();
         let real = canonical_str(dir_path);
         let reg_params = json!({"client_view_root": dir_path});
-        let reg_response = dispatch(&mut state, peer, "workspace.register", &reg_params, &[]);
+        let reg_response = dispatch(&mut state, peer, "workspace.register", &reg_params);
 
         // #63 / F-OWNER-01 P1-3：先探测属主事实。非 SelfOwned 且未获 admin 提升跳过时
         // 注册本身就会被拒，拿不到 instance_id，后续 status 分支无从发生 ——
@@ -6035,7 +5974,7 @@ mod tests {
 
         // 查询状态
         let status_params = json!({"workspace_instance_id": instance_id});
-        let response = dispatch(&mut state, peer, "workspace.status", &status_params, &[]);
+        let response = dispatch(&mut state, peer, "workspace.status", &status_params);
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["workspace_instance_id"], instance_id);
 
@@ -6050,7 +5989,6 @@ mod tests {
             peer,
             "workspace.status",
             &numeric_params,
-            &[],
         );
         assert_eq!(numeric_response["ok"], true);
         assert_eq!(numeric_response["result"]["workspace_id"], numeric_id);
@@ -6072,7 +6010,6 @@ mod tests {
             peer_owner,
             "workspace.register",
             &reg_params,
-            &[],
         );
         // #63 / F-OWNER-01 P1-3：非 SelfOwned 且未获 admin 提升跳过时注册被 ACL 拒，
         // 后续「非 owner 查询被拒」无从发生；断言「注册被拒」这一唯一结果。
@@ -6103,7 +6040,6 @@ mod tests {
             peer_other,
             "workspace.status",
             &status_params,
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -6122,7 +6058,6 @@ mod tests {
             peer_owner,
             "workspace.register",
             &json!({"client_view_root": dir_path}),
-            &[],
         );
         // #63 / F-OWNER-01 P1-3：非 SelfOwned 且未获 admin 提升跳过时注册被 ACL 拒，
         // 拿不到 instance_id，remove/activate 的 owner-only 分支无从发生；
@@ -6149,19 +6084,19 @@ mod tests {
             .to_string();
         let params = json!({"workspace_instance_id": instance_id});
 
-        let forbidden_remove = dispatch(&mut state, peer_other, "workspace.remove", &params, &[]);
+        let forbidden_remove = dispatch(&mut state, peer_other, "workspace.remove", &params);
         assert_eq!(forbidden_remove["error"]["code"], "workspace_forbidden");
 
-        let removed = dispatch(&mut state, peer_owner, "workspace.remove", &params, &[]);
+        let removed = dispatch(&mut state, peer_owner, "workspace.remove", &params);
         assert_eq!(removed["ok"], true);
         assert_eq!(removed["result"]["status"], "archived");
         assert_eq!(state.registry.count_workspaces().unwrap(), 1);
 
         let forbidden_activate =
-            dispatch(&mut state, peer_other, "workspace.activate", &params, &[]);
+            dispatch(&mut state, peer_other, "workspace.activate", &params);
         assert_eq!(forbidden_activate["error"]["code"], "workspace_forbidden");
 
-        let activated = dispatch(&mut state, peer_owner, "workspace.activate", &params, &[]);
+        let activated = dispatch(&mut state, peer_owner, "workspace.activate", &params);
         assert_eq!(activated["ok"], true);
         assert_eq!(activated["result"]["status"], "active");
         assert_eq!(state.registry.count_workspaces().unwrap(), 1);
@@ -6185,7 +6120,6 @@ mod tests {
                 "git_remote_url": "https://github.com/a/a.git",
                 "git_head_commit_sha": "aaa"
             }),
-            &[],
         );
         let r2 = dispatch(
             &mut state,
@@ -6196,7 +6130,6 @@ mod tests {
                 "git_remote_url": "https://github.com/b/b.git",
                 "git_head_commit_sha": "bbb"
             }),
-            &[],
         );
 
         // health 统计与注册结果强绑定：属主（或 admin 提升跳过）决定注册能不能成功，
@@ -6205,7 +6138,7 @@ mod tests {
         if ownership_allows(&ownership) {
             assert_eq!(r1["ok"], true, "{:?}", r1);
             assert_eq!(r2["ok"], true, "{:?}", r2);
-            let response = dispatch(&mut state, peer, "health", &json!({}), &[]);
+            let response = dispatch(&mut state, peer, "health", &json!({}));
             assert_eq!(response["ok"], true);
             assert_eq!(response["result"]["workspace_count"], 2);
         } else {
@@ -6216,7 +6149,7 @@ mod tests {
             );
             assert_eq!(r1["error"]["code"].as_str(), Some("path_forbidden"));
             assert_eq!(r2["ok"], false, "{:?}", r2);
-            let response = dispatch(&mut state, peer, "health", &json!({}), &[]);
+            let response = dispatch(&mut state, peer, "health", &json!({}));
             assert_eq!(response["ok"], true);
             assert_eq!(response["result"]["workspace_count"], 0);
         }
@@ -6229,7 +6162,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_owner_peer();
         let params = json!({"workspace_instance_id": "xyz"});
-        let response = dispatch(&mut state, peer, "workspace.recover", &params, &[]);
+        let response = dispatch(&mut state, peer, "workspace.recover", &params);
 
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_not_found");
@@ -6258,7 +6191,6 @@ mod tests {
                 "git_remote_url": "https://github.com/o1/o1.git",
                 "git_head_commit_sha": "o1"
             }),
-            &[],
         );
         let reg2 = dispatch(
             &mut state,
@@ -6269,7 +6201,6 @@ mod tests {
                 "git_remote_url": "https://github.com/o2/o2.git",
                 "git_head_commit_sha": "o2"
             }),
-            &[],
         );
         // #63 / F-OWNER-01 P1-3：owner 侧 2 行能否注册成功取决于属主事实（含 admin
         // 提升跳过），故 list 长度也按属主分支断言唯一值（other 那 1 行是直接注入的，
@@ -6304,7 +6235,6 @@ mod tests {
             make_peer(owner_uid),
             "workspace.list",
             &json!({}),
-            &[],
         );
         assert_eq!(r1["result"].as_array().unwrap().len(), owner_ws_count);
 
@@ -6314,7 +6244,6 @@ mod tests {
             make_peer(other_uid),
             "workspace.list",
             &json!({}),
-            &[],
         );
         assert_eq!(r2["result"].as_array().unwrap().len(), 1);
     }
@@ -6355,7 +6284,6 @@ mod tests {
             peer,
             "workspace.recover",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "recover_failed");
@@ -6375,7 +6303,6 @@ mod tests {
             other,
             "workspace.recover",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -6392,7 +6319,6 @@ mod tests {
             peer,
             "workspace.recover",
             &json!({"workspace_instance_id": "nonexistent_ws"}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_not_found");
@@ -6411,7 +6337,6 @@ mod tests {
             peer,
             "workspace.recover",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "recovered");
@@ -6494,7 +6419,6 @@ mod tests {
             peer,
             "workspace.recover",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         // 没有 snapshot publisher/codegraph DB 时只能安全延期，不能清除 durable retry。
@@ -6534,7 +6458,6 @@ mod tests {
             peer,
             "workspace.recover",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "failed");
@@ -6547,7 +6470,6 @@ mod tests {
             make_owner_peer(),
             "workspace.recover",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response2["result"]["status"], "failed");
         assert_eq!(response2["result"]["applied_count"], 0);
@@ -6585,7 +6507,6 @@ mod tests {
             peer,
             "workspace.recover",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         // 没有完整发布链路时不应用任何 entry，也不触碰其他 workspace 的 entry。
@@ -6600,7 +6521,7 @@ mod tests {
         let mut state = make_state_with_data_root(tmp.path());
         let peer = make_owner_peer();
 
-        let response = dispatch(&mut state, peer, "workspace.recover", &json!({}), &[]);
+        let response = dispatch(&mut state, peer, "workspace.recover", &json!({}));
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
     }
@@ -6716,7 +6637,6 @@ mod tests {
             peer,
             "workspace.recover",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
 
         // 核心断言：完整恢复链成功
@@ -6785,7 +6705,6 @@ mod tests {
                     "workspace_instance_id": workspace_instance_id,
                     "agent_session_id": format!("session-{}", workspace_instance_id),
                 }),
-                &[],
             );
             assert_eq!(response["ok"], true);
         }
@@ -6817,7 +6736,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["session_epoch"], 1);
@@ -6840,7 +6758,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
         assert_eq!(r1["result"]["session_epoch"], 1);
 
@@ -6853,7 +6770,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-2"
             }),
-            &[],
         );
         assert_eq!(r2["result"]["session_epoch"], 2);
     }
@@ -6874,7 +6790,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -6894,7 +6809,6 @@ mod tests {
                 "workspace_instance_id": "nonexistent_ws",
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_not_found");
@@ -6913,7 +6827,6 @@ mod tests {
             &json!({
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -6933,7 +6846,6 @@ mod tests {
             &json!({
                 "workspace_instance_id": ws_id
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -6954,7 +6866,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "resources_init_failed");
@@ -6977,7 +6888,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
         assert_eq!(r1["ok"], true);
         assert_eq!(r1["result"]["session_epoch"], 1);
@@ -6991,7 +6901,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-2"
             }),
-            &[],
         );
         assert_eq!(r2["ok"], true);
         assert_eq!(r2["result"]["session_epoch"], 2);
@@ -7018,7 +6927,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": session_id
             }),
-            &[],
         );
         assert_eq!(r["ok"], true);
         let epoch = r["result"]["session_epoch"].as_i64().unwrap();
@@ -7141,7 +7049,6 @@ mod tests {
                 "force": false,
                 "files": [{"rel_path": "src/removed.rs", "content_hash": current_hash}]
             }),
-            &[],
         );
         assert_eq!(first_chunk["ok"], true, "{first_chunk:?}");
         assert_eq!(first_chunk["result"]["scanned"], 1);
@@ -7161,7 +7068,6 @@ mod tests {
                 "force": false,
                 "files": [{"rel_path": "src/new.rs", "content_hash": new_hash}]
             }),
-            &[],
         );
         assert_eq!(incremental["ok"], true, "{incremental:?}");
         assert_eq!(incremental["result"]["scanned"], 2);
@@ -7187,7 +7093,6 @@ mod tests {
                     {"rel_path": "src/new.rs", "content_hash": new_hash},
                 ]
             }),
-            &[],
         );
         assert_eq!(
             forced["result"]["refresh_paths"],
@@ -7206,7 +7111,6 @@ mod tests {
                 "complete": true,
                 "files": [{"rel_path": "src/new.rs", "content_hash": new_hash}]
             }),
-            &[],
         );
         assert_eq!(deleted["result"]["delete_paths"], json!(["src/removed.rs"]));
     }
@@ -7226,7 +7130,6 @@ mod tests {
             make_other_peer(),
             "workspace.refresh.plan",
             &params,
-            &[],
         );
         assert_eq!(forbidden["error"]["code"], "workspace_forbidden");
 
@@ -7241,7 +7144,6 @@ mod tests {
                 "complete": true,
                 "files": [{"rel_path": "../escape.rs", "content_hash": "b".repeat(64)}]
             }),
-            &[],
         );
         assert_eq!(unsafe_path["error"]["code"], "invalid_params");
     }
@@ -7260,7 +7162,6 @@ mod tests {
                 "session_epoch": epoch,
                 "monotonic_seq": 1,
             }),
-            &[],
         );
         assert_eq!(response["ok"], true, "{:?}", response);
         assert_eq!(response["result"]["status"], "deleted");
@@ -7309,7 +7210,6 @@ mod tests {
             make_other_peer(),
             "workspace.file.delete",
             &params,
-            &[],
         );
         assert_eq!(forbidden["error"]["code"], "workspace_forbidden");
 
@@ -7324,7 +7224,6 @@ mod tests {
                 "session_epoch": epoch,
                 "monotonic_seq": 1,
             }),
-            &[],
         );
         assert_eq!(stale["error"]["code"], "stale_session");
     }
@@ -7359,7 +7258,6 @@ mod tests {
                 "session_epoch": 1,
                 "monotonic_seq": 1,
             }),
-            &[],
         );
         assert_eq!(response["error"]["code"], "session_not_active");
     }
@@ -7378,7 +7276,6 @@ mod tests {
                 "session_epoch": epoch,
                 "monotonic_seq": 5,
             }),
-            &[],
         );
         assert_eq!(first["ok"], true, "{:?}", first);
 
@@ -7393,7 +7290,6 @@ mod tests {
                 "session_epoch": epoch,
                 "monotonic_seq": 3,
             }),
-            &[],
         );
         assert_eq!(stale["ok"], true);
         assert_eq!(stale["result"]["status"], "stale_seq_dropped");
@@ -7418,7 +7314,6 @@ mod tests {
                 "monotonic_seq": 1,
                 "session_epoch": 1
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "session_not_active");
@@ -7444,7 +7339,6 @@ mod tests {
                 "monotonic_seq": 1,
                 "session_epoch": 999
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "stale_session");
@@ -7473,7 +7367,6 @@ mod tests {
                 "language": "rust",
                 "canonical_bytes_hex": rust_canon_hex()
             }),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "committed");
@@ -7507,7 +7400,6 @@ mod tests {
                 "language": "rust",
                 "canonical_bytes_hex": rust_canon_hex()
             }),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "committed");
@@ -7550,7 +7442,6 @@ mod tests {
                 "canonical_bytes_hex": hex_encoded,
                 "canonical_len": canonical.len(),
             }),
-            &[],
         );
         assert_eq!(response["ok"], true, "hex 路径应正常工作");
         assert_eq!(response["result"]["status"], "committed");
@@ -7596,7 +7487,6 @@ mod tests {
                 "canonical_bytes_gz_b64": b64,
                 "canonical_len": canonical.len(),
             }),
-            &[],
         );
         assert_eq!(response["ok"], true, "gz+b64 路径应正常工作");
         assert_eq!(response["result"]["status"], "committed");
@@ -7684,7 +7574,6 @@ mod tests {
                 "language": "rust"
                 // 故意不提供 canonical_bytes_hex / abs_path
             }),
-            &[],
         );
 
         // 关键断言：status 应为 "blocked"，不是 "committed"
@@ -7747,7 +7636,6 @@ mod tests {
                 "session_epoch": epoch,
                 "canonical_bytes_hex": hex::encode(b"hello\n")
             }),
-            &[],
         );
 
         assert_eq!(response["ok"], true);
@@ -7784,7 +7672,6 @@ mod tests {
                 "session_epoch": epoch,
                 "canonical_bytes_hex": hex::encode(b"ref: refs/heads/main\n")
             }),
-            &[],
         );
 
         assert_eq!(response["ok"], true);
@@ -7820,7 +7707,6 @@ mod tests {
                 "session_epoch": epoch,
                 "language": "rust"
             }),
-            &[],
         );
 
         // 验证 parse_retry.log 已写入
@@ -7868,11 +7754,10 @@ mod tests {
                 "session_epoch": epoch,
                 "language": "rust"
             }),
-            &[],
         );
 
         // 调用 health
-        let health = dispatch(&mut state, make_owner_peer(), "health", &json!({}), &[]);
+        let health = dispatch(&mut state, make_owner_peer(), "health", &json!({}));
 
         assert_eq!(health["ok"], true);
         // parser_metrics 数组应存在且至少 1 个 workspace
@@ -7962,7 +7847,6 @@ mod tests {
                 "canonical_bytes_b64": b64_encoded,
                 "canonical_len": canonical.len(),
             }),
-            &[],
         );
         assert_eq!(response["ok"], true, "b64 路径应正常工作");
         assert_eq!(response["result"]["status"], "committed");
@@ -7988,7 +7872,6 @@ mod tests {
                 "session_epoch": epoch,
                 "canonical_bytes_hex": "not valid hex!@#",
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "hex_decode_failed");
@@ -8015,7 +7898,6 @@ mod tests {
                 "session_epoch": epoch,
                 "canonical_bytes_hex": rust_canon_hex()
             }),
-            &[],
         );
         assert_eq!(r1["result"]["status"], "committed");
 
@@ -8031,7 +7913,6 @@ mod tests {
                 "monotonic_seq": 3,
                 "session_epoch": epoch
             }),
-            &[],
         );
         assert_eq!(r2["ok"], true);
         assert_eq!(r2["result"]["status"], "stale_seq_dropped");
@@ -8060,7 +7941,6 @@ mod tests {
                 "session_epoch": epoch,
                 "canonical_bytes_hex": rust_canon_hex()
             }),
-            &[],
         );
         assert_eq!(r1["result"]["status"], "committed");
 
@@ -8077,7 +7957,6 @@ mod tests {
                 "session_epoch": epoch,
                 "canonical_bytes_hex": rust_canon_hex()
             }),
-            &[],
         );
         assert_eq!(r2["result"]["status"], "committed");
         assert_eq!(r2["result"]["generation"], format!("{}:{}", epoch, 10));
@@ -8102,7 +7981,6 @@ mod tests {
                 "monotonic_seq": 1,
                 "session_epoch": epoch
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -8125,7 +8003,6 @@ mod tests {
                 "monotonic_seq": 1,
                 "session_epoch": 1
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_not_found");
@@ -8149,7 +8026,6 @@ mod tests {
                 "monotonic_seq": 1,
                 "session_epoch": epoch
             }),
-            &[],
         );
         assert_eq!(r1["ok"], false);
         assert_eq!(r1["error"]["code"], "invalid_params");
@@ -8165,7 +8041,6 @@ mod tests {
                 "agent_session_id": "session-1",
                 "session_epoch": epoch
             }),
-            &[],
         );
         assert_eq!(r2["ok"], false);
         assert_eq!(r2["error"]["code"], "invalid_params");
@@ -8181,7 +8056,6 @@ mod tests {
                 "agent_session_id": "session-1",
                 "monotonic_seq": 1
             }),
-            &[],
         );
         assert_eq!(r3["ok"], false);
         assert_eq!(r3["error"]["code"], "invalid_params");
@@ -8204,7 +8078,6 @@ mod tests {
                 "monotonic_seq": 1,
                 "session_epoch": 1
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "resources_init_failed");
@@ -8227,7 +8100,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
         assert_eq!(r1["result"]["session_epoch"], 1);
         let epoch: i64 = r1["result"]["session_epoch"].as_i64().unwrap();
@@ -8245,7 +8117,6 @@ mod tests {
                 "session_epoch": epoch,
                 "canonical_bytes_hex": rust_canon_hex()
             }),
-            &[],
         );
         assert_eq!(r2["result"]["status"], "committed");
 
@@ -8262,7 +8133,6 @@ mod tests {
                 "session_epoch": epoch,
                 "canonical_bytes_hex": rust_canon_hex()
             }),
-            &[],
         );
         assert_eq!(r3["result"]["status"], "committed");
         assert_eq!(r3["result"]["generation"], format!("{}:{}", epoch, 2));
@@ -8276,7 +8146,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-2"
             }),
-            &[],
         );
         assert_eq!(r4["result"]["session_epoch"], 2);
 
@@ -8292,7 +8161,6 @@ mod tests {
                 "monotonic_seq": 3,
                 "session_epoch": 1
             }),
-            &[],
         );
         assert_eq!(r5["ok"], false);
         assert_eq!(r5["error"]["code"], "stale_session");
@@ -8334,7 +8202,6 @@ mod tests {
             peer,
             "backup",
             &json!({"output_path": backup_path_str}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "ok");
@@ -8357,7 +8224,7 @@ mod tests {
         let peer = make_owner_peer();
         let _ = tmp; // 持有 tempdir
 
-        let response = dispatch(&mut state, peer, "backup", &json!({}), &[]);
+        let response = dispatch(&mut state, peer, "backup", &json!({}));
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
     }
@@ -8374,7 +8241,6 @@ mod tests {
             peer,
             "backup",
             &json!({"output_path": backup_path.to_str().unwrap()}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert!(backup_path.exists());
@@ -8403,7 +8269,6 @@ mod tests {
             peer,
             "backup",
             &json!({"output_path": backup_path.to_str().unwrap()}),
-            &[],
         );
         assert_eq!(backup_resp["ok"], true);
 
@@ -8431,7 +8296,6 @@ mod tests {
             peer,
             "restore",
             &json!({"source_path": backup_path.to_str().unwrap()}),
-            &[],
         );
         assert_eq!(restore_resp["ok"], true);
         assert_eq!(restore_resp["result"]["status"], "ok");
@@ -8459,7 +8323,7 @@ mod tests {
         let peer = make_owner_peer();
         let _ = tmp;
 
-        let response = dispatch(&mut state, peer, "restore", &json!({}), &[]);
+        let response = dispatch(&mut state, peer, "restore", &json!({}));
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
     }
@@ -8475,7 +8339,6 @@ mod tests {
             peer,
             "restore",
             &json!({"source_path": "/nonexistent/path/backup.db"}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "backup_not_found");
@@ -8495,7 +8358,6 @@ mod tests {
             peer,
             "restore",
             &json!({"source_path": fake_backup.to_str().unwrap()}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "restore_failed");
@@ -8517,7 +8379,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "grace_days": 7
             }),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "ok");
@@ -8541,7 +8402,6 @@ mod tests {
             &json!({
                 "workspace_instance_id": ws_id
             }),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["grace_days"], 7);
@@ -8563,7 +8423,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "grace_days": 7
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         // gc.cas 在 ADMIN_ONLY_METHODS 中，非 admin 在 dispatch 层
@@ -8585,7 +8444,6 @@ mod tests {
                 "workspace_instance_id": "nonexistent_ws",
                 "grace_days": 7
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_not_found");
@@ -8604,7 +8462,6 @@ mod tests {
             &json!({
                 "grace_days": 7
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -8628,7 +8485,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
 
         // 直接通过 CasStore 插入测试数据
@@ -8684,7 +8540,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "grace_days": 0
             }),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["deleted_count"], 1);
@@ -8911,7 +8766,7 @@ mod tests {
             "host_path": "/data/volumes/user1",
             "mapping_type": "bind"
         });
-        let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        let resp = dispatch(&mut state, peer, "mount.register", &params);
         assert!(
             resp["ok"].as_bool().unwrap_or(false),
             "mount.register 应成功"
@@ -8933,7 +8788,7 @@ mod tests {
             "container_path": "/app",
             "host_path": "/h1"
         });
-        let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        let resp = dispatch(&mut state, peer, "mount.register", &params);
         assert!(resp["ok"].as_bool().unwrap_or(false));
         assert_eq!(resp["result"]["mapping_type"], "bind");
     }
@@ -8949,7 +8804,7 @@ mod tests {
             "host_path": "/h1",
             "mapping_type": "invalid_type"
         });
-        let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        let resp = dispatch(&mut state, peer, "mount.register", &params);
         assert!(!resp["ok"].as_bool().unwrap_or(true), "应失败");
         assert_eq!(resp["error"]["code"], "invalid_params");
     }
@@ -8963,7 +8818,7 @@ mod tests {
             "container_path": "/app",
             "host_path": "/h1"
         });
-        let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        let resp = dispatch(&mut state, peer, "mount.register", &params);
         assert!(!resp["ok"].as_bool().unwrap_or(true));
         assert_eq!(resp["error"]["code"], "invalid_params");
     }
@@ -8973,7 +8828,7 @@ mod tests {
         // 初始状态下 mount.list 返回空数组
         let mut state = make_state();
         let peer = make_admin_peer();
-        let resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
+        let resp = dispatch(&mut state, peer, "mount.list", &json!({}));
         assert!(resp["ok"].as_bool().unwrap_or(false));
         assert!(resp["result"].as_array().unwrap().is_empty());
     }
@@ -8994,9 +8849,9 @@ mod tests {
                 "host_path": hpath,
                 "mapping_type": mtype
             });
-            let _ = dispatch(&mut state, peer, "mount.register", &params, &[]);
+            let _ = dispatch(&mut state, peer, "mount.register", &params);
         }
-        let resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
+        let resp = dispatch(&mut state, peer, "mount.list", &json!({}));
         assert!(resp["ok"].as_bool().unwrap_or(false));
         assert_eq!(resp["result"].as_array().unwrap().len(), 3);
     }
@@ -9016,14 +8871,13 @@ mod tests {
                 "container_path": cpath,
                 "host_path": hpath
             });
-            let _ = dispatch(&mut state, peer, "mount.register", &params, &[]);
+            let _ = dispatch(&mut state, peer, "mount.register", &params);
         }
         let resp = dispatch(
             &mut state,
             peer,
             "mount.list",
             &json!({"container_id": "c1"}),
-            &[],
         );
         assert!(resp["ok"].as_bool().unwrap_or(false));
         let arr = resp["result"].as_array().unwrap();
@@ -9048,7 +8902,6 @@ mod tests {
                 "container_path": "/app",
                 "host_path": "/h1"
             }),
-            &[],
         );
         // 删除
         let resp = dispatch(
@@ -9056,12 +8909,11 @@ mod tests {
             peer,
             "mount.delete",
             &json!({"container_id": "c1", "container_path": "/app"}),
-            &[],
         );
         assert!(resp["ok"].as_bool().unwrap_or(false));
         assert_eq!(resp["result"]["deleted"], 1);
         // 再 list 应为空
-        let list_resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
+        let list_resp = dispatch(&mut state, peer, "mount.list", &json!({}));
         assert!(list_resp["result"].as_array().unwrap().is_empty());
     }
 
@@ -9075,7 +8927,6 @@ mod tests {
             peer,
             "mount.delete",
             &json!({"container_id": "c1", "container_path": "/app"}),
-            &[],
         );
         assert!(resp["ok"].as_bool().unwrap_or(false));
         assert_eq!(resp["result"]["deleted"], 0);
@@ -9091,7 +8942,6 @@ mod tests {
             peer,
             "mount.delete",
             &json!({"container_path": "/app"}),
-            &[],
         );
         assert!(!resp["ok"].as_bool().unwrap_or(true));
         assert_eq!(resp["error"]["code"], "invalid_params");
@@ -9108,19 +8958,19 @@ mod tests {
             "host_path": "/h_v1",
             "mapping_type": "bind"
         });
-        let _ = dispatch(&mut state, peer, "mount.register", &params_v1, &[]);
+        let _ = dispatch(&mut state, peer, "mount.register", &params_v1);
         let params_v2 = json!({
             "container_id": "c1",
             "container_path": "/app",
             "host_path": "/h_v2",
             "mapping_type": "volume"
         });
-        let resp_v2 = dispatch(&mut state, peer.clone(), "mount.register", &params_v2, &[]);
+        let resp_v2 = dispatch(&mut state, peer.clone(), "mount.register", &params_v2);
         assert!(resp_v2["ok"].as_bool().unwrap_or(false));
         assert_eq!(resp_v2["result"]["host_path"], "/h_v2");
         assert_eq!(resp_v2["result"]["mapping_type"], "volume");
         // list 应只有 1 条
-        let list_resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
+        let list_resp = dispatch(&mut state, peer, "mount.list", &json!({}));
         assert_eq!(list_resp["result"].as_array().unwrap().len(), 1);
     }
 
@@ -9129,7 +8979,7 @@ mod tests {
         // 未知 mount.* 方法返回 method_not_found
         let mut state = make_state();
         let peer = make_peer(1000);
-        let resp = dispatch(&mut state, peer, "mount.update", &json!({}), &[]);
+        let resp = dispatch(&mut state, peer, "mount.update", &json!({}));
         assert!(!resp["ok"].as_bool().unwrap_or(true));
         assert_eq!(resp["error"]["code"], "method_not_found");
     }
@@ -9176,7 +9026,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "agent_session_id": "session-1"
             }),
-            &[],
         );
 
         let resources = state.resources.get(&ws_id).unwrap().clone();
@@ -9212,7 +9061,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "grace_days": 0
             }),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["deleted_count"], 0);

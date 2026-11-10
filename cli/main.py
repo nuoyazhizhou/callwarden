@@ -13335,7 +13335,7 @@ def run_client_mode(argv: list) -> int:
     # 无参数时打印简介 + 帮助提示
     if not argv:
         print("Call Warden Client Mode")
-        print("  Connects to Enterprise Daemon via UDS/NamedPipe")
+        print("  Connects to Enterprise Daemon via HTTPS+mTLS")
         print("  No local parser or CAS write capability")
         print("  Subcommands: ping, register, list, status, publish, query,")
         print("               health, schema-version, backup, restore,")
@@ -15732,15 +15732,9 @@ def _governance_gate(task_id, action_label, role=None):
     from callwarden.server.daemon_client import (
         DaemonRemoteError,
         HttpDaemonRpcClient,
-        UnixDaemonRpcClient,
-        is_http_transport_enabled,
     )
     try:
-        rpc_client = (
-            HttpDaemonRpcClient.get_instance()
-            if is_http_transport_enabled()
-            else UnixDaemonRpcClient()
-        )
+        rpc_client = HttpDaemonRpcClient.get_instance()
         call = (
             rpc_client.call_with_autostart
             if hasattr(rpc_client, "call_with_autostart")
@@ -16130,10 +16124,8 @@ def _route_lease_write(rpc_method, params, fallback_func):
     """
     from callwarden.server.daemon_client import (
         DaemonRemoteError,
-        UnixDaemonRpcClient,
         HttpDaemonRpcClient,
         is_daemon_required,
-        is_http_transport_enabled,
     )
     mode = get_daemon_mode()
     if mode == "local":
@@ -16141,7 +16133,7 @@ def _route_lease_write(rpc_method, params, fallback_func):
     if isinstance(params, dict) and "request_id" not in params:
         import uuid
         params["request_id"] = f"req-{uuid.uuid4().hex[:12]}"
-    rpc_client = HttpDaemonRpcClient.get_instance() if is_http_transport_enabled() else UnixDaemonRpcClient()
+    rpc_client = HttpDaemonRpcClient.get_instance()
     try:
         call = (
             rpc_client.call_with_autostart

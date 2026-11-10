@@ -72,6 +72,6 @@ def test_guardrail_list_rules_read_only(rpc, params):
 
 def test_guardrail_list_rules_daemon_unavailable_fail_closed():
     """daemon 不可用 → fail-closed（本地连接异常即证据）。"""
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(DaemonUnavailableError):
         c.call("guardrail_list_rules", {"workspace_instance_id": CANONICAL_INSTANCE})

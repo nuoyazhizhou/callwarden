@@ -2,7 +2,7 @@
 //!
 //! 参考：server/daemon_server.py:EnterpriseDaemonService.dispatch（L121-514）。
 //! 本模块负责：
-//! - 解析 RPC 请求（method + params + received_fds）
+//! - 解析 RPC 请求（method + params + inline_payload）
 //! - 路由到对应 handler
 //! - 基础方法实现：ping / health / schema.version
 //! - 错误码体系：INVALID_PARAMS / METHOD_NOT_FOUND / INTERNAL_ERROR / PERMISSION_DENIED
@@ -12,6 +12,7 @@
 
 use super::peercred::PrincipalIdentity;
 use super::protocol::{make_error_response, make_ok_response};
+use super::snapshot_guard::looks_like_path;
 use serde_json::{Map, Value};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -160,7 +161,7 @@ impl PeerCredential {
         #[cfg(not(unix))]
         {
             if self.uid == u32::MAX {
-                crate::daemon::transport_windows::get_current_user_sid()
+                crate::daemon::peercred::get_current_user_sid()
                     .unwrap_or_else(|_| "unknown".to_string())
             } else {
                 self.uid.to_string()
@@ -296,6 +297,17 @@ fn now_ts() -> f64 {
 pub trait DaemonStateExt {
     /// 返回基础 DaemonState（用于获取 pid / start_time / schema_version）
     fn daemon_state(&self) -> &DaemonState;
+
+    /// ADR-002 §16.1：daemon 绑定 profile（"loopback" / "remote"），运行时只读。
+    /// 默认 "loopback"；`SnapshotDaemonState` 按 manifest v2 注入值重写。
+    /// dispatch 层用它做远端 profile 的绝对路径兜底拒绝（E_REMOTE_PATH_FORBIDDEN）。
+    fn bind_scope(&self) -> &str {
+        "loopback"
+    }
+
+    /// ADR-002 §16.1：注入 bind_scope（manifest v2 字段，启动时一次性设定）。
+    /// 默认 no-op（仅 `SnapshotDaemonState` 持有可写字段）。
+    fn set_bind_scope(&mut self, _scope: &str) {}
 
     /// task-scoped registry owner ACL（Linux 多用户 / 多 workspace fail-closed）。
     ///
@@ -483,10 +495,9 @@ pub trait DaemonStateExt {
         &mut self,
         peer: PeerCredential,
         params: &Value,
-        received_fds: &[i32],
         inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = (peer, params, received_fds, inline_payload);
+        let _ = (peer, params, inline_payload);
         Err(DaemonRpcError::method_not_found("workspace.file.refresh"))
     }
 
@@ -521,11 +532,42 @@ pub trait DaemonStateExt {
         &mut self,
         peer: PeerCredential,
         params: &Value,
-        received_fds: &[i32],
         inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = (peer, params, received_fds, inline_payload);
+        let _ = (peer, params, inline_payload);
         Err(DaemonRpcError::method_not_found("snapshot.publish"))
+    }
+
+    /// ADR-002 §16.2：remote profile 快照上传面（内联 gzip），默认
+    /// method_not_found；`SnapshotDaemonState` 重写。
+    fn handle_snapshot_upload(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+        inline_payload: Option<InlinePayload<'_>>,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params, inline_payload);
+        Err(DaemonRpcError::method_not_found("snapshot.upload"))
+    }
+
+    /// ADR-002 §16.2：分块上传（写 slot），默认 method_not_found。
+    fn handle_snapshot_upload_chunk(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("snapshot.upload.chunk"))
+    }
+
+    /// ADR-002 §16.2：分块上传组装提交，默认 method_not_found。
+    fn handle_snapshot_upload_commit(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("snapshot.upload.commit"))
     }
 
     fn handle_gc_snapshots(
@@ -2295,7 +2337,6 @@ impl DaemonStateExt for DaemonState {
 /// - peer: peer credential（来自 SO_PEERCRED）
 /// - method: RPC 方法名
 /// - params: 参数（JSON object）
-/// - received_fds: 附加的 FD 列表（来自 SCM_RIGHTS）
 ///
 /// 返回：JSON-RPC 响应（{ok:true, result} 或 {ok:false, error:{code,message}}）
 pub fn dispatch<S: DaemonStateExt>(
@@ -2303,9 +2344,8 @@ pub fn dispatch<S: DaemonStateExt>(
     peer: PeerCredential,
     method: &str,
     params: &Value,
-    received_fds: &[i32],
 ) -> Value {
-    let result = dispatch_inner(state, peer, method, params, received_fds, None);
+    let result = dispatch_inner(state, peer, method, params, None);
     match result {
         Ok(value) => make_ok_response(value),
         Err(err) => make_error_response(&err.code, &err.message),
@@ -2403,6 +2443,10 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     // ---- 已实现 ----
     // Envelope 发布（Snapshot publish = Envelope 物化）
     "snapshot.publish",
+    // ADR-002 §16.2：远端快照上传面（写操作，受 http_dedup 幂等去重门控）
+    "snapshot.upload",
+    "snapshot.upload.chunk",
+    "snapshot.upload.commit",
     // Workspace 文件刷新（写符号图谱）
     "workspace.file.refresh",
     // Workspace 恢复（写操作：重建状态）
@@ -2764,20 +2808,19 @@ pub fn dispatch_rpc<S: DaemonStateExt>(
     peer: PeerCredential,
     method: &str,
     params: &Value,
-    received_fds: &[i32],
     serialization_point: &super::serialization::SerializationPoint,
 ) -> Value {
     if is_protected_mutation(method) {
         // Protected_Mutation 经唯一串行化点（Req 14.6）
         match serialization_point
-            .execute(|| dispatch_inner(state, peer.clone(), method, params, received_fds, None))
+            .execute(|| dispatch_inner(state, peer.clone(), method, params, None))
         {
             Ok(value) => make_ok_response(value),
             Err(err) => make_error_response(&err.code, &err.message),
         }
     } else {
         // 非 Protected_Mutation 直接执行
-        dispatch(state, peer, method, params, received_fds)
+        dispatch(state, peer, method, params)
     }
 }
 
@@ -2793,7 +2836,6 @@ pub fn dispatch_rpc_with_payload<S: DaemonStateExt>(
     peer: PeerCredential,
     method: &str,
     params: &Value,
-    received_fds: &[i32],
     serialization_point: &super::serialization::SerializationPoint,
     inline_payload: Option<InlinePayload<'_>>,
 ) -> Value {
@@ -2804,7 +2846,6 @@ pub fn dispatch_rpc_with_payload<S: DaemonStateExt>(
                 peer.clone(),
                 method,
                 params,
-                received_fds,
                 inline_payload,
             )
         }) {
@@ -2812,7 +2853,7 @@ pub fn dispatch_rpc_with_payload<S: DaemonStateExt>(
             Err(err) => make_error_response(&err.code, &err.message),
         }
     } else {
-        dispatch_with_payload(state, peer, method, params, received_fds, inline_payload)
+        dispatch_with_payload(state, peer, method, params, inline_payload)
     }
 }
 
@@ -2823,10 +2864,9 @@ pub fn dispatch_with_payload<S: DaemonStateExt>(
     peer: PeerCredential,
     method: &str,
     params: &Value,
-    received_fds: &[i32],
     inline_payload: Option<InlinePayload<'_>>,
 ) -> Value {
-    let result = dispatch_inner(state, peer, method, params, received_fds, inline_payload);
+    let result = dispatch_inner(state, peer, method, params, inline_payload);
     match result {
         Ok(value) => make_ok_response(value),
         Err(err) => make_error_response(&err.code, &err.message),
@@ -2896,7 +2936,7 @@ pub fn current_daemon_owner_key() -> String {
     }
     #[cfg(not(unix))]
     {
-        crate::daemon::transport_windows::get_current_user_sid()
+        crate::daemon::peercred::get_current_user_sid()
             .unwrap_or_else(|_| "unknown".to_string())
     }
 }
@@ -2938,20 +2978,17 @@ pub fn authority_id_from_env() -> String {
     format!("{host}/{platform}/{user}/{fingerprint}")
 }
 
-/// 获取本 daemon 使用的 transport（共存契约 §3.2）。
+/// 获取本 daemon 使用的 transport（ADR-002 单轨：只有 HTTPS + mTLS）。
 ///
-/// 优先级：`CW_DAEMON_TRANSPORT` 环境变量，否则按平台默认。
+/// `CW_DAEMON_TRANSPORT` 仅作诊断覆盖，不再影响端点选择。
 pub fn transport_from_env() -> String {
     if let Ok(v) = std::env::var("CW_DAEMON_TRANSPORT") {
-        if !v.trim().is_empty() {
-            return v.trim().to_string();
+        let v = v.trim();
+        if !v.is_empty() {
+            return v.to_string();
         }
     }
-    if cfg!(windows) {
-        "named-pipe".to_string()
-    } else {
-        "uds".to_string()
-    }
+    "https".to_string()
 }
 
 /// 计算 task 数据库内容指纹（主库和 WAL 的规范路径及字节内容）。
@@ -3064,13 +3101,12 @@ fn workspace_scope_of(params: &Value) -> Option<String> {
 /// `inline_payload`：multipart 传输的带外 payload（Q10 2026-09-17）——
 /// 二进制 canonical_bytes（裸或 gz）不经 JSON 信封，直接由 HTTP 层
 /// 传入。仅 `workspace.file.refresh` / `snapshot.publish` 消费；
-/// 其余方法忽略。None = 老路径（FD/hex/b64/gz_b64 全在 params 内）。
+/// 其余方法忽略。None = 老路径（hex/b64/gz_b64 全在 params 内）。
 fn dispatch_inner<S: DaemonStateExt>(
     state: &mut S,
     peer: PeerCredential,
     method: &str,
     params: &Value,
-    received_fds: &[i32],
     inline_payload: Option<InlinePayload<'_>>,
 ) -> Result<Value, DaemonRpcError> {
     // ADR-002 §5.4：mTLS 连接的 workspace 授权按 principal grant 判定。
@@ -3129,6 +3165,54 @@ fn dispatch_inner<S: DaemonStateExt>(
             }
         }
     }
+    // ADR-002 §16.1：远端 profile 路径兜底拒绝（fail-closed，S2-05 daemon 侧）。
+    //
+    // bind_scope=remote 时 daemon 无法验证跨 OS 客户端路径，params 顶层出现
+    // 绝对路径（Posix `/` 前缀、Windows 盘符/UNC/`\` 前缀）或非空
+    // `host_real_root` 即拒 E_REMOTE_PATH_FORBIDDEN。排除键：
+    // - `db_path`：由 `snapshot.publish` 专属判 E_REMOTE_DB_PATH_FORBIDDEN；
+    // - base64 内容载体：合法 base64 可以 `/` 开头，非路径语义。
+    if state.bind_scope() == "remote" {
+        if let Some(obj) = params.as_object() {
+            const PATH_SCAN_EXEMPT_KEYS: &[&str] = &[
+                "db_path",
+                "payload_b64",
+                "chunk_b64",
+                "canonical_bytes_gz_b64",
+                "canonical_bytes_b64",
+            ];
+            for (key, val) in obj.iter() {
+                if key == "host_real_root" {
+                    if let Some(s) = val.as_str() {
+                        if !s.trim().is_empty() {
+                            return Err(DaemonRpcError::new(
+                                "E_REMOTE_PATH_FORBIDDEN",
+                                format!(
+                                    "远端 profile 禁止 host_real_root 参数（method={}）",
+                                    method
+                                ),
+                            ));
+                        }
+                    }
+                    continue;
+                }
+                if PATH_SCAN_EXEMPT_KEYS.contains(&key.as_str()) {
+                    continue;
+                }
+                if let Some(s) = val.as_str() {
+                    if looks_like_path(s) {
+                        return Err(DaemonRpcError::new(
+                            "E_REMOTE_PATH_FORBIDDEN",
+                            format!(
+                                "远端 profile 禁止绝对路径参数（method={}, key={}）",
+                                method, key
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
     match method {
         // ---- 基础方法（R3 默认实现）----
         "ping" => state.handle_ping(peer),
@@ -3147,16 +3231,16 @@ fn dispatch_inner<S: DaemonStateExt>(
         "workspace.remove" => state.handle_workspace_remove(peer, params),
         "workspace.connect" => state.handle_workspace_connect(peer, params),
         "workspace.refresh.plan" => state.handle_workspace_refresh_plan(peer, params),
-        "workspace.file.refresh" => {
-            state.handle_workspace_file_refresh(peer, params, received_fds, inline_payload)
-        }
+        "workspace.file.refresh" => state.handle_workspace_file_refresh(peer, params, inline_payload),
         "workspace.file.delete" => state.handle_workspace_file_delete(peer, params),
         "workspace.recover" => state.handle_workspace_recover(peer, params),
 
         // ---- Snapshot 管理（R6 实现）----
-        "snapshot.publish" => {
-            state.handle_snapshot_publish(peer, params, received_fds, inline_payload)
-        }
+        "snapshot.publish" => state.handle_snapshot_publish(peer, params, inline_payload),
+        // ADR-002 §16.2：remote profile 唯一快照入口（gzip 内联 / 分块上传）
+        "snapshot.upload" => state.handle_snapshot_upload(peer, params, inline_payload),
+        "snapshot.upload.chunk" => state.handle_snapshot_upload_chunk(peer, params),
+        "snapshot.upload.commit" => state.handle_snapshot_upload_commit(peer, params),
         "gc.snapshots" => state.handle_gc_snapshots(peer, params),
 
         // ---- CAS GC（R6 实现）----
@@ -3609,7 +3693,7 @@ fn dispatch_inner<S: DaemonStateExt>(
             replicator_handlers::handle_is_rust_replicator_query_rolled_back(params)
         }
         "mcp.replicator.daemon_handle_refresh" => {
-            replicator_handlers::handle_daemon_handle_refresh(state, peer, params, received_fds)
+            replicator_handlers::handle_daemon_handle_refresh(state, peer, params)
         }
 
         // ---- SRV-015：mcp.schema_migrator（T-1787323461541-f7e6ec24）----
@@ -3814,7 +3898,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({});
-        let response = dispatch(&mut state, peer, "ping", &params, &[]);
+        let response = dispatch(&mut state, peer, "ping", &params);
 
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "ok");
@@ -3833,7 +3917,7 @@ mod tests {
             kind: FixedStr::<16>::from_str("service").unwrap(),
             ..Default::default()
         });
-        let response = dispatch(&mut state, peer, "ping", &json!({}), &[]);
+        let response = dispatch(&mut state, peer, "ping", &json!({}));
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["principal_id"], "pr_test_executor");
     }
@@ -3852,7 +3936,6 @@ mod tests {
             peer,
             "workspace.get",
             &json!({"workspace_id": "2"}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(
@@ -3878,7 +3961,6 @@ mod tests {
             peer,
             "workspace.get",
             &json!({"workspace_id": "1"}),
-            &[],
         );
         let code = response["error"]["code"].as_str().unwrap_or("");
         assert_ne!(code, "E_PRINCIPAL_WORKSPACE_FORBIDDEN");
@@ -3913,7 +3995,6 @@ mod tests {
             peer,
             "role_worker.status",
             &json!({"role_worker_id": "rw-status-route"}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["role"], "adjudicator");
@@ -3930,7 +4011,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({});
-        let response = dispatch(&mut state, peer, "ping", &params, &[]);
+        let response = dispatch(&mut state, peer, "ping", &params);
 
         assert_eq!(response["ok"], true);
         let ts = response["result"]["timestamp"].as_f64();
@@ -3946,7 +4027,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({});
-        let response = dispatch(&mut state, peer, "health", &params, &[]);
+        let response = dispatch(&mut state, peer, "health", &params);
 
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "ok");
@@ -3967,7 +4048,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({});
-        let response = dispatch(&mut state, peer, "schema.version", &params, &[]);
+        let response = dispatch(&mut state, peer, "schema.version", &params);
 
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["version"], super::super::SCHEMA_VERSION);
@@ -3980,7 +4061,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({});
-        let response = dispatch(&mut state, peer, "nonexistent.method", &params, &[]);
+        let response = dispatch(&mut state, peer, "nonexistent.method", &params);
 
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "method_not_found");
@@ -3997,7 +4078,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({"client_view_root": "/tmp/test"});
-        let response = dispatch(&mut state, peer, "workspace.register", &params, &[]);
+        let response = dispatch(&mut state, peer, "workspace.register", &params);
 
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "method_not_found");
@@ -4008,7 +4089,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({"workspace_instance_id": "123"});
-        let response = dispatch(&mut state, peer, "snapshot.publish", &params, &[0]);
+        let response = dispatch(&mut state, peer, "snapshot.publish", &params);
 
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "method_not_found");
@@ -4019,7 +4100,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({"workspace_instance_id": "123"});
-        let response = dispatch(&mut state, peer, "query.stats", &params, &[]);
+        let response = dispatch(&mut state, peer, "query.stats", &params);
 
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "method_not_found");
@@ -4189,31 +4270,16 @@ mod tests {
     }
 
     /// 非管理员 peer 调用 admin-only 方法应返回 permission_denied
+    /// 矩阵覆盖 ADMIN_ONLY_METHODS 全部 12 项（含 mount.list：P0-2 整改后
+    /// 它暴露全局宿主机路径，缺失即漏检）。
     #[test]
     fn test_admin_only_method_denied_for_non_admin() {
         let mut state = make_state();
-        let peer = make_peer(); // uid=1000，非 root 且非 daemon 自己
+        let peer = make_peer(); // uid=current_daemon_uid()+1，非 root 且非 daemon 自己
         let params = json!({"output_path": "/tmp/x.db"});
 
-        // backup 是 admin-only 方法
-        let response = dispatch(&mut state, peer, "backup", &params, &[]);
-        assert_eq!(response["ok"], false);
-        assert_eq!(response["error"]["code"], "permission_denied");
-
-        // 验证多个 admin-only 方法都被拒绝
-        for method in &[
-            "restore",
-            "gc.cas",
-            "gc.snapshots",
-            "snapshot.evict",
-            "mount.register",
-            "mount.delete",
-            "toolchain.register",
-            "toolchain.delete",
-            "toolchain.bind",
-            "mcp.backup_restore.backup_file",
-        ] {
-            let response = dispatch(&mut state, make_peer(), method, &params, &[]);
+        for method in ADMIN_ONLY_METHODS.iter().copied() {
+            let response = dispatch(&mut state, peer.clone(), method, &params);
             assert_eq!(
                 response["error"]["code"], "permission_denied",
                 "方法 {} 应被 permission_denied 拒绝",
@@ -4223,19 +4289,66 @@ mod tests {
     }
 
     /// root (uid=0) 调用 admin-only 方法应通过授权检查（进入 handler 后由 handler 返回结果）
+    /// 矩阵覆盖全部 12 项：仅断言未被 permission_denied 拦截。
     #[test]
     fn test_admin_only_method_allowed_for_root() {
         let mut state = make_state();
         let peer = make_root_peer();
         let params = json!({});
 
-        // backup 通过授权检查后，默认 DaemonState 的 handle_backup 返回 method_not_found
-        // 这里只验证授权检查未拒绝（不是 permission_denied）
-        let response = dispatch(&mut state, peer, "backup", &params, &[]);
-        assert_ne!(
-            response["error"]["code"], "permission_denied",
-            "root 调用 backup 不应被 permission_denied"
-        );
+        for method in ADMIN_ONLY_METHODS.iter().copied() {
+            let response = dispatch(&mut state, peer.clone(), method, &params);
+            assert_ne!(
+                response["error"]["code"], "permission_denied",
+                "root 调用 {} 不应被 permission_denied 拦截",
+                method
+            );
+        }
+    }
+
+    /// ADR-002 §5.1：mTLS `kind=service`（daemon owner 引导身份）等价管理员。
+    /// 矩阵覆盖全部 12 项，与 root 侧对齐。
+    #[test]
+    fn test_admin_only_method_allowed_for_mtls_service_principal() {
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_owner").unwrap(),
+            kind: FixedStr::<16>::from_str("service").unwrap(),
+            ..Default::default()
+        });
+        let params = json!({});
+
+        for method in ADMIN_ONLY_METHODS.iter().copied() {
+            let response = dispatch(&mut state, peer.clone(), method, &params);
+            assert_ne!(
+                response["error"]["code"], "permission_denied",
+                "service principal 调用 {} 不应被 permission_denied 拦截",
+                method
+            );
+        }
+    }
+
+    /// mTLS `kind=agent`（token-enrolled 普通用户身份）非管理员：
+    /// 全部 12 项 admin-only 方法必须 fail-closed（与 unix 非 admin 侧对齐）。
+    #[test]
+    fn test_admin_only_method_denied_for_mtls_agent_principal() {
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1").unwrap(),
+            ..Default::default()
+        });
+        let params = json!({"output_path": "/tmp/x.db"});
+
+        for method in ADMIN_ONLY_METHODS.iter().copied() {
+            let response = dispatch(&mut state, peer.clone(), method, &params);
+            assert_eq!(
+                response["error"]["code"], "permission_denied",
+                "agent principal 调用 {} 应被 permission_denied 拒绝",
+                method
+            );
+        }
     }
 
     /// 只读方法（list/get/query/stats）不应被授权检查拦截
@@ -4263,7 +4376,7 @@ mod tests {
             "snapshot.list_workspaces",
         ] {
             let params = json!({});
-            let response = dispatch(&mut state, peer, method, &params, &[]);
+            let response = dispatch(&mut state, peer, method, &params);
             assert_ne!(
                 response["error"]["code"], "permission_denied",
                 "只读方法 {} 不应被 permission_denied 拦截",
@@ -4304,7 +4417,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer();
         let params = json!({});
-        let response = dispatch(&mut state, peer, "ping", &params, &[]);
+        let response = dispatch(&mut state, peer, "ping", &params);
 
         // 验证路由到 handle_ping（而非其他 handler）
         assert_eq!(response["ok"], true);
@@ -4353,7 +4466,7 @@ mod tests {
         ];
 
         for method in methods {
-            let response = dispatch(&mut state, peer, method, &params, &[]);
+            let response = dispatch(&mut state, peer, method, &params);
             // 所有方法都应该返回有效的 JSON-RPC 响应（ok=true 或 ok=false）
             assert!(
                 response.get("ok").is_some(),
@@ -4385,7 +4498,7 @@ mod tests {
         let params = json!({});
 
         for method in collab_methods {
-            let response = dispatch(&mut state, peer, method, &params, &[]);
+            let response = dispatch(&mut state, peer, method, &params);
             // 返回有效 JSON-RPC 响应（不 panic）
             assert!(
                 response.get("ok").is_some(),
@@ -4442,7 +4555,6 @@ mod tests {
             make_peer(),
             "verdict.submit",
             &json!({"request_id": "route-verdict-1"}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["routed_method"], "verdict.submit");
@@ -4483,12 +4595,12 @@ mod tests {
         let params = json!({});
 
         // workspace.list 在 MockState 中被重写，返回自定义数据
-        let response = dispatch(&mut state, peer, "workspace.list", &params, &[]);
+        let response = dispatch(&mut state, peer, "workspace.list", &params);
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["count"], 5);
 
         // ping 走基础 handler（DaemonState 默认实现）
-        let response = dispatch(&mut state, peer, "ping", &params, &[]);
+        let response = dispatch(&mut state, peer, "ping", &params);
         assert_eq!(response["ok"], true);
         assert_eq!(
             response["result"]["peer_uid"],
@@ -4545,7 +4657,7 @@ mod tests {
         // snapshot.publish 是 Protected_Mutation，经串行化点执行
         // 默认 DaemonState 返回 method_not_found（handler 未实现），但路由正确
         let params = json!({"workspace_id": "ws-test"});
-        let response = dispatch_rpc(&mut state, peer, "snapshot.publish", &params, &[], &sp);
+        let response = dispatch_rpc(&mut state, peer, "snapshot.publish", &params, &sp);
         // 应该得到响应（ok=false + method_not_found 或 ok=true，取决于 handler）
         assert!(response.get("ok").is_some());
 
@@ -4564,7 +4676,7 @@ mod tests {
 
         // ping 不是 Protected_Mutation，直接执行
         let params = json!({});
-        let response = dispatch_rpc(&mut state, peer, "ping", &params, &[], &sp);
+        let response = dispatch_rpc(&mut state, peer, "ping", &params, &sp);
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "ok");
     }
@@ -4586,7 +4698,7 @@ mod tests {
             let mut state = make_state();
             let peer = PeerCredential::new_unix(1000, 1000, 1);
             let params = json!({});
-            dispatch_rpc(&mut state, peer, "backup", &params, &[], &sp2)
+            dispatch_rpc(&mut state, peer, "backup", &params, &sp2)
         });
 
         let response = handle.join().unwrap();
@@ -4668,10 +4780,29 @@ mod tests {
                     "workspace_instance_id": "ws-1",
                     "task_id": bare_task,
                     "title": "no contract revision",
-                    "steps": [{"action": "implement", "target_file": "a.rs"}]
+                    "steps": [{"action": "implement", "target_file": "a.rs"}],
+                    // O1 门禁（§36.4）：显式 task_id 也属 governed，必须携带
+                    // 非空 role_contracts；本夹具仅验证“无合同 revision”路径。
+                    "identity_policy": "legacy_identity_v1",
+                    "role_contracts": [
+                        {"role": "executor", "independence": "{}"},
+                        {"role": "reviewer", "independence": "{}"},
+                        {"role": "adjudicator", "independence": "{}"}
+                    ]
                 }),
             )
             .unwrap();
+        // 历史形态还原：O1 门禁要求显式 task_id 必须带 role_contracts，create 会
+        // bootstrap 出 revision 1；本用例验证的是“无合同 revision”的 legacy 投影，
+        // 故移除 bootstrap 产物，恢复历史任务形态。
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "DELETE FROM task_contract_revisions WHERE task_id = ?1",
+                [bare_task],
+            )
+            .unwrap();
+        }
 
         // 1) role_worker_v1：投影携带 policy 与结构化 claim requirements（只读，无 mutation）
         let response = dispatch(
@@ -4679,7 +4810,6 @@ mod tests {
             peer.clone(),
             "task.next_action",
             &json!({"task_id": rw_task, "workspace_instance_id": "ws-1"}),
-            &[],
         );
         assert_eq!(
             response["ok"], true,
@@ -4706,7 +4836,6 @@ mod tests {
             peer,
             "task.next_action",
             &json!({"task_id": bare_task, "workspace_instance_id": "ws-1"}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         let result = &response["result"];
@@ -4748,11 +4877,27 @@ mod tests {
                         "workspace_instance_id": "ws-1",
                         "task_id": task_id,
                         "title": "p0l R3 blocked projection",
-                        "steps": [{"action": "implement", "target_file": "a.rs"}]
+                        "steps": [{"action": "implement", "target_file": "a.rs"}],
+                        // O1 门禁（§36.4）：显式 task_id 属 governed，必须携带
+                        // 非空 role_contracts + 显式 identity_policy，否则在写入前
+                        // 即 E_TASK_CONTRACT_REQUIRED / E_TASK_IDENTITY_POLICY_REQUIRED。
+                        "identity_policy": "legacy_identity_v1",
+                        "role_contracts": [
+                            {"role": "executor", "independence": "{}"},
+                            {"role": "reviewer", "independence": "{}"},
+                            {"role": "adjudicator", "independence": "{}"}
+                        ]
                     }),
                 )
                 .unwrap();
             let conn = store.conn.lock().unwrap();
+            // 清掉 O1 门禁下 create 自动 bootstrap 的 revision 1，保证本夹具的
+            // revision 唯一且可控（两种 fail-closed envelope 场景由下方插入）。
+            conn.execute(
+                "DELETE FROM task_contract_revisions WHERE task_id = ?1",
+                [task_id],
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO task_contract_revisions
                      (contract_id, revision, contract_hash, profile, task_id, workspace_id,
@@ -4789,7 +4934,6 @@ mod tests {
                 peer.clone(),
                 "task.next_action",
                 &json!({"task_id": task_id, "workspace_instance_id": "ws-1"}),
-                &[],
             );
             assert_eq!(
                 response["ok"], true,

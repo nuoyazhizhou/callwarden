@@ -310,6 +310,424 @@ pub fn evaluate_generation_protection(
 // 单元测试
 // ============================================
 
+// ============================================
+// S2（ADR-002 §16.2）：snapshot.upload 分块组装槽位
+// ============================================
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// upload slot TTL：自首块起 2h（§16.2）
+const UPLOAD_SLOT_TTL: Duration = Duration::from_secs(2 * 60 * 60);
+/// §16.2 单块解码后上限
+pub const MAX_CHUNK_BYTES: usize = 16 * 1024 * 1024;
+/// §16.2 内联解码后上限
+pub const MAX_INLINE_BYTES: usize = 32 * 1024 * 1024;
+/// §16.2 组装后 raw SQLite 上限
+pub const MAX_ASSEMBLED_RAW_BYTES: usize = 512 * 1024 * 1024;
+/// §16.2 total_chunks 上限
+pub const MAX_TOTAL_CHUNKS: usize = 4096;
+
+/// 一个分块上传会话的组装状态。
+///
+/// 键为 `(workspace_instance_id, upload_id)`：upload_id 客户端生成（uuid4 hex），
+/// 不保证全局唯一，必须绑定 workspace 防串号。
+pub struct UploadSlot {
+    /// 首块声明并由后续块一致性校验
+    total_chunks: usize,
+    /// chunk_index → 解码后 gzip 字节（重传同 request_id 由 HTTP dedup 复用；
+    /// 同 index 不同 request_id 重传覆盖写盘，保持幂等语义）
+    chunks: BTreeMap<usize, Vec<u8>>,
+    created_at: Instant,
+}
+
+/// 分块上传内存组装存储（daemon 内单实例，跨 worker 共享）。
+///
+/// 内存含量天然有界：单块 ≤ [`MAX_CHUNK_BYTES`]、块数 ≤ [`MAX_TOTAL_CHUNKS`]、
+/// TTL 2h 惰性 sweep。
+#[derive(Default)]
+pub struct UploadSlotStore {
+    slots: Mutex<HashMap<(String, String), UploadSlot>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SlotError {
+    /// chunk_index 越界（≥ total_chunks）
+    ChunkOutOfRange,
+    /// total_chunks 与首块声明不一致
+    TotalMismatch,
+    /// commit 时缺块（块未到齐）
+    MissingChunks(Vec<usize>),
+    /// upload_id 首块从未到达
+    UnknownUpload,
+    /// 超过 2h TTL
+    Expired,
+    /// 单块解码后超过 16MiB 上限
+    ChunkTooLarge,
+    /// total_chunks 超过 4096 或 < 2
+    TotalOutOfRange,
+}
+
+impl UploadSlotStore {
+    pub fn new() -> Self {
+        Self {
+            slots: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// 记录一块，返回当前已收块数 `chunks_received`。
+    ///
+    /// - `chunk_index` 必须 < `total_chunks`；
+    /// - `total_chunks` 必须 ≥2（否则应走内联 `snapshot.upload`）且 ≤4096；
+    /// - 后续块的 `total_chunks` 必须与首块一致；
+    /// - 越界/不一致一律 fail-closed（不记盘，不影响既有槽位）。
+    pub fn put_chunk(
+        &self,
+        workspace_instance_id: &str,
+        upload_id: &str,
+        chunk_index: usize,
+        total_chunks: usize,
+        chunk: Vec<u8>,
+    ) -> Result<usize, SlotError> {
+        if total_chunks < 2 || total_chunks > MAX_TOTAL_CHUNKS {
+            return Err(SlotError::TotalOutOfRange);
+        }
+        if chunk_index >= total_chunks {
+            return Err(SlotError::ChunkOutOfRange);
+        }
+        if chunk.len() > MAX_CHUNK_BYTES {
+            return Err(SlotError::ChunkTooLarge);
+        }
+        let mut slots = self
+            .slots
+            .lock()
+            .expect("UploadSlotStore mutex poisoned");
+        let key = (workspace_instance_id.to_string(), upload_id.to_string());
+        let slot = slots.entry(key).or_insert(UploadSlot {
+            total_chunks,
+            chunks: BTreeMap::new(),
+            created_at: Instant::now(),
+        });
+        if slot.total_chunks != total_chunks {
+            return Err(SlotError::TotalMismatch);
+        }
+        slot.chunks.insert(chunk_index, chunk);
+        Ok(slot.chunks.len())
+    }
+
+    /// 校验块是否到齐（不消费）。commit 前的 Precondition。
+    pub fn chunks_complete(
+        &self,
+        workspace_instance_id: &str,
+        upload_id: &str,
+        total_chunks: usize,
+    ) -> Result<(), SlotError> {
+        let mut slots = self
+            .slots
+            .lock()
+            .expect("UploadSlotStore mutex poisoned");
+        self.sweep_expired(&mut slots);
+        let key = (workspace_instance_id.to_string(), upload_id.to_string());
+        let slot = slots.get(&key).ok_or(SlotError::UnknownUpload)?;
+        if slot.created_at.elapsed() > UPLOAD_SLOT_TTL {
+            return Err(SlotError::Expired);
+        }
+        if slot.total_chunks != total_chunks {
+            return Err(SlotError::TotalMismatch);
+        }
+        let missing: Vec<usize> = (0..total_chunks)
+            .filter(|i| !slot.chunks.contains_key(i))
+            .collect();
+        if !missing.is_empty() {
+            return Err(SlotError::MissingChunks(missing));
+        }
+        Ok(())
+    }
+
+    /// 消费 slot，按 chunk_index 拼回 gzip 流。
+    ///
+    /// 调用前应先用 [`UploadSlotStore::chunks_complete`] 校验（commit 处
+    /// 校验失败须返回 E_SNAPSHOT_UPLOAD_CHUNK_MISSING 而非拼到一半失败）。
+    pub fn take(
+        &self,
+        workspace_instance_id: &str,
+        upload_id: &str,
+        total_chunks: usize,
+    ) -> Result<Vec<u8>, SlotError> {
+        let mut slots = self
+            .slots
+            .lock()
+            .expect("UploadSlotStore mutex poisoned");
+        self.sweep_expired(&mut slots);
+        let key = (workspace_instance_id.to_string(), upload_id.to_string());
+        if !slots.contains_key(&key) {
+            return Err(SlotError::UnknownUpload);
+        }
+        let slot = slots.remove(&key).expect("checked above");
+        if slot.created_at.elapsed() > UPLOAD_SLOT_TTL {
+            return Err(SlotError::Expired);
+        }
+        if slot.total_chunks != total_chunks {
+            return Err(SlotError::TotalMismatch);
+        }
+        let missing: Vec<usize> = (0..total_chunks)
+            .filter(|i| !slot.chunks.contains_key(i))
+            .collect();
+        if !missing.is_empty() {
+            return Err(SlotError::MissingChunks(missing));
+        }
+        let mut out = Vec::new();
+        for (idx, chunk) in slot.chunks {
+            out.reserve(chunk.len());
+            out.extend_from_slice(&chunk);
+            debug_assert_eq!(out.len() % 1, 0, "chunks are raw bytes; idx {}", idx);
+        }
+        Ok(out)
+    }
+
+    /// 主动丢弃一个 slot（commit 失败时调用，保持「不残留」语义）。
+    pub fn discard(&self, workspace_instance_id: &str, upload_id: &str) {
+        let mut slots = self
+            .slots
+            .lock()
+            .expect("UploadSlotStore mutex poisoned");
+        slots.remove(&(workspace_instance_id.to_string(), upload_id.to_string()));
+    }
+
+    /// 惰性 sweep：清理过期 slot。仅在锁内调用。
+    fn sweep_expired(&self, slots: &mut HashMap<(String, String), UploadSlot>) {
+        slots.retain(|_, slot| slot.created_at.elapsed() <= UPLOAD_SLOT_TTL);
+    }
+
+    /// 诊断用：当前 slot 数（测试/健康检查）
+    pub fn slot_count(&self) -> usize {
+        self.slots
+            .lock()
+            .expect("UploadSlotStore mutex poisoned")
+            .len()
+    }
+}
+
+/// §16.1 路径形态兜底：判断字符串是否是绝对路径形态。
+///
+/// 规则（契约 §16.1）：
+/// - Posix `/` 前缀
+/// - Windows 盘符前缀（`C:\` / `C:/`）
+/// - UNC `\\` 前缀
+/// - Windows `\` 前缀（root-relative）
+///
+/// 注意：只判形态（daemon 无法解析远端路径），命中即交由调用方返回
+/// E_REMOTE_PATH_FORBIDDEN，fail-closed。
+pub fn looks_like_path(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+    if s.starts_with('/') || s.starts_with('\\') {
+        return true;
+    }
+    // Windows 盘符前缀：单字母 + ':' + 分隔符
+    let b = s.as_bytes();
+    b.len() >= 3
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && (b[2] == b'\\' || b[2] == b'/')
+}
+
+/// §16.2 协议校验：upload_id 必须是 32 位小写 hex（uuid4形态，不带连字符）。
+pub fn is_valid_upload_id(upload_id: &str) -> bool {
+    upload_id.len() == 32
+        && upload_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// §16.2 协议校验：sha256 必须是 64 位小写 hex。
+pub fn is_valid_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// §16.2 sha256 契约：对 raw（gunzip 后）字节计算 sha256，返回小写 hex。
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+// ============================================
+// 单元测试
+// ============================================
+
+#[cfg(test)]
+mod s2_upload_tests {
+    use super::*;
+
+    fn chunk(i: usize, n: usize, data: Vec<u8>) -> Result<usize, SlotError> {
+        let store = UploadSlotStore::new();
+        store.put_chunk("ws1", "upload1", i, n, data)
+    }
+
+    #[test]
+    fn test_put_chunk_basic() {
+        let store = UploadSlotStore::new();
+        assert_eq!(
+            store
+                .put_chunk("ws1", "upload1", 0, 2, b"a".to_vec())
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .put_chunk("ws1", "upload1", 1, 2, b"b".to_vec())
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_put_chunk_index_out_of_range() {
+        assert_eq!(chunk(2, 2, b"x".to_vec()), Err(SlotError::ChunkOutOfRange));
+    }
+
+    #[test]
+    fn test_put_chunk_total_mismatch() {
+        let store = UploadSlotStore::new();
+        store.put_chunk("ws1", "u1", 0, 3, b"a".to_vec()).unwrap();
+        assert_eq!(
+            store.put_chunk("ws1", "u1", 1, 2, b"b".to_vec()),
+            Err(SlotError::TotalMismatch)
+        );
+    }
+
+    #[test]
+    fn test_put_chunk_total_out_of_range() {
+        assert_eq!(
+            chunk(0, 1, b"a".to_vec()),
+            Err(SlotError::TotalOutOfRange)
+        );
+        assert_eq!(
+            chunk(0, MAX_TOTAL_CHUNKS + 1, b"a".to_vec()),
+            Err(SlotError::TotalOutOfRange)
+        );
+    }
+
+    #[test]
+    fn test_put_chunk_too_large() {
+        assert_eq!(
+            chunk(0, 2, vec![0u8; MAX_CHUNK_BYTES + 1]),
+            Err(SlotError::ChunkTooLarge)
+        );
+    }
+
+    #[test]
+    fn test_assemble_roundtrip() {
+        let store = UploadSlotStore::new();
+        let gzip_stream = vec![0u8; 64];
+        store
+            .put_chunk("ws1", "u1", 0, 2, gzip_stream[..30].to_vec())
+            .unwrap();
+        store
+            .put_chunk("ws1", "u1", 1, 2, gzip_stream[30..].to_vec())
+            .unwrap();
+        store.chunks_complete("ws1", "u1", 2).unwrap();
+        let out = store.take("ws1", "u1", 2).unwrap();
+        assert_eq!(out, gzip_stream);
+        // take 消费 slot
+        assert_eq!(
+            store.chunks_complete("ws1", "u1", 2),
+            Err(SlotError::UnknownUpload)
+        );
+    }
+
+    #[test]
+    fn test_chunk_order_irrelevant() {
+        let store = UploadSlotStore::new();
+        store.put_chunk("ws1", "u1", 1, 2, b"second".to_vec()).unwrap();
+        store.put_chunk("ws1", "u1", 0, 2, b"first".to_vec()).unwrap();
+        assert_eq!(store.take("ws1", "u1", 2).unwrap(), b"firstsecond");
+    }
+
+    #[test]
+    fn test_missing_chunks() {
+        let store = UploadSlotStore::new();
+        store.put_chunk("ws1", "u1", 0, 3, b"a".to_vec()).unwrap();
+        assert_eq!(
+            store.chunks_complete("ws1", "u1", 3),
+            Err(SlotError::MissingChunks(vec![1, 2]))
+        );
+    }
+
+    #[test]
+    fn test_unknown_upload() {
+        let store = UploadSlotStore::new();
+        assert_eq!(
+            store.chunks_complete("ws1", "ghost", 2),
+            Err(SlotError::UnknownUpload)
+        );
+    }
+
+    #[test]
+    fn test_workspace_isolation() {
+        let store = UploadSlotStore::new();
+        store.put_chunk("ws1", "u1", 0, 2, b"a".to_vec()).unwrap();
+        // 同 upload_id 不同 workspace：互不串号
+        assert_eq!(
+            store.chunks_complete("ws2", "u1", 2),
+            Err(SlotError::UnknownUpload)
+        );
+    }
+
+    #[test]
+    fn test_discard() {
+        let store = UploadSlotStore::new();
+        store.put_chunk("ws1", "u1", 0, 2, b"a".to_vec()).unwrap();
+        store.discard("ws1", "u1");
+        assert_eq!(store.slot_count(), 0);
+    }
+
+    #[test]
+    fn test_looks_like_path() {
+        assert!(looks_like_path("/etc/passwd"));
+        assert!(looks_like_path("/home/u/x.py"));
+        assert!(looks_like_path("C:\\Users\\u\\x.py"));
+        assert!(looks_like_path("D:/repo/x.py"));
+        assert!(looks_like_path("\\\\server\\share\\x"));
+        assert!(looks_like_path("\\repo\\x"));
+        assert!(!looks_like_path("src/main.rs"));
+        assert!(!looks_like_path("x.py"));
+        assert!(!looks_like_path(""));
+        assert!(!looks_like_path("relative\\path"));
+    }
+
+    #[test]
+    fn test_is_valid_upload_id() {
+        assert!(is_valid_upload_id("0123456789abcdef0123456789abcdef"));
+        assert!(!is_valid_upload_id("0123456789abcdef0123456789abcde")); // 31
+        assert!(!is_valid_upload_id("0123456789abcdef0123456789abcdef0")); // 33
+        assert!(!is_valid_upload_id("0123456789ABCDEF0123456789abcdef")); // uppercase
+        assert!(!is_valid_upload_id("01234567-89ab-cdef-0123-456789abcdef")); // dashes
+    }
+
+    #[test]
+    fn test_is_valid_sha256_hex() {
+        assert!(is_valid_sha256_hex(&"a".repeat(64)));
+        assert!(!is_valid_sha256_hex(&"a".repeat(63)));
+        assert!(!is_valid_sha256_hex(&"A".repeat(64)));
+        assert!(!is_valid_sha256_hex(&"g".repeat(64)));
+    }
+
+    #[test]
+    fn test_sha256_hex_known_value() {
+        // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        assert_eq!(
+            sha256_hex(b"hello"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

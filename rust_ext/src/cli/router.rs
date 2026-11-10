@@ -11,10 +11,6 @@
 
 use std::path::{Path, PathBuf};
 
-// `encode_wide` 是 Windows 专属扩展 trait，仅 Windows 目标需要。
-#[cfg(windows)]
-use std::os::windows::ffi::OsStrExt;
-
 // ============================================================
 // 常量
 // ============================================================
@@ -143,119 +139,62 @@ pub fn is_daemon_required() -> bool {
 
 /// 检测 daemon 是否可用。
 ///
-/// 对齐 Python `config.py:is_daemon_available()`
+/// 对齐 Python `config.py:is_daemon_available()` 的**单轨形态门禁**：
+/// ADR-002 单轨 HTTPS+mTLS 下，endpoint 为 http(s):// URL 才可能可用；
+/// socket / Named Pipe 路径一律 fail-closed false（传输已删除，存在性
+/// 不再代表可用，亦覆盖 TP-49「未 arm 占位者」假阳性方向）。
 ///
-/// - Linux → `socket_path.exists()`
-/// - macOS → false（UDS 不可用，且未实现 Named Pipe）
-/// - Windows → `windows_endpoint_available(socket_path)`（尊重传入端点，
-///   见该函数的三分支与残留局限说明）
+/// 本路由层为**轻量决策层**（无 TLS 客户端依赖，hyper 仅 server 特性）：
+/// 对 http(s) 端点做 TCP 可达性探针（2s 短超时）。协议级探针（mTLS
+/// 握手 + ping 应答）由 Python 消费层 `config.is_daemon_available` 承担——
+/// `is_daemon_available_py` 无生产调用方，仅服务于路由契约 diff 测试
+/// （两侧 TCP 语义对齐）。
 ///
 /// # 参数
-/// - `socket_path`: daemon socket 路径（或命名管道路径）
+/// - `socket_path`: daemon 端点（单轨语义下为 http(s):// URL；保留旧参数
+///   名以兼容 PyO3 签名与 diff 测试注入）
 /// - `platform`: 平台名（`std::env::consts::OS` 或测试指定值）
-///
-/// # 已知局限与职责边界（TP-11G 2a/2b，勿把 RPC 塞回本层）
-///
-/// 1. **WaitNamedPipeW 对未 arm 实例假阳性**（tp48 注入测试实证；台账
-///    TP11G_rust_ci_range.md §A5）：「存在即可用」不成立——占位者只建不
-///    监听即可让本函数误判 True。可用性判定止步于此是**决策层的边界**，
-///    不是可用性的完整定义。
-/// 2. **归属 / 活性 / 共存校验归 client 协议层**（2a 批次已落地：
-///    Python `daemon_client._verify_pipe_creator_attribution` 与 Rust
-///    `client.rs verify_pipe_creator_attribution`，ping 响应 daemon_pid
-///    vs `GetNamedPipeServerProcessId` 创建者交叉校验，失配 fail-closed）。
-///    本层无 pid 概念、无应答能力语义——把 RPC 级校验塞回 WaitNamedPipeW
-///    是语义倒置（协议层是唯一判别器，2204315 改动 1 同此结论）。
-/// 3. **机制依据**：台账 §A5（未 arm 实例可被连上 + 探测即消耗且与返回值
-///    无关）、§A6（verbatim 形态同破坏）——Windows 管道上任何路径语义
-///    探测都不可用作判别器，只能走实例/协议语义。
 pub fn is_daemon_available(socket_path: &Path, platform: &str) -> bool {
     match platform {
-        // Linux：UDS socket 文件存在即认为 daemon 可用
-        "linux" => socket_path.exists(),
-        // macOS：UDS 不可用，且未实现 Named Pipe，返回 false
+        // 单轨：linux / windows 统一 http(s) 端点形态门禁 + TCP 可达性探针
+        "linux" | "windows" => {
+            let endpoint = socket_path.to_string_lossy();
+            if !endpoint.starts_with("https://") && !endpoint.starts_with("http://") {
+                return false;
+            }
+            tcp_reachable(&endpoint)
+        }
+        // macOS：单轨 HTTPS 之外无本地传输，返回 false
         "macos" => false,
-        // Windows：按传入端点判定（TP-11G #48 / F-ROUTER-01）
-        "windows" => windows_endpoint_available(socket_path),
         // 未知平台 fail-closed
         _ => false,
     }
 }
 
-/// Windows 端点可用性判定（TP-11G #48 / F-ROUTER-01 修复）。
+/// 对 http(s) endpoint 做 TCP 可达性探针（2s 短超时）。
 ///
-/// 三分支，fail-closed 优先：
-/// 1. `socket_path` 为命名管道形态（`\\.\pipe\...`）→ 探测**该管道**：
-///    尊重运维显式配置的端点，测试也可注入隔离管道；
-/// 2. `socket_path` 等于 `DEFAULT_DAEMON_SOCKET`（未显式配置——注意该默认值
-///    是 Unix 式路径 `/run/callwarden/callwarden.sock`，在 Windows 上永不
-///    存在）→ 退化为探测本用户默认管道（保留既有生产行为，见下）；
-/// 3. 其他显式路径（UDS 式文件路径，Windows 不支持）→ **false**（fail-closed：
-///    该端点在当前平台不可能存在）。
-///
-/// 为何分支 2 保留环境派生探测：Windows 上 daemon 数据通道默认走 HTTP
-/// loopback（`runtime.rs` 对 `\\.\pipe\` 前缀的特判即为此），管道探测只是
-/// 「本用户是否有 daemon 在跑」的活性代理。若分支 2 也判 false，Windows
-/// 生产上 Enterprise 将恒 Unavailable、路由全断。
-///
-/// 残留局限（**未闭环，另行立项**）：未显式配置时仍无法识别「默认管道属于
-/// 另一个实例」的跨实例混淆；彻底消除需改为探测真实数据通道（HTTP
-/// endpoint），而非旁路管道活性。
-#[cfg(windows)]
-fn windows_endpoint_available(socket_path: &Path) -> bool {
-    let raw = socket_path.to_string_lossy();
-    // 前缀匹配对 ASCII 大小写不敏感（TP-48 复核信息项）：Win32 管道名本身
-    // 不区分大小写，运维配置 `\\.\PIPE\foo` 与 `\\.\pipe\foo` 语义等价，都应
-    // 进分支 1。原先大写形态静默落分支 3 → false，是「忽略显式端点」缺陷的
-    // 残留形态。探测时仍传原始形态（WaitNamedPipeW 大小写不敏感）。
-    let normalized = raw.replace('\\', "/").to_ascii_lowercase();
-    if normalized.starts_with("//./pipe/") {
-        return wait_named_pipe(&raw);
-    }
-    if socket_path == Path::new(DEFAULT_DAEMON_SOCKET) {
-        return windows_named_pipe_available();
-    }
-    false
-}
+/// 解析 `host:port`（无端口补 https 默认 443）；解析失败 / 连接失败 =
+/// 不可用。仅可达性判定——TLS/HTTP 应答由 Python 协议级探针承担。
+fn tcp_reachable(endpoint: &str) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
 
-#[cfg(not(windows))]
-fn windows_endpoint_available(_socket_path: &Path) -> bool {
-    false
-}
-
-/// Windows 下探测 daemon 命名管道是否可用。
-///
-/// 管道名与 daemon 绑定一致：`\\.\pipe\callwarden-<user-sid>`
-/// （见 `daemon/transport_windows.rs:get_current_user_sid` + 管道名派生）。
-#[cfg(windows)]
-fn windows_named_pipe_available() -> bool {
-    let sid = match crate::daemon::transport_windows::get_current_user_sid() {
-        Ok(s) => s,
-        Err(_) => return false,
+    let host_port = endpoint
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let addr = match host_port.rsplit(':').next() {
+        Some(port) if port.parse::<u16>().is_ok() => host_port.to_string(),
+        _ => format!("{host_port}:443"),
     };
-    wait_named_pipe(&format!(r"\\.\pipe\callwarden-{}", sid))
-}
-
-#[cfg(not(windows))]
-fn windows_named_pipe_available() -> bool {
-    false
-}
-
-/// 以 `WaitNamedPipeW` 探测指定管道：返回非 0 表示存在可用实例。
-///
-/// 超时统一 **5000ms**，与 `cw_client.rs` / `cw_daemon.rs` /
-/// `daemon/client.rs` 三处探针一致（TP-11G 关屿 N3）。
-/// Win32 语义纠正：`NMPWAIT_USE_DEFAULT_WAIT = 0` 表示「等待服务端
-/// `CreateNamedPipe` 时声明的默认超时」，**并非**「立即返回」；原注释
-/// 「timeout=0：立即返回不阻塞」属误导性契约。
-#[cfg(windows)]
-fn wait_named_pipe(pipe_name: &str) -> bool {
-    let wide: Vec<u16> = std::path::Path::new(pipe_name)
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    unsafe { windows_sys::Win32::System::Pipes::WaitNamedPipeW(wide.as_ptr(), 5000) != 0 }
+    match addr.to_socket_addrs() {
+        Ok(mut it) => match it.next() {
+            Some(socket_addr) => {
+                TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2)).is_ok()
+            }
+            None => false,
+        },
+        Err(_) => false,
+    }
 }
 
 // ============================================================
@@ -329,11 +268,14 @@ pub fn is_daemon_required_py() -> bool {
 ///
 /// **边界校验（TP-49 假阳性卡）**：`platform` 与当前 OS 不一致时 eprintln
 /// 告警；其中**破坏性组合**（非 linux 实机喂 linux 语义 + 管道形态路径）
-/// 直接拒绝返回 false——linux 分支的 `socket_path.exists()` 对 Windows
-/// 管道名「接触即破坏」（属性查询打开消耗 armed 实例，与返回值无关），
-/// 实证见台账 §A4/A5。其余不一致组合（macos/windows 语义在异机恒
-/// false，无文件系统接触）保留模拟，维持 diff 测试的显式平台注入能力。
-/// **不做自动纠正**：纠正会摧毁跨平台语义模拟（测试依赖）并掩盖调用方 bug。
+/// 直接拒绝返回 false。历史依据：早期 linux 分支为 `socket_path.exists()`，
+/// 对 Windows 管道名「接触即破坏」（属性查询打开消耗 armed 实例，与返回值
+/// 无关，实证见台账 §A4/A5）。ADR-002 单轨后 linux 分支已改为 http(s)
+/// 形态门禁 + TCP 探针，不再接触文件系统；本 guard 作为**纵深防御**保留——
+/// 管道形态端点在任何平台语义下都不应进入探针路径。其余不一致组合
+/// （macos/windows 语义在异机恒 false）保留模拟，维持 diff 测试的显式
+/// 平台注入能力。**不做自动纠正**：纠正会摧毁跨平台语义模拟（测试依赖）
+/// 并掩盖调用方 bug。
 #[pyfunction]
 pub fn is_daemon_available_py(socket_path: &str, platform: &str) -> bool {
     let host = std::env::consts::OS;
@@ -441,11 +383,12 @@ mod tests {
     // D3: is_daemon_available
 
     #[test]
-    fn test_d3_1_linux_socket_exists() {
-        // 用临时文件模拟存在的 socket
+    fn test_d3_1_linux_socket_path_fail_closed() {
+        // ADR-002 单轨：socket 路径形态一律 fail-closed——旧 socket 文件
+        // 残留不代表 daemon 可用（UDS 传输已删除）。
         let tmp = std::env::temp_dir().join("cw_test_socket_d3_1.sock");
         std::fs::write(&tmp, b"").ok();
-        assert!(is_daemon_available(&tmp, "linux"));
+        assert!(!is_daemon_available(&tmp, "linux"));
         std::fs::remove_file(&tmp).ok();
     }
 
@@ -456,157 +399,34 @@ mod tests {
     }
 
     #[test]
-    fn test_d3_3_windows_probes_named_pipe() {
-        // TP-11G #48（F-ROUTER-01）：Windows 分支必须**尊重传入端点**。
-        // 原实现无条件探测本用户默认管道、丢弃 socket_path，导致：
-        //   - Enterprise fail-closed 可被未认证方满足；
-        //   - 测试隔离失效（探针打到真实生产 daemon）；
-        //   - 与 Linux 分支语义不对称。
-        // 本用例原先把该缺陷行为写成期望契约（断言「任意路径 == 默认管道探测」），
-        // 现按新契约改写。
+    fn test_d3_3_windows_socket_path_fail_closed() {
+        // 历史（TP-11G #48 / F-ROUTER-01）：Windows 分支曾无条件探测本用户
+        // 默认管道、丢弃 socket_path，导致 Enterprise fail-closed 可被未认证
+        // 方满足、测试隔离失效。ADR-002 单轨后语义收敛：非 http(s) 端点在
+        // Windows（及 linux）一律 fail-closed，与 Python 镜像对齐。
         let explicit = Path::new("C:\\callwarden\\socket.sock");
         assert!(
             !is_daemon_available(explicit, "windows"),
-            "显式配置的非管道端点在 Windows 上必须 fail-closed（不再旁路到默认管道）"
+            "非 http(s) 端点在 Windows 上必须 fail-closed"
         );
-        assert_eq!(
-            is_daemon_available(Path::new(DEFAULT_DAEMON_SOCKET), "windows"),
-            windows_named_pipe_available(),
-            "未显式配置（Unix 默认路径）时保留默认管道探测，保 Windows 生产行为"
-        );
-    }
-
-    // ============================================================
-    // TP-48 N-a（何序复核）：分支 1（显式管道路径）真实注入测试。
-    // 4 个原失败用例全走分支 3（fail-closed），分支 1 此前零覆盖。
-    // 起真实管道服务端验证「探测的是注入管道本身」，Q11 注入终态落地。
-    // 仅 Windows 编译；Linux 上不存在（不计 skip）。
-    // ============================================================
-
-    /// RAII 句柄守卫（何序 N-c）：断言 panic 时也能 CloseHandle，
-    /// 不泄漏监听实例至进程退出。
-    #[cfg(windows)]
-    struct PipeHandleGuard(windows_sys::Win32::Foundation::HANDLE);
-
-    #[cfg(windows)]
-    impl Drop for PipeHandleGuard {
-        fn drop(&mut self) {
-            use windows_sys::Win32::Foundation::CloseHandle;
-            unsafe {
-                CloseHandle(self.0);
-            }
-        }
-    }
-
-    /// 起一次性命名管道服务端（默认安全属性即可——测试不需要 daemon 的
-    /// SDDL 隔离，只要名字存在且处于 listening 态，WaitNamedPipeW 即命中）。
-    #[cfg(windows)]
-    fn spawn_pipe_server(pipe_name: &str) -> PipeHandleGuard {
-        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
-        };
-        use windows_sys::Win32::System::Pipes::{CreateNamedPipeW, PIPE_TYPE_BYTE, PIPE_WAIT};
-
-        let wide: Vec<u16> = pipe_name.encode_utf16().chain(Some(0)).collect();
-        let handle = unsafe {
-            CreateNamedPipeW(
-                wide.as_ptr(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
-                PIPE_TYPE_BYTE | PIPE_WAIT,
-                1, // 单实例：本测试独占
-                1024,
-                1024,
-                0, // 默认超时
-                std::ptr::null(),
-            )
-        };
-        assert_ne!(
-            handle, INVALID_HANDLE_VALUE,
-            "CreateNamedPipeW 失败: {pipe_name}"
-        );
-        PipeHandleGuard(handle)
-    }
-
-    #[cfg(windows)]
-    fn unique_pipe_name(tag: &str) -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        format!(
-            r"\\.\pipe\callwarden-test-{}-{}-{}",
-            tag,
-            std::process::id(),
-            nanos
-        )
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn test_tp48_branch1_explicit_pipe_probed_not_bypassed() {
-        let pipe_name = unique_pipe_name("b1");
-        let server = spawn_pipe_server(&pipe_name);
-
-        // 分支 1：显式管道路径 → 探测**该管道**（listening 实例在）→ true。
         assert!(
-            is_daemon_available(Path::new(&pipe_name), "windows"),
-            "显式管道路径必须探测该管道本身"
-        );
-
-        // 大写前缀形态 `\\.\PIPE\` 也必须走分支 1（大小写不敏感匹配）→ true。
-        // 若静默落分支 3（fail-closed）会得到 false，本断言即失败。
-        let upper = pipe_name.replacen(r"\\.\pipe\", r"\\.\PIPE\", 1);
-        assert!(
-            is_daemon_available(Path::new(&upper), "windows"),
-            "大写 PIPE 前缀必须被识别为管道路径（Win32 管道名大小写不敏感）"
-        );
-
-        // 服务端销毁 → 管道名消失 → false。若实现仍旁路默认管道（旧缺陷），
-        // 本机真实 daemon 会让它得到 true，本断言即失败——同时证明密闭。
-        //
-        // 🔴 判别力依赖（何序附录 E）：本断言的「能抓住旁路缺陷」依赖**本机
-        // 有真实 daemon 在跑**（旁路 + 有 daemon → true → 失败）；在干净
-        // CI runner 上旁路缺陷同样得 false，本断言退化为平凡通过。
-        // **核心判别由断言 1/2 承担**（任何机器都以真实注入管道证明走分支 1），
-        // 本断言是开发机加成，勿误读为「CI 上也验证了不旁路」。
-        drop(server);
-        assert!(
-            !is_daemon_available(Path::new(&pipe_name), "windows"),
-            "管道销毁后必须不可用（证明探测的是注入管道而非默认管道）"
+            !is_daemon_available(Path::new(DEFAULT_DAEMON_SOCKET), "windows"),
+            "socket 默认路径在 Windows 上必须 fail-closed"
         );
     }
 
-    #[cfg(windows)]
     #[test]
-    fn test_tp48_branch1_nonexistent_pipe_fails_closed() {
-        // 从未存在的管道名 → ERROR_FILE_NOT_FOUND → 立即 false（不触发 5s 等待）。
-        let missing = unique_pipe_name("missing");
-        assert!(!is_daemon_available(Path::new(&missing), "windows"));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn test_tp49_pywrapper_refuses_linux_semantics_on_pipe() {
-        // PyO3 边界（TP-49 假阳性卡）：非 linux 实机喂 linux 语义 + 管道形态
-        // 路径 → 拒绝。若无此校验，linux 分支 exists()（fs::metadata）会对
-        // un-armed 实例返回 true 且**消耗掉它**（接触即破坏，§A4/A5 实证）。
-        let pipe_name = unique_pipe_name("b4");
-        let _server = spawn_pipe_server(&pipe_name);
-
-        // 拒绝 → false（而非破坏性 exists() 的 true）
-        assert!(!is_daemon_available_py(&pipe_name, "linux"));
-
-        // 实例未被消耗（windows 语义探测仍命中）——证明拒绝发生在接触之前
-        assert!(is_daemon_available(Path::new(&pipe_name), "windows"));
-
-        // 非管道形态路径 + linux 语义 → 模拟保留（diff 测试依赖）：
-        // 真实临时文件 exists() = true
-        let tmp = std::env::temp_dir().join("tp49_probe_sim_file");
-        std::fs::write(&tmp, b"x").unwrap();
-        assert!(is_daemon_available_py(tmp.to_str().unwrap(), "linux"));
-        let _ = std::fs::remove_file(&tmp);
+    fn test_d3_5_https_unreachable_endpoint_false() {
+        // 单轨：http(s) 端点形态合法但端口无监听 → TCP 可达性探针失败 →
+        // false。端口 1（tcpmux）在测试机确定无监听；两侧 TCP 语义一致。
+        assert!(!is_daemon_available(
+            Path::new("https://127.0.0.1:1"),
+            "linux"
+        ));
+        assert!(!is_daemon_available(
+            Path::new("https://127.0.0.1:1"),
+            "windows"
+        ));
     }
 
     #[cfg(windows)]
@@ -639,12 +459,14 @@ mod tests {
     }
 
     #[test]
-    fn test_d4_2_enterprise_linux_socket_exists() {
+    fn test_d4_2_enterprise_linux_socket_path_fail_closed() {
+        // ADR-002 单轨：socket 路径形态 fail-closed → Enterprise 模式
+        // 无法证实 daemon 可用 → Unavailable（不回退本地）。
         let tmp = std::env::temp_dir().join("cw_test_socket_d4_2.sock");
         std::fs::write(&tmp, b"").ok();
         assert_eq!(
             route_command(&DaemonMode::Enterprise, &tmp, "linux"),
-            RouteDecision::Enterprise
+            RouteDecision::Unavailable
         );
         std::fs::remove_file(&tmp).ok();
     }
@@ -668,12 +490,13 @@ mod tests {
     }
 
     #[test]
-    fn test_d4_5_auto_linux_socket_exists() {
+    fn test_d4_5_auto_linux_socket_path_falls_back_local() {
+        // ADR-002 单轨：socket 路径形态 fail-closed → auto 模式回退 Local。
         let tmp = std::env::temp_dir().join("cw_test_socket_d4_5.sock");
         std::fs::write(&tmp, b"").ok();
         assert_eq!(
             route_command(&DaemonMode::Auto, &tmp, "linux"),
-            RouteDecision::Enterprise
+            RouteDecision::Local
         );
         std::fs::remove_file(&tmp).ok();
     }

@@ -3,7 +3,7 @@ T-1786519211837-fdfffe10）。
 
 验证 query.tests 按符号查询（test cases / tested functions / stability）从
 Python 本地 SQLite 迁移到 Rust daemon RPC 后的成功路径与拒绝矩阵，全程启动
-真实 `cw-daemon`（隔离临时数据目录），通过 Windows Named Pipe 进程级 RPC
+真实 `cw-daemon`（隔离临时数据目录），通过隔离 HTTPS+mTLS daemon 进程级 RPC
 往返验证，**禁 mock**（Client 侧 fail-closed / HTTP 注入单测除外）。
 
 与 M2.4 query.issues 的关键差异：
@@ -45,57 +45,36 @@ HTTP 轮次（T-1786519211837-fdfffe10）补充：
   None），本轮不改仅补测试确认
 
 前置条件（与 test_query_issues_rpc.py 一致）：
-1. Windows 平台（Named Pipe）
+1. Windows 平台
 2. 已构建 `cw-daemon.exe`：`cargo build --release --no-default-features
    --manifest-path rust_ext/Cargo.toml --bin cw-daemon`
-3. 默认管道 `\\.\pipe\callwarden-<sid>` 未被其他 daemon 占用（占用则 skip）
+3. 隔离 HTTPS daemon 由 `_w3_harness.setup_w3_client` 自建（缺二进制则 skip）
 """
 
-import json
 import os
 import shutil
 import sqlite3
-import subprocess
 import sys
 import tempfile
-import time
 
 import pytest
 
 from callwarden.server.daemon_protocol import DaemonRemoteError
+from callwarden.config import get_pki_dir
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
+_REAL_PKI_DIR = get_pki_dir()
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
-    reason="进程级 query.tests round-trip 需要 Windows + Named Pipe",
+    reason="进程级 query.tests round-trip 需要 Windows 平台",
 )
 
 requires_binaries = pytest.mark.skipif(
     not os.path.exists(_DAEMON_BIN),
     reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
 )
-
-
-def _daemon_config(tmp: str) -> dict:
-    """生成隔离的 daemon JSON 配置（Windows 管道名由 transport 按 SID 派生）。"""
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 2,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 4,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -120,58 +99,31 @@ def ensure_fresh_binary():
 
 @pytest.fixture(scope="class")
 def query_tests_env():
-    """启动真实 cw-daemon（隔离数据目录），返回 (client, tmp, proc)。"""
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    from callwarden.config import _get_windows_user_sid
+    """启动隔离 HTTPS daemon（_w3_harness 权威栈），返回 (client, tmp, proc)。"""
+    from _w3_harness import setup_w3_client
 
-    pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
-    probe = UnixDaemonRpcClient(socket_path=pipe, timeout=3)
-    try:
-        probe.call("ping")
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过")
-    except Exception:
-        pass
-
+    prev_pki = os.environ.get("CW_PKI_DIR")
+    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
     tmp = tempfile.mkdtemp(prefix="cw_query_tests_")
-    config = _daemon_config(tmp)
-    config_path = os.path.join(tmp, "daemon.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config, f)
-    log = open(os.path.join(tmp, "daemon.log"), "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-    )
-    client = UnixDaemonRpcClient(socket_path=pipe, timeout=10)
-    deadline = time.time() + 40
-    ready = False
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            break
-        try:
-            if client.call("ping").get("status") == "ok":
-                ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    if not ready:
-        log.flush()
-        pytest.fail("daemon 未在超时内响应")
-
-    yield client, tmp, proc
-
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+    client = proc = None
+    try:
+        client, _inst, _endpoint, proc = setup_w3_client(
+            tmp, os.path.join(tmp, "repo"), ws_id=1
+        )
+    finally:
+        if prev_pki is None:
+            os.environ.pop("CW_PKI_DIR", None)
+        else:
+            os.environ["CW_PKI_DIR"] = prev_pki
+    if client is None:
+        shutil.rmtree(tmp, ignore_errors=True)
+        pytest.skip("隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）")
+    try:
+        yield client, tmp, proc
+    finally:
+        if proc.poll() is None:
             proc.kill()
-    log.close()
-    shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------

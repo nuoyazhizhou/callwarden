@@ -4,7 +4,7 @@
 要求的 CLI 层 HTTP RPC 场景：
   - success：握手（ping -> workspace.connect）成功，Python 仅编排，Rust daemon 是唯一 authority；
   - daemon-unavailable：daemon 不可达 -> fail-closed，返回码 2 并清理 PID 文件；
-  - 结构不变量：Python 不再持有 UnixDaemonRpcClient / Unix socket 业务路径，
+  - 结构不变量：Python 不再持有 HttpDaemonRpcClient / Unix socket 业务路径，
     Rust daemon 是唯一 authority。
 
 与 test_cli_006_http_rpc.py 互补：本文件聚焦 `cw-agent start` 的握手链路。

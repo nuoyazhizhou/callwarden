@@ -189,6 +189,9 @@ def cli_env(tmp_path_factory):
 
     bin_path = require_daemon_binary(harness.find_daemon_binary())
     proc, daemon_env = harness.spawn_isolated_daemon(bin_path, data_root)
+    # try 前置初始化：pki_init/断言等在 _saved_env 赋值之前抛异常时，
+    # finally 的还原循环不得以 UnboundLocalError 掩盖原始错误。
+    _saved_env = None
     try:
         manifest, _manifest_file = harness.wait_manifest(data_root, proc, timeout=60)
         if manifest is None:
@@ -200,12 +203,42 @@ def cli_env(tmp_path_factory):
             )
         skip_if_isolated_daemon_pipe_conflict(proc)
         endpoint = manifest["endpoint"]
-        assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+        # ADR-002 单轨 HTTPS：daemon manifest 发布 https endpoint
+        assert endpoint.startswith("https://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+
+        # ADR-002 单轨 mTLS：客户端与子进程从隔离 PKI 取 owner 身份（daemon
+        # 信任根为自签 ca/ca.crt；module 级 fixture 无法用 monkeypatch，手动
+        # save/restore；对齐 test_http_daemon_transport.py http_daemon fixture
+        # 的 bootstrap：pki init 幂等补齐 owner 身份后注入证书 env）
+        import test_mtls_control_plane as _mtls  # noqa: PLC0415
+
+        _mtls.pki_init(data_root)
+        cert, key = _mtls.identity_paths(data_root)
+        _saved_env = {
+            k: os.environ.get(k)
+            for k in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT", "CW_PKI_DIR")
+        }
+        os.environ["CW_CLIENT_CERT"] = cert
+        os.environ["CW_CLIENT_KEY"] = key
+        os.environ["CW_CA_CERT"] = os.path.join(
+            _mtls.pki_dir_of(data_root), "ca", "ca.crt"
+        )
+        os.environ.pop("CW_PKI_DIR", None)
 
         from server.daemon_client import HttpDaemonRpcClient  # noqa: PLC0415
 
+        # CA pin 显式指向隔离 daemon 的 manifest：module 级 fixture 实例化早于
+        # conftest._isolate_db_path（函数级 autouse），此时
+        # callwarden.config.CALLWARDEN_DIR 仍是真实 HOME——若不显式指定，
+        # client.discover() 会加载真实 HOME 的 manifest 并以其 tls.ca_cert_pem
+        # （真实 CA）做 pin，校验隔离 daemon 的自签证书必然签名失败
+        # （CERTIFICATE_VERIFY_FAILED: certificate signature failure）。
+        # 传 _manifest_file 使 CA pin 与本隔离 daemon 一致。
         client = HttpDaemonRpcClient(
-            endpoint=endpoint, verify_health=False, validate_manifest=False
+            endpoint=endpoint,
+            verify_health=False,
+            validate_manifest=False,
+            manifest_path=_manifest_file,
         )
         ws = client.call("workspace.register", {"client_view_root": root_path})
         instance_id = ws["workspace_instance_id"]
@@ -242,6 +275,12 @@ def cli_env(tmp_path_factory):
         }
     finally:
         _terminate(proc)
+        if _saved_env is not None:
+            for _k, _v in _saved_env.items():
+                if _v is None:
+                    os.environ.pop(_k, None)
+                else:
+                    os.environ[_k] = _v
 
 
 def _run(argv: list, env: dict, root: str, timeout: float = 90.0) -> subprocess.CompletedProcess:

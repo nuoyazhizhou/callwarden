@@ -47,7 +47,6 @@ fn main() {
 #[cfg(unix)]
 mod unix {
     use std::io;
-    use std::os::unix::net::UnixStream;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -61,8 +60,7 @@ mod unix {
     use callwarden_core::daemon::config::DaemonConfig;
     use callwarden_core::daemon::dispatch::{dispatch, PeerCredential};
     use callwarden_core::daemon::server::{
-        spawn_http_transport, spawn_http_transport_prebound, start_server, ServerConfig,
-        ServerHandle,
+        new_serialization_point, spawn_http_transport_prebound,
     };
     use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
@@ -87,10 +85,6 @@ mod unix {
         /// 前台运行（Rust 实现天然前台，flag 仅为兼容 systemd Type=simple）
         #[arg(long, default_value_t = true)]
         foreground: bool,
-
-        /// UDS socket 路径（覆盖配置文件）
-        #[arg(long)]
-        socket: Option<PathBuf>,
 
         /// 工作线程数（覆盖配置文件）
         #[arg(long)]
@@ -223,8 +217,7 @@ mod unix {
         }
 
         eprintln!(
-            "[cw_daemon] [INFO] starting with config: socket={}, workers={}, registry={}",
-            config.socket_path.display(),
+            "[cw_daemon] [INFO] starting with config: workers={}, registry={}",
             config.max_workers,
             config.registry_db_path.display()
         );
@@ -270,92 +263,64 @@ mod unix {
         // validate_http_manifest 报 E_HTTP_MANIFEST_STALE fail-closed。此处同步
         // 预绑定（std listener + 原子 manifest 发布），使 manifest 在进程启动 ~1s
         // 内生效；listener 先行入内核 backlog，TCP connect 探针即刻成功。
-        // H6: HTTP 默认 transport（迁移期，安全后置）——未显式指定 transport 时默认启用 HTTP。
-        // 显式 --http-bind 时用指定地址；CW_DAEMON_TRANSPORT=http/auto 或未设置时启用 HTTP
-        // （默认 127.0.0.1:0 动态端口）；显式指定其他 transport（named-pipe/uds/windows-bridge/
-        // cli-bridge）时回落旧通道（HTTP 不启用）。
-        let http_spec: Option<String> = if cli.http_bind.is_some() {
-            cli.http_bind.clone()
-        } else {
-            let transport = std::env::var("CW_DAEMON_TRANSPORT")
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            // 迁移期默认 transport = http；显式指定非 http transport 时回落
-            if transport.is_empty() || transport == "http" || transport == "auto" {
-                Some(
-                    std::env::var("CW_DAEMON_HTTP_BIND")
-                        .unwrap_or_else(|_| "127.0.0.1:0".to_string()),
-                )
-            } else {
-                None
-            }
-        };
-        // H6：HTTP 成为迁移期默认 transport；未显式指定具体 transport 时，
-        // 让 daemon 状态报告 transport=http（dispatch::transport_from_env 读取该环境变量）。
-        if http_spec.is_some() {
-            let transport = std::env::var("CW_DAEMON_TRANSPORT")
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            if transport.is_empty() || transport == "auto" {
-                std::env::set_var("CW_DAEMON_TRANSPORT", "http");
-            }
-        }
-        // 预绑定：非 loopback fail-closed 退出（与旧 validate_loopback_bind 语义一致）；
-        // 其余预绑定失败（端口占用/manifest 写入）非致命——记日志并禁用 HTTP transport。
-        let prebound_http: Option<(
+        // 单轨（ADR-002）：daemon RPC 唯一出口是 HTTPS + mTLS。
+        // `--http-bind` / `CW_DAEMON_HTTP_BIND` 只决定绑定地址；
+        // 不存在 UDS / 命名管道回退路径。
+        let http_spec: String = cli.http_bind.clone().unwrap_or_else(|| {
+            std::env::var("CW_DAEMON_HTTP_BIND").unwrap_or_else(|_| "127.0.0.1:0".to_string())
+        });
+        std::env::set_var("CW_DAEMON_TRANSPORT", "https");
+
+        // 预绑定：loopback / remote 校验或 PKI 初始化失败一律 fail-closed
+        // （单轨下没有第二传输可以兜底）。
+        let prebound_http: (
             callwarden_core::daemon::http_server::BoundHttp,
             callwarden_core::daemon::http_server::HttpServerConfig,
-        )> = match http_spec.as_deref() {
-            Some(spec) => {
-                // P1-3/H6 修复：authority-scoped manifest（目录固定 ~/.callwarden，
-                // 与 Python get_http_manifest_path 一致）。
-                let authority_id = callwarden_core::daemon::http_server::http_authority_id();
-                let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
-                    callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
-                );
-                let http_cfg = callwarden_core::daemon::http_server::HttpServerConfig::new(
-                    spec.to_string(),
-                    manifest_path,
-                );
-                match callwarden_core::daemon::http_server::bind_http(&http_cfg) {
-                    Ok(bound) => {
-                        eprintln!(
-                            "[cw_daemon] [INFO] HTTP MVP pre-bound at http://{} (manifest published)",
-                            bound.local_addr
-                        );
-                        Some((bound, http_cfg))
-                    }
-                    Err(callwarden_core::daemon::http_server::HttpServerError::LoopbackOnly) => {
-                        eprintln!(
-                            "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): E_HTTP_MVP_LOOPBACK_ONLY",
-                            spec
-                        );
-                        return 1;
-                    }
-                    Err(callwarden_core::daemon::http_server::HttpServerError::RemoteNotAllowed) => {
-                        eprintln!(
-                            "[cw_daemon] [ERROR] HTTP MVP bind {} rejected: E_HTTP_BIND_REMOTE_NOT_ALLOWED (需 CW_DAEMON_HTTP_ALLOW_REMOTE=1)",
-                            spec
-                        );
-                        return 1;
-                    }
-                    Err(callwarden_core::daemon::http_server::HttpServerError::ProfileInvalid(profile)) => {
-                        eprintln!(
-                            "[cw_daemon] [ERROR] HTTP profile {:?} is not supported: E_HTTP_PROFILE_INVALID (only https_mtls_v1)",
-                            profile
-                        );
-                        return 1;
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "[cw_daemon] [ERROR] HTTP MVP pre-bind failed (HTTP disabled): {:?}",
-                            e
-                        );
-                        None
-                    }
+        ) = {
+            // P1-3/H6 修复：authority-scoped manifest（目录固定 ~/.callwarden，
+            // 与 Python get_http_manifest_path 一致）。
+            let authority_id = callwarden_core::daemon::http_server::http_authority_id();
+            let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
+                callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
+            );
+            let http_cfg = callwarden_core::daemon::http_server::HttpServerConfig::new(
+                http_spec.clone(),
+                manifest_path,
+            );
+            match callwarden_core::daemon::http_server::bind_http(&http_cfg) {
+                Ok(bound) => {
+                    eprintln!(
+                        "[cw_daemon] [INFO] HTTPS pre-bound at {} (manifest published)",
+                        bound.local_addr
+                    );
+                    (bound, http_cfg)
+                }
+                Err(callwarden_core::daemon::http_server::HttpServerError::LoopbackOnly) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] HTTPS bind {} rejected (non-loopback): E_HTTP_MVP_LOOPBACK_ONLY",
+                        http_spec
+                    );
+                    return 1;
+                }
+                Err(callwarden_core::daemon::http_server::HttpServerError::RemoteNotAllowed) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] HTTPS bind {} rejected: E_HTTP_BIND_REMOTE_NOT_ALLOWED (需 CW_DAEMON_HTTP_ALLOW_REMOTE=1)",
+                        http_spec
+                    );
+                    return 1;
+                }
+                Err(callwarden_core::daemon::http_server::HttpServerError::ProfileInvalid(profile)) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] HTTP profile {:?} is not supported: E_HTTP_PROFILE_INVALID (only https_mtls_v1)",
+                        profile
+                    );
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("[cw_daemon] [ERROR] HTTPS pre-bind failed: {:?}", e);
+                    return 1;
                 }
             }
-            None => None,
         };
 
         // 3. schema 初始化（WorkspaceRegistry::open 会自动 init_conn + 写入 schema_version）
@@ -529,64 +494,26 @@ mod unix {
             Ok(state)
         };
 
-        // H6/CR10：http_spec 解析与预绑定已前移至启动最前（见 "HTTP 预绑定" 块）。
-        let http_state: Option<Arc<TokioMutex<SnapshotDaemonState>>> = if http_spec.is_some() {
-            // CR10：loopback fail-closed 校验已在预绑定阶段完成（LoopbackOnly → return 1）。
-            match state_factory() {
-                Ok(s) => {
-                    eprintln!(
-                        "[cw_daemon] [INFO] HTTP MVP transport enabled (loopback-only, pre-bound)"
-                    );
-                    Some(Arc::new(TokioMutex::new(s)))
-                }
-                Err(e) => {
-                    eprintln!("[cw_daemon] [ERROR] HTTP MVP state init failed: {}", e);
-                    return 1;
-                }
+        // 单轨：daemon state 只由 HTTPS handler 使用。
+        let http_state: Arc<TokioMutex<SnapshotDaemonState>> = match state_factory() {
+            Ok(s) => {
+                eprintln!("[cw_daemon] [INFO] HTTPS transport enabled (pre-bound)");
+                Arc::new(TokioMutex::new(s))
             }
-        } else {
-            None
-        };
-
-        // 6. 构造 ServerConfig
-        let server_config = ServerConfig {
-            socket_path: config.socket_path.clone(),
-            max_message_bytes: callwarden_core::daemon::protocol::DEFAULT_MAX_MESSAGE_BYTES,
-            max_fds: callwarden_core::daemon::protocol::DEFAULT_MAX_FDS,
-            max_workers: config.max_workers,
-            request_timeout: config.request_timeout(),
-            socket_mode: config.socket_mode as libc::mode_t,
-            accept_timeout: Duration::from_millis(200),
-            // P0-3 修复：传递 socket_group 到 ServerConfig
-            socket_group: if config.socket_group.is_empty() {
-                None
-            } else {
-                Some(config.socket_group.clone())
-            },
-            http: None,
-        };
-
-        // 7. 启动 server
-        let mut handle: ServerHandle = match start_server(server_config, state_factory) {
-            Ok(h) => h,
             Err(e) => {
-                eprintln!("[cw_daemon] [ERROR] server 启动失败: {}", e);
+                eprintln!("[cw_daemon] [ERROR] daemon state init failed: {}", e);
                 return 1;
             }
         };
-        eprintln!(
-            "[cw_daemon] [INFO] server listening: {} (mode 0o{:o})",
-            config.socket_path.display(),
-            config.socket_mode
-        );
 
-        // H1/CR10: 启动 HTTP MVP accept loop（与既有 UDS transport 并行；loopback-only）。
-        // manifest 已在预绑定阶段原子发布（新 PID/endpoint）；此处仅接管 listener。
-        if let (Some((bound, http_cfg)), Some(state)) = (prebound_http, http_state) {
-            // P0-1 修复：复用 start_server 的唯一串行化点，避免 HTTP 与 UDS mutation 并发。
-            let http_sp = handle.serialization_point();
-            spawn_http_transport_prebound(bound, state, http_sp, http_cfg);
-        }
+        // 7. 启动 HTTPS accept loop（唯一传输，共享同一串行化点）。
+        let serialization_point = new_serialization_point();
+        spawn_http_transport_prebound(
+            prebound_http.0,
+            Arc::clone(&http_state),
+            Arc::clone(&serialization_point),
+            prebound_http.1,
+        );
 
         // 8. 注册信号处理
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -639,11 +566,9 @@ mod unix {
             }
         }
 
-        // 12. 优雅关闭
-        eprintln!("[cw_daemon] [INFO] shutting down server...");
-        handle.shutdown();
-        handle.join();
-        eprintln!("[cw_daemon] [INFO] server exited cleanly");
+        // 12. 优雅关闭：HTTPS accept 线程随进程退出（单轨无独立 listener 句柄）
+        eprintln!("[cw_daemon] [INFO] shutting down daemon...");
+        eprintln!("[cw_daemon] [INFO] daemon exited cleanly");
         0
     }
 
@@ -723,51 +648,57 @@ mod unix {
     }
 
     // ============================================
-    // health-check 子命令（连接 UDS socket 验证 daemon 存活）
+    // health-check 子命令（读取 HTTPS manifest，验证 daemon 存活）
     // ============================================
 
-    fn health_check(timeout: u64, cli: &Cli) -> i32 {
-        let config = match load_config(cli) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[cw_daemon] [ERROR] 配置加载失败: {}", e);
-                return 1;
-            }
-        };
-        let socket_path = cli.socket.clone().unwrap_or(config.socket_path);
+    fn health_check(timeout: u64, _cli: &Cli) -> i32 {
+        let authority_id = callwarden_core::daemon::http_server::http_authority_id();
+        let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
+            callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
+        );
 
         let deadline = Instant::now() + Duration::from_secs(timeout);
+        let mut last_error = String::from("manifest 尚不可读");
         while Instant::now() < deadline {
-            match UnixStream::connect(&socket_path) {
-                Ok(stream) => {
-                    // 连接成功，尝试发送一个 ping 消息（4 字节长度 + JSON）
-                    // 简化：只发空帧，daemon 应该返回错误但表示存活
-                    use std::io::Write;
-                    let mut stream = stream;
-                    // {"method":"ping"} = 18 字节
-                    let body = br#"{"id":1,"method":"ping"}"#;
-                    let len = body.len() as u32;
-                    if stream.write_all(&len.to_be_bytes()).is_ok()
-                        && stream.write_all(body).is_ok()
-                    {
+            match read_https_endpoint(&manifest_path) {
+                Ok(addr) => match std::net::TcpStream::connect_timeout(
+                    &addr,
+                    Duration::from_secs(2),
+                ) {
+                    Ok(_) => {
                         eprintln!(
-                            "[cw_daemon] [INFO] health-check OK: daemon responding at {}",
-                            socket_path.display()
+                            "[cw_daemon] [INFO] health-check OK: HTTPS listener responding at {}",
+                            addr
                         );
                         return 0;
                     }
-                }
-                Err(_) => {
-                    // socket 还没就绪，等 200ms 重试
-                    thread::sleep(Duration::from_millis(200));
-                }
+                    Err(e) => last_error = e.to_string(),
+                },
+                Err(e) => last_error = e,
             }
+            thread::sleep(Duration::from_millis(200));
         }
         eprintln!(
-            "[cw_daemon] [ERROR] health-check timeout: daemon not responding at {}",
-            socket_path.display()
+            "[cw_daemon] [ERROR] health-check timeout: daemon not responding at {} ({})",
+            manifest_path.display(),
+            last_error
         );
         1
+    }
+
+    /// 读取 manifest 的 `endpoint`（`https://<ip>:<port>`）并解析为 SocketAddr。
+    fn read_https_endpoint(path: &std::path::Path) -> Result<std::net::SocketAddr, String> {
+        let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let endpoint = v
+            .get("endpoint")
+            .and_then(|e| e.as_str())
+            .ok_or_else(|| "manifest 缺少 endpoint".to_string())?;
+        endpoint
+            .strip_prefix("https://")
+            .ok_or_else(|| format!("endpoint 不是 HTTPS: {}", endpoint))?
+            .parse()
+            .map_err(|e: std::net::AddrParseError| e.to_string())
     }
 
     // ============================================
@@ -787,9 +718,6 @@ mod unix {
 
     /// 应用 CLI 参数覆盖（最高优先级）
     fn apply_cli_overrides(config: &mut DaemonConfig, cli: &Cli) {
-        if let Some(socket) = &cli.socket {
-            config.socket_path = socket.clone();
-        }
         if let Some(workers) = cli.workers {
             config.max_workers = workers;
         }
@@ -1204,7 +1132,6 @@ mod unix {
                 PeerCredential::new_unix(owner_uid, 0, 0),
                 "workspace.recover",
                 &json!({ "workspace_instance_id": workspace_id }),
-                &[],
             );
             if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
                 let result = response.get("result").unwrap_or(&serde_json::Value::Null);
@@ -2151,7 +2078,7 @@ mod windows {
     use callwarden_core::daemon::config::DaemonConfig;
     use callwarden_core::daemon::dispatch::{dispatch, PeerCredential};
     use callwarden_core::daemon::server::{
-        spawn_http_transport_prebound, start_server, ServerConfig, ServerHandle,
+        new_serialization_point, spawn_http_transport_prebound,
     };
     use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
@@ -2203,13 +2130,6 @@ mod windows {
         /// 前台运行（Rust 实现天然前台，flag 仅为 CLI 兼容）
         #[arg(long, default_value_t = true)]
         foreground: bool,
-
-        /// 命名管道端点 `\\.\pipe\callwarden-<sid>`。
-        ///
-        /// Windows 上管道名始终由当前用户 SID 派生（NamedPipeListener::bind），
-        /// 该参数仅作 CLI 兼容（daemon_autostart 以 `--socket <pipe>` 唤起）。
-        #[arg(long)]
-        socket: Option<PathBuf>,
 
         /// 工作线程数（覆盖配置文件）
         #[arg(long)]
@@ -2296,16 +2216,7 @@ mod windows {
         // 应用 CLI 参数覆盖（最高优先级）
         apply_cli_overrides(&mut config, cli);
 
-        // Windows 管道名由当前用户 SID 派生，--socket 仅作兼容校验
-        if let Some(ref socket) = cli.socket {
-            let socket_str = socket.to_string_lossy();
-            if !socket_str.starts_with(r"\\.\pipe\callwarden-") {
-                eprintln!(
-                    "[cw_daemon] [WARN] --socket 不是命名管道端点（期望 \\\\.\\pipe\\callwarden-<sid>）: {}",
-                    socket_str
-                );
-            }
-        }
+        // 单轨（ADR-002）：端点固定为 HTTPS + mTLS（manifest 发布）。
 
         // 2. 确保目录存在
         if let Err(e) = config.ensure_directories() {
@@ -2387,84 +2298,62 @@ mod windows {
         // validate_http_manifest 报 E_HTTP_MANIFEST_STALE fail-closed。此处同步
         // 预绑定（std listener + 原子 manifest 发布），使 manifest 在进程启动 ~1s
         // 内生效；listener 先行入内核 backlog，TCP connect 探针即刻成功。
-        let http_spec: Option<String> = if cli.http_bind.is_some() {
-            cli.http_bind.clone()
-        } else {
-            let transport = std::env::var("CW_DAEMON_TRANSPORT")
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            // 迁移期默认 transport = http；显式指定非 http transport 时回落
-            if transport.is_empty() || transport == "http" || transport == "auto" {
-                Some(
-                    std::env::var("CW_DAEMON_HTTP_BIND")
-                        .unwrap_or_else(|_| "127.0.0.1:0".to_string()),
-                )
-            } else {
-                None
-            }
-        };
-        if http_spec.is_some() {
-            let transport = std::env::var("CW_DAEMON_TRANSPORT")
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            if transport.is_empty() || transport == "auto" {
-                std::env::set_var("CW_DAEMON_TRANSPORT", "http");
-            }
-        }
-        // 预绑定：非 loopback fail-closed 退出；其余预绑定失败（端口占用/manifest 写入）
-        // 非致命——记日志并禁用 HTTP transport。
-        let prebound_http: Option<(
+        // 单轨（ADR-002）：daemon RPC 唯一出口是 HTTPS + mTLS。
+        // `--http-bind` / `CW_DAEMON_HTTP_BIND` 只决定绑定地址；
+        // 不存在 UDS / 命名管道回退路径。
+        let http_spec: String = cli.http_bind.clone().unwrap_or_else(|| {
+            std::env::var("CW_DAEMON_HTTP_BIND").unwrap_or_else(|_| "127.0.0.1:0".to_string())
+        });
+        std::env::set_var("CW_DAEMON_TRANSPORT", "https");
+
+        // 预绑定：loopback / remote 校验或 PKI 初始化失败一律 fail-closed
+        // （单轨下没有第二传输可以兜底）。
+        let prebound_http: (
             callwarden_core::daemon::http_server::BoundHttp,
             callwarden_core::daemon::http_server::HttpServerConfig,
-        )> = match http_spec.as_deref() {
-            Some(spec) => {
-                let authority_id = callwarden_core::daemon::http_server::http_authority_id();
-                let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
-                    callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
-                );
-                let http_cfg = callwarden_core::daemon::http_server::HttpServerConfig::new(
-                    spec.to_string(),
-                    manifest_path,
-                );
-                match callwarden_core::daemon::http_server::bind_http(&http_cfg) {
-                    Ok(bound) => {
-                        eprintln!(
-                            "[cw_daemon] [INFO] HTTP MVP pre-bound at http://{} (manifest published)",
-                            bound.local_addr
-                        );
-                        Some((bound, http_cfg))
-                    }
-                    Err(callwarden_core::daemon::http_server::HttpServerError::LoopbackOnly) => {
-                        eprintln!(
-                            "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): E_HTTP_MVP_LOOPBACK_ONLY",
-                            spec
-                        );
-                        return 1;
-                    }
-                    Err(callwarden_core::daemon::http_server::HttpServerError::RemoteNotAllowed) => {
-                        eprintln!(
-                            "[cw_daemon] [ERROR] HTTP MVP bind {} rejected: E_HTTP_BIND_REMOTE_NOT_ALLOWED (需 CW_DAEMON_HTTP_ALLOW_REMOTE=1)",
-                            spec
-                        );
-                        return 1;
-                    }
-                    Err(callwarden_core::daemon::http_server::HttpServerError::ProfileInvalid(profile)) => {
-                        eprintln!(
-                            "[cw_daemon] [ERROR] HTTP profile {:?} is not supported: E_HTTP_PROFILE_INVALID (only https_mtls_v1)",
-                            profile
-                        );
-                        return 1;
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "[cw_daemon] [ERROR] HTTP MVP pre-bind failed (HTTP disabled): {:?}",
-                            e
-                        );
-                        None
-                    }
+        ) = {
+            let authority_id = callwarden_core::daemon::http_server::http_authority_id();
+            let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
+                callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
+            );
+            let http_cfg = callwarden_core::daemon::http_server::HttpServerConfig::new(
+                http_spec.clone(),
+                manifest_path,
+            );
+            match callwarden_core::daemon::http_server::bind_http(&http_cfg) {
+                Ok(bound) => {
+                    eprintln!(
+                        "[cw_daemon] [INFO] HTTPS pre-bound at {} (manifest published)",
+                        bound.local_addr
+                    );
+                    (bound, http_cfg)
+                }
+                Err(callwarden_core::daemon::http_server::HttpServerError::LoopbackOnly) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] HTTPS bind {} rejected (non-loopback): E_HTTP_MVP_LOOPBACK_ONLY",
+                        http_spec
+                    );
+                    return 1;
+                }
+                Err(callwarden_core::daemon::http_server::HttpServerError::RemoteNotAllowed) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] HTTPS bind {} rejected: E_HTTP_BIND_REMOTE_NOT_ALLOWED (需 CW_DAEMON_HTTP_ALLOW_REMOTE=1)",
+                        http_spec
+                    );
+                    return 1;
+                }
+                Err(callwarden_core::daemon::http_server::HttpServerError::ProfileInvalid(profile)) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] HTTP profile {:?} is not supported: E_HTTP_PROFILE_INVALID (only https_mtls_v1)",
+                        profile
+                    );
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("[cw_daemon] [ERROR] HTTPS pre-bind failed: {:?}", e);
+                    return 1;
                 }
             }
-            None => None,
         };
 
         // 3. schema 初始化（WorkspaceRegistry::open 会自动 init_conn + 写入 schema_version）
@@ -2628,62 +2517,26 @@ mod windows {
         };
 
         // H6/CR10：http_spec 解析与预绑定已前移至启动最前（见 "HTTP 预绑定" 块）。
-        let http_state: Option<Arc<TokioMutex<SnapshotDaemonState>>> = if http_spec.is_some() {
-            // CR10：loopback fail-closed 校验已在预绑定阶段完成（LoopbackOnly → return 1）。
-            match state_factory() {
-                Ok(s) => {
-                    eprintln!(
-                        "[cw_daemon] [INFO] HTTP MVP transport enabled (loopback-only, pre-bound)"
-                    );
-                    Some(Arc::new(TokioMutex::new(s)))
-                }
-                Err(e) => {
-                    eprintln!("[cw_daemon] [ERROR] HTTP MVP state init failed: {}", e);
-                    return 1;
-                }
+        // 单轨：daemon state 只由 HTTPS handler 使用。
+        let http_state: Arc<TokioMutex<SnapshotDaemonState>> = match state_factory() {
+            Ok(s) => {
+                eprintln!("[cw_daemon] [INFO] HTTPS transport enabled (pre-bound)");
+                Arc::new(TokioMutex::new(s))
             }
-        } else {
-            None
-        };
-
-        // 6. 构造 Windows ServerConfig。
-        // 管道名默认按 owner SID 派生；仅当显式端点自身是命名管道
-        // （daemon_autostart 传 `\\.\pipe\callwarden-<sid>` 或隔离 daemon 传独立名）
-        // 时作为覆盖，避免与常驻 daemon 同名冲突（隔离/测试共存）。
-        let pipe_name = {
-            let endpoint = config.socket_path.to_string_lossy();
-            if endpoint.starts_with(r"\\.\pipe\") {
-                Some(endpoint.to_string())
-            } else {
-                None
-            }
-        };
-        let server_config = ServerConfig {
-            max_message_bytes: callwarden_core::daemon::protocol::DEFAULT_MAX_MESSAGE_BYTES,
-            max_workers: config.max_workers,
-            request_timeout: config.request_timeout(),
-            accept_timeout: Duration::from_millis(200),
-            pipe_name,
-            http: None,
-        };
-
-        // 7. 启动 server（默认绑定 \\.\pipe\callwarden-<sid>，SDDL 仅授权 owner）
-        let mut handle: ServerHandle = match start_server(server_config, state_factory) {
-            Ok(h) => h,
             Err(e) => {
-                eprintln!("[cw_daemon] [ERROR] server 启动失败: {}", e);
+                eprintln!("[cw_daemon] [ERROR] daemon state init failed: {}", e);
                 return 1;
             }
         };
-        eprintln!("[cw_daemon] [INFO] named pipe server listening");
 
-        // H1/CR10: 启动 HTTP MVP accept loop（与既有 Named Pipe transport 并行；loopback-only）。
-        // manifest 已在预绑定阶段原子发布（新 PID/endpoint）；此处仅接管 listener。
-        if let (Some((bound, http_cfg)), Some(state)) = (prebound_http, http_state) {
-            // P0-1 修复：复用 start_server 的唯一串行化点，避免 HTTP 与 Named Pipe mutation 并发。
-            let http_sp = handle.serialization_point();
-            spawn_http_transport_prebound(bound, state, http_sp, http_cfg);
-        }
+        // 7. 启动 HTTPS accept loop（唯一传输，共享同一串行化点）。
+        let serialization_point = new_serialization_point();
+        spawn_http_transport_prebound(
+            prebound_http.0,
+            Arc::clone(&http_state),
+            Arc::clone(&serialization_point),
+            prebound_http.1,
+        );
 
         // 8. 注册控制台 Ctrl+C / Ctrl+Break 优雅关闭
         register_console_ctrl_handler();
@@ -2702,11 +2555,9 @@ mod windows {
             thread::sleep(Duration::from_millis(100));
         }
 
-        // 10. 优雅关闭（打断 accept → join worker 线程）
-        eprintln!("[cw_daemon] [INFO] shutting down server...");
-        handle.shutdown();
-        handle.join();
-        eprintln!("[cw_daemon] [INFO] server exited cleanly");
+        // 10. 优雅关闭：HTTPS accept 线程随进程退出（单轨无独立 listener 句柄）
+        eprintln!("[cw_daemon] [INFO] shutting down daemon...");
+        eprintln!("[cw_daemon] [INFO] daemon exited cleanly");
         0
     }
 
@@ -2783,193 +2634,62 @@ mod windows {
     }
 
     // ============================================
-    // health-check 子命令（命名管道 ping）
+    // health-check 子命令（读取 HTTPS manifest，验证 daemon 存活）
     // ============================================
 
-    fn health_check(timeout: u64, cli: &Cli) -> i32 {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::Foundation::{
-            CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
-        };
-        use windows_sys::Win32::Storage::FileSystem::{
-            CreateFileW, ReadFile, WriteFile, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-        };
-        use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
-
-        let config = match load_config(cli) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[cw_daemon] [ERROR] 配置加载失败: {}", e);
-                return 1;
-            }
-        };
-        let endpoint = cli
-            .socket
-            .clone()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(default_windows_endpoint);
-
-        if !endpoint.starts_with(r"\\.\pipe\callwarden-") {
-            eprintln!(
-                "[cw_daemon] [ERROR] health-check: 端点不是命名管道（期望 \\\\.\\pipe\\callwarden-<sid>）: {}",
-                endpoint
-            );
-            return 1;
-        }
-        let _ = config;
-
-        // 宽字符管道名（CreateFileW / WaitNamedPipeW 需要 PCWSTR）
-        let wide: Vec<u16> = std::path::Path::new(&endpoint)
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
+    fn health_check(timeout: u64, _cli: &Cli) -> i32 {
+        let authority_id = callwarden_core::daemon::http_server::http_authority_id();
+        let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
+            callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
+        );
 
         let deadline = Instant::now() + Duration::from_secs(timeout);
-        loop {
-            // WaitNamedPipeW 等待管道实例可用（daemon 未启动时管道不存在）
-            if unsafe { WaitNamedPipeW(wide.as_ptr(), 5000) } != 0 {
-                break;
-            }
-            if Instant::now() >= deadline {
-                eprintln!(
-                    "[cw_daemon] [ERROR] health-check timeout: daemon not responding at {}",
-                    endpoint
-                );
-                return 1;
+        let mut last_error = String::from("manifest 尚不可读");
+        while Instant::now() < deadline {
+            match read_https_endpoint(&manifest_path) {
+                Ok(addr) => match std::net::TcpStream::connect_timeout(
+                    &addr,
+                    Duration::from_secs(2),
+                ) {
+                    Ok(_) => {
+                        eprintln!(
+                            "[cw_daemon] [INFO] health-check OK: HTTPS listener responding at {}",
+                            addr
+                        );
+                        return 0;
+                    }
+                    Err(e) => last_error = e.to_string(),
+                },
+                Err(e) => last_error = e,
             }
             thread::sleep(Duration::from_millis(200));
         }
-
-        // 打开管道（阻塞模式；服务端协议：4 字节大端长度 + JSON）
-        let handle: HANDLE = unsafe {
-            CreateFileW(
-                wide.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                std::ptr::null(),
-                OPEN_EXISTING,
-                0,
-                std::ptr::null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            eprintln!(
-                "[cw_daemon] [ERROR] health-check: CreateFileW 失败: {}",
-                endpoint
-            );
-            return 1;
-        }
-
-        // 发送 ping（与服务端 recv_message 一致：4 字节大端长度 + JSON）
-        let body = br#"{"id":1,"method":"ping","params":{}}"#;
-        let len = (body.len() as u32).to_be_bytes();
-        let mut frame = Vec::with_capacity(4 + body.len());
-        frame.extend_from_slice(&len);
-        frame.extend_from_slice(body);
-
-        let mut written: u32 = 0;
-        let ok_write = unsafe {
-            WriteFile(
-                handle,
-                frame.as_ptr(),
-                frame.len() as u32,
-                &mut written,
-                std::ptr::null_mut(),
-            )
-        };
-        if ok_write == 0 {
-            unsafe { CloseHandle(handle) };
-            eprintln!(
-                "[cw_daemon] [ERROR] health-check: WriteFile 失败: {}",
-                endpoint
-            );
-            return 1;
-        }
-
-        // 读取 4 字节长度前缀（ReadFile 可能短读，循环补足）
-        let mut header = [0u8; 4];
-        let mut header_read: u32 = 0;
-        while header_read < 4 {
-            let mut n: u32 = 0;
-            let ptr = unsafe { header.as_mut_ptr().add(header_read as usize) };
-            let ok =
-                unsafe { ReadFile(handle, ptr, 4 - header_read, &mut n, std::ptr::null_mut()) };
-            if ok == 0 || n == 0 {
-                unsafe { CloseHandle(handle) };
-                eprintln!(
-                    "[cw_daemon] [ERROR] health-check: 读取响应长度失败: {}",
-                    endpoint
-                );
-                return 1;
-            }
-            header_read += n;
-        }
-        let resp_len = u32::from_be_bytes(header) as usize;
-        let mut resp = vec![0u8; resp_len];
-        let mut resp_read: u32 = 0;
-        while resp_read < resp_len as u32 {
-            let mut n: u32 = 0;
-            let ptr = unsafe { resp.as_mut_ptr().add(resp_read as usize) };
-            let ok = unsafe {
-                ReadFile(
-                    handle,
-                    ptr,
-                    (resp_len as u32) - resp_read,
-                    &mut n,
-                    std::ptr::null_mut(),
-                )
-            };
-            if ok == 0 || n == 0 {
-                unsafe { CloseHandle(handle) };
-                eprintln!(
-                    "[cw_daemon] [ERROR] health-check: 读取响应体失败: {}",
-                    endpoint
-                );
-                return 1;
-            }
-            resp_read += n;
-        }
-        unsafe { CloseHandle(handle) };
-
-        let parsed: serde_json::Value = match serde_json::from_slice(&resp) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!(
-                    "[cw_daemon] [ERROR] health-check: 响应 JSON 解析失败: {}: {}",
-                    e, endpoint
-                );
-                return 1;
-            }
-        };
-        if parsed.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-            eprintln!(
-                "[cw_daemon] [ERROR] health-check: daemon 返回异常响应: {}",
-                parsed
-            );
-            return 1;
-        }
         eprintln!(
-            "[cw_daemon] [INFO] health-check OK: daemon responding at {}",
-            endpoint
+            "[cw_daemon] [ERROR] health-check timeout: daemon not responding at {} ({})",
+            manifest_path.display(),
+            last_error
         );
-        0
+        1
+    }
+
+    /// 读取 manifest 的 `endpoint`（`https://<ip>:<port>`）并解析为 SocketAddr。
+    fn read_https_endpoint(path: &std::path::Path) -> Result<std::net::SocketAddr, String> {
+        let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let endpoint = v
+            .get("endpoint")
+            .and_then(|e| e.as_str())
+            .ok_or_else(|| "manifest 缺少 endpoint".to_string())?;
+        endpoint
+            .strip_prefix("https://")
+            .ok_or_else(|| format!("endpoint 不是 HTTPS: {}", endpoint))?
+            .parse()
+            .map_err(|e: std::net::AddrParseError| e.to_string())
     }
 
     // ============================================
     // 辅助函数
     // ============================================
-
-    /// 当前用户的默认命名管道端点：`\\.\pipe\callwarden-<sid>`。
-    fn default_windows_endpoint() -> String {
-        match callwarden_core::daemon::transport_windows::get_current_user_sid() {
-            Ok(sid) => format!(r"\\.\pipe\callwarden-{}", sid),
-            Err(e) => {
-                eprintln!("[cw_daemon] [ERROR] 获取当前用户 SID 失败: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
 
     /// 加载配置：默认值 → 文件覆盖（如果 --config 指定）
     fn load_config(
@@ -2984,9 +2704,6 @@ mod windows {
 
     /// 应用 CLI 参数覆盖（最高优先级）
     fn apply_cli_overrides(config: &mut DaemonConfig, cli: &Cli) {
-        if let Some(socket) = &cli.socket {
-            config.socket_path = socket.clone();
-        }
         if let Some(workers) = cli.workers {
             config.max_workers = workers;
         }
@@ -3060,7 +2777,6 @@ mod windows {
                 PeerCredential::new_unix(owner_uid, 0, 0),
                 "workspace.recover",
                 &json!({ "workspace_instance_id": workspace_id }),
-                &[],
             );
             if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
                 let result = response.get("result").unwrap_or(&serde_json::Value::Null);

@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import logging
 import os
-import socket
 import subprocess
 import threading
 import time
@@ -232,7 +231,7 @@ def user_agent_connect(
     规范：watcher-generation-state-machine.md §4.1（session epoch CAS）
 
     Args:
-        daemon_rpc_client: DaemonClient 单例（或 UnixDaemonRpcClient）
+        daemon_rpc_client: HttpDaemonRpcClient 单例
         workspace_instance_id: workspace 标识符（16 位 hex）
         agent_session: AgentSession 实例
 
@@ -356,7 +355,7 @@ def build_refresh_message(
 # 阈值：超过此大小走 FD 路径（与 ipc_transport.MAX_MSG_BYTES 对齐）
 REFRESH_LARGE_FILE_THRESHOLD = 16 * 1024 * 1024  # 16 MB
 
-# 内联（HTTP / 非 AF_UNIX）路径的 hex 编码上限：超过此大小改用 gzip + base64。
+# 内联（HTTP 单轨）路径的 hex 编码上限：超过此大小改用 gzip + base64。
 #
 # Q9 大文件优化（2026-09-17）：daemon HTTP body 上限为 64MiB（http_server.rs
 # MAX_BODY_BYTES）。hex 编码膨胀 2x，>32MB 的源码 hex 编码后即超限；且 8-16MB
@@ -485,7 +484,7 @@ def send_refresh_to_daemon(
     - daemon-ipc-security.md §6（S10：传输路径对 agent 透明）
 
     Args:
-        daemon_rpc_client: DaemonClient 单例（或 UnixDaemonRpcClient）
+        daemon_rpc_client: HttpDaemonRpcClient 单例
         agent_session: AgentSession 实例
         workspace_instance_id: workspace 标识符
         rel_path: 相对路径
@@ -533,23 +532,10 @@ def send_refresh_to_daemon(
                 f"workspace.file.refresh RPC 失败（小文件路径）：{e}",
             ) from e
 
-    # 2b. 大文件：优先 FD 传递（需 client 支持 + Unix socket 传输 + 超过阈值）
-    #
-    # 能力探测修复（2026-09-17）：原实现仅按 socket.AF_UNIX 判定平台能力，
-    # 但生产 run_agent_mode 传入的是 HttpDaemonRpcClient（HTTP 传输，
-    # 无 call_with_fd 方法）。Linux 上 >16MB 文件会走到此处并触发
-    # AttributeError，导致大文件刷新静默失败。正确判据是「client 本身是否
-    # 支持 FD 传递」，与平台是否具备 AF_UNIX 无关。
-    #
-    # 不支持 FD / 非 Unix / 未超过 REFRESH_LARGE_FILE_THRESHOLD 时，走 2c 的
-    # gzip+b64 内联降级（daemon 侧 workspace.rs 降级链明确支持
-    # canonical_bytes_gz_b64，Windows 分支同样走此路）。
-    supports_fd = hasattr(daemon_rpc_client, "call_with_fd")
-    use_fd = (
-        supports_fd
-        and hasattr(socket, "AF_UNIX")
-        and canonical_len > REFRESH_LARGE_FILE_THRESHOLD
-    )
+    # 2b. ADR-002 单轨：FD（SCM_RIGHTS）传递已退休——HTTPS+mTLS 无法传递
+    # 物理 FD。大文件一律走 2c 的 multipart 裸 payload / gzip payload（或
+    # gzip+base64 内联降级），不存在 Unix socket FD 路径。
+    use_fd = False
     if not use_fd:
         # 2c. Q10 raw-gz-body multipart 路径（HTTP 传输的主力路径）
         #
@@ -605,52 +591,6 @@ def send_refresh_to_daemon(
                     )
         # 2c-降级：gzip + base64 内联（旧 daemon / 无 multipart 能力 client）
         return _refresh_via_gz_b64(daemon_rpc_client, params, canonical_bytes)
-
-    # Linux 大文件路径（client 须支持 FD）：优先 memfd，降级普通临时文件
-    from callwarden.server.ipc_transport import create_sealed_memfd
-    fd = -1
-    tmp_path = None
-    use_memfd = False
-    try:
-        try:
-            fd = create_sealed_memfd(canonical_bytes)
-            use_memfd = True
-        except (AttributeError, OSError):
-            # memfd 不可用（非 Linux 或内核版本太老）：降级普通临时文件
-            tmp_dir = os.path.join(
-                os.path.expanduser("~"), ".callwarden", "agent_tmp",
-            )
-            os.makedirs(tmp_dir, exist_ok=True)
-            tmp_path = os.path.join(
-                tmp_dir,
-                f"refresh_{agent_session.session_id}_"
-                f"{params['monotonic_seq']}.tmp",
-            )
-            with open(tmp_path, "wb") as f:
-                f.write(canonical_bytes)
-            fd = os.open(tmp_path, os.O_RDONLY)
-
-        try:
-            return daemon_rpc_client.call_with_fd(
-                "workspace.file.refresh", params, fd,
-            )
-        except Exception as e:
-            raise AgentProtocolError(
-                _resolve_rpc_error_code(e),
-                f"workspace.file.refresh RPC 失败（FD 路径，"
-                f"{'memfd' if use_memfd else '临时文件'}）：{e}",
-            ) from e
-    finally:
-        if fd >= 0:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
 
 
 # ============================================

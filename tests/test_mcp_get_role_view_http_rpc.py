@@ -145,7 +145,7 @@ def test_get_role_view_unknown_task(live_daemon):
 # ---------------------------------------------------------------------------
 def test_get_role_view_daemon_unavailable_fail_closed():
     from callwarden.config import get_http_authority_id
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError) as ei:
         c.call("get_role_view", {"task_id": CLI_02_TASK, "role": "implementer"})

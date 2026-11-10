@@ -56,7 +56,6 @@ def _stub_daemon_client(monkeypatch, cli_main, *, mode="auto", projection=None, 
             return _StubClient().call(method, params)
 
     monkeypatch.setattr(cli_main, "get_daemon_mode", lambda: mode)
-    monkeypatch.setattr(client_mod, "UnixDaemonRpcClient", _StubCls, raising=False)
     monkeypatch.setattr(client_mod, "HttpDaemonRpcClient", _StubCls, raising=False)
     monkeypatch.setattr(client_mod, "is_http_transport_enabled", lambda: False, raising=False)
     return client_mod

@@ -5,7 +5,7 @@
   - success：Rust daemon ping 成功，Python 仅做输出格式化；
   - invalid/unavailable：daemon 端点不可达 -> fail-closed（"daemon 不可达"）；
   - restart 后行为一致：二次调用结果稳定；
-  - 结构不变量：Python 不再持有 UnixDaemonRpcClient / Unix socket 业务路径，
+  - 结构不变量：Python 不再持有 HttpDaemonRpcClient / Unix socket 业务路径，
     Rust daemon 是唯一 authority。
 
 与 test_cli_004_http_rpc.py 互补：本文件聚焦 `cw-agent status` 单命令链路。

@@ -8,10 +8,11 @@
   handle_final_zero_python_authority_audit）；客户端侧扫描由
   `deliverables/software-company/audit_server_authority_residue.py` 承担，
   本测试以真实 daemon RPC + 静态门禁固化"零可执行 authority"不变量；
-- 14 个 legacy Python daemon 实现文件（authority 已由 Rust 完全接管，
+- 13 个 legacy Python daemon 实现文件（authority 已由 Rust 完全接管，
   见 docs/evidence/srv019_rust_takeover_matrix_20260829.md）经
   `RETIRED_LEGACY_FILES` 白名单声明性退休——保留仅为存量测试基线，
-  白名单只减不加；新增文件一律不得入白名单；
+  白名单只减不加；新增文件一律不得入白名单；server/daemon_server.py
+  已经 ADR-002 单轨下线物理删除，其白名单条目随之移除；
 - Python 行为测试（test_phase8 / test_c5 / test_g9 等）受存量锁定保留；
   负矩阵直接针对 final gate 审计接缝（真实 daemon 集成，daemon 不可用时
   runtime 段 skip），并以静态门禁固化审计脚本 retired 白名单与
@@ -94,15 +95,14 @@ def test_success_final_gate_passed():
     assert actual_py >= 53  # 下界回归保护：server 模块只增不减
 
 
-def test_success_retired_files_14():
-    """14 个 legacy 文件全部声明性退休（与原始 14 文件清单一致）。"""
+def test_success_retired_files_13():
+    """13 个 legacy 文件全部声明性退休（daemon_server.py 已物理删除）。"""
     report = run_audit()
-    assert report["retired_files_count"] == 14
+    assert report["retired_files_count"] == 13
     expected = {
         "server/compat_registry.py",
         "server/compat_worker.py",
         "server/daemon_config.py",
-        "server/daemon_server.py",
         "server/durable_staging.py",
         "server/health_check.py",
         "server/job_executor.py",
@@ -269,7 +269,7 @@ def test_authority_audit_retired_whitelist_only_shrinks():
 
 
 def test_authority_takeover_matrix_exists():
-    """接管矩阵文档存在（14 文件逐文件 Rust 接管证据）。"""
+    """接管矩阵文档存在（13 文件逐文件 Rust 接管证据）。"""
     assert MATRIX.exists(), "缺少 srv019_rust_takeover_matrix_20260829.md"
 
 
@@ -307,7 +307,7 @@ def test_restart_audit_idempotent():
     r1 = run_audit()
     r2 = run_audit()
     assert r1["finding_count"] == r2["finding_count"] == 0
-    assert r1["retired_files_count"] == r2["retired_files_count"] == 14
+    assert r1["retired_files_count"] == r2["retired_files_count"] == 13
 
 
 def test_restart_final_gate_replay_idempotent(rpc):

@@ -6,9 +6,9 @@ r"""M7 Lease Gate 实证（任务 T-1786499847862-77260874）。
 E_LEASE_NOT_FOUND / E_LEASE_TOKEN_MISMATCH / E_LEASE_EXPIRED /
 E_LEASE_FENCING_STALE / E_LEASE_HOLDER_MISMATCH）。
 
-全程启动真实 `cw-daemon.exe`（隔离临时数据目录 + task DB），通过 Named Pipe
-进程级 RPC 往返验证，**禁 mock**；每个拒绝场景都证明 task status / task_events /
-action_identities 未被错误修改。
+全程启动真实 `cw-daemon.exe`（隔离临时数据目录 + task DB），通过 HTTPS + mTLS
+（`HttpDaemonRpcClient`，ADR-002 单轨）进程级 RPC 往返验证，**禁 mock**；
+每个拒绝场景都证明 task status / task_events / action_identities 未被错误修改。
 
 覆盖矩阵：
 - 成功路径：create → claim → report(review) → lease.acquire →
@@ -21,18 +21,14 @@ action_identities 未被错误修改。
   close 保留父任务子任务关闸 / 业务错误原样返回（不包装为连接失败）/
   enterprise/auto daemon 不可用 fail-closed（不静默回退本地 DB）
 
-前置条件（与 test_lease_rpc.py 一致）：
-1. Windows 平台（Named Pipe）
-2. 已构建 `cw-daemon.exe`：`cargo build --release --no-default-features
-   --manifest-path rust_ext/Cargo.toml --bin cw-daemon`
-3. 默认管道 `\\.\pipe\callwarden-<sid>` 未被其他 daemon 占用（占用则 skip）
+前置条件：
+1. 已构建 `cw-daemon.exe` 且存在可用的 mTLS PKI；缺失时由 `setup_w3_client`
+   归一为前置缺失并 skip。
 """
 
-import json
 import os
 import shutil
 import sqlite3
-import subprocess
 import sys
 import tempfile
 import time
@@ -41,170 +37,106 @@ import pytest
 
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.daemon_client import DaemonUnavailableError
-from _prereq_guard import (
-    require_cargo,
-    skip_if_daemon_exited_before_manifest,
-    skip_if_native_build_prereq_unavailable,
-)
-
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
+from callwarden.config import get_pki_dir
+from _w3_harness import seed_cli_task_agent, seed_cli_task_authority, setup_w3_client
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
-    reason="进程级 Lease 门禁 round-trip 需要 Windows + Named Pipe",
+    reason="进程级 Lease 门禁 round-trip 需要 Windows 隔离 daemon",
 )
 
-requires_binaries = pytest.mark.skipif(
-    not os.path.exists(_DAEMON_BIN),
-    reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
-)
-
-
-def _daemon_config(tmp: str) -> dict:
-    """生成隔离的 daemon JSON 配置（Windows 管道名由 transport 按 SID 派生）。"""
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 2,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 2,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
-
-
-@pytest.fixture(scope="module", autouse=True)
-def ensure_fresh_binary():
-    """P2 门禁：显式构建 cw-daemon，确保二进制由当前源码重建。"""
-    cargo = require_cargo()
-    build = subprocess.run(
-        [cargo, "build", "--release", "--no-default-features",
-         "--manifest-path", os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
-         "--bin", "cw-daemon"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if build.returncode != 0:
-        skip_if_native_build_prereq_unavailable(build)
-        pytest.fail("cargo build 失败，二进制无法由当前源码重建：\n" + (build.stdout + build.stderr)[-3000:])
-    if not os.path.exists(_DAEMON_BIN):
-        pytest.fail(f"cargo build 成功但未产出 {_DAEMON_BIN}")
+_REAL_PKI_DIR = get_pki_dir()
 
 
 @pytest.fixture(scope="class")
 def lease_env():
-    """启动真实 cw-daemon（隔离 task DB），返回 (client, tmp, task_db, proc)。
-
-    与 test_lease_rpc.py 一致：探针默认管道，被生产 daemon 占用则 skip；
-    隔离库插入 workspace id=1，使 action_identity 可绑定真实 workspace_id。
-    """
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    from callwarden.config import _get_windows_user_sid
-
-    pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
-    probe = UnixDaemonRpcClient(socket_path=pipe, timeout=3)
-    try:
-        probe.call("ping")
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过")
-    except Exception:
-        pass
-
+    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, ws)。"""
+    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
     tmp = tempfile.mkdtemp(prefix="cw_lease_gate_")
-    config = _daemon_config(tmp)
-    config_path = os.path.join(tmp, "daemon.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config, f)
-    log = open(os.path.join(tmp, "daemon.log"), "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-    )
-
-    client = UnixDaemonRpcClient(socket_path=pipe, timeout=10)
-    # 150s：daemon 冷启动两段 ~24s 空耗 + worker 池预热，管道绑定 ~50s、
-    # 首次应答 ~89s（详见 step3 证据）；旧 40s 恒假失败。
-    deadline = time.time() + 150
-    ready = False
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            break
-        try:
-            if client.call("ping").get("status") == "ok":
-                ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    if not ready:
-        log.flush()
-        try:
-            stderr_text = open(
-                os.path.join(tmp, "daemon.log"), encoding="utf-8").read()[-3000:]
-        except OSError:
-            stderr_text = ""
-        skip_if_daemon_exited_before_manifest(
-            proc, stderr_text, context="daemon 未在超时内响应")
-        pytest.fail("daemon 未在超时内响应")
-
-    task_db = os.path.join(tmp, "callwarden.db")
-
-    # BR-01/BR-02：task.create 必须显式携带 (workspace_id, workspace_instance_id)
-    # 且 task-DB workspaces 表存在对应行；旧版只插 id=1、无 instance/capture 且
-    # create 不传配对 → E_TASK_WORKSPACE_UNBOUND（陈旧断言）。对齐
-    # tests/test_task_prompt_e2e.py 的经证实范式：workspace.register 返回 registry
-    # 整数 id + instance，把该 id 同插 task-DB workspaces 表（is_active=1），
-    # 使 registry 与 task-DB 两侧 id/instance 一致。
     ws_root = os.path.join(tmp, "ws_root")
-    os.makedirs(ws_root, exist_ok=True)
-    reg = client.call("workspace.register", {
-        "name": "lease-gate-e2e-ws", "client_view_root": ws_root,
-        "description": "lease gate empirical",
-        "git_remote_url": "https://github.com/callwarden/lease-gate-e2e.git",
-        "git_head_commit_sha": "lgs0" * 10,
-    })
-    ws_id = reg["workspace_id"]
-    ws_inst = reg["workspace_instance_id"]
-    snapshot_id = reg.get("snapshot_id")
-    assert isinstance(ws_id, int) and ws_id > 0, reg
-    assert isinstance(ws_inst, str) and ws_inst.strip(), reg
-    assert isinstance(snapshot_id, str) and snapshot_id.strip(), reg
-    conn = sqlite3.connect(task_db)
+    proc = None
     try:
-        conn.execute(
-            "INSERT OR REPLACE INTO workspaces (id, name, root_path, created_at, is_active) "
-            "VALUES (?, ?, ?, ?, 1)",
-            (ws_id, "lease-gate-e2e-ws", ws_root, time.time()),
-        )
-        conn.commit()
+        client, _inst, _endpoint, proc = setup_w3_client(tmp, ws_root, ws_id=1)
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        task_db = os.path.join(tmp, "task.db")
+
+        # BR-01/BR-02：task.create 必须显式携带 (workspace_id,
+        # workspace_instance_id)，且 task-DB workspaces 表存在对应 canonical
+        # capture。workspace.register 返回 registry 整数 id / instance /
+        # snapshot_id，这里同插 task-DB workspaces 并补 canonical authority。
+        reg = client.call("workspace.register", {
+            "name": "lease-gate-e2e-ws", "client_view_root": ws_root,
+            "description": "lease gate empirical",
+        })
+        ws_id = reg["workspace_id"]
+        ws_inst = reg["workspace_instance_id"]
+        assert isinstance(ws_id, int) and ws_id > 0, reg
+        assert isinstance(ws_inst, str) and ws_inst.strip(), reg
+        seed_cli_task_authority(task_db, ws_id, "lease-gate-e2e-ws", ws_root, ws_inst)
+        seed_cli_task_agent(task_db, "agent-gate-impl",
+                            session_id="session-impl", role="executor")
+        # snapshot_id 由 daemon 发布空 codegraph 生成（task.report 必需）。
+        cg_db = os.path.join(tmp, "userhome", ".callwarden", "callwarden.db")
+        published = client.call("snapshot.publish", {
+            "workspace_instance_id": ws_inst, "db_path": cg_db,
+        })
+        snapshot_id = published.get("snapshot_id") if isinstance(published, dict) else None
+        assert isinstance(snapshot_id, str) and snapshot_id.strip(), published
+
+        yield client, tmp, task_db, proc, {
+            "workspace_id": ws_id,
+            "workspace_instance_id": ws_inst,
+            "snapshot_id": snapshot_id,
+        }
     finally:
-        conn.close()
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                proc.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
 
-    yield client, tmp, task_db, proc, {
-        "workspace_id": ws_id,
-        "workspace_instance_id": ws_inst,
-        "snapshot_id": snapshot_id,
-    }
 
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    shutil.rmtree(tmp, ignore_errors=True)
+def _task_status(client, task_id):
+    return client.call("task.status", {"task_id": task_id})
+
+
+def _task_events(client, task_id):
+    return client.call("task.events", {"task_id": task_id})
+
+
+def _lease_acquire(client, task_id, role, identity, ttl_seconds):
+    return client.call("lease.acquire", {
+        "task_id": task_id, "role": role, "identity": identity,
+        "ttl_seconds": ttl_seconds,
+    })
+
+
+def _lease_release(client, task_id, role, token, identity):
+    return client.call("lease.release", {
+        "task_id": task_id, "role": role, "token": token, "identity": identity,
+    })
+
+
+_VERDICT_WAIVER = {"reason": "lease-gate empirical test"}
+
+
+def _task_apply(client, task_id, reviewer, identity, token, counter):
+    return client.call("task.apply", {
+        "task_id": task_id, "reviewer": reviewer, "identity": identity,
+        "lease_token": token, "fencing_counter": counter,
+        "verdict_waiver": _VERDICT_WAIVER,
+    })
+
+
+def _task_close(client, task_id, reviewer, identity, token, counter):
+    return client.call("task.close", {
+        "task_id": task_id, "reviewer": reviewer, "identity": identity,
+        "lease_token": token, "fencing_counter": counter,
+        "verdict_waiver": _VERDICT_WAIVER,
+    })
 
 
 # ----------------------------------------------------------------------
@@ -266,6 +198,15 @@ _CHILD_ROLE_CONTRACTS = [
 ]
 
 
+def _implementer_identity(session: str = "session-impl") -> dict:
+    return {
+        "agent_id": "agent-gate-impl",
+        "session_id": session,
+        "model_id": "model-gate-impl",
+        "role": "executor",
+    }
+
+
 def _prepare_task_review(lease_env, task_id: str, session: str = "session-impl",
                          steps: list = None) -> dict:
     """create(open) → claim(in_progress) → report(review)。返回 claim 响应。
@@ -281,21 +222,27 @@ def _prepare_task_review(lease_env, task_id: str, session: str = "session-impl",
         "steps": steps if steps is not None else [{"action": "实现", "target_file": "f.py"}],
         "workspace_id": ws["workspace_id"],
         "workspace_instance_id": ws["workspace_instance_id"],
+        "role_contracts": _CHILD_ROLE_CONTRACTS,
+        "identity_policy": "legacy_identity_v1",
     })
-    claim = client.call("task.claim", {"task_id": task_id, "agent_session_id": session})
+    claim = client.call("task.claim", {
+        "task_id": task_id,
+        "agent_session_id": session,
+        "identity": _implementer_identity(session),
+        "contract_claim": _CHILD_ROLE_CONTRACTS[0],
+    })
     report_params = {"task_id": task_id, "summary": "done", "agent_session_id": session,
                      "success": True,
                      "snapshot_id": ws["snapshot_id"]}
     if claim.get("step_id"):
         report_params["step_id"] = claim["step_id"]
     client.call("task.report", report_params)
-    assert client.task_status(task_id)["status"] == "review", "任务未推进到 review"
+    assert _task_status(client, task_id)["status"] == "review", "任务未推进到 review"
     return claim
 
 
 def _acquire_reviewer_lease(client, task_id: str, tag: str) -> dict:
-    return client.lease_acquire(task_id, "reviewer", identity=_reviewer_identity(tag),
-                                ttl_seconds=3600.0)
+    return _lease_acquire(client, task_id, "reviewer", _reviewer_identity(tag), 3600.0)
 
 
 def _prepare_task_applied(lease_env, task_id: str, tag: str) -> dict:
@@ -303,8 +250,8 @@ def _prepare_task_applied(lease_env, task_id: str, tag: str) -> dict:
     client = lease_env[0]
     _prepare_task_review(lease_env, task_id)
     acq = _acquire_reviewer_lease(client, task_id, tag)
-    res = client.task_apply(task_id, reviewer="reviewer", identity=_reviewer_identity(tag),
-                            lease_token=acq["token"], fencing_counter=acq["fencing_counter"])
+    res = _task_apply(client, task_id, "reviewer", _reviewer_identity(tag),
+                      acq["token"], acq["fencing_counter"])
     assert res["status"] == "applied", f"apply 失败: {res}"
     return acq
 
@@ -322,15 +269,15 @@ def _count_actions(task_db: str, task_id: str) -> int:
 def _assert_rejected(client, task_db: str, task_id: str, method: str, params: dict,
                      expect_code: str):
     """断言拒绝：返回 expect_code，且 task status / task_events / action_identities 均不变。"""
-    before_status = client.task_status(task_id)["status"]
-    before_events = len(client.task_events(task_id)["events"])
+    before_status = _task_status(client, task_id)["status"]
+    before_events = len(_task_events(client, task_id)["events"])
     before_actions = _count_actions(task_db, task_id)
     with pytest.raises(DaemonRemoteError) as exc:
         client.call(method, params)
     assert exc.value.code == expect_code, f"{method}: {exc.value}"
-    after_status = client.task_status(task_id)["status"]
+    after_status = _task_status(client, task_id)["status"]
     assert after_status == before_status, f"状态被错误修改: {before_status} -> {after_status}"
-    after_events = len(client.task_events(task_id)["events"])
+    after_events = len(_task_events(client, task_id)["events"])
     assert after_events == before_events, f"拒绝后新增了 task_event: {before_events} -> {after_events}"
     after_actions = _count_actions(task_db, task_id)
     assert after_actions == before_actions, f"拒绝后写入了 action_identity: {before_actions} -> {after_actions}"
@@ -340,7 +287,6 @@ def _assert_rejected(client, task_db: str, task_id: str, method: str, params: di
 # 成功路径
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestLeaseGateSuccessPath:
     """合法 reviewer lease 下 apply/close 全链路成功，事件与身份落库。"""
 
@@ -351,14 +297,14 @@ class TestLeaseGateSuccessPath:
         acq = _prepare_task_applied(lease_env, task_id, tag)
 
         # close 使用同一有效 lease
-        res = client.task_close(task_id, reviewer="reviewer", identity=_reviewer_identity(tag),
-                                lease_token=acq["token"], fencing_counter=acq["fencing_counter"])
+        res = _task_close(client, task_id, "reviewer", _reviewer_identity(tag),
+                          acq["token"], acq["fencing_counter"])
         assert res["status"] == "closed"
         assert res.get("closed_at", 0) > 0, "closed_at 必须为非零真实时间戳"
-        assert client.task_status(task_id)["status"] == "closed"
+        assert _task_status(client, task_id)["status"] == "closed"
 
         # task_events：存在 applied / closed 状态流转事件
-        events = client.task_events(task_id)["events"]
+        events = _task_events(client, task_id)["events"]
         to_statuses = [e["to_status"] for e in events]
         assert "applied" in to_statuses, f"缺少 applied 事件: {to_statuses}"
         assert "closed" in to_statuses, f"缺少 closed 事件: {to_statuses}"
@@ -380,8 +326,8 @@ class TestLeaseGateSuccessPath:
         assert transitions[-1] == expect, f"close 身份记录不匹配: {transitions[-1]}"
 
         # lease 审计：acquire 后 release（幂等收尾）
-        rel = client.lease_release(task_id, "reviewer", acq["token"],
-                                   identity=_reviewer_identity(tag))
+        rel = _lease_release(client, task_id, "reviewer", acq["token"],
+                             _reviewer_identity(tag))
         assert rel["status"] == "released"
 
 
@@ -389,7 +335,6 @@ class TestLeaseGateSuccessPath:
 # apply 拒绝路径
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestLeaseGateApplyRejections:
     """apply 缺/错凭证全部 fail-closed，状态与事件零改动。"""
 
@@ -477,7 +422,6 @@ class TestLeaseGateApplyRejections:
 # close 拒绝路径
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestLeaseGateCloseRejections:
     """close 缺/错凭证全部 fail-closed，状态与事件零改动。"""
 
@@ -548,7 +492,6 @@ class TestLeaseGateCloseRejections:
 # 额外门禁
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestLeaseGateExtraGates:
     """request_id 重放 / 单 holder 竞争 / 子任务关闸 / 业务错误透传。"""
 
@@ -563,24 +506,26 @@ class TestLeaseGateExtraGates:
             "task_id": task_id, "reviewer": "reviewer", "identity": identity,
             "lease_token": acq["token"], "fencing_counter": acq["fencing_counter"],
             "request_id": "req-gate-replay-1",
+            "verdict_waiver": _VERDICT_WAIVER,
         }
         r1 = client.call("task.apply", params)
         assert r1["status"] == "applied"
-        events_after_first = len(client.task_events(task_id)["events"])
+        events_after_first = len(_task_events(client, task_id)["events"])
 
         # 同 request_id 重放：返回缓存结果，不得产生重复状态事件
         r2 = client.call("task.apply", params)
         assert r2["status"] == "applied"
-        events_after_replay = len(client.task_events(task_id)["events"])
+        events_after_replay = len(_task_events(client, task_id)["events"])
         assert events_after_replay == events_after_first, \
             f"request_id 重放新增了事件: {events_after_first} -> {events_after_replay}"
 
-        applied_events = [e for e in client.task_events(task_id)["events"]
-                          if e["to_status"] == "applied"]
+        applied_events = [e for e in _task_events(client, task_id)["events"]
+                          if e["to_status"] == "applied"
+                          and e.get("reason_code") != "verdict_waiver"]
         assert len(applied_events) == 1, f"applied 事件应为 1 条: {len(applied_events)}"
         # 状态仍为 applied，可继续 close（不受重放影响）
-        res = client.task_close(task_id, reviewer="reviewer", identity=identity,
-                                lease_token=acq["token"], fencing_counter=acq["fencing_counter"])
+        res = _task_close(client, task_id, "reviewer", identity,
+                          acq["token"], acq["fencing_counter"])
         assert res["status"] == "closed"
 
     def test_single_active_reviewer_holder_competition(self, lease_env):
@@ -597,8 +542,7 @@ class TestLeaseGateExtraGates:
                                        "identity": ident_a})
         # 第二个 reviewer acquire 同 task+role → E_LEASE_ACTIVE_EXISTS
         with pytest.raises(DaemonRemoteError) as exc:
-            client.lease_acquire(task_id, "reviewer", identity=_reviewer_identity("comp-b"),
-                                 ttl_seconds=3600.0)
+            _lease_acquire(client, task_id, "reviewer", _reviewer_identity("comp-b"), 3600.0)
         assert exc.value.code == "E_LEASE_ACTIVE_EXISTS", exc.value
         # 竞争失败者用他人 token + 自己身份 apply → holder mismatch
         with pytest.raises(DaemonRemoteError) as exc:
@@ -609,10 +553,8 @@ class TestLeaseGateExtraGates:
             })
         assert exc.value.code == "E_LEASE_HOLDER_MISMATCH", exc.value
         # 唯一有效 holder 正常 apply
-        res = client.task_apply(task_id, reviewer="reviewer",
-                                identity=_reviewer_identity("comp-a"),
-                                lease_token=acq_a["token"],
-                                fencing_counter=acq_a["fencing_counter"])
+        res = _task_apply(client, task_id, "reviewer", _reviewer_identity("comp-a"),
+                          acq_a["token"], acq_a["fencing_counter"])
         assert res["status"] == "applied"
 
     def test_close_keeps_child_gate(self, lease_env):
@@ -637,13 +579,12 @@ class TestLeaseGateExtraGates:
         })
         # 父任务 acquire reviewer lease 并 apply
         acq = _acquire_reviewer_lease(client, parent_id, "parent")
-        res = client.task_apply(parent_id, reviewer="reviewer",
-                                identity=_reviewer_identity("parent"),
-                                lease_token=acq["token"], fencing_counter=acq["fencing_counter"])
+        res = _task_apply(client, parent_id, "reviewer", _reviewer_identity("parent"),
+                          acq["token"], acq["fencing_counter"])
         assert res["status"] == "applied"
 
         # 带合法 lease 关闭父任务 → 子任务门禁拒绝（业务错误，非连接故障）
-        before_events = len(client.task_events(parent_id)["events"])
+        before_events = len(_task_events(client, parent_id)["events"])
         with pytest.raises(DaemonRemoteError) as exc:
             client.call("task.close", {
                 "task_id": parent_id, "reviewer": "reviewer",
@@ -652,8 +593,8 @@ class TestLeaseGateExtraGates:
             })
         assert exc.value.code == "E_CHILD_TASKS_NOT_CLOSED", exc.value
         assert not isinstance(exc.value, DaemonUnavailableError), "业务错误不得包装为连接故障"
-        assert client.task_status(parent_id)["status"] == "applied", "子任务未关闭时父任务状态被改动"
-        assert len(client.task_events(parent_id)["events"]) == before_events
+        assert _task_status(client, parent_id)["status"] == "applied", "子任务未关闭时父任务状态被改动"
+        assert len(_task_events(client, parent_id)["events"]) == before_events
 
     def test_apply_close_business_error_not_wrapped_as_connection_failure(self, lease_env):
         client, _tmp, _task_db, _proc, _ws = lease_env
@@ -673,7 +614,6 @@ class TestLeaseGateExtraGates:
         assert not isinstance(exc.value, DaemonUnavailableError)
 
 
-@requires_binaries
 class TestLeaseGateRoutePolicy:
     """enterprise/auto 模式下 daemon 不可用时 fail-closed，不静默回退本地 DB。
 
@@ -689,7 +629,7 @@ class TestLeaseGateRoutePolicy:
             return {"local": "ok"}
 
         class _FakeFailClient:
-            """构造成功、call 阶段抛连接错误（贴近真实 UnixDaemonRpcClient）。"""
+            """构造成功、call 阶段抛连接错误（贴近真实 HttpDaemonRpcClient）。"""
 
             def call(self, method, params):
                 raise OSError("endpoint 不可连接")
@@ -700,9 +640,8 @@ class TestLeaseGateRoutePolicy:
         monkeypatch.setattr(dc, "get_daemon_mode", lambda: mode)
         monkeypatch.setattr(dc, "get_task_write_policy", lambda: "shared")
         monkeypatch.setattr(dc, "is_daemon_required", lambda: mode == "enterprise")
-        # transport 无关 seam：HTTP 迁移期 route_task_write 默认走
-        # HttpDaemonRpcClient（真实 manifest 端点），只替 UnixDaemonRpcClient
-        # 会命中真实 HTTP 端点（502 / E_HTTP_MANIFEST_MISSING 随环境漂移）。
+        # transport 无关 seam：route_task_write 默认走 HttpDaemonRpcClient，
+        # 直接替 `_get_rpc_client_for_route` 避免命中真实 HTTP 端点。
         monkeypatch.setattr(dc, "_get_rpc_client_for_route",
                             lambda *a, **kw: _FakeFailClient())
         # 显式 workspace_id 使故障落在 route_task_write 的 try 块内：

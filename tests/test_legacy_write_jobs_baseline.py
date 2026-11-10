@@ -55,7 +55,7 @@ import pytest
 
 from callwarden.server.daemon_client import (
     DaemonUnavailableError,
-    UnixDaemonRpcClient,
+    HttpDaemonRpcClient,
 )
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
@@ -379,12 +379,12 @@ MUTATION_READ_RPC = {
 
 
 def _stub_client():
-    """构造不带 __init__ 的 UnixDaemonRpcClient 空实例（测试替身，禁真实 DB/网络）。
+    """构造不带 __init__ 的 HttpDaemonRpcClient 空实例（测试替身，禁真实 DB/网络）。
 
-    mutation_call / _query_mutation_outcome 属于 UnixDaemonRpcClient（daemon_client.py
+    mutation_call / _query_mutation_outcome 属于 HttpDaemonRpcClient（daemon_client.py
     L370 起），DaemonClient 是上层封装，测试直接针对实现层。
     """
-    client = UnixDaemonRpcClient.__new__(UnixDaemonRpcClient)
+    client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
     client.verify_authority = lambda *a, **kw: None
     return client
 

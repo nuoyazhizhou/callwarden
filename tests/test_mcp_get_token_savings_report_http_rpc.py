@@ -78,7 +78,7 @@ def test_token_savings_headline_shape(rpc):
 
 
 def test_token_savings_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("get_token_savings_report", {})
 

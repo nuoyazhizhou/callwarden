@@ -22,7 +22,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -48,11 +47,6 @@ CONNECT_TIMEOUT: float = 1.0
 MACOS_LAUNCHD_LABEL: str = "com.callwarden.daemon"
 LINUX_SYSTEMD_UNIT: str = "callwarden-daemon.service"
 
-# Windows 命名管道前缀
-WINDOWS_PIPE_PREFIX: str = "\\\\.\\pipe\\callwarden-"
-# 通用命名管道路径前缀（用于识别管道路径）
-_WINDOWS_PIPE_PATH_PREFIX: str = "\\\\.\\pipe\\"
-
 
 # ---------------------------------------------------------------------------
 # 公开 API
@@ -70,9 +64,9 @@ def ensure_daemon(
     """尝试连接 daemon；连不上时自动唤起并在有界窗口内退避重试。
 
     Args:
-        endpoint: Daemon_Endpoint 路径。
-                  Unix: UDS 路径（如 /run/callwarden/callwarden.sock）
-                  Windows: 命名管道路径（如 \\\\.\\pipe\\callwarden-<sid>）
+        endpoint: Daemon endpoint（单轨 HTTPS，如 https://127.0.0.1:<port>）。
+                  非 HTTP(S) 形式（裸路径 / Named Pipe / unix:// / tcp://）
+                  一律 fail-closed 返回 None，不存在 UDS / Named Pipe / bridge 回退。
         window: 有界等待窗口（秒）。None 时使用 DEFAULT_WAIT_WINDOW。
         backoff_base: 首次退避间隔（秒）。
         backoff_factor: 退避倍增因子。
@@ -117,13 +111,13 @@ def ensure_daemon(
         if now >= deadline:
             break
 
-        # 首次连接失败时尝试唤起 daemon（仅一次）
-        # TCP bridge 由另一 authority（通常是 Windows）管理；WSL/Linux
-        # 不得把 bridge 端点误当成本地 daemon，启动 systemd/本地进程。
-        if not launch_attempted and not _is_tcp_endpoint(endpoint):
+        # 首次连接失败时尝试唤起 daemon（仅一次）。单轨 HTTPS：不再传任何
+        # socket/pipe 参数；daemon 自行监听并写 authority-scoped manifest。
+        # 非 loopback（远端 authority）端点不得在本机误启 daemon。
+        if not launch_attempted and _is_local_http_endpoint(endpoint):
             launch_attempted = True
             _start_daemon_platform(endpoint)
-        elif _is_tcp_endpoint(endpoint):
+        elif not _is_local_http_endpoint(endpoint):
             launch_attempted = True
 
         # 指数退避，但不超过 deadline
@@ -182,34 +176,36 @@ def ensure_daemon_for_startup(
 
 
 def try_connect(endpoint: str) -> Optional[socket.socket]:
-    r"""尝试建立到 daemon endpoint 的连接。
+    r"""尝试建立到 daemon endpoint 的连接（单轨：仅 HTTPS/HTTP）。
 
-    支持端点类型（共存契约 §3.2）：
-    - Windows Named Pipe：`\\.\pipe\callwarden-<sid>`
-    - Unix Domain Socket：绝对路径（如 `/run/callwarden/callwarden.sock`）
-    - TCP bridge：`tcp://host:port` 或 `host:port`（WSL 访问 Windows bridge）
+    ADR-002 单轨：唯一允许的 daemon RPC 传输是 HTTPS+mTLS。裸路径、
+    `\\.\pipe\...`、`unix://`、`tcp://` 等非 HTTP(S) 形式一律返回 None
+    （fail-closed，不存在 UDS / Named Pipe / bridge 回退）。
 
     Returns:
-        已连接的 socket，或 None（连接失败）。
+        已连接的 TCP socket，或 None（连接失败 / endpoint 形式非法）。
     """
-    # TCP endpoint 优先于平台判断：即使 Windows 平台也走 TCP（bridge health 用）。
-    if _is_tcp_endpoint(endpoint):
-        return _transport_connect_tcp(endpoint)
-    if sys.platform == "win32":
-        return _try_connect_windows(endpoint)
-    return _transport_connect_unix(endpoint)
+    if not _is_http_endpoint(endpoint):
+        return None
+    return _transport_connect_tcp(endpoint)
 
 
-def _is_tcp_endpoint(endpoint: str) -> bool:
-    """判断 endpoint 是否为 TCP bridge 端点。"""
-    if endpoint.startswith("tcp://"):
-        return True
-    # 裸 host:port 形式（如 127.0.0.1:8456）且非 UDS 绝对路径
-    if ":" in endpoint and not endpoint.startswith("/"):
-        host, _, port = endpoint.rpartition(":")
-        if port.isdigit() and host:
-            return True
-    return False
+def _is_http_endpoint(endpoint: str) -> bool:
+    """判断 endpoint 是否为 HTTPS/HTTP 端点。"""
+    return endpoint.startswith(("https://", "http://"))
+
+
+def _is_local_http_endpoint(endpoint: str) -> bool:
+    """判断 endpoint 是否为本机 HTTP(S) 端点（可本机唤起）。"""
+    if not _is_http_endpoint(endpoint):
+        return False
+    from callwarden.config import is_loopback_host, parse_http_endpoint_host
+
+    try:
+        _scheme, host, _port = parse_http_endpoint_host(endpoint)
+    except ValueError:
+        return False
+    return bool(host) and is_loopback_host(host)
 
 
 def _try_connect_tcp(endpoint: str) -> Dict[str, Any]:
@@ -262,224 +258,6 @@ def _transport_connect_tcp(endpoint: str) -> Optional[socket.socket]:
 # ---------------------------------------------------------------------------
 
 
-def _try_connect_unix(endpoint: str) -> Dict[str, Any]:
-    """Unix UDS 连通探测（SRV-005：authority 已下沉 Rust daemon）。
-
-    下沉后经 daemon RPC `mcp.daemon_autostart.try_connect_unix` 以探测语义
-    返回结果 dict；需要活连接的 transport 通信见 `_transport_connect_unix`。
-    fail-closed：daemon 不可用抛 DaemonUnavailableError（不回退本地探测）。
-    """
-    result = _call_daemon_rpc(
-        "mcp.daemon_autostart.try_connect_unix",
-        {"endpoint": endpoint, "timeout": CONNECT_TIMEOUT},
-    )
-    if not isinstance(result, dict):
-        raise RuntimeError(f"_try_connect_unix: daemon 返回非对象结果: {result!r}")
-    return result
-
-
-def _transport_connect_unix(endpoint: str) -> Optional[socket.socket]:
-    """Transport bootstrap：客户端连接自身 daemon 的 UDS 活连接。
-
-    SRV-005：同 `_transport_connect_tcp` 的鸡生蛋约束说明——transport
-    适配职责，非 DB/业务 authority。
-    """
-    if not hasattr(socket, "AF_UNIX"):
-        return None
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(CONNECT_TIMEOUT)
-        sock.connect(endpoint)
-        return sock
-    except (OSError, socket.error):
-        try:
-            sock.close()  # type: ignore[possibly-undefined]
-        except Exception:
-            pass
-        return None
-
-
-def _try_connect_windows(endpoint: str) -> Optional[socket.socket]:
-    """Windows 命名管道连接尝试。
-
-    使用 AF_INET loopback 模拟不适用；Windows 命名管道通过 CreateFileW 打开。
-    返回一个包装了 pipe handle 的 socket-like 对象，或 None。
-    为保持与 Unix 路径的接口一致性，返回 _WindowsPipeSocket 包装。
-    """
-    # 仅对命名管道路径尝试连接，普通文件路径不是有效的 daemon endpoint
-    if not endpoint.startswith(_WINDOWS_PIPE_PATH_PREFIX):
-        return None
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-
-        # 64 位进程必须显式声明 restype/argtypes，否则 HANDLE 返回被截断为 32 位，
-        # 失败的 CreateFileW 会被误判为成功（低 32 位 -1 != 64 位 -1）。
-        kernel32.CreateFileW.restype = wintypes.HANDLE
-        kernel32.CreateFileW.argtypes = [
-            wintypes.LPCWSTR,
-            wintypes.DWORD,
-            wintypes.DWORD,
-            ctypes.c_void_p,
-            wintypes.DWORD,
-            wintypes.DWORD,
-            wintypes.HANDLE,
-        ]
-
-        GENERIC_READ = 0x80000000
-        GENERIC_WRITE = 0x40000000
-        OPEN_EXISTING = 3
-        ERROR_PIPE_BUSY = 231
-
-        INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
-        # 标准命名管道客户端模式：所有实例瞬时繁忙时 CreateFileW 返回
-        # ERROR_PIPE_BUSY(231)，按惯例退避重试几次再放弃（服务端 accept 之间
-        # 会补建替换实例，重试窗口内必然恢复）。
-        for _ in range(5):
-            handle = kernel32.CreateFileW(
-                endpoint,
-                GENERIC_READ | GENERIC_WRITE,
-                0,       # 不共享
-                None,    # 默认安全属性
-                OPEN_EXISTING,
-                0,       # 同步 I/O
-                None,    # 无模板文件
-            )
-            if handle != INVALID_HANDLE_VALUE and handle is not None:
-                return _WindowsPipeSocket(handle)
-            if ctypes.windll.kernel32.GetLastError() != ERROR_PIPE_BUSY:
-                return None
-            time.sleep(0.05)
-        return None
-    except Exception:
-        return None
-
-
-class _WindowsPipeSocket:
-    """Windows 命名管道 handle 的 socket-like 包装。
-
-    提供与 socket.socket 兼容的 send/recv/close/settimeout 接口，
-    使调用方无需区分 Unix socket 和 Windows pipe。
-    """
-
-    # TP-49 假阳性卡：默认超时必须有界。此前 None（无限阻塞）——调用方若
-    # 忘记 settimeout（如 ensure_daemon_running readiness None 分支原样
-    # 返回的 conn），下游 I/O 对无响应对端将永久挂起。30.0 与
-    # DaemonClient.timeout 默认值一致；显式 settimeout 仍可覆盖。
-    DEFAULT_TIMEOUT: float = 30.0
-
-    def __init__(self, handle: int):
-        self._handle = handle
-        self._timeout: Optional[float] = self.DEFAULT_TIMEOUT
-
-    def settimeout(self, timeout: Optional[float]) -> None:
-        self._timeout = timeout
-
-    def send(self, data: bytes) -> int:
-        return self._run_with_timeout(lambda: self._send_blocking(data))
-
-    def _send_blocking(self, data: bytes) -> int:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        written = wintypes.DWORD(0)
-        ok = kernel32.WriteFile(
-            self._handle, data, len(data), ctypes.byref(written), None
-        )
-        if not ok:
-            raise OSError(f"WriteFile failed: {ctypes.GetLastError()}")
-        return written.value
-
-    def sendall(self, data: bytes) -> None:
-        """按 socket.sendall 语义处理 Windows pipe 的短写。"""
-        offset = 0
-        while offset < len(data):
-            written = self.send(data[offset:])
-            if written <= 0:
-                raise OSError("WriteFile 写入零字节")
-            offset += written
-
-    def recv(self, bufsize: int) -> bytes:
-        return self._run_with_timeout(lambda: self._recv_blocking(bufsize))
-
-    def _recv_blocking(self, bufsize: int) -> bytes:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        buf = ctypes.create_string_buffer(bufsize)
-        read = wintypes.DWORD(0)
-        ok = kernel32.ReadFile(
-            self._handle, buf, bufsize, ctypes.byref(read), None
-        )
-        if not ok:
-            raise OSError(f"ReadFile failed: {ctypes.GetLastError()}")
-        return buf.raw[: read.value]
-
-    def _run_with_timeout(self, operation):
-        """为同步 Win32 I/O 提供真正的客户端超时。
-
-        超时后关闭句柄，阻止调用方继续等待；底层阻塞调用在线程中结束，
-        线程为 daemon 线程，不会阻止客户端进程退出。
-        """
-        if self._timeout is None:
-            return operation()
-
-        result = {}
-        done = threading.Event()
-
-        def worker():
-            try:
-                result["value"] = operation()
-            except BaseException as exc:  # 传回 Win32 I/O 的原始错误
-                result["error"] = exc
-            finally:
-                done.set()
-
-        threading.Thread(target=worker, name="cw-pipe-io", daemon=True).start()
-        if not done.wait(self._timeout):
-            # TP-49 实证（faulthandler 栈）：同步句柄（FlagsAndAttributes=0）
-            # 上有未决阻塞 ReadFile/WriteFile 时，另一线程的 CloseHandle 会
-            # **等 I/O 完成才返回**——对静默对端（占位者/挂死 daemon）就是
-            # 死锁：worker 永远等数据，close 永远等 worker。此前 docstring
-            # 「关闭句柄使阻塞调用结束」对同步句柄不成立。
-            # CancelIoEx(handle, NULL) 取消**任意线程**在该句柄上的未决 I/O，
-            # worker 的 ReadFile 立即以 ERROR_OPERATION_ABORTED 失败退出，
-            # 之后 close 才安全。该死锁同样影响主 RPC 路径的 30s 超时兜底
-            # （daemon 应答挂起场景），此处修复即全路径生效。
-            try:
-                import ctypes
-
-                ctypes.windll.kernel32.CancelIoEx(
-                    ctypes.c_void_p(self._handle), None
-                )
-            except Exception:
-                pass  # CancelIoEx 不可用（<Vista）时退回旧行为（可能死锁）
-            done.wait(1.0)  # 给 worker 一点时间以 ABORTED 错误退出
-            self.close()
-            raise socket.timeout("Windows named pipe I/O timed out")
-        if "error" in result:
-            raise result["error"]
-        return result.get("value")
-
-    def close(self) -> None:
-        if self._handle is not None:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-            kernel32.CloseHandle(self._handle)
-            self._handle = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
-
-
 # ---------------------------------------------------------------------------
 # 平台唤起实现
 # ---------------------------------------------------------------------------
@@ -492,15 +270,19 @@ def _start_daemon_platform(endpoint: str) -> bool:
         True 表示启动命令已发出（不代表 daemon 已就绪），False 表示启动失败。
     """
     if sys.platform == "win32":
-        return _start_daemon_windows(endpoint)
+        return _start_daemon_windows()
     elif sys.platform == "darwin":
         return _start_daemon_macos(endpoint)
     else:
         return _start_daemon_linux(endpoint)
 
 
-def _start_daemon_windows(endpoint: str) -> bool:
-    """Windows: 启动分离进程，客户端退出后 daemon 仍存活 [Req 14.24]。"""
+def _start_daemon_windows() -> bool:
+    """Windows: 启动分离进程，客户端退出后 daemon 仍存活 [Req 14.24]。
+
+    单轨 HTTPS：daemon 自行监听并写 authority-scoped manifest，绝不传
+    `--socket` 之类 UDS/pipe 参数。
+    """
     daemon_bin = _find_daemon_binary()
     if daemon_bin is None:
         logger.error("未找到 cw_daemon 可执行文件，无法自动唤起")
@@ -521,7 +303,7 @@ def _start_daemon_windows(endpoint: str) -> bool:
 
     try:
         subprocess.Popen(
-            [daemon_bin, "--socket", endpoint],
+            [daemon_bin],
             creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -529,7 +311,7 @@ def _start_daemon_windows(endpoint: str) -> bool:
             close_fds=True,
             env=child_env,
         )
-        logger.info("Windows 分离进程已启动: %s --socket %s", daemon_bin, endpoint)
+        logger.info("Windows 分离进程已启动: %s", daemon_bin)
         return True
     except OSError as exc:
         logger.error("Windows daemon 启动失败: %s", exc)
@@ -721,90 +503,16 @@ def spawn_http_daemon(wait_window: float = 15.0) -> Optional[str]:
 
 
 def get_default_endpoint() -> str:
-    """获取当前平台的默认 Daemon_Endpoint。
+    """获取默认 Daemon endpoint（ADR-002 单轨：HTTPS+mTLS）。
 
-    Unix: CW_DAEMON_SOCKET 环境变量或 /run/callwarden/callwarden.sock
-    Windows: \\\\.\\pipe\\callwarden-<当前用户 SID>
+    优先读取 authority manifest 中登记的 endpoint；读不到时返回本机默认
+    HTTPS 端点。绝不返回 socket / Named Pipe 路径。
     """
-    from callwarden.config import get_default_daemon_endpoint
-    return get_default_daemon_endpoint()
-
-
-def _get_windows_user_sid() -> str:
-    """获取当前 Windows 用户的 SID 字符串。"""
-    from callwarden.config import _get_windows_user_sid as _cfg_sid
-    return _cfg_sid()
-
-    """获取当前 Windows 用户的 SID 字符串。"""
     try:
-        import ctypes
-
-        advapi32 = ctypes.windll.advapi32  # type: ignore[attr-defined]
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        from ctypes import wintypes
-
-        # 64 位进程必须显式声明 argtypes/restype，否则 HANDLE 在指针截断后
-        # OpenProcessToken 失败，SID 退化为 "unknown"。
-        advapi32.OpenProcessToken.argtypes = [
-            wintypes.HANDLE,
-            wintypes.DWORD,
-            ctypes.POINTER(wintypes.HANDLE),
-        ]
-        advapi32.OpenProcessToken.restype = wintypes.BOOL
-        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-        advapi32.GetTokenInformation.argtypes = [
-            wintypes.HANDLE,
-            wintypes.DWORD,
-            ctypes.c_void_p,
-            wintypes.DWORD,
-            ctypes.POINTER(wintypes.DWORD),
-        ]
-        advapi32.GetTokenInformation.restype = wintypes.BOOL
-        advapi32.ConvertSidToStringSidW.argtypes = [
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_wchar_p),
-        ]
-        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.LocalFree.argtypes = [wintypes.HANDLE]
-
-        # 获取当前进程 token
-        token = wintypes.HANDLE()
-        TOKEN_QUERY = 0x0008
-        ok = advapi32.OpenProcessToken(
-            kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)
-        )
-        if not ok:
-            return "unknown"
-
-        # 获取 token 中的用户 SID
-        TOKEN_USER = 1
-        size = ctypes.c_ulong(0)
-        advapi32.GetTokenInformation(
-            token, TOKEN_USER, None, 0, ctypes.byref(size))
-
-        buf = ctypes.create_string_buffer(size.value)
-        ok = advapi32.GetTokenInformation(
-            token, TOKEN_USER, buf, size.value, ctypes.byref(size))
-        kernel32.CloseHandle(token)
-
-        if not ok:
-            return "unknown"
-
-        # TOKEN_USER 结构的第一个成员是 SID_AND_ATTRIBUTES，其第一个成员是 SID*
-        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
-
-        # 将 SID 转为字符串
-        sid_str = ctypes.c_wchar_p()
-        ok = advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(sid_str))
-        if not ok:
-            return "unknown"
-
-        result = sid_str.value
-        kernel32.LocalFree(sid_str)
-        return result or "unknown"
+        endpoint, _manifest = resolve_http_endpoint_and_manifest()
     except Exception:
-        return "unknown"
+        endpoint = ""
+    return endpoint or "https://127.0.0.1:6374"
 
 
 # ────────────────────────────────────────────────────────────────────────────

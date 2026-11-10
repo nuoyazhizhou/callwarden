@@ -40,21 +40,28 @@ class TestCliFailClosed:
     def _assert_fail_closed(exc) -> None:
         """断言异常为 fail-closed：不降级本地执行。
 
-        接受两类结构化拒绝（均不触碰本地 SQLite）：
+        接受三类结构化拒绝（均不触碰本地 SQLite）：
         - ``E_HTTP_DAEMON_UNAVAILABLE``：连接失败（DaemonUnavailableError）
         - ``E_HTTP_MANIFEST_STALE``：manifest 校验失败/daemon 不可信
           （DaemonRemoteError；测试机残留真实 daemon manifest 时，死端点
           会先命中 stale manifest 校验，错误码不同于连接失败，但同样拒绝执行）
+        - ``E_MTLS_CLIENT_CERT_MISSING``：ADR-002 单轨下客户端身份缺失
+          （_ssl_context 在建连前即 fail-closed 拒发请求，同样不降级本地；
+          测试机未配置客户端证书时命中此路径）
         """
         assert isinstance(exc, RuntimeError), f"应为运行时错误: {exc!r}"
         text = str(exc)
-        assert ("E_HTTP_" in text) or ("无法连接" in text), \
-            f"应为 E_HTTP_* fail-closed 错误，实际: {text}"
+        assert (
+            ("E_HTTP_" in text)
+            or ("无法连接" in text)
+            or ("E_MTLS_CLIENT_CERT_MISSING" in text)
+            or ("客户端证书缺失" in text)
+        ), f"应为 E_HTTP_*/E_MTLS_CLIENT_CERT_MISSING fail-closed 错误，实际: {text}"
 
     def test_call_daemon_unreachable_raises(self, monkeypatch):
         """daemon 不可达 → DaemonUnavailableError（fail-closed，不降级本地执行）。"""
         monkeypatch.setenv("CW_DAEMON_MODE", "http")
-        monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "http://127.0.0.1:1")  # 无效端口
+        monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "https://127.0.0.1:1")  # 无效端口
         monkeypatch.delenv("CW_DAEMON_ENDPOINT", raising=False)
         monkeypatch.delenv("CW_TEST_MODE", raising=False)
         with pytest.raises(Exception) as ei:
@@ -66,7 +73,7 @@ class TestCliFailClosed:
     def test_cli_dispatcher_unreachable_raises(self, monkeypatch):
         """CliDispatcher.dispatch 未注册/daemon 不可达 → 明确报错。"""
         monkeypatch.setenv("CW_DAEMON_MODE", "http")
-        monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "http://127.0.0.1:1")
+        monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "https://127.0.0.1:1")
         monkeypatch.delenv("CW_DAEMON_ENDPOINT", raising=False)
         monkeypatch.delenv("CW_TEST_MODE", raising=False)
         d = CliDispatcher()
@@ -109,7 +116,7 @@ class TestCliFailClosed:
     def test_route_rpc_fail_closed_never_falls_back_local(self, monkeypatch):
         """daemon 不可达时 route_rpc 抛错而非回退本地 SQLite（HTTP 模式语义）。"""
         monkeypatch.setenv("CW_DAEMON_MODE", "http")
-        monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "http://127.0.0.1:1")
+        monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", "https://127.0.0.1:1")
         monkeypatch.delenv("CW_DAEMON_ENDPOINT", raising=False)
         monkeypatch.delenv("CW_TEST_MODE", raising=False)
         from callwarden.server.daemon_client import route_rpc

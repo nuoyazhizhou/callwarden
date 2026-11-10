@@ -60,7 +60,7 @@ def test_test_impact_selection_empty_qualified_name(rpc):
 
 def test_test_impact_selection_daemon_unavailable_fail_closed():
     """daemon 不可用 → fail-closed（本地连接异常即证据）。"""
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(DaemonUnavailableError):
         # fail-closed 证据即异常类型本身（本机代理会把 127.0.0.1:9 拦成 502，
         # 错误消息随网络环境变化，不钉死错误码字符串）

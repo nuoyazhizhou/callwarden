@@ -28,7 +28,11 @@ use pyo3::Bound;
 use serde_json::Value;
 
 use crate::daemon::dispatch::ADMIN_ONLY_METHODS;
-use crate::daemon::protocol::{DEFAULT_MAX_FDS, DEFAULT_MAX_MESSAGE_BYTES, HEADER_SIZE};
+use crate::daemon::protocol::{DEFAULT_MAX_MESSAGE_BYTES, HEADER_SIZE};
+
+/// 默认最大 FD 数量（SCM_RIGHTS 传输已按 ADR-002 退役；该常量仅为
+/// 保持协议常量查询兼容 Python `daemon_protocol.DEFAULT_MAX_FDS` 断言）。
+const DEFAULT_MAX_FDS: usize = 1;
 
 // ===========================================================================
 // 协议常量查询

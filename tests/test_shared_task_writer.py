@@ -19,9 +19,9 @@ PYT 回归卡 step#4（thin-client / daemon authority 迁移对齐）——本�
 * ``test_task_write_uses_daemon_autostart`` → **A（mock RPC seam 过期）**
   生产 ``server/daemon_client.py:3498-3506`` 的 ``_get_rpc_client_for_route()``
   现优先返回 ``HttpDaemonRpcClient.get_instance()``（``is_http_transport_enabled()``
-  为真时），仅在其为假时才构造 ``UnixDaemonRpcClient()``；且
+  为真时），仅在其为假时才构造 ``HttpDaemonRpcClient()``；且
   ``_inject_workspace_id``（``server/daemon_client.py:3509-3524``）在 try 之外
-  复用同一 client。旧测试 monkeypatch ``UnixDaemonRpcClient`` 已失效，必须
+  复用同一 client。旧测试 monkeypatch ``HttpDaemonRpcClient`` 已失效，必须
   替身 ``_get_rpc_client_for_route`` 才能命中 daemon 自动拉起路径
   （``route_task_write`` 的 ``call_with_autostart``，:3718-3723）。
 

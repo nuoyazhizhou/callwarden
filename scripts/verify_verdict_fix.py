@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """行为级验证 verdict normalization 修复（47c404f 部署后）。
 
-对单张 review 卡经 UnixDaemonRpcClient（直达 daemon）提交 pass verdict：
+对单张 review 卡经 HttpDaemonRpcClient（单轨 HTTPS+mTLS 直达 daemon）提交 pass verdict：
 1. 检查 task_verdict_events 新行 4 个 normalization 列是否落库；
 2. next-action 是否从 governance_blocked 转为 adjudication 就绪。
 
@@ -19,13 +19,13 @@ from review_aprime_cards import (  # noqa: E402
     REVIEWER_AGENT, REVIEWER_MODEL, WORKSPACE_ID,
     compute_role_contract_hash, fetch_card_bindings, get_db,
 )
-from callwarden.server.daemon_client import UnixDaemonRpcClient  # noqa: E402
+from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
 
 
 def main():
     task_id = sys.argv[1]
     session = f"sess-verify-{uuid.uuid4().hex[:8]}"
-    client = UnixDaemonRpcClient()
+    client = HttpDaemonRpcClient.get_instance()
 
     lease = client.call("lease.acquire", {
         "task_id": task_id, "role": "reviewer",

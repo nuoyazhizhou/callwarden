@@ -60,7 +60,7 @@ def test_daemon_authority_exposes_read_only_evidence_and_gate_queries():
     reason="real daemon round-trip is enabled explicitly by the runtime gate acceptance",
 )
 def test_real_daemon_rejects_non_whitelisted_change_without_writing():
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
+    from callwarden.server.daemon_client import HttpDaemonRpcClient
 
     task_id = os.environ["CW_EVIDENCE_TASK_ID"]
     step_id = os.environ["CW_EVIDENCE_STEP_ID"]
@@ -75,7 +75,7 @@ def test_real_daemon_rejects_non_whitelisted_change_without_writing():
         "role": "implementer",
         "provider": "openai",
     }
-    client = UnixDaemonRpcClient()
+    client = HttpDaemonRpcClient()
     before = client.call(
         "evidence.query",
         {"request_id": "e2e-before", "task_id": task_id},

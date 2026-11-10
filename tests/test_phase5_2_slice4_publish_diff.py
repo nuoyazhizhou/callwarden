@@ -4,7 +4,7 @@
 - D9.1-D9.5: publish 参数构建（method + 2 个字段）
 - D9.6: PyO3 签名验证
 
-契约：对齐 server/daemon_client.py:UnixDaemonRpcClient.publish_snapshot (L103-119)
+契约：对齐 server/daemon_client.py:HttpDaemonRpcClient.publish_snapshot (L103-119)
 
 注意：
 - FD 打开和 SCM_RIGHTS 传递是 Unix-only 副作用，无法在 Windows 差分测试
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.filterwarnings("error::pytest.PytestReturnNotNoneWarnin
 # ============================================================
 
 def py_build_publish_params(workspace_instance_id: str, build_context_hash: str = ""):
-    """Python 真相源：UnixDaemonRpcClient.publish_snapshot 的参数构建部分。
+    """Python 真相源：HttpDaemonRpcClient.publish_snapshot 的参数构建部分。
 
     对齐 Python：
     ```python

@@ -13,7 +13,6 @@ import re
 import socket
 import sys
 import tempfile
-import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 # === PyInstaller 冻结环境检测 ===
@@ -1707,63 +1706,51 @@ def get_task_write_policy() -> str:
     return policy if policy in ("shared", "isolated") else "shared"
 
 
-def _windows_daemon_probe_ok(conn) -> bool:
-    """对已连接的 Windows 管道做协议级最小校验（TP-49 假阳性卡）。
+def is_daemon_available(endpoint: Optional[str] = None) -> bool:
+    """检测 daemon 是否可用（ADR-002 单轨：HTTPS+mTLS 协议级探针）。
 
-    CreateFileW 对「存在但未 arm」的管道实例同样返回成功（假阳性）——
-    占位者只建不监听即可让 try_connect 连上，故可用性判定不能止步于
-    连接成功，必须让对端证明它能应答协议。非协议占位者无法应答 ping
-    → 判不可用。探针超时 1.0s（与 daemon_client readiness 探针同款，
-    短于查询的 30s，失败快速返回）。
+    单轨事实（ADR-002）：daemon 传输只保留 HTTPS+mTLS，UDS / Named Pipe
+    已删除。由此：
+
+    - endpoint 为 socket / Named Pipe 路径 → False（fail-closed）。旧
+      socket 文件残留、管道占位者都不再代表 daemon 可用；同时覆盖
+      TP-49「未 arm 占位者可被连上」的假阳性方向——非协议应答不足为凭。
+    - endpoint 为 http(s):// → 短超时协议探针（manifest 校验 + /health
+      交叉核对 + ping 应答），任一环节失败或异常 = 不可用。
+    - endpoint 为 None → ADR-002 HTTPS 发现层（authority manifest 或
+      https://127.0.0.1:6374），不再使用 socket/pipe 默认路径。
+
+    TP-11G 2a D3.3 参数化保留：显式传入 endpoint 则探测指定端点（diff
+    测试镜像、route_command 决策层等）。
     """
-    from callwarden.server.daemon_protocol import (
-        DEFAULT_MAX_MESSAGE_BYTES,
-        parse_response,
-        recv_message,
-        send_message,
-    )
-
-    try:
-        conn.settimeout(1.0)
-        request_id = f"probe-{uuid.uuid4().hex}"
-        send_message(
-            conn,
-            {"id": request_id, "method": "ping", "params": {}},
-            DEFAULT_MAX_MESSAGE_BYTES,
-        )
-        response = recv_message(conn, DEFAULT_MAX_MESSAGE_BYTES)
-        if response.get("id") != request_id:
+    if endpoint is None:
+        try:
+            from callwarden.server.daemon_autostart import get_default_endpoint
+            endpoint = get_default_endpoint()
+        except Exception:
             return False
-        parse_response(response)
+    if not endpoint.startswith(("https://", "http://")):
+        return False
+    return _https_probe_ok(endpoint)
+
+
+def _https_probe_ok(endpoint: str) -> bool:
+    """对 HTTPS daemon endpoint 做协议级最小校验（TP-49 假阳性卡）。
+
+    连接成功 != 可用：必须让对端证明它能应答协议。本探针经单轨
+    HttpDaemonRpcClient 完成 loopback/manifest 校验、/health 交叉核对
+    与一次 ping RPC；任一环节失败或异常 = 不可用（fail-closed，
+    2.0s 短超时快速返回，不阻塞路由决策）。
+    """
+    try:
+        from callwarden.server.daemon_client import HttpDaemonRpcClient
+        # 构造即发现：显式 endpoint 经 loopback/manifest 校验与 /health
+        # 交叉核对（构造不抛异常，连接探测延迟到首次调用）。
+        client = HttpDaemonRpcClient(endpoint=endpoint, timeout=2.0)
+        client.call("ping", {})
         return True
     except Exception:
         return False
-
-
-def is_daemon_available(endpoint: Optional[str] = None) -> bool:
-    """检测 daemon 是否可用（endpoint 存在、可连接且能应答协议）。
-
-    TP-11G 2a D3.3 参数化：``endpoint`` 为 None 时探测默认端点；显式传入
-    （diff 测试镜像、route_command 决策层等）则探测指定端点——与 Rust
-    ``windows_endpoint_available(socket_path)``（#48 三分支）对齐，消除
-    「py 镜像忽略 socket_path」的镜像语义分歧（2204315 已知残留）。
-    """
-    endpoint = endpoint or get_default_daemon_endpoint()
-    if sys.platform == "win32":
-        from callwarden.server.daemon_autostart import try_connect
-        conn = try_connect(endpoint)
-        if conn is not None:
-            try:
-                # TP-49 假阳性卡：连接成功 != 可用（未 arm 占位者可被连上）。
-                # 协议探针通过才算可用；探针失败/异常 = 不可用（fail-closed）。
-                return _windows_daemon_probe_ok(conn)
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-        return False
-    return os.path.exists(endpoint)
 
 
 # ────────────────────────────────────────────────────────────────────────────

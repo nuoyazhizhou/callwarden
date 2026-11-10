@@ -1,0 +1,31 @@
+{
+  "task_id": "T-1793774130739-6e096a14",
+  "verdict_phase": "blind_first_pass",
+  "snapshot_id": "fb991b7856ddf699",
+  "view_manifest": {
+    "task_id": "T-1793774130739-6e096a14",
+    "step_id": "S-1793774130741-6e209d24",
+    "review_scope": [
+      "rust_ext/src/daemon/snapshot_state.rs（snapshot.upload 导入面）",
+      "rust_ext/src/daemon/snapshot_server.rs",
+      "callwarden/server/daemon_client.py（remote 半侧）",
+      "callwarden/server/tools/tools_workspace.py（五工具 remote 本机执行体）",
+      "tests/test_remote_read_plane.py",
+      "tests/test_remote_snapshot_upload.py",
+      "docs/design/mtls-remote-plane.md §16"
+    ],
+    "test_evidence": {
+      "pytest": "37 passed, 1 skipped（tests/test_remote_read_plane.py + tests/test_remote_snapshot_upload.py）",
+      "regression": "pytest 全量与闭环门禁中"
+    },
+    "defect_fix": "tools_workspace.py _remote_glob_match glob 双重替换缺陷已修复"
+  },
+  "acceptance_checks": [
+    "root cause addressed (not masked): snapshot.upload 拒绝逻辑落在 daemon snapshot 导入面，db_path 参数经 mcp.common.get_db_path_for_daemon 权威解析",
+    "single-track invariant preserved: 远端执行只读面与本机执行共用单一 client 通道",
+    "negative cases fail-closed: db_path 直传远端被拒、越权 workspace 被拒、快照缺失 fail-closed",
+    "forbidden paths untouched: executor 契约未触 task.apply/task.close/task.supersede、无 daemon 外 SQLite 直写、无 pipe/UDS 回退",
+    "regression evidence reproducible: pytest 全量 37+10 passed 与 check_e2e_matrix_closure 门禁"
+  ],
+  "test_result": "37 passed / 1 skipped"
+}

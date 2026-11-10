@@ -10,7 +10,7 @@
   no-bypass —— 子任务治理完整性逐项断言（不允许"有任务有步骤但无合同"残缺态），
               split event 记录真实 workspace_id（非空串）。
 
-依赖：live daemon（含 d7e9a95 修复）经 UnixDaemonRpcClient；权威库只读断言。
+依赖：live daemon（含 d7e9a95 修复）经 HttpDaemonRpcClient；权威库只读断言。
 """
 
 import os
@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-from callwarden.server.daemon_client import UnixDaemonRpcClient
+from callwarden.server.daemon_client import HttpDaemonRpcClient
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
 AUTH_DB = r"C:\Users\wanpi\.callwarden\callwarden.db"
@@ -125,7 +125,7 @@ def client():
     # test_task_cascade_close 的 rpc fixture 同型）：CI fresh runner 无
     # 常驻 daemon，直接调用会以 OSError(endpoint 不可连接) 染红；
     # 静态门禁（handler 归属/参数契约断言）不依赖 daemon，仍执行。
-    c = UnixDaemonRpcClient()
+    c = HttpDaemonRpcClient()
     try:
         c.call("ping", {})
     except Exception:

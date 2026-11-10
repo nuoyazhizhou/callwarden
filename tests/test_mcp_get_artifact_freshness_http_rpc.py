@@ -75,7 +75,7 @@ def test_get_artifact_freshness_unknown_workspace(live_daemon):
 # daemon unavailable：fail-closed，绝不降级本地 SQLite
 # ---------------------------------------------------------------------------
 def test_get_artifact_freshness_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError) as ei:
         c.call("get_artifact_freshness", {"workspace_id": 1, "task_id": "T-X"})

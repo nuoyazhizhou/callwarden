@@ -26,7 +26,6 @@ import time
 
 import pytest
 
-from callwarden.config import HTTP_MVP_TRANSPORT_PROFILE
 from callwarden.server.daemon_client import (
     DaemonUnavailableError,
     HttpDaemonRpcClient,
@@ -37,6 +36,7 @@ from _prereq_guard import (
     skip_if_daemon_exited_before_manifest,
     skip_if_isolated_daemon_pipe_conflict,
 )
+import test_mtls_control_plane as _mtls
 
 
 # ----------------------------------------------------------------------
@@ -215,7 +215,7 @@ def _make_http_client(endpoint, manifest_path=None, verify_health=True, timeout=
 # ----------------------------------------------------------------------
 
 @pytest.fixture
-def isolated_daemon(tmp_path):
+def isolated_daemon(tmp_path, monkeypatch):
     """启动隔离真实 daemon，yield (endpoint, manifest, data_root, bin_path, proc)。"""
     bin_path = _find_daemon_binary()
     if bin_path is None:
@@ -242,7 +242,20 @@ def isolated_daemon(tmp_path):
                 f"stderr={stderr_text}"
             )
         endpoint = manifest["endpoint"]
-        assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+        # ADR-002 单轨 HTTPS：daemon manifest 发布 https endpoint
+        assert endpoint.startswith("https://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+        # ADR-002 单轨 mTLS：客户端从隔离 PKI 取 owner 身份（daemon 信任根为
+        # 自签 ca/ca.crt；对齐 test_http_daemon_transport.py http_daemon fixture
+        # 的 bootstrap：pki init 幂等补齐 owner 身份后注入证书 env）
+        _mtls.pki_init(data_root)
+        cert, key = _mtls.identity_paths(data_root)
+        monkeypatch.setenv("CW_CLIENT_CERT", cert)
+        monkeypatch.setenv("CW_CLIENT_KEY", key)
+        monkeypatch.setenv(
+            "CW_CA_CERT",
+            os.path.join(_mtls.pki_dir_of(data_root), "ca", "ca.crt"),
+        )
+        monkeypatch.delenv("CW_PKI_DIR", raising=False)
         yield endpoint, manifest, data_root, bin_path, proc
     finally:
         _terminate(proc)
@@ -291,7 +304,10 @@ def test_production_factory_selects_http_and_real_ping(isolated_daemon, monkeypa
         health = client.health()
         assert health["pid"] == manifest["pid"]
         assert health["schema_version"] == manifest["schema_version"]
-        assert health["security_profile"] == HTTP_MVP_TRANSPORT_PROFILE
+        # ADR-002 陈旧断言修正：单轨 HTTPS+mTLS 后 security_profile 恒为
+        # https_mtls_v1（HTTP_MVP_TRANSPORT_PROFILE="dev_loopback_unauthenticated"
+        # 为 MVP 期遗留值，已被 daemon 端 manifest/health 事实性取代）。
+        assert health["security_profile"] == "https_mtls_v1"
     finally:
         HttpDaemonRpcClient.reset_instance()
 
@@ -305,10 +321,11 @@ def test_manifest_discovery_and_health_cross_check(http_client, isolated_daemon)
     # /health 与 manifest 交叉核对点（真实 daemon /health 无 manifest_id，仅 PID/schema）
     assert health["pid"] == manifest["pid"]
     assert health["schema_version"] == manifest["schema_version"]
-    assert health["security_profile"] == HTTP_MVP_TRANSPORT_PROFILE
+    # ADR-002 陈旧断言修正：同 test_production_factory_selects_http_and_real_ping
+    assert health["security_profile"] == "https_mtls_v1"
 
     caps = client.capabilities()
-    assert caps["server_mode"] == HTTP_MVP_TRANSPORT_PROFILE
+    assert caps["server_mode"] == "https_mtls_v1"
     assert caps["methods"]["ping"]["status"] == "available"
     assert caps["methods"]["ping"]["backend"] == "rust_native"
 
@@ -370,12 +387,29 @@ def test_mutation_dedup_real_daemon(http_client, tmp_path):
     assert exc.value.code == "E_REQUEST_ID_REUSE_MISMATCH"
 
 
-def test_timeout_fails_closed():
-    """真实传输超时 → E_HTTP_REQUEST_TIMEOUT（fail-closed，不降级）。"""
+def test_timeout_fails_closed(tmp_path, monkeypatch):
+    """真实传输超时 → E_HTTP_REQUEST_TIMEOUT（fail-closed，不降级）。
+
+    ADR-002 单轨 mTLS：客户端装配 SSL 上下文即需客户端证书（否则握手前
+    抛 E_MTLS_CLIENT_CERT_MISSING，走不到超时分支）。生成一次性隔离 PKI
+    仅供上下文装配——blackhole socket 不会完成握手，证书内容不参与校验。
+    """
+    if _mtls._DAEMON_BIN is None:
+        pytest.skip("cw-daemon 二进制不可用（pki init 需要）")
+    _mtls.pki_init(str(tmp_path))
+    cert, key = _mtls.identity_paths(str(tmp_path))
+    monkeypatch.setenv("CW_CLIENT_CERT", cert)
+    monkeypatch.setenv("CW_CLIENT_KEY", key)
+    monkeypatch.setenv(
+        "CW_CA_CERT",
+        os.path.join(_mtls.pki_dir_of(str(tmp_path)), "ca", "ca.crt"),
+    )
+    monkeypatch.delenv("CW_PKI_DIR", raising=False)
+
     srv, port = _start_blackhole_socket()
     try:
         client = _make_http_client(
-            endpoint=f"http://127.0.0.1:{port}",
+            endpoint=f"https://127.0.0.1:{port}",
             verify_health=False,
             timeout=0.5,
         )
@@ -389,7 +423,8 @@ def test_timeout_fails_closed():
 def test_loopback_only_and_no_sqlite_fallback(isolated_daemon):
     """loopback only + HTTP client 结构上不含 SQLite fallback + 连接失败 fail-closed。"""
     endpoint, manifest, data_root, _, _ = isolated_daemon
-    assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+    # ADR-002 单轨 HTTPS：daemon manifest 发布 https endpoint
+    assert endpoint.startswith("https://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
     # 结构上无 SQL/服务 fallback 入口（frozen contract §9 负向矩阵）
     http_client = _make_http_client(endpoint, verify_health=False, timeout=2.0)
     assert not hasattr(http_client, "_get_db")
@@ -397,7 +432,7 @@ def test_loopback_only_and_no_sqlite_fallback(isolated_daemon):
 
     # 连接失败必须 fail-closed，而非回退 SQLite/Named Pipe/UDS
     dead = _make_http_client(
-        endpoint="http://127.0.0.1:1",
+        endpoint="https://127.0.0.1:1",
         verify_health=False,
         timeout=2.0,
     )
@@ -432,15 +467,26 @@ def test_nonloopback_bind_rejected(tmp_path):
 # step #1 restart_and_no_fallback
 # ----------------------------------------------------------------------
 
-def test_restart_dedup_persist(tmp_path):
-    """daemon restart 后 dedup 持久化：同 request_id 重放仍返回原结果。"""
+def test_restart_dedup_persist(tmp_path, monkeypatch):
+    """daemon restart 后 dedup 持久化：同 request_id 重放仍返回原结果。
+
+    ADR-002 单轨 mTLS：客户端装配 SSL 上下文即需客户端证书。PKI 与 daemon
+    共用 `data_root/userhome/.callwarden/pki`（daemon 信任根 = manifest 同目录
+    的 pki/ 兄弟目录）；pki init 幂等补齐 owner 身份，证书跨 proc1/proc2
+    restart 复用（同 data_root，CA 不轮换）。
+    """
     bin_path = _find_daemon_binary()
     if bin_path is None:
         pytest.skip("cw-daemon 二进制不可用")
+    if _mtls._DAEMON_BIN is None:
+        pytest.skip("cw-daemon 二进制不可用（pki init 需要）")
     data_root = str(tmp_path / "data-restart")
     os.makedirs(data_root, exist_ok=True)
     root_path = str(tmp_path / "seed-repo")
     task_db_path = os.path.join(data_root, "task.db")
+    # daemon 的 pki_root() 优先读 CW_PKI_DIR：必须清掉，使其回退到 manifest
+    # 同目录的 pki/（= pki_dir_of(data_root)），与 pki init 落点一致
+    monkeypatch.delenv("CW_PKI_DIR", raising=False)
 
     params_template = {
         "title": "h2i-restart-dedup",
@@ -459,6 +505,17 @@ def test_restart_dedup_persist(tmp_path):
             skip_if_daemon_exited_before_manifest(proc1, read_proc_stderr(proc1))
             pytest.fail("第一次启动未发布 manifest")
         skip_if_isolated_daemon_pipe_conflict(proc1)
+        # ADR-002 单轨 mTLS：pki init 幂等补齐 owner 身份（daemon 启动时已建
+        # CA，init 不轮换），随后注入三证书 env——proc2 复用同一 data_root
+        # 的 PKI，无需二次 init
+        _mtls.pki_init(data_root)
+        cert, key = _mtls.identity_paths(data_root)
+        monkeypatch.setenv("CW_CLIENT_CERT", cert)
+        monkeypatch.setenv("CW_CLIENT_KEY", key)
+        monkeypatch.setenv(
+            "CW_CA_CERT",
+            os.path.join(_mtls.pki_dir_of(data_root), "ca", "ca.crt"),
+        )
         c1 = _make_http_client(m1["endpoint"], manifest_path=_manifest_path_in(data_root))
         inst = _ensure_workspace(c1, root_path)
         _seed_task_db_workspace(task_db_path)

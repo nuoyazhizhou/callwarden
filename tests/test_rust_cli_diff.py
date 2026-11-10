@@ -219,6 +219,38 @@ def _assert_python_rust_read_outputs(
     )
 
 
+def _assert_python_rust_usage_error_outputs(
+    python_result: subprocess.CompletedProcess[str],
+    rust_result: subprocess.CompletedProcess[str],
+) -> None:
+    """usage 错误差分断言（台账 s1_rustdiff-07）：消息文本逐字一致，流/退出码按各自 CLI 契约。
+
+    `cw tests` 无 qualified_name 时：python 薄壳 handler 沿既有惯例
+    ``print("Error: …")`` + ``return False``（分发器不映射布尔返回 → rc=0，
+    消息进 stdout）；rust CLI 按 clap 惯例写 stderr 且 rc=2。两侧消息文本
+    完全一致，差分只登记「python rc=0/stdout ↔ rust rc!=0/stderr」的既有
+    契约差，不回退任何一侧产品行为（python 全局退出码语义变更超出本差分
+    测试范围）。
+    """
+    py_msg = (python_result.stdout or "").strip()
+    rs_msg = (rust_result.stderr or "").strip()
+    assert python_result.returncode == 0, (
+        f"python 薄壳 usage 错误惯例为 rc=0，实得 {python_result.returncode}"
+    )
+    assert rust_result.returncode != 0, (
+        f"rust usage 错误应为非零退出，实得 {rust_result.returncode}"
+    )
+    assert py_msg == rs_msg != "", (
+        f"两侧 usage 消息应逐字一致：python={py_msg!r} rust={rs_msg!r}"
+    )
+    assert python_result.stderr == "", (
+        f"python usage 错误不写 stderr：{python_result.stderr!r}"
+    )
+    assert rust_result.stdout == "", (
+        f"rust usage 错误不写 stdout：{rust_result.stdout!r}"
+    )
+
+
 def _assert_python_fails_closed_no_daemon(
     result: subprocess.CompletedProcess[str],
 ) -> None:
@@ -366,6 +398,41 @@ def _publish_snapshot(endpoint: str, workspace_root: Path, db_path: Path) -> str
     return instance_id
 
 
+def _ensure_isolated_mtls_env(home_dir: Path) -> None:
+    """ADR-002 单轨 mTLS：为隔离 daemon 的 PKI 补齐 pr_owner 客户端身份，
+    并把三证书注入 os.environ。
+
+    daemon 启动时已建 CA/server 证书（home_dir/.callwarden/pki——CW_PKI_DIR
+    未设时即 manifest 目录/pki）；`cw-daemon pki init` 幂等补齐 pr_owner
+    身份、不轮换 CA。in-process HttpDaemonRpcClient 与 CLI 子进程（经
+    _python_cli_env 继承 os.environ）共用这三份证书。调用方用完须恢复
+    （见 _run_python_cli_via_daemon 的 finally），避免前一个测试的隔离 CA
+    泄漏到后续各自独立 CA 的隔离 daemon。
+    """
+    daemon_bin = require_daemon_binary(_find_daemon_binary())
+    pki_dir = home_dir / ".callwarden" / "pki"
+    init_proc = subprocess.run(
+        [str(daemon_bin), "pki", "init"],
+        env={
+            **os.environ,
+            "CW_PKI_DIR": str(pki_dir),
+            "USERPROFILE": str(home_dir),
+            "HOME": str(home_dir),
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    if init_proc.returncode != 0:
+        raise RuntimeError(f"隔离 pki init 失败: {init_proc.stderr[-1500:]}")
+    identity = pki_dir / "identities" / "pr_owner"
+    os.environ["CW_CLIENT_CERT"] = str(identity / "client.crt")
+    os.environ["CW_CLIENT_KEY"] = str(identity / "client.key")
+    os.environ["CW_CA_CERT"] = str(pki_dir / "ca" / "ca.crt")
+    os.environ.pop("CW_PKI_DIR", None)
+
+
 def _python_cli_env(
     home_dir: Path, workspace_root: Path, lang: str = "zh_CN"
 ) -> dict:
@@ -397,11 +464,18 @@ def _run_python_cli_via_daemon(
 
     daemon 每次调用临时拉起并在 finally 终止，manifest/registry 随测试
     tmp_path 自动回收；调用方不得在子进程运行期间修改种子库。
+    ADR-002 单轨 mTLS：manifest 就绪后对 daemon 自身 PKI 跑 `pki init`，
+    三证书经 os.environ 注入（in-process client 与 CLI 子进程共用）并在
+    finally 恢复——各隔离 daemon 持独立 CA，证书不得跨测试泄漏。
     python_env 可选：在标准 python 客户端环境之上叠加（如 grep 用例裁剪
     PATH 以强制内置 fallback），PATH 等仅作用于 python 子进程，不影响 daemon。
     """
     data_root = home_dir.parent / "daemon-data"
     proc = _spawn_isolated_daemon(home_dir, data_root)
+    saved_mtls_env = {
+        key: os.environ.get(key)
+        for key in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT", "CW_PKI_DIR")
+    }
     try:
         manifest = _wait_daemon_manifest(home_dir, proc)
         if manifest is None:
@@ -414,6 +488,7 @@ def _run_python_cli_via_daemon(
                 pass
             skip_if_daemon_exited_before_manifest(proc, stderr_text)
             pytest.fail("隔离 daemon 未在超时内发布 manifest（进程存活，需排查卡死）")
+        _ensure_isolated_mtls_env(home_dir)
         try:
             _publish_snapshot(manifest["endpoint"], workspace_root, db_path)
         except Exception as exc:  # noqa: BLE001
@@ -435,6 +510,11 @@ def _run_python_cli_via_daemon(
             timeout=180,
         )
     finally:
+        for key, saved_value in saved_mtls_env.items():
+            if saved_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = saved_value
         _terminate_daemon(proc)
 
 
@@ -1306,6 +1386,8 @@ def test_issues_binary_matches_python_process_output(
         ("a.missing",),
         ("a.missing", "--reverse"),
         ("a.missing", "--history"),
+        # 无参 usage 错误：python rc=0/stdout ↔ rust rc!=0/stderr（s1_rustdiff-07，
+        # 消息文本逐字一致，见 _assert_python_rust_usage_error_outputs）。
         (),
     ],
 )
@@ -1367,6 +1449,11 @@ def test_tests_binary_matches_python_read_process_output(
         encoding="utf-8",
     )
 
+    if not tests_args:
+        # s1_rustdiff-07：无参 usage 错误走流/rc 契约差断言，不经只读等值断言。
+        _assert_python_rust_usage_error_outputs(python_result, rust_result)
+        return
+
     _assert_python_rust_read_outputs(python_result, rust_result)
 
 
@@ -1384,6 +1471,10 @@ def test_tests_binary_matches_python_read_process_output(
         #   qualified 命中 → 语义差，xfail(strict) 记录。
         # - call-chain / topo 响应形状契约差（s1_rustdiff-03）：daemon 快照返回
         #   字符串列表，python 薄客户端 handler 期待 dict 行，格式化报错 rc=0。
+        #   其中 depth=0（空链）与 missing 符号两条于 2026-11-10 复核 XPASS：
+        #   mTLS 夹具修复（_ensure_isolated_mtls_env）后 daemon 响应经薄客户端
+        #   正常解析，与 rust local 输出逐行一致，故移除失效 xfail 标记，改为
+        #   正常等值断言；args8/9（非空 call-chain）与 topo 的形状差仍真实存在。
         # - impact（s1_rustdiff-04，2026-09-13 复核 XPASS）：早期 python 侧经
         #   daemon python_compat blast_radius 时 worker 无客户端 workspace 上下文
         #   → 无 active workspace fail-closed，曾登记 xfail(strict)。迁移到隔离
@@ -1412,14 +1503,8 @@ def test_tests_binary_matches_python_read_process_output(
             "call-chain", ("a.alpha", "--depth", "1"),
             marks=pytest.mark.xfail(strict=True, reason="python 解析 daemon call-chain 响应形状失败：期望 dict 行实得字符串列表（list indices must be integers or slices, not str）（s1_rustdiff-03）"),
         ),
-        pytest.param(
-            "call-chain", ("a.alpha", "--depth", "0"),
-            marks=pytest.mark.xfail(strict=True, reason="python 解析 daemon call-chain 响应形状失败：期望 dict 行实得字符串列表（list indices must be integers or slices, not str）（s1_rustdiff-03）"),
-        ),
-        pytest.param(
-            "call-chain", ("missing",),
-            marks=pytest.mark.xfail(strict=True, reason="python 解析 daemon call-chain 响应形状失败：期望 dict 行实得字符串列表（list indices must be integers or slices, not str）（s1_rustdiff-03）"),
-        ),
+        ("call-chain", ("a.alpha", "--depth", "0")),
+        ("call-chain", ("missing",)),
         pytest.param(
             "topo", (),
             marks=pytest.mark.xfail(strict=True, reason="python 解析 daemon topo 响应形状失败：期望 dict 行实得字符串（'str' object has no attribute 'get'）（s1_rustdiff-03）"),

@@ -16,8 +16,9 @@ CLI/MCP 验收矩阵收口门禁（只读）。
   3. `WATCHED_TASK_IDS` 里的历史遗留卡同样 `closed` 且步骤全 `done`，或按
      `LEGACY_WAIVERS` 提供存在且含该 task id 的豁免证据文件；
   4. 看板本身在看板子卡未闭合前不得为 `closed`（提前关闭视为违规）；
-  5. ADR-002 §38 远端验收行（S1-01…S1-20 / S2-01…S2-09 / S3-01…S3-10）逐行
-     核验：S1 行须有承载测试与用例标记，S2/S3 行须归属卡已 `closed`。
+  5. ADR-002 §38 远端验收行（S1-01…S1-20 / S2-01…S2-09 / S3-01…S3-10 /
+     S4-01 / S4-03）逐行核验：S1 与 S4 行须有承载测试与用例标记，S2/S3 行
+     须归属卡已 `closed`。
 
 任一条件不满足 → 退出码 1，并逐卡打印缺口；全部满足 → 退出码 0。
 
@@ -64,10 +65,11 @@ LEGACY_WAIVERS: Dict[str, str] = {
 DEFAULT_DB = r"C:\Users\wanpi\.callwarden\callwarden.db"
 
 # ---------------------------------------------------------------------------
-# ADR-002 §38 远端平面验收行（S1/S2/S3）
+# ADR-002 §38 远端平面验收行（S1/S2/S3/S4）
 # ---------------------------------------------------------------------------
 # 每一行都必须在矩阵里有唯一可核验证据，否则视为缺口：
-#   - S1 行：由 pytest 用例承载，检查测试文件存在且含对应 `s1_XX` 用例标记；
+#   - S1/S4 行：由 pytest 用例承载，检查测试文件存在且含对应 `s1_XX`/`s4_XX`
+#     用例标记；
 #   - S2/S3 行：实现尚未落地，按归属任务卡是否 closed 判定（open → 缺口）。
 REMOTE_ACCEPTANCE_ROWS: List[Dict[str, str]] = [
     {"id": "S1-01", "owner_task": "T-1793774130685-6acab9d4",
@@ -129,11 +131,18 @@ REMOTE_ACCEPTANCE_ROWS: List[Dict[str, str]] = [
     {"id": "S3-08", "owner_task": "T-1793774130800-71aa5b74"},
     {"id": "S3-09", "owner_task": "T-1793774130800-71aa5b74"},
     {"id": "S3-10", "owner_task": "T-1793774130800-71aa5b74"},
+    # S4（清理与矩阵）：由 T-1793807024448-17d4cd60 步骤 5 落地承载测试。
+    # S4-01（pipe/UDS 代码删除）与 S4-03（Python local 分支删除）以
+    # tests/test_single_track_kernel.py 的 s4_01 / s4_03 用例为收口证据。
+    {"id": "S4-01", "owner_task": "T-1793807024448-17d4cd60",
+     "test_file": "tests/test_single_track_kernel.py", "marker": "test_s4_01"},
+    {"id": "S4-03", "owner_task": "T-1793807024448-17d4cd60",
+     "test_file": "tests/test_single_track_kernel.py", "marker": "test_s4_03"},
 ]
 
 
 def _remote_row_gaps(conn: sqlite3.Connection) -> List[Dict[str, str]]:
-    """核验 S1–S3 每条验收行，返回行状态（含 gaps）。"""
+    """核验 S1–S4 每条验收行，返回行状态（含 gaps）。"""
     rows: List[Dict[str, str]] = []
     for row in REMOTE_ACCEPTANCE_ROWS:
         gaps: List[str] = []

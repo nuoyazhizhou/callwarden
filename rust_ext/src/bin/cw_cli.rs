@@ -92,7 +92,7 @@ struct Cli {
     #[arg(long, value_enum, global = true)]
     mode: Option<ModeArg>,
 
-    /// daemon UDS 路径
+    /// daemon endpoint 路径
     #[arg(long, global = true)]
     socket: Option<PathBuf>,
 
@@ -5342,7 +5342,7 @@ fn format_role_support(role: &str, platform: &str, supported: bool) -> String {
         format!("角色 '{role}' 在当前平台 {platform} 上 ❌ 不支持"),
         "提示：".to_string(),
         "  - Windows/macOS 仅支持 local/client 角色".to_string(),
-        "  - Linux 才支持 agent/daemon/all 角色（需 SO_PEERCRED + SCM_RIGHTS + UDS）".to_string(),
+        "  - agent/daemon/all 角色需经 HTTPS+mTLS 单轨访问 daemon（ADR-002）".to_string(),
     ]
     .join("\n")
 }

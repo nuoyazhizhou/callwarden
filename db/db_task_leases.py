@@ -114,18 +114,18 @@ def _clock_unavailable_reason(detail: str) -> Dict[str, Any]:
                 else ("macos" if _sys.platform == "darwin" else "linux"))
     if platform == "windows":
         recovery = (
-            f"daemon 未运行。请执行: cw_daemon.exe --socket \"{endpoint}\" "
+            f"daemon 未运行。请执行: cw_daemon.exe "
             f"或确认 Windows 服务 CallWarden Daemon 已启动。端点: {endpoint}"
         )
     elif platform == "macos":
         recovery = (
             f"daemon 未运行。请执行: launchctl start com.callwarden.daemon "
-            f"或手动运行: cw_daemon --socket \"{endpoint}\"。端点: {endpoint}"
+            f"或手动运行: cw_daemon。端点: {endpoint}"
         )
     else:
         recovery = (
             f"daemon 未运行。请执行: systemctl --user start callwarden-daemon.service "
-            f"或手动运行: cw_daemon --socket \"{endpoint}\"。端点: {endpoint}"
+            f"或手动运行: cw_daemon。端点: {endpoint}"
         )
     reason["recovery_guidance"] = recovery
     reason["method"] = "lease"
@@ -175,8 +175,8 @@ class LeaseMixin:
             LeaseClockUnavailableError: 无法从 daemon 读取权威时钟
         """
         try:
-            from callwarden.server.daemon_client import UnixDaemonRpcClient
-            client = UnixDaemonRpcClient()
+            from callwarden.server.daemon_client import HttpDaemonRpcClient
+            client = HttpDaemonRpcClient.get_instance()
             res = client.call("ping")
             if isinstance(res, dict) and "timestamp" in res:
                 return float(res["timestamp"])

@@ -39,9 +39,18 @@ def _scan_file(path: str):
         "_p3_identity_mcp_reason", "_p2_detect_cycle_on_edges", "_p2_find_cycle_dfs",
         "_p2_find_shortest_cycle",
     }
+    # S2 sanctioned client-execution window（ADR-002 §16.3）：remote profile 下
+    # build_graph/build_directory 由客户端在本机构建临时工作库再经
+    # snapshot.upload 上传，契约 §16.4 指定执行位置即 server/tools/（与
+    # check_client_purity.py 的 s2_client_exec_names 同步，双写互证）。
+    s2_client_exec = {"_remote_codegraph"}
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name.startswith("_h_") or node.name in compat_helpers:
+            if (
+                node.name.startswith("_h_")
+                or node.name in compat_helpers
+                or node.name in s2_client_exec
+            ):
                 compat_ranges.append((node.lineno, node.end_lineno or node.lineno))
 
     def in_compat(lineno: int) -> bool:

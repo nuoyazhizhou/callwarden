@@ -32,8 +32,8 @@ SUMMARY = (
 
 
 def main():
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    client = UnixDaemonRpcClient()
+    from callwarden.server.daemon_client import HttpDaemonRpcClient
+    client = HttpDaemonRpcClient.get_instance()
     params = {
         "task_id": TID,
         "step_id": RSTEP,

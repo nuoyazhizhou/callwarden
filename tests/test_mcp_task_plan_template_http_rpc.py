@@ -38,14 +38,27 @@ def _call(rpc, params=None):
 
 
 def test_task_plan_template_default_shape(rpc):
-    """默认调用：返回模板字符串（Python compat 真相源为裸字符串，非 dict 包装）。"""
+    """默认调用：返回 i18n Markdown 模板（Python compat 真相源为裸字符串，非 dict 包装）。
+
+    模板语言由 **daemon 进程**环境决定（`CALLWARDEN_LANG` → `LC_ALL`/
+    `LC_MESSAGES`/`LANG`，zh_CN/zh 归一化取中文模板，否则英文默认），与本
+    测试进程的 locale 无关。故断言与语言无关的结构形态：根任务一级标题、
+    子任务二级标题、未完成/已完成 checkbox 步骤占位行与花括号占位符。
+    """
     out = _call(rpc)
     assert isinstance(out, str), f"期望 str，实际 {type(out)}"
-    assert len(out) > 0, "template 不应为空"
-    # 验证模板内容包含关键占位符
-    assert "{Root task title}" in out
-    assert "{Subtask 1 title}" in out
-    assert "{Step 1 description}" in out
+    lines = out.splitlines()
+    assert len(lines) >= 10, f"模板行数过少（疑似被裁剪）：{out!r}"
+    assert lines[0].startswith("# {"), f"首行应为根任务占位标题：{lines[0]!r}"
+    assert any(line.startswith("## {") for line in lines), (
+        f"缺少子任务二级标题占位：{out!r}"
+    )
+    assert any("- [ ] {" in line for line in lines), (
+        f"缺少未完成步骤 checkbox 占位：{out!r}"
+    )
+    assert any("- [x] {" in line for line in lines), (
+        f"缺少已完成步骤 checkbox 占位：{out!r}"
+    )
 
 
 def test_task_plan_template_ignores_params(rpc):
@@ -64,6 +77,6 @@ def test_task_plan_template_repeatable(rpc):
 
 def test_task_plan_template_daemon_unavailable_fail_closed():
     """daemon 不可达时必须报错（fail-closed），不得静默返回空。"""
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("task_plan_template", {})

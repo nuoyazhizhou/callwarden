@@ -51,7 +51,7 @@ except Exception:  # pragma: no cover - fallback for bare worktree checkout
         DaemonRemoteError,
     )
 
-DEAD_ENDPOINT = "http://127.0.0.1:9"  # nothing listening -> connection refused
+DEAD_ENDPOINT = "https://127.0.0.1:9"  # nothing listening -> connection refused
 TASK_ID = "T-1787322799850-e804f55c"
 
 

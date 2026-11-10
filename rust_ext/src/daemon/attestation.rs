@@ -23,7 +23,6 @@ use sha2::Sha256;
 
 use super::clock::AuthoritativeClock;
 use super::dispatch::DaemonRpcError;
-use super::peercred::PeerIdentity;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -119,14 +118,14 @@ impl AttestationIssuer {
     /// 客户端提交的 Attestation 在校验侧被拒绝（Req 10.9）。
     pub fn issue(
         &self,
-        identity: &PeerIdentity,
+        principal_id: &str,
         record_id: &str,
         view_manifest_hash: &str,
         contract_hash: &str,
     ) -> Attestation {
         let issued_at = self.clock.now_millis();
         let expires_at = issued_at + self.validity_window_ms;
-        let identity_str = identity.owner_key();
+        let identity_str = principal_id.to_string();
 
         let signature = self.compute_signature(
             ATTESTATION_ISSUER_DAEMON,
@@ -447,11 +446,8 @@ mod tests {
         AttestationIssuer::new(key, clock, None)
     }
 
-    fn make_identity() -> PeerIdentity {
-        PeerIdentity::Unix {
-            uid: 1000,
-            gid: 1000,
-        }
+    fn make_identity() -> String {
+        "1000".to_string()
     }
 
     #[test]
@@ -669,9 +665,7 @@ mod tests {
     #[test]
     fn test_windows_identity_attestation() {
         let issuer = make_issuer();
-        let identity = PeerIdentity::Windows {
-            sid: "S-1-5-21-1234567890-1000".to_string(),
-        };
+        let identity = "S-1-5-21-1234567890-1000".to_string();
 
         let att = issuer.issue(&identity, "evidence-042", "vmhash-win", "contract-win");
 
