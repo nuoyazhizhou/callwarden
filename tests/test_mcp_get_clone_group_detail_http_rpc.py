@@ -122,6 +122,6 @@ def test_get_clone_group_detail_repeatable(rpc):
 
 def test_get_clone_group_detail_daemon_unavailable_fail_closed():
     """daemon 不可达时必须报错（fail-closed），不得静默返回空。"""
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("get_clone_group_detail", {"group_id": 1})

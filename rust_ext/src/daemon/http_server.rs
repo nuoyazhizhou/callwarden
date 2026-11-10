@@ -525,6 +525,17 @@ where
     S: DaemonStateExt + Send + Sync + 'static,
 {
     let local = bound.local_addr;
+    // ADR-002 §16.1：按绑定地址注入 bind_scope（与 manifest v2 bind_scope 推导同源）。
+    // remote profile 下 snapshot.publish 的 db_path 兼容路径被拒绝（E_REMOTE_DB_PATH_FORBIDDEN），
+    // 快照入口唯一为 §16.2 的 snapshot.upload 系列；dispatch 层据此做绝对路径兜底拒绝。
+    {
+        let mut s = state.lock().await;
+        s.set_bind_scope(if local.ip().is_loopback() {
+            "loopback"
+        } else {
+            "remote"
+        });
+    }
     // H3: compat worker。止血(审计问题3):COMPAT_ROUTE_WHITELIST 已清零
     // （所有方法均迁 rust_native），compat_route(method) 恒为 None、worker 分派分支
     // 是死代码,没有任何 RPC 会路由到 worker。此时启动 worker 纯属多余,且启动
@@ -1115,7 +1126,7 @@ async fn rpc_handler<S: DaemonStateExt + Send + Sync + 'static>(
 
     let result = {
         let mut st = app.state.lock().await;
-        super::dispatch::dispatch_rpc(&mut *st, peer, &method, &params, &[], &app.serialization)
+        super::dispatch::dispatch_rpc(&mut *st, peer, &method, &params, &app.serialization)
     };
 
     if is_mut {
@@ -1442,7 +1453,6 @@ async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
                     bg_peer,
                     &bg_method,
                     &bg_params,
-                    &[],
                     &app_bg.serialization,
                     inline_payload,
                 )
@@ -1490,7 +1500,6 @@ async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
             peer,
             &method,
             &params,
-            &[],
             &app.serialization,
             inline_payload,
         )
@@ -1637,7 +1646,7 @@ async fn jobs_handler<S: DaemonStateExt + Send + Sync + 'static>(
         }
         let res = {
             let mut s = st.lock().await;
-            super::dispatch::dispatch_rpc(&mut *s, peer, &method, &params, &[], &sp)
+            super::dispatch::dispatch_rpc(&mut *s, peer, &method, &params, &sp)
         };
         let mut j = jobs2.lock().unwrap();
         if let Some(r) = j.get_mut(&jid) {
@@ -2501,6 +2510,52 @@ fn build_capability_registry() -> Result<Value, String> {
         "fixture-sp-ok",
         "fixture-sp-err",
         "T-1786590214634-9e740cdc-sub-2#H1",
+        "",
+    );
+    // ADR-002 §16.2（REMOTE-S2）：remote profile 唯一快照入口（gzip 内联上传）。
+    add(
+        "snapshot.upload",
+        "snapshot.upload",
+        "snapshot-upload",
+        "rust_native",
+        "available",
+        "index_write",
+        "snapshot",
+        false,
+        "/v1/rpc",
+        "fixture-snapshot-upload-ok",
+        "fixture-snapshot-upload-err",
+        "T-1793774130739-6e096a14#REMOTE-S2",
+        "",
+    );
+    add(
+        "snapshot.upload.chunk",
+        "snapshot.upload.chunk",
+        "snapshot-upload-chunk",
+        "rust_native",
+        "available",
+        "index_write",
+        "snapshot",
+        false,
+        "/v1/rpc",
+        "fixture-snapshot-upload-chunk-ok",
+        "fixture-snapshot-upload-chunk-err",
+        "T-1793774130739-6e096a14#REMOTE-S2",
+        "",
+    );
+    add(
+        "snapshot.upload.commit",
+        "snapshot.upload.commit",
+        "snapshot-upload-commit",
+        "rust_native",
+        "available",
+        "index_write",
+        "snapshot",
+        false,
+        "/v1/rpc",
+        "fixture-snapshot-upload-commit-ok",
+        "fixture-snapshot-upload-commit-err",
+        "T-1793774130739-6e096a14#REMOTE-S2",
         "",
     );
     add(

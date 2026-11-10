@@ -42,25 +42,42 @@ def py_is_daemon_required() -> bool:
     return py_get_daemon_mode() == "enterprise"
 
 
-def py_is_daemon_available(socket_path: str, platform: str) -> bool:
-    """Python 真相源：config.py:is_daemon_available(endpoint)（2a D3.3 参数化）
-
-    参数化版本。现状（生产演进后）：
-    - Windows：委托生产函数（协议探针，TP-49 假阳性卡）并**消费 socket_path**
-      ——与 rs ``windows_endpoint_available(socket_path)``（#48 三分支）对齐，
-      消除「py 镜像忽略 socket_path」的镜像语义分歧（2204315 已知残留）；
-    - macOS：false（UDS/Named Pipe 均不可用）
-    - Linux：socket_path 文件存在性（模拟；生产 linux 分支同为 exists()）
-    """
-    if platform == "windows":
-        try:
-            from callwarden.config import is_daemon_available as _prod_fn
-            return bool(_prod_fn(socket_path))
-        except Exception:
-            return False
-    if platform != "linux":
+def _py_tcp_reachable(endpoint: str) -> bool:
+    """对齐 rs ``tcp_reachable``：host:port 解析（无端口补 443）+ TCP 可达性（2s 超时）。"""
+    host_port = endpoint[len("https://"):] if endpoint.startswith("https://") \
+        else endpoint[len("http://"):]
+    last = host_port.rsplit(":", 1)[-1]
+    try:
+        port_ok = 0 <= int(last) <= 65535
+    except ValueError:
+        port_ok = False
+    addr = host_port if port_ok else f"{host_port}:443"
+    import socket as _socket
+    try:
+        with _socket.create_connection(addr, timeout=2.0):
+            pass
+        return True
+    except Exception:
         return False
-    return os.path.exists(socket_path)
+
+
+def py_is_daemon_available(socket_path: str, platform: str) -> bool:
+    """Python 真相源：config.py:is_daemon_available(endpoint)（ADR-002 单轨镜像）
+
+    与 rs ``is_daemon_available`` 的**轻量层**语义对齐（两端 TCP 可达性）：
+    - 非 http(s) 端点（socket/Named Pipe 路径）→ False（fail-closed：
+      传输已删除，文件存在性不再代表可用，亦覆盖 TP-49 假阳性方向）；
+    - linux/windows：http(s) 端点做 TCP 可达性探针（2s 短超时）；
+    - macOS/未知平台：False。
+
+    协议级探针（mTLS 握手 + ping 应答）由 Python 消费层
+    ``config.is_daemon_available`` 承担；本镜像只对齐 Rust 路由决策层。
+    """
+    if platform not in ("linux", "windows"):
+        return False
+    if not socket_path.startswith(("https://", "http://")):
+        return False
+    return _py_tcp_reachable(socket_path)
 
 
 def py_daemon_socket_path() -> str:
@@ -222,16 +239,17 @@ def test_d3_is_daemon_available():
     tmp = Path(tempfile.gettempdir()) / "cw_test_socket_d3.sock"
     tmp.write_bytes(b"")
 
-    # 2a D3.3 参数化：Windows 行改为「显式 socket_path 的探测结果」——
-    # py/rs 均消费 socket_path（#48 三分支 + config 参数化），非管道且
-    # 不存在的路径两端一致为 False（此前 py 探测默认管道、rs 探测
-    # socket_path，daemon 运行时 py=True/rs=False 必红的镜像分歧就此消除）。
+    # ADR-002 单轨：endpoint 为 http(s):// URL 才可能可用；socket/Named Pipe
+    # 路径一律 fail-closed False（传输已删除，文件存在性不再代表可用）。
+    # py 镜像与 rs 轻量层均为 TCP 可达性语义（无 daemon 监听 127.0.0.1:1）。
     test_cases = [
         # (socket_path, platform, expected)
-        (str(tmp), "linux", True),              # D3.1
+        (str(tmp), "linux", False),              # D3.1 socket 路径 → fail-closed
         ("/run/callwarden/nonexistent.sock", "linux", False),  # D3.2
-        ("C:\\callwarden\\socket.sock", "windows", False),      # D3.3（非管道路径，两端 False）
+        ("C:\\callwarden\\socket.sock", "windows", False),      # D3.3（非 http(s) 端点）
         ("/tmp/callwarden.sock", "macos", False),               # D3.4
+        ("https://127.0.0.1:1", "linux", False),   # D3.5 http(s) 端点 TCP 不可达
+        ("https://127.0.0.1:1", "windows", False), # D3.6
     ]
 
     all_match = True
@@ -264,22 +282,25 @@ def test_d4_route_command():
     tmp = Path(tempfile.gettempdir()) / "cw_test_socket_d4.sock"
     tmp.write_bytes(b"")
 
-    # 2a D3.3 参数化：Windows 行期望改为固定 False 分支值——py/rs 均消费
-    # socket_path（#48 三分支 + config 参数化），`C:\socket.sock` 非管道且
-    # 不存在 → 两端一致 False（不再依赖默认管道的运行时探测结果）。
+    # ADR-002 单轨：socket 路径 fail-closed → enterprise 降级 unavailable、
+    # auto/unknown 回退 local；http(s) 端点按 TCP 可达性决策（127.0.0.1:1
+    # 无 daemon 监听 → 不可达）。
     test_cases = [
         # (mode, socket_path, platform, expected)
         ("local", str(tmp), "linux", "local"),                # D4.1
-        ("enterprise", str(tmp), "linux", "enterprise"),      # D4.2
+        ("enterprise", str(tmp), "linux", "unavailable"),     # D4.2 socket 路径 fail-closed
         ("enterprise", "/run/cw/nonexistent.sock", "linux", "unavailable"),  # D4.3
         ("enterprise", "C:\\socket.sock", "windows", "unavailable"),  # D4.4
-        ("auto", str(tmp), "linux", "enterprise"),            # D4.5
+        ("auto", str(tmp), "linux", "local"),                 # D4.5 socket 路径 → 回退 local
         ("auto", "/run/cw/nonexistent.sock", "linux", "local"),                # D4.6
         ("auto", "C:\\socket.sock", "windows", "local"),             # D4.7
         ("local", "C:\\socket.sock", "windows", "local"),      # D4.8
         # 额外：未知 mode → auto fail-soft
-        ("unknown", str(tmp), "linux", "enterprise"),
+        ("unknown", str(tmp), "linux", "local"),
         ("unknown", "/run/cw/nonexistent.sock", "linux", "local"),
+        # ADR-002 单轨：http(s) 端点 TCP 不可达
+        ("enterprise", "https://127.0.0.1:1", "linux", "unavailable"),
+        ("auto", "https://127.0.0.1:1", "linux", "local"),
     ]
 
     all_match = True

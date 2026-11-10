@@ -52,7 +52,7 @@ from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
 # ---------------------------------------------------------------------------
 # Fixtures / constants
 # ---------------------------------------------------------------------------
-DEAD_ENDPOINT = "http://127.0.0.1:9"
+DEAD_ENDPOINT = "https://127.0.0.1:9"
 TASK_ID = "T-1787322799770-e34ac71c"
 
 

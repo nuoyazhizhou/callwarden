@@ -1,10 +1,11 @@
 """K2 评审修复验证测试（2026-07-20 二轮评审）。
 
-确保 K2 修复不可回退：
-1. Python daemon_server.py workspace.file.refresh 在 canonical_bytes is None 时
-   校验 abs_path 落在 workspace host_real_root 内
-2. Rust workspace.rs handle_workspace_file_refresh 同步校验
-3. path_escape 错误类型存在
+ADR-002 单轨后 `server/daemon_server.py` 已整文件退役（U3），Python 侧 K2 源码
+断言随之删除；本文件只保留仍有效的校验：
+
+1. Rust workspace.rs handle_workspace_file_refresh 必须实施 path_escape 校验
+2. path_escape 错误类型存在
+3. path escape prefix 校验逻辑本身（不依赖 daemon 启动）
 """
 
 from pathlib import Path
@@ -15,68 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 # ============================================================
-# 1. Python 侧 K2 修复
-# ============================================================
-
-
-class TestK2PythonFix:
-    """server/daemon_server.py 必须在 canonical_bytes is None 时校验 abs_path。"""
-
-    def test_python_has_path_escape_check(self):
-        """daemon_server.py workspace.file.refresh 必须包含 path_escape 校验。"""
-        path = ROOT / "server" / "daemon_server.py"
-        content = path.read_text(encoding="utf-8")
-
-        # 必须包含 K2 评审修复标记
-        assert "K2 评审修复" in content, (
-            "daemon_server.py 必须包含 K2 评审修复注释标记"
-        )
-        # 必须包含 path_escape 错误类型
-        assert "path_escape" in content, (
-            "daemon_server.py 必须包含 path_escape DaemonRpcError 错误类型"
-        )
-        # 必须在 canonical_bytes is None 分支中校验
-        assert "canonical_bytes is None" in content, (
-            "daemon_server.py 必须在 canonical_bytes is None 分支校验 abs_path"
-        )
-        # 必须检查 host_real_root prefix
-        assert "host_real_root" in content, (
-            "daemon_server.py 必须使用 host_real_root 做 prefix 校验"
-        )
-        # 必须调用 _validate_owned_path（owner UID 校验）
-        assert "_validate_owned_path" in content, (
-            "daemon_server.py 必须调用 _validate_owned_path 校验 owner UID"
-        )
-
-    def test_python_path_escape_logic_correct(self):
-        """path escape 校验逻辑必须正确：real_abs == host_root 或以 host_root+sep 开头。"""
-        path = ROOT / "server" / "daemon_server.py"
-        content = path.read_text(encoding="utf-8")
-
-        # 找到 K2 修复代码块
-        k2_idx = content.find("K2 评审修复")
-        assert k2_idx >= 0, "daemon_server.py 必须包含 K2 评审修复"
-        # stale 修正：startswith 校验现位于 server/daemon_server.py:1235；
-        # 该分支新增了「Phase 4-2 Rust 短路」检查（:1223-1232），使 K2 注释起点
-        # （:1212）到 startswith（:1235）跨度超过原 1200 字符窗口，导致扫描窗口过期。
-        # 与 Rust 侧一致放宽到 2500 字符，确保覆盖 startswith/os.sep/realpath。
-        block = content[k2_idx:k2_idx + 2500]
-
-        # 必须包含 prefix 校验逻辑（startswith + os.sep）
-        assert "startswith" in block, (
-            f"K2 修复必须用 startswith 做 prefix 校验，实际块：{block[:400]}"
-        )
-        assert "os.sep" in block, (
-            f"K2 修复必须用 os.sep 分隔 host_root 和子路径，实际块：{block[:400]}"
-        )
-        # 必须用 realpath 规范化 abs_path 和 host_root
-        assert "realpath" in block or "real_abs" in block, (
-            f"K2 修复必须用 realpath 规范化路径，实际块：{block[:400]}"
-        )
-
-
-# ============================================================
-# 2. Rust 侧 K2 修复
+# 1. Rust 侧 K2 修复
 # ============================================================
 
 
@@ -130,7 +70,7 @@ class TestK2RustFix:
 
 
 # ============================================================
-# 3. 行为级测试（直接测试校验逻辑）
+# 2. 行为级测试（直接测试校验逻辑）
 # ============================================================
 
 
@@ -142,7 +82,7 @@ class TestK2BehaviorLogic:
         import os
 
         def check_path_escape(abs_path: str, host_root: str) -> bool:
-            """模拟 daemon_server.py 的 K2 校验逻辑。返回 True=通过，False=逃逸。"""
+            """模拟 workspace.rs 的 K2 校验逻辑。返回 True=通过，False=逃逸。"""
             real_abs = os.path.realpath(os.path.abspath(abs_path))
             real_host_root = os.path.realpath(host_root)
             return (
@@ -162,20 +102,6 @@ class TestK2BehaviorLogic:
         assert check_path_escape("/tmp/workspace-evil/foo.py", "/tmp/workspace") is False
         # workspace 根本身 → 通过
         assert check_path_escape("/tmp/workspace", "/tmp/workspace") is True
-
-    def test_python_validate_owned_path_exists(self):
-        """_validate_owned_path 静态方法必须存在且签名正确。"""
-        # 直接检查源码（不依赖 import，避免触发复杂依赖）
-        path = ROOT / "server" / "daemon_server.py"
-        content = path.read_text(encoding="utf-8")
-
-        # 验证 _validate_owned_path 方法签名包含 peer_uid 和 require_file
-        assert "def _validate_owned_path(path: str, peer_uid" in content, (
-            "_validate_owned_path 签名必须包含 peer_uid 参数"
-        )
-        assert "require_file" in content, (
-            "_validate_owned_path 签名必须包含 require_file 参数"
-        )
 
 
 if __name__ == "__main__":

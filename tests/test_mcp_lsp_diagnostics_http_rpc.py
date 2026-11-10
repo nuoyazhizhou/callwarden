@@ -54,7 +54,7 @@ def test_lsp_diagnostics_defaults(rpc):
 
 
 def test_lsp_diagnostics_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("lsp_diagnostics", {"file_path": "a.py"})
 

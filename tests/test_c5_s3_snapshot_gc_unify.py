@@ -15,7 +15,7 @@ import threading
 
 
 from callwarden.server.daemon_client import (
-    UnixDaemonRpcClient,
+    HttpDaemonRpcClient,
 )
 from callwarden.server.snapshot_manager import SnapshotManagerService
 
@@ -26,13 +26,13 @@ from callwarden.server.snapshot_manager import SnapshotManagerService
 
 
 def _make_client(monkeypatch):
-    """构造 UnixDaemonRpcClient，mock 最终 RPC 调用（记录 method 序列）。
+    """构造 HttpDaemonRpcClient，mock 最终 RPC 调用（记录 method 序列）。
 
-    stale 修正：server/daemon_client.py:1012-1041 publish_snapshot 已删除本地
-    sqlite3 connect + PASSIVE checkpoint（SRV-006，checkpoint authority 下沉
-    Rust daemon），模块不再 import sqlite3，故不再 mock sqlite3.connect。
+    stale 修正：单轨 HTTPS 后 publish_snapshot 仍为两步 RPC 委派；
+    server/daemon_client.py publish_snapshot 无本地 sqlite3 connect +
+    PASSIVE checkpoint（SRV-006，checkpoint authority 下沉 Rust daemon）。
     """
-    client = UnixDaemonRpcClient(socket_path="unused-socket")
+    client = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     calls = []
 
     def fake_call(method, params=None, *args, **kwargs):
@@ -74,7 +74,7 @@ def test_publish_snapshot_no_local_busy_fail_fast(monkeypatch):
     Python 侧不含 wal_checkpoint / busy_timeout 本地分支。
     """
     import inspect
-    src = inspect.getsource(UnixDaemonRpcClient.publish_snapshot)
+    src = inspect.getsource(HttpDaemonRpcClient.publish_snapshot)
     assert "PRAGMA busy_timeout" not in src
     assert "wal_checkpoint" not in src
 

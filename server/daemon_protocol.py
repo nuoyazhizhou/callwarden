@@ -8,11 +8,9 @@ Rust 失败时 fail-soft 降级到 Python 路径（与 Phase 2-6/3-4 模式一�
 from __future__ import annotations
 
 import json
-import os
 import socket
 import struct
 import time
-from array import array
 from typing import Any, Dict
 
 
@@ -44,7 +42,7 @@ except ImportError:
 # rollback_config 查询缓存（60s TTL，避免每次帧收发都发起 RPC）
 _ROLLBACK_CACHE: Dict[str, Any] = {"ts": 0.0, "value": False}
 _ROLLBACK_CACHE_TTL = 60.0
-# SRV-007 重入守卫：回滚查询本身经本模块帧收发（UnixDaemonRpcClient）传输，
+# SRV-007 重入守卫：回滚查询本身经 daemon RPC（HttpDaemonRpcClient）传输，
 # 缓存过期瞬间存在 _is_rust_protocol_rolled_back → RPC → send_message →
 # _is_rust_protocol_rolled_back 的自依赖环；in-flight 时直接视为未回滚。
 _ROLLBACK_QUERY_STATE: Dict[str, Any] = {"in_flight": False}
@@ -206,108 +204,6 @@ def recv_message(sock: socket.socket,
     if not isinstance(message, dict):
         raise ProtocolError("消息必须是 JSON object")
     return message
-
-
-def send_message_with_fds(sock: socket.socket, message: Dict[str, Any],
-                          fds: list[int],
-                          max_bytes: int = DEFAULT_MAX_MESSAGE_BYTES) -> None:
-    """发送 JSON 帧并附带少量 SCM_RIGHTS 文件描述符。
-
-    Phase 4-1 wire-production：默认走 Rust ``protocol_encode_payload`` 短路（仅 payload 编码），
-    SCM_RIGHTS 仍由 Python socket.sendmsg 处理（Rust 端不暴露 socket 操作）。
-    rollback_config 中 feature=rust_daemon_protocol 置为 1 时回退 Python。
-    """
-    if not hasattr(sock, "sendmsg") or not hasattr(socket, "SCM_RIGHTS"):
-        raise ProtocolError("当前平台不支持 SCM_RIGHTS")
-    if not fds or len(fds) > DEFAULT_MAX_FDS:
-        raise ProtocolError(f"FD 数量必须在 1..{DEFAULT_MAX_FDS} 之间")
-    # Phase 4-1 wire-production: Rust 短路（仅 payload 编码）
-    payload: bytes
-    if _RUST_PROTOCOL_AVAILABLE and not _is_rust_protocol_rolled_back():
-        try:
-            payload = _rust_encode_payload(message)
-        except Exception:
-            payload = json.dumps(
-                message, ensure_ascii=False, separators=(",", ":")
-            ).encode("utf-8")  # fail-soft 降级
-    else:
-        payload = json.dumps(
-            message, ensure_ascii=False, separators=(",", ":")
-        ).encode("utf-8")
-    if len(payload) > max_bytes:
-        raise ProtocolError(f"消息超过限制: {len(payload)} > {max_bytes}")
-    frame = HEADER.pack(len(payload)) + payload
-    rights = array("i", fds)
-    sent = sock.sendmsg(
-        [frame], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, rights.tobytes())]
-    )
-    if sent < len(frame):
-        sock.sendall(frame[sent:])
-
-
-def recv_message_with_fds(sock: socket.socket,
-                          max_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
-                          max_fds: int = DEFAULT_MAX_FDS) -> tuple[Dict[str, Any], list[int]]:
-    """接收 JSON 帧及首包携带的 SCM_RIGHTS FD。
-
-    Phase 4-1 wire-production：默认走 Rust ``protocol_parse_header`` +
-    ``protocol_decode_payload`` 短路（仅帧解析），SCM_RIGHTS 仍由 Python socket.recvmsg 处理。
-    rollback_config 中 feature=rust_daemon_protocol 置为 1 时回退 Python。
-    """
-    if not hasattr(sock, "recvmsg") or not hasattr(socket, "SCM_RIGHTS"):
-        return recv_message(sock, max_bytes), []
-    item_size = array("i").itemsize
-    header, ancillary, flags, _addr = sock.recvmsg(
-        HEADER.size, socket.CMSG_SPACE(max_fds * item_size)
-    )
-    if not header:
-        raise ProtocolError("连接在消息接收完成前关闭")
-    if len(header) < HEADER.size:
-        header += _recv_exact(sock, HEADER.size - len(header))
-    received_fds: list[int] = []
-    try:
-        if flags & getattr(socket, "MSG_CTRUNC", 0):
-            raise ProtocolError("SCM_RIGHTS ancillary data 被截断")
-        for level, kind, data in ancillary:
-            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
-                values = array("i")
-                values.frombytes(data[:len(data) - (len(data) % item_size)])
-                received_fds.extend(values.tolist())
-        if len(received_fds) > max_fds:
-            raise ProtocolError(f"收到过多 FD: {len(received_fds)} > {max_fds}")
-        # Phase 4-1 wire-production: Rust 短路（header 解析）
-        size: int
-        use_rust = _RUST_PROTOCOL_AVAILABLE and not _is_rust_protocol_rolled_back()
-        if use_rust:
-            try:
-                size = _rust_parse_header(header)
-            except Exception:
-                (size,) = HEADER.unpack(header)  # fail-soft 降级
-                use_rust = False
-        else:
-            (size,) = HEADER.unpack(header)
-        if size <= 0 or size > max_bytes:
-            raise ProtocolError(f"非法消息长度: {size}")
-        payload = _recv_exact(sock, size)
-        # Phase 4-1 wire-production: Rust 短路（payload 解码）
-        if use_rust:
-            try:
-                message = _rust_decode_payload(payload)
-                return message, received_fds
-            except Exception:
-                pass  # fail-soft → 降级 Python 路径
-        # Python 降级路径
-        try:
-            message = json.loads(payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ProtocolError(f"JSON 解码失败: {exc}") from exc
-        if not isinstance(message, dict):
-            raise ProtocolError("消息必须是 JSON object")
-        return message, received_fds
-    except Exception:
-        for fd in received_fds:
-            os.close(fd)
-        raise
 
 
 def parse_response(response: Dict[str, Any]) -> Any:

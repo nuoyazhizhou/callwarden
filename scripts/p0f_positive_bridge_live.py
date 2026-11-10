@@ -78,8 +78,8 @@ def rpc_call(client, method, params, max_retry=4):
 
 
 def get_client():
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    return UnixDaemonRpcClient()
+    from callwarden.server.daemon_client import HttpDaemonRpcClient
+    return HttpDaemonRpcClient.get_instance()
 
 
 def status_of(task_id):

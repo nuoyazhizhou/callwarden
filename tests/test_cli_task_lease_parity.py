@@ -9,9 +9,9 @@ r"""CLI ↔ Rust daemon 生命周期 RPC 一致性（任务 T-1786616113972-c74a
    另一 session，导致 E_IDENTITY_SESSION_MISMATCH 或伪 task_conflict。
 
 验收方式（必须 CLI 进程级）：
-- 每个写调用都是 `C:\Python314\python.exe cw.py task ...` 真实子进程；
-- 全程连接真实隔离 cw-daemon.exe（临时 task DB + Named Pipe），禁 mock；
-- daemon 侧只读断言（task_status / task_events）仅用于核验状态，不替代 CLI 写入口。
+- 每个写调用都是 `sys.executable cw.py task ...` 真实子进程；
+- 全程连接真实隔离 cw-daemon.exe（临时 task DB + HTTPS/mTLS），禁 mock；
+- daemon 侧只读断言（task.status / task.events）仅用于核验状态，不替代 CLI 写入口。
 
 覆盖矩阵：
 - CLI 进程级全链路：create → claim → report → lease acquire → apply → close；
@@ -22,18 +22,16 @@ r"""CLI ↔ Rust daemon 生命周期 RPC 一致性（任务 T-1786616113972-c74a
   task_events 的 agent_session_id 都等于显式 session（不漂移到 Windows SID）；
 - enterprise/auto 模式下 daemon 不可用时 fail-closed，不回退本地 SQLite。
 
-前置条件（与 test_lease_gate_empirical.py 一致）：
-1. Windows 平台（Named Pipe）
-2. 已构建 `cw-daemon.exe`：`cargo build --release --no-default-features
-   --manifest-path rust_ext/Cargo.toml --bin cw-daemon`
-3. 默认管道 `\\.\pipe\callwarden-<sid>` 未被其他 daemon 占用（占用则 skip，
-   隔离 daemon 的 Windows 管道名由 transport 按 SID 硬编码派生，不可自定义）
+前置条件：
+1. 已构建 `cw-daemon.exe` 且存在可用的 mTLS PKI；缺失时由 `setup_w3_client`
+   归一为前置缺失并 skip。
 """
 
 import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -41,17 +39,10 @@ import time
 
 import pytest
 
-from _prereq_guard import (
-    require_cargo,
-    skip_if_daemon_exited_before_manifest,
-    skip_if_native_build_prereq_unavailable,
-)
-# 任务指令：每个 CLI 调用必须走 C:\Python314\python.exe（禁止依赖 python/python3/py）
-_PY_EXE = r"C:\Python314\python.exe"
+_PY_EXE = sys.executable
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CW_PY = os.path.join(_REPO_ROOT, "cw.py")
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
 
 _TASK_ID_RE = re.compile(r"T-[0-9A-Za-z-]+")
 _STEP_ID_RE = re.compile(r"S-[0-9A-Za-z-]+")
@@ -66,130 +57,28 @@ _PARITY_SNAPSHOT_ID = ""
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
-    reason="CLI↔daemon 生命周期 parity 需要 Windows + Named Pipe",
+    reason="CLI↔daemon 生命周期 parity 需要 Windows 隔离 daemon",
 )
 
-requires_binaries = pytest.mark.skipif(
-    not os.path.exists(_DAEMON_BIN),
-    reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
-)
-
-
-def _daemon_config(tmp: str) -> dict:
-    """生成隔离的 daemon JSON 配置（Windows 管道名由 transport 按 SID 派生）。"""
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 2,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 2,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
-
-
-@pytest.fixture(scope="module", autouse=True)
-def ensure_fresh_binary():
-    """P2 门禁：显式构建 cw-daemon，确保二进制由当前源码重建（fresh runtime）。"""
-    cargo = require_cargo()
-    build = subprocess.run(
-        [cargo, "build", "--release", "--no-default-features",
-         "--manifest-path", os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
-         "--bin", "cw-daemon"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=1200,
-    )
-    if build.returncode != 0:
-        skip_if_native_build_prereq_unavailable(build)
-        pytest.fail("cargo build 失败，二进制无法由当前源码重建：\n" + (build.stdout + build.stderr)[-3000:])
-    if not os.path.exists(_DAEMON_BIN):
-        pytest.fail(f"cargo build 成功但未产出 {_DAEMON_BIN}")
+_REAL_PKI_DIR = None
 
 
 @pytest.fixture(scope="module")
 def lease_env():
-    """启动真实隔离 cw-daemon（临时 task DB + 默认 Named Pipe），返回
-    (client, tmp, task_db, proc, pipe)。
+    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。"""
+    global _REAL_PKI_DIR, _PARITY_SNAPSHOT_ID
+    from callwarden.config import get_pki_dir
+    from _w3_harness import seed_cli_task_agent, seed_cli_task_authority, setup_w3_client
 
-    与 test_lease_gate_empirical.py 一致：探针默认管道，被其他 daemon 占用则 skip
-    （不杀他人进程）；隔离库插入 workspace id=1，使 lease/action_identity 可绑定。
-    测试只用隔离临时任务库，绝不触碰真实用户任务库。
-    """
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    from callwarden.config import _get_windows_user_sid
-
-    pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
-    probe = UnixDaemonRpcClient(socket_path=pipe, timeout=3)
-    try:
-        probe.call("ping")
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过")
-    except Exception:
-        pass
-
+    _REAL_PKI_DIR = get_pki_dir()
+    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
     tmp = tempfile.mkdtemp(prefix="cw_cli_lease_parity_")
-    config = _daemon_config(tmp)
-    config_path = os.path.join(tmp, "daemon.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config, f)
-    log = open(os.path.join(tmp, "daemon.log"), "w", encoding="utf-8")
-    # workspace.list / task_collab store 按 env（CW_DAEMON_REGISTRY_DB /
-    # CW_DAEMON_TASK_DB）而非 config 解析权威库路径：必须与 config 指向同一隔离
-    # 文件，否则 register 写 tmp/registry.db 而 list 读默认 registry → matches=0。
-    _daemon_env = dict(os.environ)
-    _daemon_env["CW_DAEMON_REGISTRY_DB"] = os.path.join(tmp, "registry.db")
-    _daemon_env["CW_DAEMON_TASK_DB"] = os.path.join(tmp, "callwarden.db")
-    proc = subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        env=_daemon_env,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-    )
-
-    client = UnixDaemonRpcClient(socket_path=pipe, timeout=10)
-    deadline = time.time() + 40
-    ready = False
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            break
-        try:
-            if client.call("ping").get("status") == "ok":
-                ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    if not ready:
-        log.flush()
-        try:
-            stderr_text = open(
-                os.path.join(tmp, "daemon.log"), encoding="utf-8").read()[-3000:]
-        except OSError:
-            stderr_text = ""
-        skip_if_daemon_exited_before_manifest(
-            proc, stderr_text, context="隔离 daemon 未在超时内响应")
-        pytest.fail("隔离 daemon 未在超时内响应")
-
-    task_db = os.path.join(tmp, "callwarden.db")
+    proc = None
     try:
-        # CLI task.create 经 resolve_workspace_pair_from_daemon 要求 registry 侧存在
-        # active 且 root=仓库根 的 canonical workspace（workspace.list 命中），否则
-        # matches=0 fail-closed。root 必须与 callwarden.config.PROJECT_ROOT 归一化一致。
-        # 同时携带 git 元数据：workspace.register 据此计算权威 snapshot_id
-        # （sha256("git_remote_url|git_head_commit_sha|toolchain_fingerprint")[:16]），
-        # task.report 的 validate_report_snapshot_authority 要求报告携带与该
-        # workspace authority 一致的 snapshot_id，否则 E_TASK_REPORT_SNAPSHOT_MISMATCH。
+        client, _inst, endpoint, proc = setup_w3_client(tmp, _REPO_ROOT, ws_id=1)
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        task_db = os.path.join(tmp, "task.db")
         reg = client.call("workspace.register", {
             "client_view_root": _REPO_ROOT,
             "git_remote_url": "https://cli-parity.invalid/repo.git",
@@ -199,45 +88,36 @@ def lease_env():
         instance_id = (reg or {}).get("workspace_instance_id") or ""
         if not instance_id:
             raise RuntimeError(f"workspace.register 未返回 workspace_instance_id: {reg!r}")
-        global _PARITY_SNAPSHOT_ID
         _PARITY_SNAPSHOT_ID = (reg or {}).get("snapshot_id") or ""
         if not _PARITY_SNAPSHOT_ID:
             raise RuntimeError(f"workspace.register 未返回 snapshot_id（需 git 元数据）: {reg!r}")
-        # workspace.status 的 task-DB 侧只读 workspace_authority_captures：仅 seed
-        # workspaces 表会导致 task_db_workspace_id=null → resolver matches=0。
-        # seed_cli_task_authority 补齐 workspaces + c14n rule + rev=1 capture。
-        from tests._w3_harness import seed_cli_task_authority, seed_cli_task_agent
-
         seed_cli_task_authority(
             task_db, ws_id=1, name="cli-parity-test",
             root_path=_REPO_ROOT, instance_id=instance_id,
         )
         # claim 的 task.next 携带结构化 identity（agent 需注册且 active）。
         seed_cli_task_agent(task_db, _PARITY_AGENT_ID, model_id=_PARITY_MODEL_ID)
-    except Exception:
-        # setup 失败（yield 前）必须回收 daemon，否则残留进程占用默认管道，
-        # 令后续所有 CLI 家族用例按设计 skip。
-        if proc.poll() is None:
+        yield client, tmp, task_db, proc, endpoint
+    except BaseException:
+        if proc is not None and proc.poll() is None:
             proc.kill()
         raise
-
-    yield client, tmp, task_db, proc, pipe
-
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    if not os.environ.get("CW_KEEP_PARITY_TMP"):
-        shutil.rmtree(tmp, ignore_errors=True)
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if not os.environ.get("CW_KEEP_PARITY_TMP"):
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------
 # CLI 子进程辅助
 # ----------------------------------------------------------------------
 
-def _cli_env(pipe: str, session: str = "", mode: str = "enterprise",
+def _cli_env(endpoint: str, data_root: str, session: str = "", mode: str = "enterprise",
              extra: dict = None) -> dict:
     """构造 CLI 子进程环境：路由到指定 daemon、enterprise/auto、autostart 窗口 0。
 
@@ -250,11 +130,13 @@ def _cli_env(pipe: str, session: str = "", mode: str = "enterprise",
     env = dict(os.environ)
     env.pop("CW_AGENT_SESSION_ID", None)
     env["CW_DAEMON_MODE"] = mode
-    env["CW_DAEMON_ENDPOINT"] = pipe
-    # 强制 Named Pipe transport：跳过 HTTP manifest 检查（宿主 CALLWARDEN_DIR 的
-    # stale manifest 会触发 E_HTTP_MANIFEST_STALE fail-closed，误判 daemon 不可用，
-    # 使「daemon 连接失败」断言落空——与 claim_recover 同源修复）
-    env["CW_DAEMON_TRANSPORT"] = "named-pipe"
+    env["CW_DAEMON_HTTP_ENDPOINT"] = endpoint
+    env["CW_DAEMON_TRANSPORT"] = "http"
+    # 隔离 USERPROFILE：CLI 读到的是本隔离 daemon 的 manifest，避免真实
+    # manifest 的 manifest_id/PID 与隔离 daemon 不符触发 E_HTTP_MANIFEST_STALE。
+    env["USERPROFILE"] = os.path.join(data_root, "userhome")
+    env["HOME"] = env["USERPROFILE"]
+    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
@@ -267,10 +149,10 @@ def _cli_env(pipe: str, session: str = "", mode: str = "enterprise",
 
 
 def _run_cw_cli(args, env, cwd, timeout=90):
-    r"""真实 `C:\Python314\python.exe cw.py ...` CLI 子进程（任务指令要求）。"""
+    r"""真实 `sys.executable cw.py ...` CLI 子进程。"""
     return subprocess.run(
         [_PY_EXE, _CW_PY] + args,
-        env=env, cwd=cwd, capture_output=True,
+        env=env, cwd=_REPO_ROOT, capture_output=True,
         text=True, encoding="utf-8", errors="replace", timeout=timeout,
     )
 
@@ -283,6 +165,29 @@ def _assert_ok(proc, what: str):
     assert proc.returncode == 0, f"{what} 失败(exit={proc.returncode}):\n{_all_out(proc)}"
 
 
+def _seed_pass_verdict(task_db: str, task_id: str) -> None:
+    """seed 一条 reviewer pass verdict（S4 关闭门禁的前置账本）。
+
+    本文件验证的是「CLI 原样透传 lease token/fencing_counter 到 daemon」（payload
+    parity）。daemon S4 门禁要求 review 态 apply/close 前 `task_verdict_events`
+    已有 pass 入账（或显式 waiver；CLI 未暴露 waiver flag）。这里直接 seed 账本
+    行，等价于 reviewer 已提交 pass verdict，不绕过被测的 CLI→daemon 写路径。
+    """
+    conn = sqlite3.connect(task_db, timeout=10)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO task_verdict_events "
+            "(verdict_id, task_id, contract_id, contract_revision, contract_hash,"
+            " phase, overall, submitted_at, reviewer_identity)"
+            " VALUES (?, ?, 'c-parity', 1, 'h-parity', 'blind_first_pass',"
+            " 'pass', ?, 'parity-seed')",
+            (f"v-parity-{task_id}", task_id, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _assert_cli_rejected(proc, what: str, *codes: str):
     """CLI 业务拒绝：`_dispatch_subcommand` 顶层打印 `✗ 执行子命令 'task' 失败:
     <code>: <message>` 并按运行时失败 exit 1。断言输出含结构化错误码。"""
@@ -291,19 +196,19 @@ def _assert_cli_rejected(proc, what: str, *codes: str):
         assert code in out, f"{what}: 输出缺少错误码 {code}:\n{out}"
 
 
-def _create_via_cli(tmpdir: str, pipe: str, title: str) -> str:
+def _create_via_cli(tmpdir: str, endpoint: str, title: str) -> str:
     """CLI task create → 解析 daemon 生成的 task_id。"""
     proc = _run_cw_cli(
         ["task", "create", "--title", title,
          "--steps", '[{"action": "实现", "target_file": "f.py"}]'],
-        _cli_env(pipe), tmpdir)
+        _cli_env(endpoint, tmpdir), tmpdir)
     _assert_ok(proc, f"task create {title}")
     match = _TASK_ID_RE.search(_all_out(proc))
     assert match, f"task create 输出未解析到 task_id:\n{_all_out(proc)}"
     return match.group(0)
 
 
-def _claim_via_cli(tmpdir: str, pipe: str, task_id: str, session: str) -> str:
+def _claim_via_cli(tmpdir: str, endpoint: str, task_id: str, session: str) -> str:
     """CLI task next（claim）→ 解析 step_id。
 
     携带结构化 identity（agent 已在 fixture 注册 active）+ 由 daemon 权威
@@ -316,44 +221,44 @@ def _claim_via_cli(tmpdir: str, pipe: str, task_id: str, session: str) -> str:
          "--session-id", session,
          "--model-id", _PARITY_MODEL_ID,
          "--role", "executor"],
-        _cli_env(pipe, session=session), tmpdir)
+        _cli_env(endpoint, tmpdir, session=session), tmpdir)
     _assert_ok(proc, f"task next {task_id} session={session}")
     match = _STEP_ID_RE.search(_all_out(proc))
     assert match, f"task next 输出未解析到 step_id:\n{_all_out(proc)}"
     return match.group(0)
 
 
-def _report_via_cli(tmpdir: str, pipe: str, task_id: str, step_id: str, session: str):
+def _report_via_cli(tmpdir: str, endpoint: str, task_id: str, step_id: str, session: str):
     args = ["task", "report", task_id, step_id, "--result", "done"]
     # daemon task.report 要求携带与绑定 workspace authority 一致的 snapshot_id。
     if _PARITY_SNAPSHOT_ID:
         args += ["--snapshot-id", _PARITY_SNAPSHOT_ID]
-    proc = _run_cw_cli(args, _cli_env(pipe, session=session), tmpdir)
+    proc = _run_cw_cli(args, _cli_env(endpoint, tmpdir, session=session), tmpdir)
     _assert_ok(proc, f"task report {task_id} session={session}")
     return proc
 
 
-def _prepare_review_via_cli(tmpdir: str, pipe: str, task_id: str,
+def _prepare_review_via_cli(tmpdir: str, endpoint: str, task_id: str,
                             session: str = "session-impl") -> str:
     """CLI 链路 create → claim → report，推进到 review。
 
     `task_id` 参数同时用作 create 的标题；返回 **daemon 生成的真实 task_id**
     （不能把标题字符串当任务 ID 使用）。
     """
-    task_id = _create_via_cli(tmpdir, pipe, task_id)
-    step_id = _claim_via_cli(tmpdir, pipe, task_id, session)
-    _report_via_cli(tmpdir, pipe, task_id, step_id, session)
+    task_id = _create_via_cli(tmpdir, endpoint, task_id)
+    step_id = _claim_via_cli(tmpdir, endpoint, task_id, session)
+    _report_via_cli(tmpdir, endpoint, task_id, step_id, session)
     return task_id
 
 
-def _acquire_lease_via_cli(tmpdir: str, pipe: str, task_id: str,
+def _acquire_lease_via_cli(tmpdir: str, endpoint: str, task_id: str,
                            tag: str, role: str = "reviewer") -> dict:
     """CLI lease acquire（--json）→ 解析 raw token / fencing_counter。"""
     aid, sid, mid = f"agent-parity-{tag}", f"session-parity-{tag}", f"model-parity-{tag}"
     proc = _run_cw_cli(
         ["lease", "acquire", task_id, "--role", role,
          "--agent-id", aid, "--session-id", sid, "--model-id", mid, "--json"],
-        _cli_env(pipe), tmpdir)
+        _cli_env(endpoint, tmpdir), tmpdir)
     _assert_ok(proc, f"lease acquire {task_id}")
     try:
         data = json.loads(proc.stdout)
@@ -386,161 +291,163 @@ def _lease_flags(holder: dict) -> list:
 # 1) CLI payload 含 lease token/fencing counter + 全链路 + fail-closed 矩阵
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestCliLeasePayloadParity:
     """CLI 进程级：payload 原样携带 P4 lease 凭证；缺/错/旧凭证全部 fail-closed。"""
 
     def test_full_chain_create_claim_report_acquire_apply_close(self, lease_env):
-        client, tmp, task_db, _proc, pipe = lease_env
+        client, tmp, task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-FULL"
         session = "session-claim"
         tag = "full"
 
         # create（CLI 子进程）；task_id 参数是标题，create 返回 daemon 生成的真实 ID
-        task_id = _create_via_cli(tmp, pipe, task_id)
-        assert client.task_status(task_id)["status"] == "open"
+        task_id = _create_via_cli(tmp, endpoint, task_id)
+        assert client.call("task.status", {"task_id": task_id})["status"] == "open"
 
         # claim + 同 session report（CLI 子进程，仅 CW_AGENT_SESSION_ID，无 identity）
-        step_id = _claim_via_cli(tmp, pipe, task_id, session)
-        _report_via_cli(tmp, pipe, task_id, step_id, session)
-        assert client.task_status(task_id)["status"] == "review", \
+        step_id = _claim_via_cli(tmp, endpoint, task_id, session)
+        _report_via_cli(tmp, endpoint, task_id, step_id, session)
+        assert client.call("task.status", {"task_id": task_id})["status"] == "review", \
             "claim(env session) + 同 session report 未推进到 review"
 
         # lease acquire（CLI 子进程）
-        holder = _acquire_lease_via_cli(tmp, pipe, task_id, tag)
+        holder = _acquire_lease_via_cli(tmp, endpoint, task_id, tag)
         assert holder["fencing_counter"] >= 1
+        # S4 关闭门禁前置：reviewer pass verdict 已入账（详见 _seed_pass_verdict）。
+        _seed_pass_verdict(task_db, task_id)
 
         # apply（CLI 子进程，原样传 lease_token + fencing_counter + identity）
         proc = _run_cw_cli(
             ["task", "apply", task_id, "--reviewer", "reviewer",
              *_lease_flags(holder), *_reviewer_flags(holder)],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_ok(proc, f"task apply {task_id}")
         assert "已审核通过" in _all_out(proc), f"apply 输出异常:\n{_all_out(proc)}"
-        assert client.task_status(task_id)["status"] == "applied"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "applied"
 
         # close（CLI 子进程，同一 lease 凭证）
         proc = _run_cw_cli(
             ["task", "close", task_id, "--reviewer", "reviewer",
              *_lease_flags(holder), *_reviewer_flags(holder)],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_ok(proc, f"task close {task_id}")
         assert "已关闭" in _all_out(proc), f"close 输出异常:\n{_all_out(proc)}"
-        assert client.task_status(task_id)["status"] == "closed"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "closed"
 
         # 事件落库：applied/closed 两条状态流转
-        events = client.task_events(task_id)["events"]
+        events = client.call("task.events", {"task_id": task_id})["events"]
         to_statuses = [e["to_status"] for e in events]
         assert "applied" in to_statuses and "closed" in to_statuses, to_statuses
 
     def test_apply_missing_lease_fail_closed(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-AP-NO-LEASE"
-        task_id = _prepare_review_via_cli(tmp, pipe, task_id)
+        task_id = _prepare_review_via_cli(tmp, endpoint, task_id)
         proc = _run_cw_cli(
             ["task", "apply", task_id, "--reviewer", "reviewer",
              "--agent-id", "a", "--session-id", "s", "--model-id", "m",
              "--role", "reviewer"],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         # 缺 lease：daemon require_lease_params fail-closed（CLI 不静默补默认值）
         _assert_cli_rejected(proc, "缺 lease apply", "E_LEASE_REQUIRED")
-        assert client.task_status(task_id)["status"] == "review", \
+        assert client.call("task.status", {"task_id": task_id})["status"] == "review", \
             "缺 lease 拒绝后状态被错误修改"
 
     def test_apply_partial_lease_token_only_fail_closed(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-AP-TOKEN-ONLY"
-        task_id = _prepare_review_via_cli(tmp, pipe, task_id)
+        task_id = _prepare_review_via_cli(tmp, endpoint, task_id)
         proc = _run_cw_cli(
             ["task", "apply", task_id, "--reviewer", "reviewer",
              "--lease-token", "some-token",
              "--agent-id", "a", "--session-id", "s", "--model-id", "m",
              "--role", "reviewer"],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         # 只提供 token：CLI 凭证不完整 fail-closed（E_LEASE_CRED_INCOMPLETE）
         _assert_cli_rejected(proc, "只 token apply", "E_LEASE_CRED_INCOMPLETE")
-        assert client.task_status(task_id)["status"] == "review"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "review"
 
     def test_apply_empty_lease_fail_closed(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-AP-EMPTY"
-        task_id = _prepare_review_via_cli(tmp, pipe, task_id)
+        task_id = _prepare_review_via_cli(tmp, endpoint, task_id)
         proc = _run_cw_cli(
             ["task", "apply", task_id, "--reviewer", "reviewer",
              "--lease-token", "", "--fencing-counter", "1",
              "--agent-id", "a", "--session-id", "s", "--model-id", "m",
              "--role", "reviewer"],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         # 空 token + counter：视为凭证不完整，fail-closed（E_LEASE_CRED_INCOMPLETE）
         _assert_cli_rejected(proc, "空 lease apply", "E_LEASE_CRED_INCOMPLETE")
-        assert client.task_status(task_id)["status"] == "review"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "review"
 
     def test_apply_wrong_token_fail_closed(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-AP-WRONG-TOKEN"
-        task_id = _prepare_review_via_cli(tmp, pipe, task_id)
-        holder = _acquire_lease_via_cli(tmp, pipe, task_id, "wt")
+        task_id = _prepare_review_via_cli(tmp, endpoint, task_id)
+        holder = _acquire_lease_via_cli(tmp, endpoint, task_id, "wt")
         wrong = dict(holder, token="wrong-token")
         proc = _run_cw_cli(
             ["task", "apply", task_id, "--reviewer", "reviewer",
              *_lease_flags(wrong), *_reviewer_flags(holder)],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_cli_rejected(proc, "错 token apply", "E_LEASE_TOKEN_MISMATCH")
-        assert client.task_status(task_id)["status"] == "review"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "review"
 
     def test_apply_stale_fencing_counter_fail_closed(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-AP-STALE"
-        task_id = _prepare_review_via_cli(tmp, pipe, task_id)
-        holder = _acquire_lease_via_cli(tmp, pipe, task_id, "stale")
+        task_id = _prepare_review_via_cli(tmp, endpoint, task_id)
+        holder = _acquire_lease_via_cli(tmp, endpoint, task_id, "stale")
         # 当前 counter 为 1，故意用旧 counter 0（合法 token）
         stale = dict(holder, fencing_counter=0)
         proc = _run_cw_cli(
             ["task", "apply", task_id, "--reviewer", "reviewer",
              *_lease_flags(stale), *_reviewer_flags(holder)],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_cli_rejected(proc, "旧 counter apply", "E_LEASE_FENCING_STALE")
-        assert client.task_status(task_id)["status"] == "review"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "review"
 
     def test_close_missing_lease_fail_closed(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-CL-NO-LEASE"
         tag = "cl-no-lease"
-        task_id = _prepare_review_via_cli(tmp, pipe, task_id)
-        holder = _acquire_lease_via_cli(tmp, pipe, task_id, tag)
+        task_id = _prepare_review_via_cli(tmp, endpoint, task_id)
+        holder = _acquire_lease_via_cli(tmp, endpoint, task_id, tag)
+        # S4 关闭门禁前置：reviewer pass verdict 已入账（详见 _seed_pass_verdict）。
+        _seed_pass_verdict(task_db, task_id)
         proc = _run_cw_cli(
             ["task", "apply", task_id, "--reviewer", "reviewer",
              *_lease_flags(holder), *_reviewer_flags(holder)],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_ok(proc, f"task apply {task_id}")
-        assert client.task_status(task_id)["status"] == "applied"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "applied"
         # close 缺 lease → daemon fail-closed
         proc = _run_cw_cli(
             ["task", "close", task_id, "--reviewer", "reviewer",
              "--agent-id", holder["agent_id"], "--session-id", holder["session_id"],
              "--model-id", holder["model_id"], "--role", holder["role"]],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_cli_rejected(proc, "缺 lease close", "E_LEASE_REQUIRED")
-        assert client.task_status(task_id)["status"] == "applied"
+        assert client.call("task.status", {"task_id": task_id})["status"] == "applied"
 
 
 # ----------------------------------------------------------------------
 # 2) claim/report 同一显式 action identity（缺陷 2）
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestCliIdentitySessionParity:
     """task next（claim）与 task report 必须使用同一显式 session。"""
 
     def test_claim_report_same_session_success(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-SESSION-OK"
         session = "session-same"
         # 完整 CLI 链路：create → claim(session-same) → report(session-same)
-        task_id = _create_via_cli(tmp, pipe, task_id)
-        step_id = _claim_via_cli(tmp, pipe, task_id, session)
-        _report_via_cli(tmp, pipe, task_id, step_id, session)
-        assert client.task_status(task_id)["status"] == "review", \
+        task_id = _create_via_cli(tmp, endpoint, task_id)
+        step_id = _claim_via_cli(tmp, endpoint, task_id, session)
+        _report_via_cli(tmp, endpoint, task_id, step_id, session)
+        assert client.call("task.status", {"task_id": task_id})["status"] == "review", \
             "同 session claim/report 必须成功推进到 review"
 
     def test_claim_report_session_parity_events(self, lease_env):
@@ -553,13 +460,13 @@ class TestCliIdentitySessionParity:
         携带同一 session 时，两条 task_events 的 agent_session_id 都等于该 session
         （而非一方回退 Windows SID 造成事件漂移）。
         """
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         task_id = "T-CLI-PARITY-SESSION-EVENTS"
         session = "session-parity-events"
-        task_id = _create_via_cli(tmp, pipe, task_id)
-        step_id = _claim_via_cli(tmp, pipe, task_id, session)
-        _report_via_cli(tmp, pipe, task_id, step_id, session)
-        events = client.task_events(task_id)["events"]
+        task_id = _create_via_cli(tmp, endpoint, task_id)
+        step_id = _claim_via_cli(tmp, endpoint, task_id, session)
+        _report_via_cli(tmp, endpoint, task_id, step_id, session)
+        events = client.call("task.events", {"task_id": task_id})["events"]
         sess_by_reason = {
             e["reason_code"]: e["agent_session_id"]
             for e in events
@@ -575,7 +482,6 @@ class TestCliIdentitySessionParity:
 # 3) enterprise/auto 模式下 daemon 不可用 fail-closed（不回退本地 SQLite）
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestCliDaemonUnavailableFailClosed:
     """daemon 不可用时 CLI 写操作必须 fail-closed。
 
@@ -585,13 +491,13 @@ class TestCliDaemonUnavailableFailClosed:
     产生该消息，从而证明未回退本地库。
     """
 
-    def _fake_pipe(self):
-        return rf"\\.\pipe\nonexistent-cw-cli-parity-{os.getpid()}"
+    def _fake_endpoint(self):
+        return "https://127.0.0.1:1"
 
     def _run_unavailable(self, args, mode):
         tmp = tempfile.mkdtemp(prefix="cw_cli_unavail_")
         try:
-            return _run_cw_cli(args, _cli_env(self._fake_pipe(), mode=mode), tmp)
+            return _run_cw_cli(args, _cli_env(self._fake_endpoint(), tmp, mode=mode), tmp)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -602,7 +508,7 @@ class TestCliDaemonUnavailableFailClosed:
              "--role", "reviewer"],
             mode="enterprise")
         _assert_cli_rejected(proc, "enterprise apply 无 daemon",
-                             "无法连接 daemon endpoint", "endpoint 不可连接")
+                             "E_HTTP_DAEMON_UNAVAILABLE", "无法连接 daemon")
 
     def test_enterprise_close_daemon_unavailable_no_local_fallback(self):
         proc = self._run_unavailable(
@@ -611,7 +517,7 @@ class TestCliDaemonUnavailableFailClosed:
              "--role", "reviewer"],
             mode="enterprise")
         _assert_cli_rejected(proc, "enterprise close 无 daemon",
-                             "无法连接 daemon endpoint", "endpoint 不可连接")
+                             "E_HTTP_DAEMON_UNAVAILABLE", "无法连接 daemon")
 
     def test_auto_lease_acquire_daemon_unavailable_no_local_fallback(self):
         proc = self._run_unavailable(
@@ -619,4 +525,4 @@ class TestCliDaemonUnavailableFailClosed:
              "--agent-id", "a", "--session-id", "s", "--model-id", "m"],
             mode="auto")
         _assert_cli_rejected(proc, "auto lease acquire 无 daemon",
-                             "daemon 连接失败")
+                             "E_HTTP_DAEMON_UNAVAILABLE")

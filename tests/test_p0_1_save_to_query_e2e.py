@@ -5,13 +5,9 @@
 E2E；任一步失败不得 mark staging applied。
 
 测试覆盖：
-- Step 1: dispatch 用 int(workspace["workspace_id"]) 而非 int("hash_string")，
-  避免原 ValueError 导致 refresh 从未执行
-- Step 2: db_cas_merge.merge_cas_to_codegraph 把 CAS 解析结果 merge 到主 CodeGraph DB
+- Step 2: db_cas_merge.merge_cas_to_codegraph 把 CAS 解析结果 merge 到主表 CodeGraph DB
   的 file_instances / symbols / calls 表
-- Step 3: daemon_handle_refresh CAS committed 后调用 merge + upsert_manifest，
-  失败抛异常让上层不追加 staging entry
-- Step 4: 完整 E2E——register → connect → file.refresh → CodeGraph DB 查询到新符号
+- Step 3: daemon_handle_refresh 作为薄客户端把 refresh 转发给 daemon 并逐字透传回包
 
 规范：
 - AGENTS.md 规则 2：CodeGraph DB 用户级单库（测试用 tmp_path 隔离）
@@ -19,15 +15,14 @@ E2E；任一步失败不得 mark staging applied。
 - db/schema.py：workspaces / file_instances / symbols / calls / file_contents 表定义
 - db/db_cas.py：cas_symbols / cas_raw_calls / cas_file_cache 表定义
 - db/db_cas_merge.py：merge_cas_to_codegraph 实现
-- server/replicator.py:daemon_handle_refresh：refresh 主流程
-- server/daemon_server.py:dispatch：workspace.register / connect / file.refresh
+- server/replicator.py:daemon_handle_refresh：refresh 薄客户端主流程
+
+ADR-002 单轨传输：Python daemon（daemon_server.py）已退役，
+原 dispatch 分支源码断言与进程内 register→refresh→query 全链路 E2E 已随之退役。
 """
 
 import hashlib
-import os
 import sqlite3
-
-import pytest
 
 from callwarden.db.schema import SCHEMA_SQL
 from callwarden.db.db_cas import (
@@ -36,60 +31,6 @@ from callwarden.db.db_cas import (
 )
 from callwarden.db.db_workspace_manifest import init_manifest_schema
 from callwarden.server.replicator import init_session_schema, daemon_handle_refresh
-
-
-# ============================================
-# Step 1: dispatch int(workspace_id) bug 修复
-# ============================================
-
-
-class TestStep1DispatchIntBug:
-    """验证 dispatch 用数字主键 workspace_id（而非 hash 字符串转 int）。
-
-    Bug：原 `int(workspace_id)` 把 16 位 hash 字符串转 int 必抛 ValueError，
-    导致 workspace.file.refresh 从未成功执行过。
-    """
-
-    def test_dispatch_uses_numeric_workspace_id_from_row(self):
-        """dispatch 应从 workspace row 取数字主键 workspace_id。
-
-        验证 workspace.file.refresh 和 workspace.connect 两个关键调用点
-        使用 int(workspace["workspace_id"])（数字主键）而非 int(workspace_id)
-        （hash 字符串转 int）。
-
-        _owned_workspace_by_id 接收的就是数字主键参数（int workspace_id），
-        其内部 int(workspace_id) 是冗余防御，不在本测试断言范围。
-        """
-        source = open(
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "server", "daemon_server.py"),
-            encoding="utf-8",
-        ).read()
-
-        # 验证 file.refresh 调用点用数字主键
-        refresh_idx = source.find('if method == "workspace.file.refresh"')
-        assert refresh_idx >= 0, "找不到 workspace.file.refresh 分支"
-        # 截取 file.refresh 分支体（到下一个 if method ==）
-        refresh_body_end = source.find('if method == ', refresh_idx + 30)
-        if refresh_body_end < 0:
-            refresh_body_end = len(source)
-        refresh_body = source[refresh_idx:refresh_body_end]
-        assert 'int(workspace["workspace_id"])' in refresh_body, (
-            "P0-1 Step 1: workspace.file.refresh 分支应使用 "
-            "int(workspace['workspace_id'])（数字主键）"
-        )
-
-        # 验证 workspace.connect 调用点用数字主键
-        connect_idx = source.find('if method == "workspace.connect"')
-        assert connect_idx >= 0, "找不到 workspace.connect 分支"
-        connect_body_end = source.find('if method == ', connect_idx + 30)
-        if connect_body_end < 0:
-            connect_body_end = len(source)
-        connect_body = source[connect_idx:connect_body_end]
-        assert 'int(workspace["workspace_id"])' in connect_body, (
-            "P0-1 Step 1: workspace.connect 分支应使用 "
-            "int(workspace['workspace_id'])（数字主键）"
-        )
 
 
 # ============================================
@@ -487,157 +428,3 @@ class TestStep3DaemonHandleRefreshIntegration:
         assert calls[0][1]["monotonic_seq"] == calls[1][1]["monotonic_seq"] == 1
 
         ws_conn.close()
-
-
-# ============================================
-# Step 4: 完整 E2E——register → connect → refresh → query
-# ============================================
-
-
-class TestStep4FullE2E:
-    """完整 save-to-query E2E：register → connect → refresh → CodeGraph DB 查询。
-
-    复审报告 §8.1 第 1 条：建立真实
-    `agent start → register/connect → refresh → apply manifest/query DB → publish → query(min_generation)`
-    E2E。
-
-    Windows 兼容性（2026-07-29）：原 skipif(not hasattr(os, "getuid")) 限制过严。
-    测试用 peer={"uid": 0}（root），_validate_owned_path 在 Windows 无 getuid 时
-    跳过 owner_uid 校验，不影响数据链闭合验证。E2E 核心是 P0-1 数据链，
-    不依赖 Unix peer credentials。
-
-    现改为只在 callwarden_core 不可导入时跳过（daemon_server.py 间接依赖）。
-    """
-
-    def test_register_connect_refresh_query_e2e(self, tmp_path, monkeypatch):
-        """[B 类·迁移] register → connect → file.refresh 薄客户端转发 E2E。
-
-        stale 依据（生产侧）：daemon_server 的 `workspace.file.refresh` 分支
-        （server/daemon_server.py:1102 分支内 `from callwarden.server.replicator
-        import daemon_handle_refresh`，:1249 调用）已薄客户端化——
-        `daemon_handle_refresh`（server/replicator.py:364-384）仅
-        `_call_daemon_rpc("mcp.replicator.daemon_handle_refresh", params)`
-        （:384）。旧测试断言的“service 进程内完成 parse→merge→CodeGraph DB
-        写入→查询”数据链已下沉 Rust daemon，无 daemon 时 fail-closed 抛
-        E_HTTP_MANIFEST_MISSING（实测）。故 register/connect 仍走真实本地实现，
-        仅 mock `callwarden.server.replicator.daemon_handle_refresh`（分支内
-        from-import 生效，参照已全绿 test_c6_snapshot_guard_replicator.py::
-        TestDaemonServerBlockedBranch），断言「转发参数 + 回包透传 + staging/
-        replicate 由 daemon 回包驱动」。
-
-        Windows 环境 _validate_owned_path 的 owner_uid 校验被跳过（无 os.getuid），
-        本测试主要验证转发契约，不依赖 Unix peer credentials。
-
-        若 callwarden_core 包损坏（site-packages 中的 __init__.py 循环引用），
-        daemon_server.py 无法导入，本测试 skip（环境问题，非代码问题）。
-        """
-        # 检查 callwarden_core 是否可正常导入（非 ImportError 且非 NameError）
-        try:
-            import callwarden_core  # noqa: F401
-            cc_ok = True
-        except (ImportError, NameError):
-            cc_ok = False
-        if not cc_ok:
-            pytest.skip(
-                "callwarden_core 包损坏（site-packages __init__.py 循环引用），"
-                "daemon_server.py 无法导入。环境问题，非代码问题。"
-            )
-
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.snapshot_manager import SnapshotManagerService
-        from unittest.mock import MagicMock
-
-        # 构造 daemon service
-        registry_db = str(tmp_path / "registry.db")
-        snapshot_svc = MagicMock(spec=SnapshotManagerService)
-        # publish_snapshot 必须返回含 generation 的 dict，否则 repl_result.generation 为 MagicMock
-        snapshot_svc.publish_snapshot.return_value = {"generation": 1}
-        service = EnterpriseDaemonService(
-            registry_db=registry_db,
-            snapshot_service=snapshot_svc,
-            data_root=str(tmp_path / "enterprise"),
-            start_background_tasks=False,
-        )
-
-        # Mock _config.resolve_codegraph_db_path 返回 tmp_path 下的 CodeGraph DB
-        cg_db_path = str(tmp_path / "codegraph.db")
-        # 初始化 CodeGraph DB schema
-        cg_conn = sqlite3.connect(cg_db_path)
-        cg_conn.executescript(SCHEMA_SQL)
-        cg_conn.commit()
-        cg_conn.close()
-
-        service._config.resolve_codegraph_db_path = lambda workspace_id: cg_db_path
-
-        # 准备测试目录
-        ws_root = tmp_path / "ws_root"
-        ws_root.mkdir()
-        (ws_root / "test_module.py").write_text(
-            "# test\ndef my_func():\n    pass\n",
-            encoding="utf-8",
-        )
-
-        # Step 1: workspace.register（本地真实实现）
-        peer = {"uid": 0}  # root，避免 owner 校验问题
-        reg_result = service.dispatch(peer, "workspace.register", {
-            "client_view_root": str(ws_root),
-            "git_remote_url": "",
-            "git_head_commit_sha": "",
-        })
-        ws_instance_id = reg_result["workspace_instance_id"]
-        ws_numeric_id = reg_result["workspace_id"]
-        assert ws_instance_id, "workspace.register 应返回 workspace_instance_id"
-        assert ws_numeric_id > 0, "workspace.register 应返回数字 workspace_id"
-
-        # Step 2: workspace.connect
-        connect_result = service.dispatch(peer, "workspace.connect", {
-            "workspace_instance_id": ws_instance_id,
-            "agent_session_id": "e2e-session",
-        })
-        assert connect_result["session_epoch"] >= 1
-
-        # Step 3: workspace.file.refresh —— 薄客户端已下沉 daemon，mock RPC seam
-        file_path = ws_root / "test_module.py"
-        canonical_bytes = file_path.read_bytes()
-        content_hash = hashlib.sha256(canonical_bytes).hexdigest()
-
-        from callwarden.server import replicator as R
-        forwarded = []
-
-        def _fake_refresh(**kwargs):
-            forwarded.append(kwargs)
-            return {
-                "status": "committed",
-                "cas_state": "ready_published",
-                "content_hash": kwargs.get("msg", {}).get("content_hash", ""),
-                "merge": {"merge_status": "merged", "symbols_inserted": 1},
-            }
-
-        monkeypatch.setattr(R, "daemon_handle_refresh", _fake_refresh)
-
-        refresh_result = service.dispatch(peer, "workspace.file.refresh", {
-            "workspace_instance_id": ws_instance_id,
-            "agent_session_id": "e2e-session",
-            "session_epoch": connect_result["session_epoch"],
-            "monotonic_seq": 1,
-            "rel_path": "test_module.py",
-            "canonical_bytes_hex": canonical_bytes.hex(),
-            "content_hash": content_hash,
-            "language": "python",
-        })
-
-        # 验证转发契约：daemon 薄客户端收到完整 msg（含 canonical_bytes_hex）
-        assert forwarded, "workspace.file.refresh 应转发到 daemon 薄客户端"
-        assert forwarded[0]["msg"]["rel_path"] == "test_module.py"
-        assert forwarded[0]["msg"]["canonical_bytes_hex"] == canonical_bytes.hex()
-        assert forwarded[0]["msg"]["agent_session_id"] == "e2e-session"
-        assert forwarded[0]["msg"]["monotonic_seq"] == 1
-
-        # 验证 daemon 回包逐字透传
-        assert refresh_result["status"] == "committed"
-        assert refresh_result["cas_state"] == "ready_published"
-        assert refresh_result["merge"]["merge_status"] == "merged"
-
-        # 验证 daemon 回包驱动 dispatch 的 staging/replicate 后处理
-        assert "replication" in refresh_result
-        assert refresh_result["replication"]["snapshot_published"] is True

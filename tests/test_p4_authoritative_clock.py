@@ -57,16 +57,20 @@ def daemon_clock(monkeypatch):
     """注入 fake daemon RPC client：call('ping') 返回可变的 daemon 时钟。"""
     state = {"ts": 1000.0, "fail": False}
 
-    class FakeDaemonRpcClient:
+    class FakeHttpDaemonRpcClient:
         def __init__(self, *args, **kwargs):
             pass
+
+        @classmethod
+        def get_instance(cls):
+            return cls()
 
         def call(self, method, params=None):
             if state["fail"]:
                 raise OSError("endpoint 不可连接（模拟 daemon 不可用）")
             return {"timestamp": state["ts"]}
 
-    monkeypatch.setattr(_dc, "UnixDaemonRpcClient", FakeDaemonRpcClient)
+    monkeypatch.setattr(_dc, "HttpDaemonRpcClient", FakeHttpDaemonRpcClient)
     return state
 
 

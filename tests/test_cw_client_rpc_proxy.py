@@ -77,15 +77,15 @@ def test_daemon_status_sends_numeric_workspace_id_as_numeric_key(monkeypatch, ca
     calls = []
 
     class FakeClient:
-        def __init__(self, socket):
-            self.socket = socket
+        def __init__(self, endpoint=None, **kwargs):
+            self.endpoint = endpoint
 
         def call(self, method, params):
             calls.append((method, params))
             return {"workspace_id": 730, "workspace_instance_id": "ws-730"}
 
     monkeypatch.setattr(
-        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", FakeClient
+        "callwarden.cli.daemon_commands.HttpDaemonRpcClient", FakeClient
     )
     assert run_daemon_command(["status", "730"]) == 0
     assert calls == [("workspace.status", {"workspace_id": 730})]
@@ -97,15 +97,15 @@ def test_daemon_status_preserves_workspace_instance_id(monkeypatch):
     calls = []
 
     class FakeClient:
-        def __init__(self, socket):
-            self.socket = socket
+        def __init__(self, endpoint=None, **kwargs):
+            self.endpoint = endpoint
 
         def call(self, method, params):
             calls.append((method, params))
             return {"workspace_id": 730, "workspace_instance_id": "4baea3ff12c2ea5c"}
 
     monkeypatch.setattr(
-        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", FakeClient
+        "callwarden.cli.daemon_commands.HttpDaemonRpcClient", FakeClient
     )
     assert run_daemon_command(["status", "4baea3ff12c2ea5c"]) == 0
     assert calls == [

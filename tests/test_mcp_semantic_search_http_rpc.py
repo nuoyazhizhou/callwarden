@@ -63,7 +63,7 @@ def test_semantic_search_missing_params(live_daemon):
 # daemon unavailable：fail-closed，绝不降级本地 SQLite
 # ---------------------------------------------------------------------------
 def test_semantic_search_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError):
         c.call("semantic_search", {"workspace_instance_id": CANONICAL_INSTANCE, "query": "x"})

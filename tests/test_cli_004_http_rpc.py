@@ -324,7 +324,7 @@ class TestCli004DaemonUnavailable:
     def unavailable_client(self):
         from callwarden.config import get_http_authority_id
         return HttpDaemonRpcClient(
-            endpoint="http://127.0.0.1:9",
+            endpoint="https://127.0.0.1:9",
             authority_id=get_http_authority_id(),
         )
 
@@ -360,7 +360,7 @@ class TestCli004DaemonUnavailable:
         """health()：端点不可达 -> DaemonUnavailableError。"""
         from callwarden.config import get_http_authority_id
         c = HttpDaemonRpcClient(
-            endpoint="http://127.0.0.1:9",
+            endpoint="https://127.0.0.1:9",
             authority_id=get_http_authority_id(),
         )
         with pytest.raises(DaemonUnavailableError):
@@ -370,7 +370,7 @@ class TestCli004DaemonUnavailable:
         """capabilities()：端点不可达 -> DaemonUnavailableError。"""
         from callwarden.config import get_http_authority_id
         c = HttpDaemonRpcClient(
-            endpoint="http://127.0.0.1:9",
+            endpoint="https://127.0.0.1:9",
             authority_id=get_http_authority_id(),
         )
         with pytest.raises(DaemonUnavailableError):

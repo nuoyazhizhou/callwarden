@@ -12,8 +12,6 @@ import threading
 import time
 from unittest import mock
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from callwarden.server.daemon_autostart import (
@@ -53,77 +51,65 @@ class TestEnsureDaemonBoundedWindow:
         assert 0.4 <= elapsed <= 1.0
 
     def test_returns_socket_when_daemon_available(self):
-        """daemon 已在监听时立即返回连接。"""
-        # 创建一个真实的 UDS 监听（仅 Unix）
-        if not hasattr(socket, "AF_UNIX"):
-            pytest.skip("Windows 无 AF_UNIX")
+        """daemon 已在监听时立即返回连接（单轨 HTTPS：TCP 可达即返回）。"""
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        endpoint = f"https://127.0.0.1:{server.getsockname()[1]}"
+        try:
+            start = time.monotonic()
+            conn = ensure_daemon(endpoint, window=2.0)
+            elapsed = time.monotonic() - start
 
-        with tempfile.TemporaryDirectory() as tmp:
-            sock_path = os.path.join(tmp, "test.sock")
-            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            server.bind(sock_path)
-            server.listen(1)
-            try:
-                start = time.monotonic()
-                conn = ensure_daemon(sock_path, window=2.0)
-                elapsed = time.monotonic() - start
-
-                assert conn is not None
-                # 应立即连接，不需要退避
-                assert elapsed < 0.5
-                conn.close()
-            finally:
-                server.close()
+            assert conn is not None
+            # 应立即连接，不需要退避
+            assert elapsed < 0.5
+            conn.close()
+        finally:
+            server.close()
 
     def test_connects_after_delayed_daemon_start(self):
         """daemon 在窗口内延迟就绪时仍能连接。"""
-        if not hasattr(socket, "AF_UNIX"):
-            pytest.skip("Windows 无 AF_UNIX")
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        port = server.getsockname()[1]
+        endpoint = f"https://127.0.0.1:{port}"
 
-        with tempfile.TemporaryDirectory() as tmp:
-            sock_path = os.path.join(tmp, "delayed.sock")
+        def delayed_listen():
+            time.sleep(0.3)
+            server.listen(1)
+            # 保持监听直到测试结束
+            time.sleep(2.0)
+            server.close()
 
-            def delayed_listen():
-                time.sleep(0.3)
-                srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                srv.bind(sock_path)
-                srv.listen(1)
-                # 保持监听直到测试结束
-                time.sleep(2.0)
-                srv.close()
+        t = threading.Thread(target=delayed_listen, daemon=True)
+        t.start()
 
-            t = threading.Thread(target=delayed_listen, daemon=True)
-            t.start()
+        with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=True):
+            conn = ensure_daemon(endpoint, window=3.0)
 
-            with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=True):
-                conn = ensure_daemon(sock_path, window=3.0)
-
-            assert conn is not None
-            conn.close()
+        assert conn is not None
+        conn.close()
 
     def test_protocol_readiness_probe_retries_connected_but_unready_endpoint(self):
-        """TCP/UDS connect 成功但协议未就绪时仍继续退避探测。"""
-        if not hasattr(socket, "AF_UNIX"):
-            pytest.skip("Windows 无 AF_UNIX")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            sock_path = os.path.join(tmp, "probe.sock")
-            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            server.bind(sock_path)
-            server.listen(4)
-            probe = mock.Mock(side_effect=[False, True])
-            try:
-                conn = ensure_daemon(
-                    sock_path,
-                    window=1.0,
-                    backoff_base=0.01,
-                    readiness_check=probe,
-                )
-                assert conn is not None
-                conn.close()
-                assert probe.call_count == 2
-            finally:
-                server.close()
+        """TCP connect 成功但协议未就绪时仍继续退避探测。"""
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(4)
+        endpoint = f"https://127.0.0.1:{server.getsockname()[1]}"
+        probe = mock.Mock(side_effect=[False, True])
+        try:
+            conn = ensure_daemon(
+                endpoint,
+                window=1.0,
+                backoff_base=0.01,
+                readiness_check=probe,
+            )
+            assert conn is not None
+            conn.close()
+            assert probe.call_count == 2
+        finally:
+            server.close()
 
     def test_backoff_is_exponential(self):
         """退避间隔按指数增长。"""
@@ -178,27 +164,28 @@ class TestEnsureDaemonBoundedWindow:
 class TestTryConnect:
     """try_connect 连接尝试。"""
 
-    def test_returns_none_for_nonexistent_socket(self):
-        """不存在的 socket 路径返回 None。"""
-        result = try_connect("/nonexistent/path/to/daemon.sock")
-        assert result is None
+    def test_returns_none_for_non_http_endpoint(self):
+        """非 HTTP(S) endpoint（裸路径 / pipe / unix:// / tcp://）fail-closed。"""
+        for endpoint in (
+            "/nonexistent/path/to/daemon.sock",
+            r"\\.\pipe\callwarden-test",
+            "unix:///tmp/daemon.sock",
+            "tcp://127.0.0.1:1",
+        ):
+            assert try_connect(endpoint) is None
 
     def test_returns_socket_for_listening_endpoint(self):
-        """已监听的 endpoint 返回 socket。"""
-        if not hasattr(socket, "AF_UNIX"):
-            pytest.skip("Windows 无 AF_UNIX")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            sock_path = os.path.join(tmp, "live.sock")
-            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            server.bind(sock_path)
-            server.listen(1)
-            try:
-                conn = try_connect(sock_path)
-                assert conn is not None
-                conn.close()
-            finally:
-                server.close()
+        """已监听的 HTTPS 端点返回 TCP socket。"""
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        endpoint = f"https://127.0.0.1:{server.getsockname()[1]}"
+        try:
+            conn = try_connect(endpoint)
+            assert conn is not None
+            conn.close()
+        finally:
+            server.close()
 
 
 # ---------------------------------------------------------------------------
@@ -214,11 +201,13 @@ class TestStartDaemonWindows:
     @mock.patch("subprocess.Popen")
     def test_starts_detached_process(self, mock_popen, mock_find):
         """Windows 使用 DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP 标志。"""
-        result = _start_daemon_windows(r"\\.\pipe\callwarden-test")
+        result = _start_daemon_windows()
 
         assert result is True
         mock_popen.assert_called_once()
         call_kwargs = mock_popen.call_args
+        # 单轨 HTTPS：不得再向 daemon 传 --socket / pipe 参数
+        assert call_kwargs[0][0] == ["/usr/bin/cw_daemon.exe"]
         # 验证 creationflags 包含 DETACHED_PROCESS
         flags = call_kwargs.kwargs.get("creationflags", call_kwargs[1].get("creationflags", 0))
         DETACHED_PROCESS = 0x00000008
@@ -229,7 +218,7 @@ class TestStartDaemonWindows:
     @mock.patch("callwarden.server.daemon_autostart._find_daemon_binary", return_value=None)
     def test_returns_false_when_binary_not_found(self, mock_find):
         """找不到 daemon 二进制时返回 False。"""
-        result = _start_daemon_windows(r"\\.\pipe\callwarden-test")
+        result = _start_daemon_windows()
         assert result is False
 
 
@@ -357,36 +346,26 @@ class TestFindDaemonBinary:
 
 
 class TestGetDefaultEndpoint:
-    """get_default_endpoint 平台适配。"""
+    """get_default_endpoint：单轨 HTTPS endpoint。"""
 
-    def test_unix_uses_env_or_default(self):
-        """Unix 使用 CW_DAEMON_SOCKET 或默认路径。"""
-        if sys.platform == "win32":
-            pytest.skip("Unix-only test")
-        with mock.patch.dict(os.environ, {"CW_DAEMON_SOCKET": "/custom/path.sock"}):
-            assert get_default_endpoint() == "/custom/path.sock"
+    def test_uses_manifest_endpoint(self):
+        """优先读取 authority manifest 登记的 endpoint。"""
+        with mock.patch(
+            "callwarden.server.daemon_autostart.resolve_http_endpoint_and_manifest",
+            return_value=("https://127.0.0.1:8456", {"endpoint": "https://127.0.0.1:8456"}),
+        ):
+            assert get_default_endpoint() == "https://127.0.0.1:8456"
 
-    @mock.patch("sys.platform", "win32")
-    @mock.patch("callwarden.config._get_windows_user_sid", return_value="S-1-5-21-123")
-    @mock.patch("config._get_windows_user_sid", return_value="S-1-5-21-123")
-    def test_windows_uses_named_pipe(self, mock_sid1, mock_sid2):
-        """Windows 使用命名管道路径。"""
-        endpoint = get_default_endpoint()
-        assert endpoint.startswith(r"\\.\pipe\callwarden-")
-        assert "S-1-5-21-123" in endpoint
-
-    @mock.patch("callwarden.config._get_windows_user_sid", return_value="S-1-5-21-456")
-    @mock.patch("config._get_windows_user_sid", return_value="S-1-5-21-456")
-    @mock.patch("callwarden.server.daemon_autostart.sys.platform", "win32")
-    def test_rpc_client_uses_windows_endpoint(self, mock_sid1, mock_sid2):
-        """RPC client 默认 endpoint 必须与 autostart 使用同一命名管道。"""
-        from callwarden.server.daemon_client import DaemonClient, UnixDaemonRpcClient
-
-        client = UnixDaemonRpcClient()
-        assert client.socket_path == r"\\.\pipe\callwarden-S-1-5-21-456"
-        DaemonClient.reset_instance()
-        daemon_client = DaemonClient()
-        assert daemon_client._rpc.socket_path == client.socket_path
+    def test_falls_back_to_default_https_endpoint(self):
+        """manifest 不可读时返回默认 HTTPS 端点（绝不返回 socket/pipe 路径）。"""
+        with mock.patch(
+            "callwarden.server.daemon_autostart.resolve_http_endpoint_and_manifest",
+            side_effect=RuntimeError("no manifest"),
+        ):
+            endpoint = get_default_endpoint()
+        assert endpoint == "https://127.0.0.1:6374"
+        assert not endpoint.startswith("/")
+        assert "pipe" not in endpoint
 
 
 # ---------------------------------------------------------------------------
@@ -416,90 +395,51 @@ class TestConfigConstants:
 
 
 class TestDaemonClientAutoRoute:
-    """真实 DaemonClient 经过自动唤起后的查询链路。"""
+    """真实 DaemonClient 经过自动唤起后的查询链路（单轨 HTTPS）。"""
 
-    def test_delayed_daemon_serves_real_client_query(self, tmp_path):
-        """endpoint 延迟出现时，auto client 应完成 ping 后查询。"""
-        if not hasattr(socket, "AF_UNIX"):
-            pytest.skip("需要 AF_UNIX 支持")
+    def test_delayed_daemon_serves_real_client_query(self):
+        """endpoint 延迟就绪时，call_with_autostart 应在窗口内重试并完成查询。
 
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.daemon_protocol import recv_message, send_message
-
-        socket_path = str(tmp_path / "delayed-client.sock")
-        ready = threading.Event()
-        stop = threading.Event()
-
-        def fake_daemon():
-            time.sleep(0.15)
-            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            server.bind(socket_path)
-            server.listen(8)
-            server.settimeout(0.2)
-            ready.set()
-            try:
-                while not stop.is_set():
-                    try:
-                        conn, _ = server.accept()
-                    except socket.timeout:
-                        continue
-                    with conn:
-                        try:
-                            request = recv_message(conn, 8 * 1024 * 1024)
-                            method = request.get("method")
-                            result = {"status": "ok"} if method == "ping" else {"files": 7}
-                            # 生产 wire 合同要求成功响应必须带 "ok": true——
-                            # rust_ext/src/daemon/protocol.rs:197-202 make_ok_response
-                            # （{"ok": true, "result": ...}）；缺 ok 时 protocol.rs:166-169
-                            # parse_response 默认 ok=false，且无 error 对象 →
-                            # ("daemon_error", "unknown daemon error")；
-                            # server/daemon_protocol.py:337-338 同样以 ok is True 判定。
-                            # 该 fake 曾因缺 ok 使 autostart readiness 探针恒失败，
-                            # 不可退回去掉 ok 键。
-                            send_message(conn, {
-                                "id": request.get("id"),
-                                "ok": True,
-                                "result": result,
-                            }, 8 * 1024 * 1024)
-                        except (OSError, ValueError):
-                            # ensure_daemon 的探测连接会在未发请求时直接关闭。
-                            pass
-            finally:
-                server.close()
-                try:
-                    os.unlink(socket_path)
-                except FileNotFoundError:
-                    pass
-
-        thread = threading.Thread(target=fake_daemon, daemon=True)
-        thread.start()
-        assert not ready.is_set()
+        单轨 HTTPS 后不存在 UDS 延迟监听；此处以 HttpDaemonRpcClient 的
+        call/verify_health 及 daemon_client.ensure_http_daemon 模拟延迟就绪。
+        """
+        from callwarden.server.daemon_client import (
+            DaemonClient,
+            DaemonUnavailableError,
+        )
 
         DaemonClient.reset_instance()
-        client = DaemonClient(socket_path=socket_path)
-        client._remote_workspace_id = "ws-delayed"
-        client._remote_snapshot_ready = True
-        with mock.patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
-            with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=True):
-                result = client.get_stats(db_path=None)
+        client = DaemonClient()
+        client._rpc.call = mock.Mock(
+            side_effect=[DaemonUnavailableError("down"), {"files": 7}]
+        )
+        client._rpc.discover = mock.Mock(return_value="https://127.0.0.1:6374")
+        client._rpc.verify_health = mock.Mock(return_value=True)
+        with mock.patch(
+            "callwarden.server.daemon_client.ensure_http_daemon",
+            return_value="https://127.0.0.1:6374",
+        ):
+            result = client.call_with_autostart("query.stats", {})
 
-        assert ready.is_set()
-        assert result == {"files": 7}
-        assert client.daemon_hits == 1
-        stop.set()
-        thread.join(timeout=2.0)
+        assert result == {"result": {"files": 7}, "degraded": False}
+        assert client._rpc.call.call_count == 2
         DaemonClient.reset_instance()
 
     def test_unavailable_auto_client_returns_local_result(self):
         """daemon 永久不可用时，auto client 应返回本地 SQL 结果。"""
-        from callwarden.server.daemon_client import DaemonClient
+        from callwarden.server.daemon_client import (
+            DaemonClient,
+            DaemonUnavailableError,
+        )
 
         DaemonClient.reset_instance()
-        client = DaemonClient(socket_path="/definitely/missing/callwarden.sock")
+        client = DaemonClient()
+        client._rpc.verify_health = mock.Mock(
+            side_effect=DaemonUnavailableError("daemon unavailable")
+        )
         with mock.patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
-            with mock.patch("callwarden.server.daemon_client.ensure_daemon", return_value=None):
-                with mock.patch.object(client, "_sql_fallback_get_stats", return_value={"files": 0}):
-                    assert client.get_stats(db_path=None) == {"files": 0}
+            with mock.patch.object(client, "_sql_fallback_get_stats", return_value={"files": 0}):
+                assert client.get_stats(db_path=None) == {"files": 0}
         DaemonClient.reset_instance()
 
 

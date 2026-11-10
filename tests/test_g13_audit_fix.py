@@ -3,15 +3,16 @@
 验证内容：
 1. server/metrics.py 新增 measure_rpc 上下文管理器
 2. server/metrics.py 注册 request_duration_seconds 内置直方图
-3. server/daemon_server.py _handle_connection 用 measure_rpc 埋点
-4. server/daemon_server.py 新增 metrics.snapshot / metrics.prometheus RPC 方法
-5. cli/daemon_commands.py metrics 子命令默认走 RPC + --local 降级 + --reset 仅 local
-6. server/mcp_server.py get_metrics 新增 source 参数（auto/rpc/local）
-7. _feature_matrix.md G13 状态更新为 ✅ 已修复
-8. 文档同步（docs/mcp_tools.md / docs/cli_reference.md / docs/design/implementation-status.md）
+3. cli/daemon_commands.py metrics 子命令默认走 RPC + --local 降级 + --reset 仅 local
+4. server/mcp_server.py get_metrics 新增 source 参数（auto/rpc/local）
+5. _feature_matrix.md G13 状态更新为 ✅ 已修复
+6. 文档同步（docs/mcp_tools.md / docs/cli_reference.md / docs/design/implementation-status.md）
 
-测试不依赖 daemon 进程实际运行（Linux UDS），全部通过 import + 静态检查 +
+测试不依赖 daemon 进程实际运行，全部通过 import + 静态检查 +
 本进程 MetricsCollector 集成验证。
+
+ADR-002 单轨传输：Python daemon（daemon_server.py）已退役，
+原 daemon_server RPC 方法 / _handle_connection 埋点用例已随文件退役。
 """
 from __future__ import annotations
 
@@ -20,14 +21,6 @@ import time
 
 import pytest
 
-
-@pytest.fixture(autouse=True)
-def _redirect_daemon_data_root(tmp_path, monkeypatch):
-    """CI 无 root 权限，重定向 /var/lib/callwarden 到临时目录"""
-    monkeypatch.setattr(
-        "callwarden.server.daemon_server.DAEMON_REGISTRY_DB",
-        str(tmp_path / "registry.db"),
-    )
 
 # ============================================================
 # 1. server/metrics.py — measure_rpc 上下文管理器
@@ -185,122 +178,7 @@ class TestG13RequestDurationHistogramRegistered:
 
 
 # ============================================================
-# 2. server/daemon_server.py — RPC 方法 + 埋点
-# ============================================================
-
-
-class TestG13DaemonServerRpcMethods:
-    """验证 daemon_server 新增的 metrics.snapshot / metrics.prometheus RPC 方法"""
-
-    def test_metrics_snapshot_rpc_returns_dict(self):
-        """metrics.snapshot RPC 返回 JSON dict"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.metrics import reset_metrics_collector
-        reset_metrics_collector()
-        svc = EnterpriseDaemonService()
-        peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
-        result = svc.dispatch(peer, "metrics.snapshot", {})
-        assert isinstance(result, dict)
-        # 应包含 timestamp / uptime / counters / gauges / histograms 字段
-        for key in ("timestamp", "uptime", "counters", "gauges", "histograms"):
-            assert key in result, f"metrics.snapshot 应包含 {key} 字段"
-
-    def test_metrics_prometheus_rpc_returns_str(self):
-        """metrics.prometheus RPC 返回 Prometheus 文本格式字符串"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.metrics import reset_metrics_collector
-        reset_metrics_collector()
-        svc = EnterpriseDaemonService()
-        peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
-        result = svc.dispatch(peer, "metrics.prometheus", {})
-        assert isinstance(result, str), \
-            f"metrics.prometheus 应返回 str, 实际: {type(result)}"
-        # Prometheus 文本应包含至少一个 # TYPE 行
-        assert "# TYPE" in result, \
-            "Prometheus 文本应包含 # TYPE 行"
-
-    def test_metrics_snapshot_rpc_collects_runtime_metrics(self):
-        """metrics.snapshot 调用 collect_runtime_metrics 后返回最新运行时指标"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.metrics import reset_metrics_collector
-        reset_metrics_collector()
-        svc = EnterpriseDaemonService()
-        peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
-        result = svc.dispatch(peer, "metrics.snapshot", {})
-        # uptime 应大于 0
-        assert result["uptime"] > 0
-        # gauges 应包含 memory_rss_bytes / uptime_seconds 等内置 gauge
-        assert "memory_rss_bytes" in result["gauges"]
-        assert "uptime_seconds" in result["gauges"]
-
-    def test_metrics_prometheus_includes_request_duration_histogram(self):
-        """metrics.prometheus 输出应包含 request_duration_seconds 直方图"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.metrics import reset_metrics_collector
-        reset_metrics_collector()
-        svc = EnterpriseDaemonService()
-        peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
-        text = svc.dispatch(peer, "metrics.prometheus", {})
-        assert "request_duration_seconds" in text, \
-            "Prometheus 文本应包含 request_duration_seconds 直方图"
-
-    def test_metrics_rpc_methods_do_not_require_workspace_id(self):
-        """metrics.snapshot / metrics.prometheus 是全局方法，不需要 workspace_id"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        svc = EnterpriseDaemonService()
-        peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
-        # 直接调用应成功（不抛 workspace_not_found 等 workspace 相关错误）
-        try:
-            svc.dispatch(peer, "metrics.snapshot", {})
-            svc.dispatch(peer, "metrics.prometheus", {})
-        except Exception as e:
-            # 检查错误消息不应提到 workspace
-            msg = str(e).lower()
-            assert "workspace" not in msg, \
-                f"metrics.* RPC 不应依赖 workspace, 错误: {e}"
-
-
-class TestG13DaemonServerHandleConnectionInstrumentation:
-    """验证 _handle_connection 用 measure_rpc 埋点"""
-
-    def test_handle_connection_source_has_measure_rpc(self):
-        """_handle_connection 源代码应包含 measure_rpc 调用"""
-        import inspect
-        from callwarden.server.daemon_server import EnterpriseDaemonServer
-        src = inspect.getsource(EnterpriseDaemonServer._handle_connection)
-        assert "measure_rpc" in src, \
-            "_handle_connection 应使用 measure_rpc 埋点"
-        assert "with measure_rpc" in src, \
-            "_handle_connection 应使用 with measure_rpc(...) 形式"
-
-    def test_daemon_server_imports_measure_rpc(self):
-        """daemon_server 模块应导入 measure_rpc"""
-        from callwarden.server import daemon_server
-        assert hasattr(daemon_server, "measure_rpc"), \
-            "daemon_server 模块应导入 measure_rpc"
-        assert hasattr(daemon_server, "get_metrics_collector"), \
-            "daemon_server 模块应导入 get_metrics_collector"
-
-    def test_dispatch_source_has_metrics_snapshot(self):
-        """dispatch 源代码应包含 metrics.snapshot 分支"""
-        import inspect
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        src = inspect.getsource(EnterpriseDaemonService.dispatch)
-        assert '"metrics.snapshot"' in src, \
-            "dispatch 应处理 metrics.snapshot RPC 方法"
-        assert '"metrics.prometheus"' in src, \
-            "dispatch 应处理 metrics.prometheus RPC 方法"
-
-    def test_dispatch_source_has_g13_comment(self):
-        """dispatch 源代码应包含 G13 注释"""
-        import inspect
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        src = inspect.getsource(EnterpriseDaemonService.dispatch)
-        assert "G13" in src, "dispatch 应包含 G13 注释"
-
-
-# ============================================================
-# 3. cli/daemon_commands.py — daemon RPC 权威 + --from-file 离线检视
+# 2. cli/daemon_commands.py — daemon RPC 权威 + --from-file 离线检视
 # ============================================================
 
 
@@ -591,67 +469,6 @@ class TestG13DocsSync:
             f"Prometheus 指标导出 状态应为 ✅ 已实现, 实际: {prom_line}"
         assert "G13" in prom_line, \
             f"Prometheus 指标导出 应提及 G13, 实际: {prom_line}"
-
-
-# ============================================================
-# 7. 端到端集成 — 通过 _handle_connection 模拟埋点
-# ============================================================
-
-
-class TestG13EndToEndInstrumentation:
-    """端到端验证：通过 _handle_connection 验证 measure_rpc 埋点
-
-    通过模拟 UDS socket 对（socketpair）触发 _handle_connection，
-    验证 RPC 调用被埋点。Linux/Unix 专属（Windows 跳过）。
-    """
-
-    @pytest.mark.skipif(
-        not hasattr(__import__("socket"), "AF_UNIX"),
-        reason="Unix domain socket 仅 Linux/Unix 可用"
-    )
-    def test_handle_connection_records_rpc_metric(self, tmp_path):
-        """端到端：通过 _handle_connection 触发 ping RPC，验证 requests_total 埋点"""
-        from callwarden.server.daemon_server import EnterpriseDaemonServer, EnterpriseDaemonService
-        from callwarden.server.daemon_protocol import send_message, recv_message
-        from callwarden.server.metrics import reset_metrics_collector, get_metrics_collector
-        reset_metrics_collector()
-        # 构造 service 和 server（不启动 serve_forever）
-        socket_path = str(tmp_path / "test.sock")
-        service = EnterpriseDaemonService()
-        server = EnterpriseDaemonServer(socket_path, service, max_workers=2)
-        # 启动后台 serve_forever
-        import threading
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        # 等待 socket 就绪
-        import time as _time
-        deadline = _time.time() + 2.0
-        while not os.path.exists(socket_path) and _time.time() < deadline:
-            _time.time()
-            _time.sleep(0.01)
-        try:
-            # 发送 ping RPC
-            import socket as _socket
-            with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as client:
-                client.settimeout(2.0)
-                client.connect(socket_path)
-                send_message(
-                    client, {"id": 1, "method": "ping", "params": {}}, 65536)
-                response = recv_message(client, 65536)
-            assert response.get("ok") is True
-            assert response.get("result", {}).get("status") == "ok"
-            # 等待 measure_rpc 的 finally 块执行完毕
-            _time.sleep(0.05)
-            # 验证埋点
-            collector = get_metrics_collector()
-            counter = collector._counters["requests_total"]
-            ok_value = counter.get(labels={"method": "ping", "status": "ok"})
-            assert ok_value == 1.0, \
-                f"ping RPC 应被 measure_rpc 埋点为 requests_total{{method=ping,status=ok}}=1, 实际: {ok_value}"
-        finally:
-            server.shutdown()
-            # 等待线程退出
-            thread.join(timeout=2.0)
 
 
 if __name__ == "__main__":

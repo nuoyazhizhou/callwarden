@@ -364,7 +364,7 @@ pub fn fail_closed_unsupported(role: &str, platform: Option<&str>) {
         eprintln!(
             "ERROR: Role '{}' is not supported on {}.\n\
              Supported roles: {}\n\
-             Enterprise daemon/agent requires Linux with SO_PEERCRED, SCM_RIGHTS, and UDS.",
+             Enterprise daemon/agent requires HTTPS + mTLS (ADR-002 single transport).",
             role, plat, supported_str
         );
         exit(2);

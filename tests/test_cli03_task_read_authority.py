@@ -124,7 +124,7 @@ def test_task_read_authority_failure_fake_workspace(live_daemon):
 # ---------------------------------------------------------------------------
 def test_task_read_daemon_unavailable_fail_closed():
     from callwarden.config import get_http_authority_id
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError) as ei:
         c.call("task.list", {"status": "", "limit": 5, "workspace_id": 1})

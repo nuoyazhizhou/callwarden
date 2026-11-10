@@ -94,45 +94,24 @@ pub fn handle_try_connect_tcp(params: &Value) -> Result<Value, DaemonRpcError> {
     }))
 }
 
-/// Unix Domain Socket 连通探测（对应 Python `_try_connect_unix`）。
+/// Unix Domain Socket 连通探测（fail-closed）。
+///
+/// ADR-002 单轨 HTTPS+mTLS：UDS 传输已退役，本 handler 不再尝试连接任何
+/// socket，统一返回 `connectable=false` + 明确错误说明。
 ///
 /// params:
-/// - `endpoint`（必填）：UDS 路径；
+/// - `endpoint`（必填）：保留参数以兼容旧调用方；
 /// - `timeout`（可选，秒，默认 1.0）。
 ///
 /// 返回 `{"connectable": bool, "endpoint": str, "error": str|null}`。
-/// 非 unix 平台对齐 Python `not hasattr(socket, "AF_UNIX")` → 返回 connectable=false。
 pub fn handle_try_connect_unix(params: &Value) -> Result<Value, DaemonRpcError> {
     let endpoint = require_str_param(params, "endpoint")?;
-    let timeout = get_timeout(params, DEFAULT_CONNECT_TIMEOUT_SECS);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::net::UnixStream;
-        // 修正：std 无 `SocketAddr::from_path`（等价 API 为 `from_pathname`，且返回
-        // io::Result），亦无 `UnixStream::connect_timeout`（E0599，仅 TcpStream 有）。
-        // UDS connect 是本地操作（ENOENT/ECONNREFUSED 立即返回），不存在网络级等待，
-        // 因此直接按路径连接；`timeout` 仍按 RPC 契约接收，但不参与本路径的执行。
-        let _ = timeout;
-        let result = UnixStream::connect(endpoint).ok();
-        let connectable = result.is_some();
-        drop(result);
-        Ok(json!({
-            "connectable": connectable,
-            "endpoint": endpoint,
-            "error": if connectable { Value::Null } else { json!("connect failed or unreachable") },
-        }))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = timeout;
-        // 对齐 Python：无 AF_UNIX 直接返回 None（不抛异常）
-        Ok(json!({
-            "connectable": false,
-            "endpoint": endpoint,
-            "error": "AF_UNIX not available on this platform",
-        }))
-    }
+    let _ = get_timeout(params, DEFAULT_CONNECT_TIMEOUT_SECS);
+    Ok(json!({
+        "connectable": false,
+        "endpoint": endpoint,
+        "error": "UDS transport retired by ADR-002 (HTTPS+mTLS only)",
+    }))
 }
 
 /// 解析 HTTP endpoint（对齐 Python `urlparse(endpoint).hostname or "127.0.0.1"`、

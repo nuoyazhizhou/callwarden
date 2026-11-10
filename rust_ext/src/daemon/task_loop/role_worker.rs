@@ -843,7 +843,7 @@ mod tests {
 
     fn db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        assert_eq!(migrate_connection(&conn).unwrap(), 60);
+        assert_eq!(migrate_connection(&conn).unwrap(), 61);
         conn.execute(
             "INSERT INTO workspaces (id,name,root_path,created_at,is_active) VALUES (1,'role-worker-test','/role-worker-test',0,1)",
             [],

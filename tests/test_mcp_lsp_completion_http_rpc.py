@@ -57,7 +57,7 @@ def test_lsp_completion_defaults(rpc):
 
 
 def test_lsp_completion_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("lsp_completion", {"file_path": "a.py", "line": 1, "character": 1})
 

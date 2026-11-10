@@ -98,7 +98,7 @@ def test_legacy_root_request_unchanged(monkeypatch):
                            **PAIR, "identity_policy": "legacy_identity_v1"}
 
 
-def test_typed_adapter_preserves_response_and_envelope():
+def test_typed_adapter_preserves_response_and_envelope(monkeypatch):
     envelope = ' { "identity_policy": "legacy_identity_v1" } '
     response = {"task_id": "T-child", "extra": [1, 2]}
     class Client:
@@ -109,9 +109,15 @@ def test_typed_adapter_preserves_response_and_envelope():
             assert params["task_contract_envelope"] == envelope
             assert params["workspace_instance_id"] == PAIR["workspace_instance_id"]
             return response
-    assert dc.UnixDaemonRpcClient.task_create(
-        Client(), "child", parent_id="T-parent", **PAIR,
-        identity_policy="legacy_identity_v1", task_contract_envelope=envelope) is response
+    monkeypatch.setattr(dc, "get_daemon_mode", lambda: "auto")
+    monkeypatch.setattr(dc, "_get_rpc_client_for_route", lambda: Client())
+    assert dc.route_task_write(
+        "task.create",
+        {"title": "child", "parent_id": "T-parent", **PAIR,
+         "identity_policy": "legacy_identity_v1",
+         "task_contract_envelope": envelope},
+        lambda: pytest.fail("local fallback called"),
+    ) is response
 
 
 @pytest.mark.parametrize("field,value", [("parent_id", "T-parent"),
@@ -144,7 +150,7 @@ def test_governed_create_daemon_rejection_exits_nonzero(monkeypatch, capsys):
     capture_cli(monkeypatch, error=error)
     with pytest.raises(SystemExit) as caught:
         cli._handle_task(BASE + ["--parent-id", "T-parent"], None)
-    assert caught.value.code == 2
+    assert caught.value.code == 1
     out = capsys.readouterr().out
     assert "E_TASK_PARENT_NOT_FOUND" in out
 
@@ -155,7 +161,7 @@ def test_governed_create_daemon_unavailable_exits_nonzero(monkeypatch, capsys):
     capture_cli(monkeypatch, error=error)
     with pytest.raises(SystemExit) as caught:
         cli._handle_task(BASE + ["--parent-id", "T-parent"], None)
-    assert caught.value.code == 2
+    assert caught.value.code == 1
 
 
 def test_legacy_root_create_daemon_error_behavior_unchanged(monkeypatch):

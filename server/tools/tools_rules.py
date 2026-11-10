@@ -25,7 +25,7 @@ get_build_context / get_active_build_context 新增 workspace_instance_id
 经 workspace.status 解析并补齐，instance 归属失败即 fail-closed。
 S2 批次2（T-1787209948470-a59bcf9c）：list_toolchains / get_toolchain /
 get_workspace_toolchains 已迁移 rust_native（读权威 task DB），白名单清空。
-get_metrics 不依赖 db.conn（走 UnixDaemonRpcClient / 本地 MetricsCollector），
+get_metrics 不依赖 db.conn（走 HttpDaemonRpcClient / 本地 MetricsCollector），
 不属于 SQLite 只读查询面，不接入 worker，维持 fail-closed。
 """
 

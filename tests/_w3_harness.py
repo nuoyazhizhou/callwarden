@@ -20,7 +20,6 @@ import os
 import shutil
 import sqlite3
 import subprocess
-import sys
 import time
 import unicodedata
 
@@ -418,25 +417,13 @@ def seed_clone_groups(conn, ws_id, symbol_id):
                  (symbol_id + 1,))
 
 
-def seed_cli_task_authority(task_db, ws_id, name, root_path, instance_id, now=None):
-    """seed task-DB 的 canonical workspace 权威，使 CLI task.create 的
-    `resolve_workspace_pair_from_daemon` 拿到唯一 (task_db_id, instance) 配对。
+def _workspace_capture_fields(ws_id, name, root_path, instance_id):
+    """计算 canonical workspace capture 的派生字段（与 task_collab.rs create 路径对齐）。
 
-    根因（探针实证）：`workspace.status` 的 task-DB 侧只读
-    `workspace_authority_captures`（按 instance），不读 `workspaces` 表；
-    fixture 只 seed `workspaces` → status 返回 `task_db_workspace_id: null` →
-    resolver matches=0 fail-closed。
-
-    本函数补齐三件事（与 task_collab.rs bind_task_to_workspace 的 create 路径逐字段对齐）：
-    1. `workspaces` 行（id=ws_id，root 必须与 register/CLI 归一化一致）。
-    2. `canonicalization_rule_sets` 的 workspace_capture c14n rule row
-       （create 路径 L268-280 要求可读，否则 capability 未就绪 fail-closed）。
-    3. `workspace_authority_captures` rev=1 行：registry_identity_hash 必须与
-       create 时重新计算的完全一致（sha256:hex(c14n(payload))，c14n 按键排序 +
-       NFC + 紧凑 JSON），否则 task.create 追加 capture 时 identity 校验 mismatch。
+    返回 dict：manifest / identity 的 payload 与 hash，以及 c14n 后的
+    registry_identity_hash（`sha256:hex(c14n(payload))`，键排序 + NFC + 紧凑 JSON）。
+    `seed_cli_task_authority` 与 `_ensure_workspace_capture` 共用，避免两处公式漂移。
     """
-    if now is None:
-        now = time.time()
     root_hash = sha256_hex(root_path.encode("utf-8"))
     manifest_payload = json.dumps(
         {
@@ -465,7 +452,83 @@ def seed_cli_task_authority(task_db, ws_id, name, root_path, instance_id, now=No
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    identity_hash = "sha256:" + sha256_hex(c14n.encode("utf-8"))
+    return {
+        "root_hash": root_hash,
+        "manifest_payload": manifest_payload,
+        "manifest_hash": manifest_hash,
+        "registry_payload_json": registry_payload_json,
+        "identity_hash": "sha256:" + sha256_hex(c14n.encode("utf-8")),
+    }
+
+
+def _ensure_workspace_capture(conn, ws_id, instance_id, now):
+    """确保 ws_id 存在一条 canonical capture，返回其 workspace_capture_id。
+
+    已有 capture（无论 rev）则直接复用最新一条；否则合成一条最小 capture：
+    `workspace_instance_id=instance_id`。合成 instance 不在 WorkspaceRegistry
+    中，`verify_registry_owner_for_instance` 走「无 registry 行 → 放行」分支，
+    因此对 Protected_Mutation 入口是安全且合法的权威绑定（非绕过 fail-closed）。
+    """
+    row = conn.execute(
+        "SELECT workspace_capture_id FROM workspace_authority_captures"
+        " WHERE workspace_id = ?"
+        " ORDER BY capture_revision DESC, rowid DESC LIMIT 1",
+        (ws_id,),
+    ).fetchone()
+    if row:
+        return row[0]
+
+    ws_row = conn.execute(
+        "SELECT name, root_path FROM workspaces WHERE id = ?", (ws_id,)
+    ).fetchone()
+    name = ws_row[0] if ws_row else f"ws-{ws_id}"
+    root_path = ws_row[1] if ws_row else ""
+    fields = _workspace_capture_fields(ws_id, name, root_path, instance_id)
+    capture_id = f"wc-{instance_id}"
+    conn.execute(
+        "INSERT INTO workspace_authority_captures "
+        "(workspace_capture_id, workspace_id, capture_revision, supersedes_capture_id,"
+        " daemon_workspace_id, workspace_instance_id, capture_canonicalization_version,"
+        " capture_canonicalization_rules_hash, registry_identity_payload_json,"
+        " registry_identity_hash, workspace_manifest_payload_json, workspace_manifest_hash,"
+        " client_view_root_hash, host_real_root_hash, created_by, authoritative_created_at)"
+        " VALUES (?1, ?2, 1, NULL, 0, ?3, 'workspace-capture-c14n/v1',"
+        " 'cli-test-rules-hash', ?4, ?5, ?6, ?7, ?8, ?8, 'cli-test', ?9)",
+        (
+            capture_id,
+            ws_id,
+            instance_id,
+            fields["registry_payload_json"],
+            fields["identity_hash"],
+            fields["manifest_payload"],
+            fields["manifest_hash"],
+            fields["root_hash"],
+            f"{now:.6f}",
+        ),
+    )
+    return capture_id
+
+
+def seed_cli_task_authority(task_db, ws_id, name, root_path, instance_id, now=None):
+    """seed task-DB 的 canonical workspace 权威，使 CLI task.create 的
+    `resolve_workspace_pair_from_daemon` 拿到唯一 (task_db_id, instance) 配对。
+
+    根因（探针实证）：`workspace.status` 的 task-DB 侧只读
+    `workspace_authority_captures`（按 instance），不读 `workspaces` 表；
+    fixture 只 seed `workspaces` → status 返回 `task_db_workspace_id: null` →
+    resolver matches=0 fail-closed。
+
+    本函数补齐三件事（与 task_collab.rs bind_task_to_workspace 的 create 路径逐字段对齐）：
+    1. `workspaces` 行（id=ws_id，root 必须与 register/CLI 归一化一致）。
+    2. `canonicalization_rule_sets` 的 workspace_capture c14n rule row
+       （create 路径 L268-280 要求可读，否则 capability 未就绪 fail-closed）。
+    3. `workspace_authority_captures` rev=1 行：registry_identity_hash 必须与
+       create 时重新计算的完全一致（sha256:hex(c14n(payload))，c14n 按键排序 +
+       NFC + 紧凑 JSON），否则 task.create 追加 capture 时 identity 校验 mismatch。
+    """
+    if now is None:
+        now = time.time()
+    fields = _workspace_capture_fields(ws_id, name, root_path, instance_id)
 
     conn = sqlite3.connect(task_db)
     try:
@@ -492,11 +555,11 @@ def seed_cli_task_authority(task_db, ws_id, name, root_path, instance_id, now=No
                 f"wc-cli-{instance_id}",
                 ws_id,
                 instance_id,
-                registry_payload_json,
-                identity_hash,
-                manifest_payload,
-                manifest_hash,
-                root_hash,
+                fields["registry_payload_json"],
+                fields["identity_hash"],
+                fields["manifest_payload"],
+                fields["manifest_hash"],
+                fields["root_hash"],
                 f"{now:.6f}",
             ),
         )
@@ -512,6 +575,11 @@ def seed_cli_lifecycle_task(task_db, task_id, ws_id, bind_workspace=True, status
     - `task.claim` 在 L97 `task_bound_workspace_id` 处要求 `task_workspace_bindings` 存在，
       否则报 E_TASK_WORKSPACE_UNBOUND（而非走到身份校验）。故 seed `task_workspace_bindings`
       一行（workspace_id=ws_id），使 claim 能通过 UNBOUND 进入后续 policy/身份判断。
+    - Protected_Mutation 入口（claim/report/close 等）走 `verify_registry_owner_for_task_strict`：
+      binding 必须 JOIN 到 `workspace_authority_captures` 的非空 instance，否则
+      `E_TASK_BINDING_ATTESTATION_REQUIRED`。故 binding 必须带 workspace_capture_id
+      （该列 NOT NULL，缺失会让 INSERT OR IGNORE 整行被静默丢弃 → 表现为「无 binding」）。
+      无既有 capture 时合成一条（见 `_ensure_workspace_capture`）。
     - `task.report` 在 snapshot 校验前报 E_TASK_REPORT_SNAPSHOT_REQUIRED（空 snapshot_id）。
     - `task.rollback`/`task.reopen`/`task.resolve_quality_finding` 无身份门禁，直接执行成功。
 
@@ -528,12 +596,15 @@ def seed_cli_lifecycle_task(task_db, task_id, ws_id, bind_workspace=True, status
             (task_id, "cli-matrix " + task_id, status, now, now),
         )
         if bind_workspace:
-            bid = f"tb-{task_id}"
+            capture_id = _ensure_workspace_capture(
+                conn, ws_id, f"w3-lifecycle-{ws_id}", now
+            )
             conn.execute(
                 "INSERT OR IGNORE INTO task_workspace_bindings "
-                "(task_id, workspace_id, workspace_binding_id, created_by, authoritative_created_at)"
-                " VALUES (?, ?, ?, 'cli-matrix', ?)",
-                (task_id, ws_id, bid, now),
+                "(task_id, workspace_id, workspace_binding_id, workspace_capture_id,"
+                " created_by, authoritative_created_at)"
+                " VALUES (?, ?, ?, ?, 'cli-matrix', ?)",
+                (task_id, ws_id, f"tb-{task_id}", capture_id, now),
             )
         conn.commit()
     finally:
@@ -697,15 +768,6 @@ def spawn_isolated_daemon(bin_path, data_root, http_bind="127.0.0.1:0"):
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
-    if sys.platform == "win32":
-        # 隔离 daemon 必须使用独立命名管道：默认端点按用户 SID 派生，与常驻
-        # daemon 同名会撞 CreateNamedPipe ERROR_ACCESS_DENIED（error 5），
-        # 使 live 用例被前置 guard 降级为 skip。端点名由 data_root 派生，
-        # 天然按隔离目录唯一；SDDL 仍只授权当前用户（见 transport_windows）。
-        iso_tag = hashlib.sha256(data_root.encode("utf-8")).hexdigest()[:12]
-        env["CW_DAEMON_SOCKET"] = rf"\\.\pipe\callwarden-iso-{iso_tag}"
-    else:
-        env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     env["USERPROFILE"] = home
     # 主库（codegraph）路径与快照读面同一物理文件（userhome/.callwarden/
@@ -767,6 +829,44 @@ _PREREQ_UNAVAILABLE_MARKERS = (
 )
 
 
+# ADR-002 单轨 mTLS（w3_live 专属）：daemon 未被外部 `CW_PKI_DIR` 指定 PKI 时，
+# 其信任根为隔离 USERPROFILE 下的 LocalCa——客户端若仍解析真实用户身份目录
+# 的证书即跨 CA（实测 `invalid peer certificate: BadSignature`）。`pki init`
+# 幂等补齐同源 owner 身份（pr_owner）后注入证书 env；调用方（conftest.w3_live）
+# 在 daemon 退出时调 `restore_w3_env()` 还原。
+# 外部指定 `CW_PKI_DIR` 的调用方（test_query_* 等，daemon 继承同一真实 CA）
+# 自行负责身份装配，本机制不动其 env。
+_MTLS_ENV_KEYS = ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT", "CW_PKI_DIR")
+_W3_MTLS_ENV_SAVED = None
+
+
+def inject_isolated_mtls_env(data_root):
+    """为隔离 daemon 注入同源 mTLS 客户端证书 env（保存原值供还原）。"""
+    global _W3_MTLS_ENV_SAVED
+    import test_mtls_control_plane as _mtls  # noqa: PLC0415（懒加载避免循环 import）
+    _mtls.pki_init(data_root)
+    cert, key = _mtls.identity_paths(data_root)
+    _W3_MTLS_ENV_SAVED = {k: os.environ.get(k) for k in _MTLS_ENV_KEYS}
+    os.environ["CW_CLIENT_CERT"] = cert
+    os.environ["CW_CLIENT_KEY"] = key
+    os.environ["CW_CA_CERT"] = os.path.join(
+        _mtls.pki_dir_of(data_root), "ca", "ca.crt")
+    os.environ.pop("CW_PKI_DIR", None)
+
+
+def restore_w3_env():
+    """还原 `inject_isolated_mtls_env` 保存的 env（daemon teardown 时调用）。"""
+    global _W3_MTLS_ENV_SAVED
+    if _W3_MTLS_ENV_SAVED is None:
+        return
+    for k, v in _W3_MTLS_ENV_SAVED.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    _W3_MTLS_ENV_SAVED = None
+
+
 def _prereq_unavailable_reason(exc, daemon_exited):
     """前置缺失原因（非 None 即降级 skip）；仅覆盖明确环境前置。"""
     code = getattr(exc, "code", "")
@@ -810,6 +910,11 @@ def setup_w3_client(data_root, root_path, ws_id=1):
                   f"stderr tail={err.decode('utf-8', 'replace')[-2000:]!r}")
             return None, None, None, None
         endpoint = m["endpoint"]
+        # ADR-002 单轨 mTLS：daemon 未被外部 CW_PKI_DIR 指定 PKI 时，其信任根为
+        # 隔离 LocalCa——注入同源 owner 身份（pki init 幂等），否则客户端用真实
+        # 用户证书即跨 CA（BadSignature）。外部指定 CW_PKI_DIR 的调用方自负其责。
+        if not os.environ.get("CW_PKI_DIR", "").strip():
+            inject_isolated_mtls_env(data_root)
         # manifest_path=隔离 manifest：避免 discover() 读真实 HOME 的 stale
         # manifest（后台 daemon 残留 PID → E_HTTP_MANIFEST_STALE）。
         client = HttpDaemonRpcClient(endpoint=endpoint, authority_id=get_http_authority_id(),
@@ -851,8 +956,7 @@ def setup_w3_client(data_root, root_path, ws_id=1):
         # instrument（CI 取证）：manifest 后死亡（本机/CI 实证失败模式）——
         # daemon 先发 manifest（wait_manifest 成功返回），随后在 setup 后续
         # 调用（workspace.register / snapshot.publish）前死亡，异常在此冒泡。
-        # 输出 daemon stdout/stderr 尾部定位死因（本机实证：CreateNamedPipe
-        # 失败 error 5，pipe 名按 SID 派生未按 data_root 隔离）。
+        # 输出 daemon stdout/stderr 尾部定位死因。
         died_at_exc = proc.poll() is not None
         try:
             out, err = proc.communicate(timeout=5)

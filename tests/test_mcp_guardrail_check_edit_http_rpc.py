@@ -75,7 +75,7 @@ def test_guardrail_check_edit_missing_file(rpc):
 
 def test_guardrail_check_edit_daemon_unavailable_fail_closed():
     """daemon 不可用 → fail-closed（本地连接异常即证据）。"""
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(DaemonUnavailableError):
         c.call("guardrail_check_edit", {"workspace_instance_id": CANONICAL_INSTANCE,
                                         "file_path": "x.rs", "proposed_change": "x"})

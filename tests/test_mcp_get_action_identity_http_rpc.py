@@ -59,7 +59,7 @@ def test_get_action_identity_missing_action_id(live_daemon):
 # daemon unavailable：fail-closed，绝不降级本地 SQLite
 # ---------------------------------------------------------------------------
 def test_get_action_identity_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError) as ei:
         c.call("get_action_identity", {"workspace_id": 1, "action_id": "X"})

@@ -67,9 +67,6 @@ def _start_daemon_for_mcp_startup() -> None:
     合法传输，MCP 一律经 HTTPS+mTLS 探活（缺证书即 fail-closed）。
     """
     try:
-        from ..config import resolve_daemon_endpoint_for_authority
-
-        from .daemon_autostart import ensure_daemon_for_startup
         from .daemon_client import is_http_transport_enabled
 
         if is_http_transport_enabled():
@@ -95,12 +92,9 @@ def _start_daemon_for_mcp_startup() -> None:
                     print(t("mcp.messages.daemon_http_autostart_failed",
                             error=str(spawn_exc)), file=sys.stderr)
         else:
-            from .daemon_client import UnixDaemonRpcClient
-            rpc = UnixDaemonRpcClient(timeout=1.0)
-            ready = ensure_daemon_for_startup(
-                resolve_daemon_endpoint_for_authority(),
-                readiness_check=rpc._probe_connection,
-            )
+            # ADR-002 单轨：非 HTTP transport 不存在任何合法 RPC 传输，
+            # 不提供 UDS / Named Pipe / bridge 回退（fail-closed）。
+            ready = False
         if not ready:
             print(t("mcp.messages.daemon_startup_wakeup_failed"), file=sys.stderr)
     except Exception as exc:

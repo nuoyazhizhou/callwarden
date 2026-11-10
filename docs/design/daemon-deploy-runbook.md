@@ -7,9 +7,10 @@
 
 本文档描述 **Rust `cw_daemon` binary**（对应 [rust_ext/src/bin/cw_daemon.rs](../../rust_ext/src/bin/cw_daemon.rs)）的部署/升级/回滚流程。
 
-> **ADR-002 口径提示**：本 runbook 的 §1–§5 仍保留 v1（UDS / Named Pipe）时代的历史步骤，
-> 仅用于旧版本回滚参考。新部署请以「单轨 HTTPS + mTLS（ADR-002）」一节为准；
+> **ADR-002 口径提示**：本 runbook 的 §1–§8 仍保留 v1（UDS / Named Pipe）时代的历史步骤，
+> 仅用于旧版本回滚参考。新部署请以「单轨 HTTPS + mTLS（ADR-002）」一节与 §10 为准；
 > 其中的 `\\\\.\\pipe\\...`、`AF_UNIX`、`callwarden-clients` 组权限等内容不再构成授权面。
+> §9（cw-agent）与 §10 已按 ADR-002 更新为 mTLS 口径。
 
 ### 二进制
 
@@ -55,7 +56,9 @@ cw pki token issue --principal pr_ops --workspace 1
 # 3. 调用方用 token 完成引导，得到客户端证书（SAN URI = principal）
 cw pki enroll --token <TOKEN> --endpoint https://127.0.0.1:7633
 
-# 4. 校验：必须携带客户端证书才能访问 /health 与 /v1/rpc
+# 4. 校验：/v1/rpc 必须携带客户端证书；/health 与 /v1/enroll 免客户端证书
+#    （http_server.rs CLIENT_CERT_EXEMPT_PATHS；GET /health 仅返回 profile/commit/pid，
+#     不含 principal/grant。下面 curl 演示的是带证访问 /health 的形态）
 curl --cacert <data_root>/pki/ca/ca.crt \
      --cert   <pki>/identities/pr_ops/client.crt \
      --key    <pki>/identities/pr_ops/client.key \
@@ -211,7 +214,7 @@ journalctl -u callwarden-daemon --since "1 min ago" | grep "drain complete"
 ## 6. 监控与告警
 
 ```bash
-# 健康状态（通过 UDS JSON-RPC）
+# 健康状态（通过 HTTPS /health + mTLS 客户端，ADR-002 单轨）
 cw daemon health
 # 返回：{"status":"ok","pid":...,"uptime_seconds":...,"workspace_count":...,
 #        "snapshot_workspace_count":...,"schema_version":...}
@@ -237,7 +240,7 @@ ExecReload=/bin/kill -HUP $MAINPID    # SIGHUP 触发 reload config
 KillMode=mixed                # SIGTERM 发给主进程，子进程也收到
 KillSignal=SIGTERM            # 触发 sd_notify STOPPING=1 + graceful drain
 TimeoutStopSec=60             # 给 drain 60 秒时间
-UMask=0007                    # UDS socket 0660，callwarden-clients 组可访问
+UMask=0007                    # v1 遗留：UDS socket 0660；ADR-002 后授权改 mTLS，此项不再需要
 RuntimeDirectory=callwarden   # /run/callwarden 由 systemd 创建
 StateDirectory=callwarden     # /var/lib/callwarden 由 systemd 创建
 ```
@@ -251,7 +254,7 @@ StateDirectory=callwarden     # /var/lib/callwarden 由 systemd 创建
 **排查**：
 1. 检查 `journalctl -u callwarden-daemon` 是否有 `[ERROR]` 日志
 2. `cw_daemon schema-check --strict` 单独运行看是否 exit 0
-3. UDS socket 路径 `/run/callwarden/callwarden.sock` 父目录是否存在
+3. daemon HTTPS 端点是否监听（`cw_daemon health-check` 或 manifest 中的 endpoint）
 
 **临时绕过**：使用 `--no-sd-notify` 启动，并将 `Type=notify` 改为 `Type=simple`：
 ```bash
@@ -271,15 +274,14 @@ sudo fuser /var/lib/callwarden/registry.db
 sudo lsof /var/lib/callwarden/registry.db
 ```
 
-### 8.3 UDS socket permission denied
+### 8.3 客户端证书被拒（ADR-002）
 
-**现象**：非 callwarden 用户调用 `cw daemon health` 报 permission denied。
+**现象**：调用 `cw daemon health` 报 TLS 握手失败 / 证书未知 CA。
 
-**解决**：将用户加入 `callwarden-clients` 组（与 unit 文件 UMask=0007 配合）：
-```bash
-sudo usermod -aG callwarden-clients <user>
-# 重新登录后生效
-```
+**解决**：确认调用方使用同一 `pki init` 生成的 CA（`CW_CA_CERT`）且已通过
+`cw pki token issue` + `cw pki enroll` 取得客户端证书（`CW_CLIENT_CERT` /
+`CW_CLIENT_KEY`）；ADR-002 后授权由证书 SAN（principal）+ workspace grant 决定，
+不再使用 `callwarden-clients` 组。
 
 ## 9. cw-agent 部署（G9: per-UID systemd --user watcher）
 
@@ -292,7 +294,7 @@ sudo usermod -aG callwarden-clients <user>
 
 - 监控用户工作目录（默认 `$HOME/work`）的文件变更
 - 通过 Rust `canonicalize_source_py` 生成规范化字节流
-- 通过 UDS 发送 `workspace.file.refresh` RPC 到 system daemon
+- 通过 HTTPS + mTLS 发送 `workspace.file.refresh` RPC 到 system daemon（ADR-002 单轨）
 - 不直接访问数据库，所有写入通过 daemon RPC
 
 **关键文件**：
@@ -384,7 +386,7 @@ tail -f ~/.callwarden/agent.log
 1. **加载 AgentSession**：从 `~/.callwarden/agent_session.json` 加载（或创建新）session_id
 2. **推导 workspace_instance_id**：从 `--watch-dir` 路径的 SHA-256 前 16 位推导
 3. **写 PID 文件**：`~/.callwarden/agent.pid`（用于 stop/status）
-4. **ping daemon**：验证 daemon UDS socket 可达
+4. **ping daemon**：验证 daemon HTTPS 端点可达（携带 mTLS 客户端证书）
 5. **握手**：调用 `workspace.connect` RPC，daemon 分配 `session_epoch`
 6. **注册 workspace**：调用 `workspace.register` RPC
 7. **启动 watchdog Observer**：监控 `--watch-dir` 下的文件变更
@@ -519,8 +521,8 @@ cw-agent 是 **user service**，cw_daemon 是 **system service**。systemd 不�
 
 - 用户 A：监控 `/home/alice/work`，session_id=agent-aaa...
 - 用户 B：监控 `/home/bob/code`，session_id=agent-bbb...
-- 两个 agent 通过同一 UDS socket 连接同一 daemon
-- daemon 通过 `peer_uid` 区分不同用户的 workspace
+- 两个 agent 各自持独立 principal 客户端证书，经同一 HTTPS 端点连同一 daemon
+- daemon 通过 mTLS 证书 SAN（principal_id）区分不同用户的 workspace（ADR-002）
 
 每个用户的 `~/.callwarden/agent_session.json` 和 `~/.callwarden/agent.pid` 完全独立。
 
@@ -532,8 +534,8 @@ cw-agent 是 **user service**，cw_daemon 是 **system service**。systemd 不�
 
 **排查**：
 1. 确认 daemon 已启动：`sudo systemctl status callwarden-daemon.service`
-2. 确认 UDS socket 存在：`ls -l /run/callwarden/callwarden.sock`
-3. 确认用户在 `callwarden-clients` 组：`id <user>`
+2. 确认 HTTPS 端点监听（manifest 中 endpoint）与 `CW_DAEMON_HTTP_ENDPOINT` 一致
+3. 确认本用户客户端证书有效（`CW_CLIENT_CERT`/`CW_CLIENT_KEY`/`CW_CA_CERT`）
 4. 测试 ping：`cw-agent status`（status 命令会 ping daemon）
 
 #### 9.12.2 文件变更未触发 refresh
@@ -564,12 +566,12 @@ cw-agent 是 **user service**，cw_daemon 是 **system service**。systemd 不�
 
 ### 10.1 部署模型选择
 
-| 场景 | CW_AUTHORITY | CW_DAEMON_TRANSPORT | 端点 | 说明 |
+| 场景 | CW_AUTHORITY | 传输 | 端点 | 说明 |
 | --- | --- | --- | --- | --- |
-| Windows 本地 CLI/MCP/Agent | auto（→windows-host） | named-pipe | `\\.\pipe\callwarden-<sid>` | Windows daemon |
-| WSL 访问 Windows authority | windows-host | `https` + mTLS 直连 Windows daemon | `https://<windows-host>:<port>` | Windows daemon（ADR-002） |
-| WSL 原生 workspace | wsl-local | uds | `/tmp/callwarden-<uid>.sock` | WSL local daemon |
-| Linux 原生主机 | linux-system | uds | `/run/callwarden/callwarden.sock` | systemd daemon |
+| Windows 本地 CLI/MCP/Agent | auto（→windows-host） | https + mTLS | `https://127.0.0.1:<port>`（manifest） | Windows daemon |
+| WSL 访问 Windows authority | windows-host | https + mTLS | `https://<windows-host>:<port>` | Windows daemon（ADR-002） |
+| WSL 原生 workspace | wsl-local | https + mTLS | `https://127.0.0.1:<port>`（manifest） | WSL local daemon |
+| Linux 原生主机 | linux-system | https + mTLS | `https://127.0.0.1:<port>`（manifest） | systemd daemon |
 
 **禁止**：WSL 直接打开 `/mnt/c/.../callwarden.db`（SQLite/WAL/SHM）；Windows authority
 不可用时不得偷偷写 WSL 本地库（fail-closed）。
@@ -612,22 +614,23 @@ python cw.py daemon health
 python cw.py task list
 ```
 
-### 10.4 WSL local daemon（独立 authority）
+### 10.4 WSL local daemon（独立 authority，HTTPS + mTLS）
 
 ```bash
 # 环境变量（WSL ext4，禁止 /mnt/c）
 export CW_AUTHORITY=wsl-local
-export CW_DAEMON_TRANSPORT=uds
-export CW_DAEMON_SOCKET=/tmp/callwarden-$(id -u).sock
 export CW_DAEMON_TASK_DB=$HOME/.callwarden/callwarden.db
 export CW_DAEMON_DATA_ROOT=$HOME/.callwarden/daemon
 export CW_DAEMON_REGISTRY_DB=$HOME/.callwarden/daemon/registry.db
 
-# 启动
+# 初始化本 authority 的 PKI（幂等）并签发本机客户端身份
+cw pki init
+
+# 启动（HTTPS listener，默认 loopback）
 cw-daemon serve
 
-# 健康检查
-cw daemon health   # authority 为 wsl-local
+# 健康检查（携带 mTLS 客户端证书）
+cw daemon health   # authority 为 wsl-local，transport=https_mtls_v1
 ```
 
 ### 10.5 双 daemon 同时运行
@@ -651,5 +654,6 @@ cw daemon health   # authority 为 wsl-local
 
 1. 客户端证书私钥仅当前用户可读（`identities/<principal_id>/client.key`，ACL 拒绝 Everyone/Users）；
 2. WSL 不直连 `/mnt/c` SQLite；
-3. WSL local daemon 的 UDS socket 归属当前用户（`/tmp/callwarden-<uid>.sock`）；
-4. Linux systemd daemon 的 UDS 在 `callwarden-clients` 组（如需多用户）。
+3. daemon 非回环绑定时必须 `CW_DAEMON_HTTP_ALLOW_REMOTE=1` 显式开启，且仅暴露给受信网络；
+4. 多用户场景为每用户签发独立 principal 证书（`cw pki token issue`），授权由证书 SAN
+   + workspace grant 决定，不再依赖 `callwarden-clients` 组。

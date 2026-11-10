@@ -23,7 +23,6 @@ stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
 
 import hashlib
 import os
-import socket
 import sqlite3
 import sys
 
@@ -96,31 +95,6 @@ class TestLegacyContainerStrategy:
         new_hash = hashlib.sha256(new_content.encode()).hexdigest()
         assert new_hash != content_hash, "文件修改后 hash 应变化"
 
-    def test_client_view_root_is_display_only(self, tmp_path):
-        """client_view_root 仅作为展示信息，内容身份来自 blob/FD。"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-
-        registry_db = str(tmp_path / "registry.db")
-        service = EnterpriseDaemonService(registry_db=registry_db)
-
-        # 注册 workspace 时 client_view_root 可以是任意路径
-        from callwarden.server.daemon_registry import register_workspace
-        with service._registry_conn() as conn:
-            ws = register_workspace(
-                conn,
-                owner_uid=os.getuid() if hasattr(os, "getuid") else 0,
-                client_view_root="/container/opt/project",  # 容器内路径
-                host_real_root=str(tmp_path),  # 宿主机真实路径
-            )
-            assert ws is not None
-
-        # 内容身份不依赖 client_view_root
-        content = b"def foo(): pass\n"
-        hash1 = hashlib.sha256(content).hexdigest()
-        # 无论从哪个路径读取，相同内容的 hash 相同
-        hash2 = hashlib.sha256(content).hexdigest()
-        assert hash1 == hash2
-
 
 # ============================================================
 # 跨 mount namespace workspace 注册
@@ -145,17 +119,6 @@ class TestCrossMountNamespace:
             content_hash, "python", "0.1.0", "0.2.0", "v1", "v1", "v1"
         )
         assert key_home == key_opt, "相同内容 CAS key 必须与路径无关"
-
-    def test_workspace_owner_uid_from_peercred(self):
-        """workspace owner UID 取自 SO_PEERCRED，不从请求体。"""
-        # SO_PEERCRED 只在 Linux 上可用
-        if not hasattr(socket, "SO_PEERCRED"):
-            pytest.skip("当前平台不支持 SO_PEERCRED")
-        # 验证 daemon_server 的 get_peer_credentials 返回内核 UID
-        from callwarden.server.daemon_server import get_peer_credentials
-        # 在非连接环境下返回 fallback
-        creds = get_peer_credentials(None)
-        assert "uid" in creds
 
 
 # ============================================================

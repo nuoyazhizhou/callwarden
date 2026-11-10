@@ -20,15 +20,23 @@
 //! 参考：Python `server/daemon_server.py:EnterpriseDaemonService.dispatch` L441-490
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs;
+use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use base64::Engine;
+use flate2::read::GzDecoder;
 use regex::Regex;
 use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Map, Value};
-
 use super::dispatch::{
     current_daemon_uid, get_int_param, get_int_param_or, get_str_param, get_str_param_or,
     require_str_param, DaemonRpcError, DaemonState, DaemonStateExt, InlinePayload, PeerCredential,
+};
+use super::snapshot_guard::{
+    is_valid_sha256_hex, is_valid_upload_id, sha256_hex, SlotError,
+    MAX_ASSEMBLED_RAW_BYTES, MAX_CHUNK_BYTES, MAX_INLINE_BYTES, MAX_TOTAL_CHUNKS,
 };
 use super::workspace::{
     normalize_path_key, owned_workspace, owned_workspace_by_id, validate_owned_path,
@@ -72,6 +80,12 @@ pub struct SnapshotDaemonState {
     /// compat 工具（toolchain/rules 等）的 Rust handler 用它打开只读连接，
     /// 与 Python compat worker 的 ctx.conn 同源。
     task_db_path: Option<std::path::PathBuf>,
+    /// ADR-002 §16.1：daemon 启动时绑定的 profile（"loopback" / "remote"），
+    /// 运行时只读。remote 下 snapshot.publish 的 db_path 兼容路径被拒绝，
+    /// 快照入口唯一为 §16.2 的 snapshot.upload 系列。
+    bind_scope: String,
+    /// ADR-002 §16.2：分块上传组装存储（daemon 内单实例，跨请求共享）。
+    upload_slots: Arc<super::snapshot_guard::UploadSlotStore>,
 }
 
 impl SnapshotDaemonState {
@@ -82,6 +96,8 @@ impl SnapshotDaemonState {
             snapshot_cache,
             toolchain_store: None,
             task_db_path: None,
+            bind_scope: "loopback".to_string(),
+            upload_slots: Arc::new(super::snapshot_guard::UploadSlotStore::new()),
         }
     }
 
@@ -116,6 +132,22 @@ impl SnapshotDaemonState {
     pub fn with_task_db_path(mut self, task_db_path: std::path::PathBuf) -> Self {
         self.task_db_path = Some(task_db_path);
         self
+    }
+
+    /// ADR-002 §16.1：注入 bind_scope（manifest v2 字段，运行时只读）。
+    ///
+    /// 由 `cw_daemon` 启动时按绑定地址判定注入：
+    /// - `"loopback"`（默认）：`snapshot.publish` 的 `db_path` 兼容路径保留；
+    /// - `"remote"`：`db_path` 上送即 `E_REMOTE_DB_PATH_FORBIDDEN`，快照入口
+    ///   唯一为 `snapshot.upload` 系列（§16.2）。
+    pub fn with_bind_scope(mut self, scope: &str) -> Self {
+        self.bind_scope = scope.to_string();
+        self
+    }
+
+    /// ADR-002 §16.1：读取 bind_scope（dispatch 层的 remote 路径兜底拒绝用）。
+    pub fn bind_scope(&self) -> &str {
+        &self.bind_scope
     }
 
     /// 打开 task DB 只读连接（compat 工具 handler 用；未配置时 fail-closed）。
@@ -470,11 +502,288 @@ impl SnapshotDaemonState {
         );
         Value::Object(m)
     }
+
+    // ---- ADR-002 §16.2：snapshot.upload 共享导入面 ----
+    //
+    // §16.2 组装语义：完整 gzip 流 → hash 契约校验 → schema 校验 →
+    // owner-only 临时文件 → build_and_publish_blocking → 删除临时文件。
+    // 任一环节失败：不发布、不落库、不残留临时文件（fail-closed）。
+    fn ingest_uploaded_snapshot(
+        &mut self,
+        workspace: &Value,
+        workspace_instance_id: &str,
+        gz_bytes: &[u8],
+        declared_sha256: &str,
+        declared_raw_size: i64,
+        build_context_hash: &str,
+        requested_snapshot_id: Option<&str>,
+    ) -> Result<Value, DaemonRpcError> {
+        // 1. gunzip（bounded MAX_ASSEMBLED_RAW_BYTES，防 zip bomb）
+        let raw = s2_decompress_gz_bounded(gz_bytes, MAX_ASSEMBLED_RAW_BYTES).map_err(|e| {
+            DaemonRpcError::new(
+                "E_PAYLOAD_TOO_LARGE",
+                format!(
+                    "上传快照解压失败或超过组装上限 {} 字节（ADR-002 §16.2）: {}",
+                    MAX_ASSEMBLED_RAW_BYTES, e
+                ),
+            )
+        })?;
+        // 2. hash 契约：sha256 / raw_size 针对 gunzip 后原始 SQLite 字节
+        //    （篡改/截断防御：任一不符即 E_SNAPSHOT_UPLOAD_HASH_MISMATCH，不导入）
+        if raw.len() as i64 != declared_raw_size {
+            return Err(DaemonRpcError::new(
+                "E_SNAPSHOT_UPLOAD_HASH_MISMATCH",
+                format!(
+                    "raw_size 声明 {} 与实际 {} 不符（ADR-002 §16.2 hash 契约）",
+                    declared_raw_size,
+                    raw.len()
+                ),
+            ));
+        }
+        let actual_sha256 = sha256_hex(&raw);
+        if actual_sha256 != declared_sha256 {
+            return Err(DaemonRpcError::new(
+                "E_SNAPSHOT_UPLOAD_HASH_MISMATCH",
+                format!(
+                    "sha256 声明 {} 与实际 {} 不符（ADR-002 §16.2 hash 契约）",
+                    declared_sha256, actual_sha256
+                ),
+            ));
+        }
+        // 3. owner-only 临时文件（落 daemon 本机；Guard 保证删除，含错误/panic 路径）
+        let tmp_dir = if self.base.data_root.as_os_str().is_empty() {
+            std::env::temp_dir()
+        } else {
+            self.base.data_root.clone()
+        };
+        let tmp_name = format!(
+            ".callwarden-upload-tmp-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        let tmp_path = tmp_dir.join(&tmp_name);
+        {
+            let mut f = fs::File::create(&tmp_path).map_err(|e| {
+                DaemonRpcError::internal_error(format!("创建上传临时文件失败: {}", e))
+            })?;
+            f.write_all(&raw).map_err(|e| {
+                DaemonRpcError::internal_error(format!("写入上传临时文件失败: {}", e))
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(e) = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600)) {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(DaemonRpcError::internal_error(format!(
+                        "设置上传临时文件权限失败: {}",
+                        e
+                    )));
+                }
+            }
+        }
+        let _guard = TmpUploadGuard {
+            path: tmp_path.clone(),
+        };
+        let db_path = tmp_path.to_string_lossy().to_string();
+
+        // 4. schema 校验（缺表/缺列 → E_SNAPSHOT_UPLOAD_SCHEMA_INVALID，发布前 fail-fast）
+        if let Err(msg) = validate_snapshot_sqlite_schema(&db_path) {
+            return Err(DaemonRpcError::new(
+                "E_SNAPSHOT_UPLOAD_SCHEMA_INVALID",
+                format!("上传快照 schema 校验失败（ADR-002 §16.2）: {}", msg),
+            ));
+        }
+        // 5. WAL checkpoint（GraphStore 用 immutable=1 打开，必须先 checkpoint）
+        wal_checkpoint(&db_path)?;
+
+        // 6. 真相源 workspace id + snapshot_id 解析（同 snapshot.publish 既有路径：
+        // registry ROWID 仅 fallback，真实过滤 id 来自上传库 workspaces 表）
+        let registry_rowid: i64 = workspace
+            .get("workspace_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
+        let client_view_root = workspace
+            .get("client_view_root")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let workspace_id_num = resolve_true_workspace_id(&db_path, client_view_root, registry_rowid);
+        let registered_snapshot_id = workspace
+            .get("snapshot_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let snapshot_id = match (requested_snapshot_id, registered_snapshot_id) {
+            (Some(requested), Some(registered)) if requested != registered => {
+                return Err(DaemonRpcError::invalid_params(format!(
+                    "snapshot_id 与 workspace.register 的权威 snapshot_id 不一致: requested={}, registered={}",
+                    requested, registered
+                )));
+            }
+            (Some(requested), _) => Some(requested.to_string()),
+            (None, Some(registered)) => Some(registered.to_string()),
+            (None, None) => None,
+        };
+
+        // 7. 获取或创建 SnapshotManager → 构建 + 发布（catch_unwind 隔离 Python 依赖 panic）
+        let mgr = self.snapshot_cache.get_or_create(workspace_instance_id);
+        let publish_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mgr.build_and_publish_blocking(
+                &db_path,
+                workspace_id_num,
+                build_context_hash,
+                snapshot_id.clone(),
+            )
+        }));
+        let (generation, symbol_count, call_count) = match publish_outcome {
+            Ok(Ok(v)) => v,
+            Ok(Err(msg)) => {
+                return Err(DaemonRpcError::internal_error(format!(
+                    "build_and_publish 失败: {}",
+                    msg
+                )));
+            }
+            Err(_) => {
+                return Err(DaemonRpcError::internal_error(
+                    "snapshot.upload 发布 panic: daemon 未嵌入 Python 解释器，Python 依赖的 \
+                     publish 路径不可用（请求已隔离）"
+                        .to_string(),
+                ));
+            }
+        };
+
+        let mut m = Map::new();
+        m.insert("generation".into(), Value::Number(generation.into()));
+        m.insert("symbol_count".into(), Value::Number(symbol_count.into()));
+        m.insert("call_count".into(), Value::Number(call_count.into()));
+        m.insert(
+            "workspace_instance_id".into(),
+            Value::String(workspace_instance_id.to_string()),
+        );
+        m.insert(
+            "snapshot_id".into(),
+            snapshot_id.map(Value::String).unwrap_or(Value::Null),
+        );
+        m.insert("source".into(), Value::String("snapshot.upload".to_string()));
+        // Guard 作用域结束：发布成功后同样删除临时文件（§16.2 "不残留"）
+        Ok(Value::Object(m))
+    }
+}
+
+// ============================================
+// ADR-002 §16.2 辅助函数（daemon 侧导入面）
+// ============================================
+
+/// 带最大输出上限的 gunzip（复刻 workspace.rs 既有 bounded 解压语义，防 zip bomb）。
+/// 超限或 gzip 流损坏均返回 Err。
+fn s2_decompress_gz_bounded(gz: &[u8], max_out: usize) -> Result<Vec<u8>, String> {
+    let decoder = GzDecoder::new(gz);
+    let mut out = Vec::with_capacity(gz.len().min(max_out));
+    decoder
+        .take((max_out + 1) as u64)
+        .read_to_end(&mut out)
+        .map_err(|e| format!("gzip 解压失败: {}", e))?;
+    if out.len() > max_out {
+        return Err(format!("解压结果超过 {} 字节上限", max_out));
+    }
+    Ok(out)
+}
+
+/// 上传临时文件 guard：Drop 时尽力删除（覆盖错误返回/panic 路径，
+/// 保证 §16.2 "不残留临时文件"）。
+struct TmpUploadGuard {
+    path: PathBuf,
+}
+
+impl Drop for TmpUploadGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// ADR-002 §16.2：上传快照 schema 校验 —— 缺表/缺列即拒。
+///
+/// 与 `GraphStore::load_from_sqlite_blocking` 消费的三表必需列保持一致
+/// （file_instances / symbols / calls）。
+fn validate_snapshot_sqlite_schema(db_path: &str) -> Result<(), String> {
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| format!("打开 SQLite 失败: {}", e))?;
+    let required: [(&str, &[&str]); 3] = [
+        (
+            "file_instances",
+            &["id", "rel_path", "status", "workspace_id"],
+        ),
+        (
+            "symbols",
+            &[
+                "id",
+                "file_instance_id",
+                "kind",
+                "name",
+                "module_path",
+                "start_line",
+                "end_line",
+                "depth",
+            ],
+        ),
+        (
+            "calls",
+            &[
+                "caller_id",
+                "callee_id",
+                "callee_name",
+                "call_line",
+                "is_cross_file",
+            ],
+        ),
+    ];
+    for (table, cols) in required.iter() {
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![table],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("查询表 {} 失败: {}", table, e))?;
+        if exists == 0 {
+            return Err(format!("缺表: {}", table));
+        }
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info(?1)")
+            .map_err(|e| format!("读取表 {} 列信息失败: {}", table, e))?;
+        let actual: HashSet<String> = stmt
+            .query_map(params![table], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("读取表 {} 列信息失败: {}", table, e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        for col in cols.iter() {
+            if !actual.contains(*col) {
+                return Err(format!("表 {} 缺列: {}", table, col));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl DaemonStateExt for SnapshotDaemonState {
     fn daemon_state(&self) -> &DaemonState {
         self.base.daemon_state()
+    }
+
+    // ADR-002 §16.1：manifest v2 bind_scope（loopback / remote），启动时注入。
+    fn bind_scope(&self) -> &str {
+        self.bind_scope.as_str()
+    }
+
+    fn set_bind_scope(&mut self, scope: &str) {
+        self.bind_scope = scope.to_string();
     }
 
     // ---- 基础方法（重写 health 附加 snapshot 统计）----
@@ -629,11 +938,10 @@ impl DaemonStateExt for SnapshotDaemonState {
         &mut self,
         peer: PeerCredential,
         params: &Value,
-        received_fds: &[i32],
         inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
         self.base
-            .handle_workspace_file_refresh(peer, params, received_fds, inline_payload)
+            .handle_workspace_file_refresh(peer, params, inline_payload)
     }
 
     fn handle_workspace_refresh_plan(
@@ -700,10 +1008,25 @@ impl DaemonStateExt for SnapshotDaemonState {
         &mut self,
         peer: PeerCredential,
         params: &Value,
-        received_fds: &[i32],
         inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = inline_payload; // Q10：snapshot.publish 不消费 multipart payload
+        // ADR-002 §16.1：remote profile 下 snapshot.publish 的 db_path 兼容路径
+        // 被禁止（快照入口唯一为 §16.2 的 snapshot.upload 系列）；FD/multipart
+        // 分支同理 method_not_found（单轨 HTTPS 无带外载荷面）。
+        if self.bind_scope == "remote" {
+            if inline_payload.is_some() {
+                return Err(DaemonRpcError::method_not_found(
+                    "snapshot.publish: remote profile 不支持 multipart/FD 分支（§16.1）",
+                ));
+            }
+            if params.get("db_path").is_some() {
+                return Err(DaemonRpcError::new(
+                    "E_REMOTE_DB_PATH_FORBIDDEN",
+                    "bind_scope=remote 下 snapshot.publish 禁止上送 db_path（ADR-002 §16.1）；\
+                     快照入口为 snapshot.upload",
+                ));
+            }
+        }
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let build_context_hash = get_str_param_or(params, "build_context_hash", "");
 
@@ -751,25 +1074,8 @@ impl DaemonStateExt for SnapshotDaemonState {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        // 确定 db_path：优先用 FD（Linux），其次用 db_path 参数
-        let db_path = if !received_fds.is_empty() {
-            #[cfg(unix)]
-            {
-                if received_fds.len() > 1 {
-                    return Err(DaemonRpcError::invalid_params(
-                        "snapshot.publish 最多接收 1 个 FD",
-                    ));
-                }
-                validate_snapshot_fd(received_fds[0], peer.uid)?
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = peer;
-                return Err(DaemonRpcError::invalid_params(
-                    "FD 模式仅 Unix 支持（Windows 跳过 #[cfg(unix)]）",
-                ));
-            }
-        } else {
+        // 确定 db_path：单轨 HTTPS 不支持 FD，统一走 db_path 参数
+        let db_path = {
             let path = require_str_param(params, "db_path")?;
             // 路径校验 + owner_uid ACL
             let real_path = validate_owned_path(path, peer.uid, true)?;
@@ -789,7 +1095,6 @@ impl DaemonStateExt for SnapshotDaemonState {
         // 此处只读打开 db_path 查 workspaces 表，按规范化后的 client_view_root
         // 匹配 root_path 取真实 id；查不到（表不存在/无匹配/打开失败）时 fallback
         // registry ROWID，保持 P0-2 隔离语义现状不更糟，不影响既有测试。
-        // FD 分支（Linux /proc/self/fd/N）与 db_path 分支统一走同一条解析路径，
         // 打开失败同样 fallback，不 panic。
         let workspace_id_num =
             resolve_true_workspace_id(&db_path, client_view_root, registry_rowid);
@@ -842,6 +1147,299 @@ impl DaemonStateExt for SnapshotDaemonState {
             snapshot_id.map(Value::String).unwrap_or(Value::Null),
         );
         Ok(Value::Object(m))
+    }
+
+    // ---- ADR-002 §16.2：snapshot/upload 导入面（remote profile 唯一快照入口） ----
+
+    fn handle_snapshot_upload(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+        inline_payload: Option<InlinePayload<'_>>,
+    ) -> Result<Value, DaemonRpcError> {
+        // §16.1：单轨 HTTPS 无 FD/multipart 载荷面，upload 内容只走 params 内联
+        if inline_payload.is_some() {
+            return Err(DaemonRpcError::method_not_found(
+                "snapshot.upload: 不支持 multipart/FD 分支（ADR-002 §16.1）",
+            ));
+        }
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        // 归属校验先于一切重活（fail-closed）
+        let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        // mode / content_encoding 固定值校验（"identity" 为预留，本卡不实现）
+        let mode = get_str_param_or(params, "mode", "");
+        if mode != "inline" {
+            return Err(DaemonRpcError::invalid_params(format!(
+                "mode 必须为 \"inline\"（当前 \"{}\"；\"identity\" 为预留未实现，ADR-002 §16.2）",
+                mode
+            )));
+        }
+        let content_encoding = get_str_param_or(params, "content_encoding", "");
+        if content_encoding != "gzip" {
+            return Err(DaemonRpcError::invalid_params(format!(
+                "content_encoding 仅支持 \"gzip\"（当前 \"{}\"，ADR-002 §16.2）",
+                content_encoding
+            )));
+        }
+        // payload_b64 → gzip 字节流（base64 解码后 ≤ MAX_INLINE_BYTES）
+        let payload_b64 = require_str_param(params, "payload_b64")?;
+        let gz_bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload_b64.trim())
+            .map_err(|e| {
+                DaemonRpcError::new(
+                    "base64_decode_failed",
+                    format!("payload_b64 base64 解码失败: {}", e),
+                )
+            })?;
+        if gz_bytes.len() > MAX_INLINE_BYTES {
+            return Err(DaemonRpcError::new(
+                "E_PAYLOAD_TOO_LARGE",
+                format!(
+                    "payload_b64 解码后 {} 字节超过内联上限 {} 字节（ADR-002 §16.2）",
+                    gz_bytes.len(),
+                    MAX_INLINE_BYTES
+                ),
+            ));
+        }
+        // hash 契约参数形态校验
+        let sha256_param = require_str_param(params, "sha256")?;
+        if !is_valid_sha256_hex(sha256_param.trim()) {
+            return Err(DaemonRpcError::invalid_params(
+                "sha256 必须为 64 位小写 hex（ADR-002 §16.2 hash 契约）",
+            ));
+        }
+        let raw_size = get_int_param(params, "raw_size").ok_or_else(|| {
+            DaemonRpcError::invalid_params("raw_size 缺失或非整数（ADR-002 §16.2 hash 契约）")
+        })?;
+        if raw_size < 0 {
+            return Err(DaemonRpcError::invalid_params("raw_size 不能为负数"));
+        }
+        let build_context_hash = get_str_param_or(params, "build_context_hash", "");
+        let requested_snapshot_id = get_str_param(params, "snapshot_id")
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        self.ingest_uploaded_snapshot(
+            &workspace,
+            workspace_instance_id,
+            &gz_bytes,
+            sha256_param.trim(),
+            raw_size,
+            &build_context_hash,
+            requested_snapshot_id,
+        )
+    }
+
+    fn handle_snapshot_upload_chunk(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        // 归属校验先于 slot 写面（fail-closed）
+        let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let upload_id = require_str_param(params, "upload_id")?;
+        if !is_valid_upload_id(upload_id.trim()) {
+            return Err(DaemonRpcError::invalid_params(
+                "upload_id 必须为 32 位小写 hex（ADR-002 §16.2）",
+            ));
+        }
+        let chunk_index = get_int_param(params, "chunk_index").ok_or_else(|| {
+            DaemonRpcError::invalid_params("chunk_index 缺失或非整数")
+        })?;
+        if chunk_index < 0 {
+            return Err(DaemonRpcError::invalid_params("chunk_index 不能为负数"));
+        }
+        let total_chunks = get_int_param(params, "total_chunks").ok_or_else(|| {
+            DaemonRpcError::invalid_params("total_chunks 缺失或非整数")
+        })?;
+        if total_chunks <= 0 || total_chunks > MAX_TOTAL_CHUNKS as i64 {
+            return Err(DaemonRpcError::new(
+                "E_PAYLOAD_TOO_LARGE",
+                format!(
+                    "total_chunks {} 超出允许范围 [1, {}]（ADR-002 §16.2）",
+                    total_chunks, MAX_TOTAL_CHUNKS
+                ),
+            ));
+        }
+        // chunk_b64 → 字节（单块解码后 ≤ MAX_CHUNK_BYTES）
+        let chunk_b64 = require_str_param(params, "chunk_b64")?;
+        let chunk_bytes = base64::engine::general_purpose::STANDARD
+            .decode(chunk_b64.trim())
+            .map_err(|e| {
+                DaemonRpcError::new(
+                    "base64_decode_failed",
+                    format!("chunk_b64 base64 解码失败: {}", e),
+                )
+            })?;
+        if chunk_bytes.len() > MAX_CHUNK_BYTES {
+            return Err(DaemonRpcError::new(
+                "E_PAYLOAD_TOO_LARGE",
+                format!(
+                    "单块解码后 {} 字节超过上限 {} 字节（ADR-002 §16.2）",
+                    chunk_bytes.len(),
+                    MAX_CHUNK_BYTES
+                ),
+            ));
+        }
+        // chunk_sha256 逐块校验（防传输中块内容被替换；不符即拒，slot 不受影响）
+        let chunk_sha256 = require_str_param(params, "chunk_sha256")?;
+        if !is_valid_sha256_hex(chunk_sha256.trim()) {
+            return Err(DaemonRpcError::invalid_params(
+                "chunk_sha256 必须为 64 位小写 hex（ADR-002 §16.2）",
+            ));
+        }
+        if sha256_hex(&chunk_bytes) != chunk_sha256.trim() {
+            return Err(DaemonRpcError::new(
+                "E_SNAPSHOT_UPLOAD_HASH_MISMATCH",
+                format!(
+                    "chunk_index={} 的 chunk_sha256 与实际内容不符（ADR-002 §16.2）",
+                    chunk_index
+                ),
+            ));
+        }
+        // request_id：HTTP 层 http_dedup 已按 (workspace_instance_id, method,
+        // request_id) 幂等去重；此处的 request_id 参数仅诊断用，不参与判定。
+        let chunks_received = self
+            .upload_slots
+            .put_chunk(
+                workspace_instance_id,
+                upload_id.trim(),
+                chunk_index as usize,
+                total_chunks as usize,
+                chunk_bytes,
+            )
+            .map_err(|e| match e {
+                SlotError::ChunkOutOfRange => DaemonRpcError::invalid_params(format!(
+                    "chunk_index={} 超出 total_chunks={} 范围",
+                    chunk_index, total_chunks
+                )),
+                SlotError::TotalMismatch => DaemonRpcError::invalid_params(format!(
+                    "total_chunks 与首次声明不一致（upload_id={}）",
+                    upload_id.trim()
+                )),
+                SlotError::ChunkTooLarge | SlotError::TotalOutOfRange => {
+                    DaemonRpcError::new(
+                        "E_PAYLOAD_TOO_LARGE",
+                        format!("分块参数超限（ADR-002 §16.2）: {:?}", e),
+                    )
+                }
+                SlotError::UnknownUpload | SlotError::Expired | SlotError::MissingChunks(_) => {
+                    DaemonRpcError::new(
+                        "E_SNAPSHOT_UPLOAD_EXPIRED",
+                        format!("upload_id={} 不存在或已过期（TTL 2h）", upload_id.trim()),
+                    )
+                }
+            })?;
+        let mut m = Map::new();
+        m.insert("upload_id".into(), Value::String(upload_id.trim().to_string()));
+        m.insert("chunk_index".into(), Value::Number(chunk_index.into()));
+        m.insert("chunks_received".into(), Value::Number(chunks_received.into()));
+        m.insert("total_chunks".into(), Value::Number(total_chunks.into()));
+        Ok(Value::Object(m))
+    }
+
+    fn handle_snapshot_upload_commit(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let upload_id = require_str_param(params, "upload_id")?;
+        if !is_valid_upload_id(upload_id.trim()) {
+            return Err(DaemonRpcError::invalid_params(
+                "upload_id 必须为 32 位小写 hex（ADR-002 §16.2）",
+            ));
+        }
+        let total_chunks = get_int_param(params, "total_chunks").ok_or_else(|| {
+            DaemonRpcError::invalid_params("total_chunks 缺失或非整数")
+        })?;
+        if total_chunks <= 0 || total_chunks > MAX_TOTAL_CHUNKS as i64 {
+            return Err(DaemonRpcError::invalid_params(format!(
+                "total_chunks {} 超出允许范围 [1, {}]",
+                total_chunks, MAX_TOTAL_CHUNKS
+            )));
+        }
+        let sha256_param = require_str_param(params, "sha256")?;
+        if !is_valid_sha256_hex(sha256_param.trim()) {
+            return Err(DaemonRpcError::invalid_params(
+                "sha256 必须为 64 位小写 hex（ADR-002 §16.2 hash 契约）",
+            ));
+        }
+        let raw_size = get_int_param(params, "raw_size").ok_or_else(|| {
+            DaemonRpcError::invalid_params("raw_size 缺失或非整数（ADR-002 §16.2 hash 契约）")
+        })?;
+        if raw_size < 0 {
+            return Err(DaemonRpcError::invalid_params("raw_size 不能为负数"));
+        }
+        let build_context_hash = get_str_param_or(params, "build_context_hash", "");
+        let requested_snapshot_id = get_str_param(params, "snapshot_id")
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        // 完整性预检（不消费 slot）：缺块精确报失
+        if let Err(e) = self.upload_slots.chunks_complete(
+            workspace_instance_id,
+            upload_id.trim(),
+            total_chunks as usize,
+        ) {
+            return Err(match e {
+                SlotError::MissingChunks(missing) => DaemonRpcError::new(
+                    "E_SNAPSHOT_UPLOAD_CHUNK_MISSING",
+                    format!(
+                        "upload_id={} 缺少分块 {:?}（total_chunks={}）",
+                        upload_id.trim(),
+                        missing,
+                        total_chunks
+                    ),
+                ),
+                SlotError::Expired | SlotError::UnknownUpload => DaemonRpcError::new(
+                    "E_SNAPSHOT_UPLOAD_EXPIRED",
+                    format!("upload_id={} 不存在或已过期（TTL 2h）", upload_id.trim()),
+                ),
+                SlotError::TotalMismatch => DaemonRpcError::invalid_params(format!(
+                    "total_chunks 与首次声明不一致（upload_id={}）",
+                    upload_id.trim()
+                )),
+                SlotError::ChunkOutOfRange
+                | SlotError::ChunkTooLarge
+                | SlotError::TotalOutOfRange => {
+                    DaemonRpcError::invalid_params(format!("分块参数不合法: {:?}", e))
+                }
+            });
+        }
+        // 消费 slot 组装完整 gzip 流（slot 已移除：失败也不会残留）
+        let gz_bytes = self
+            .upload_slots
+            .take(
+                workspace_instance_id,
+                upload_id.trim(),
+                total_chunks as usize,
+            )
+            .map_err(|e| match e {
+                SlotError::MissingChunks(missing) => DaemonRpcError::new(
+                    "E_SNAPSHOT_UPLOAD_CHUNK_MISSING",
+                    format!(
+                        "upload_id={} 缺少分块 {:?}",
+                        upload_id.trim(),
+                        missing
+                    ),
+                ),
+                SlotError::Expired | SlotError::UnknownUpload => DaemonRpcError::new(
+                    "E_SNAPSHOT_UPLOAD_EXPIRED",
+                    format!("upload_id={} 不存在或已过期（TTL 2h）", upload_id.trim()),
+                ),
+                other => DaemonRpcError::invalid_params(format!("分块参数不合法: {:?}", other)),
+            })?;
+        // 组装后导入（任一环节失败：不发布、不落库、不残留临时文件）
+        self.ingest_uploaded_snapshot(
+            &workspace,
+            workspace_instance_id,
+            &gz_bytes,
+            sha256_param.trim(),
+            raw_size,
+            &build_context_hash,
+            requested_snapshot_id,
+        )
     }
 
     fn handle_gc_snapshots(
@@ -4721,72 +5319,6 @@ fn resolve_true_workspace_id(db_path: &str, client_view_root: &str, fallback_row
     fallback_rowid
 }
 
-/// 校验 FD 是只读常规文件 + owner_uid 匹配（Linux）
-///
-/// 对应 Python daemon_server.py:EnterpriseDaemonService._validate_snapshot_fd L493-514
-///
-/// 校验项：
-/// 1. `fstat(fd)` 必须是常规文件（`S_IFREG`）
-/// 2. `st_uid` 必须匹配 peer_uid（root 跳过）
-/// 3. 大小检查：`0 < st_size <= 64 GiB`
-/// 4. `fcntl(F_GETFL) & O_ACCMODE == O_RDONLY`（必须只读）
-///
-/// 返回 `/proc/self/fd/{fd}` 路径供 GraphStore `immutable=1` URI 打开。
-#[cfg(unix)]
-fn validate_snapshot_fd(fd: i32, peer_uid: u32) -> Result<String, DaemonRpcError> {
-    // fstat 校验
-    let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
-    let ret = unsafe { libc::fstat(fd, &mut stat_buf) };
-    if ret < 0 {
-        return Err(DaemonRpcError::invalid_params(format!(
-            "fstat fd {} 失败: {}",
-            fd,
-            std::io::Error::last_os_error()
-        )));
-    }
-    // 必须是常规文件
-    if (stat_buf.st_mode & libc::S_IFMT) != libc::S_IFREG {
-        return Err(DaemonRpcError::invalid_params(format!(
-            "fd {} 不是常规文件",
-            fd
-        )));
-    }
-    // owner_uid 校验（root 跳过）
-    if peer_uid != 0 && stat_buf.st_uid != peer_uid as u32 {
-        return Err(DaemonRpcError::permission_denied(format!(
-            "fd owner_uid={} != peer_uid={}",
-            stat_buf.st_uid, peer_uid
-        )));
-    }
-    // 大小检查（默认 64 GiB，与 Python CW_MAX_SNAPSHOT_DB_BYTES 一致）
-    const MAX_SNAPSHOT_DB_BYTES: u64 = 64 * 1024 * 1024 * 1024;
-    let st_size = stat_buf.st_size as u64;
-    if st_size == 0 || st_size > MAX_SNAPSHOT_DB_BYTES {
-        return Err(DaemonRpcError::invalid_params(format!(
-            "fd size {} 超出范围 (0, {}]",
-            st_size, MAX_SNAPSHOT_DB_BYTES
-        )));
-    }
-    // O_RDONLY 校验
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(DaemonRpcError::invalid_params(format!(
-            "fcntl F_GETFL fd {} 失败: {}",
-            fd,
-            std::io::Error::last_os_error()
-        )));
-    }
-    let acc_mode = (flags & libc::O_ACCMODE) as i32;
-    if acc_mode != libc::O_RDONLY {
-        return Err(DaemonRpcError::permission_denied(format!(
-            "fd {} 不是只读（O_ACCMODE={}）",
-            fd, acc_mode
-        )));
-    }
-    // 返回 /proc/self/fd/{fd} 路径
-    Ok(format!("/proc/self/fd/{}", fd))
-}
-
 // ============================================
 // W2-1（T-1786840097330-dec66710）：query 面 stats 只读查询函数
 // ============================================
@@ -7901,7 +8433,7 @@ mod tests {
             "git_head_commit_sha": "abc123",
             "toolchain_fingerprint": "test"
         });
-        let response = dispatch(state, make_peer(uid), "workspace.register", &params, &[]);
+        let response = dispatch(state, make_peer(uid), "workspace.register", &params);
         assert_eq!(response["ok"], true);
         response["result"]["workspace_instance_id"]
             .as_str()
@@ -7916,7 +8448,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer(0); // root 避免 Unix ACL 问题
 
-        let response = dispatch(&mut state, peer, "health", &json!({}), &[]);
+        let response = dispatch(&mut state, peer, "health", &json!({}));
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "ok");
         assert!(
@@ -7940,7 +8472,6 @@ mod tests {
             peer,
             "gc.snapshots",
             &json!({"keep_last": 3}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["deleted_count"], 0);
@@ -7952,7 +8483,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer(0);
 
-        let response = dispatch(&mut state, peer, "gc.snapshots", &json!({}), &[]);
+        let response = dispatch(&mut state, peer, "gc.snapshots", &json!({}));
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["keep_last"], 3);
     }
@@ -7970,7 +8501,6 @@ mod tests {
             peer,
             "query.stats",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -7990,7 +8520,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "qualified_name": "test_fn"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -8028,7 +8557,7 @@ mod tests {
             ),
         ];
         for (method, params) in requests {
-            let response = dispatch(&mut state, peer.clone(), method, &params, &[]);
+            let response = dispatch(&mut state, peer.clone(), method, &params);
             assert_eq!(
                 response["ok"], false,
                 "{method} must fail closed before publish"
@@ -8145,7 +8674,6 @@ mod tests {
             peer.clone(),
             "query.stats",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(stats["ok"], true);
         // GraphStore 的 by_id 保留 id=0 占位槽，stats 与发布计数一致地包含该槽。
@@ -8160,7 +8688,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "qualified_name": "a.alpha"
             }),
-            &[],
         );
 
         assert_eq!(response["ok"], true);
@@ -8178,7 +8705,6 @@ mod tests {
                 "callee_name": "beta",
                 "qualified_name": "a.beta"
             }),
-            &[],
         );
         assert_eq!(callers["ok"], true);
         assert_eq!(callers["result"][0]["caller_name"], "alpha");
@@ -8195,7 +8721,6 @@ mod tests {
                 "caller_name": "alpha",
                 "qualified_name": "a.alpha"
             }),
-            &[],
         );
         assert_eq!(callees["ok"], true);
         assert_eq!(callees["result"].as_array().unwrap().len(), 2);
@@ -8216,7 +8741,6 @@ mod tests {
                 "qualified_name": "a.alpha",
                 "max_depth": 10
             }),
-            &[],
         );
         assert_eq!(chain["ok"], true);
         assert_eq!(chain["result"][0]["caller_qualified"], "a.alpha");
@@ -8232,7 +8756,6 @@ mod tests {
                 "limit": 1,
                 "detail": true
             }),
-            &[],
         );
         assert_eq!(topo["ok"], true);
         assert_eq!(topo["result"].as_array().unwrap().len(), 1);
@@ -8249,7 +8772,6 @@ mod tests {
                 "symbol_hash": "hash-beta",
                 "depth": 3
             }),
-            &[],
         );
         assert_eq!(impact["ok"], true);
         assert_eq!(impact["result"]["source_symbol"], "a.beta");
@@ -8280,7 +8802,6 @@ mod tests {
             peer.clone(),
             "workspace.register",
             &json!({"client_view_root": temp.path().to_string_lossy()}),
-            &[],
         );
         assert_eq!(workspace["ok"], true);
         let workspace_instance_id = workspace["result"]["workspace_instance_id"]
@@ -8467,7 +8988,6 @@ mod tests {
                 "workspace_instance_id": workspace_instance_id,
                 "file_path": "a.py"
             }),
-            &[],
         );
         assert_eq!(file["ok"], true);
         assert_eq!(file["result"].as_array().unwrap().len(), 3);
@@ -8482,7 +9002,6 @@ mod tests {
                 "name": "alpha",
                 "file_path": "a.py"
             }),
-            &[],
         );
         assert_eq!(location["ok"], true);
         assert_eq!(location["result"]["qualified_name"], "a.alpha");
@@ -8497,7 +9016,6 @@ mod tests {
                 "fixed": true,
                 "limit": 10
             }),
-            &[],
         );
         assert_eq!(grep["ok"], true);
         assert!(grep["result"].as_str().unwrap().contains("a.py:2"));
@@ -8511,7 +9029,6 @@ mod tests {
                 "workspace_instance_id": workspace_instance_id,
                 "qualified_name": "a.alpha"
             }),
-            &[],
         );
         assert_eq!(issues["ok"], true);
         assert_eq!(issues["result"].as_array().unwrap().len(), 2);
@@ -8525,7 +9042,6 @@ mod tests {
                 "workspace_instance_id": workspace_instance_id,
                 "qualified_name": "a.alpha"
             }),
-            &[],
         );
         assert_eq!(tests["ok"], true);
         assert_eq!(tests["result"].as_array().unwrap().len(), 1);
@@ -8539,7 +9055,6 @@ mod tests {
                 "workspace_instance_id": workspace_instance_id,
                 "file_path": "a.py"
             }),
-            &[],
         );
         assert_eq!(denied["ok"], false);
         assert_eq!(denied["error"]["code"], "workspace_forbidden");
@@ -8559,7 +9074,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "query": "test"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -8579,7 +9093,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "callee_name": "some_fn"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -8599,7 +9112,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "caller_name": "some_fn"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -8619,7 +9131,6 @@ mod tests {
             peer,
             "snapshot.publish",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -8638,7 +9149,6 @@ mod tests {
                 "workspace_instance_id": "nonexistent_ws",
                 "db_path": "/tmp/whatever.db"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_not_found");
@@ -8667,7 +9177,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "db_path": empty_db.to_str().unwrap()
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         let err_msg = response["error"]["message"].as_str().unwrap().to_string();
@@ -8698,7 +9207,6 @@ mod tests {
             other_peer,
             "query.stats",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         // workspace_forbidden 优先于 snapshot_not_ready
@@ -8720,7 +9228,7 @@ mod tests {
             "git_head_commit_sha": "abc123",
             "toolchain_fingerprint": "test"
         });
-        let response = dispatch(state, make_peer(uid), "workspace.register", &params, &[]);
+        let response = dispatch(state, make_peer(uid), "workspace.register", &params);
         assert_eq!(response["ok"], true);
         let ws_instance_id = response["result"]["workspace_instance_id"]
             .as_str()
@@ -8747,7 +9255,6 @@ mod tests {
             other_peer,
             "toolchain.resolve",
             &json!({"workspace_id": ws_num_id.to_string()}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -8764,7 +9271,6 @@ mod tests {
             peer,
             "toolchain.resolve",
             &json!({"workspace_id": "99999"}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_not_found");
@@ -8783,7 +9289,6 @@ mod tests {
             make_peer(owner_uid),
             "toolchain.resolve",
             &json!({"workspace_id": ws_num_id.to_string()}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         // owner 通过 ACL，但无 ToolchainStore → internal_error（非 workspace_forbidden）
@@ -8803,7 +9308,6 @@ mod tests {
             other_peer,
             "build_context.list",
             &json!({"workspace_id": ws_num_id.to_string()}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -8847,7 +9351,7 @@ mod tests {
             ),
         ];
         for (method, params) in requests {
-            let response = dispatch(&mut state, other_peer.clone(), method, &params, &[]);
+            let response = dispatch(&mut state, other_peer.clone(), method, &params);
             assert_eq!(
                 response["error"]["code"], "workspace_forbidden",
                 "{method} 必须在访问 toolchain store 之前拒绝非 owner"
@@ -8872,7 +9376,6 @@ mod tests {
                 "build_context_hash": "test",
                 "edges": []
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -8894,7 +9397,6 @@ mod tests {
                 "workspace_id": ws_num_id.to_string(),
                 "build_context_hash": "test"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -8916,7 +9418,6 @@ mod tests {
                 "workspace_id": ws_num_id.to_string(),
                 "build_context_hash": "test"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -8932,7 +9433,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer(0);
 
-        let response = dispatch(&mut state, peer, "gc.cas", &json!({"grace_days": 7}), &[]);
+        let response = dispatch(&mut state, peer, "gc.cas", &json!({"grace_days": 7}));
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
     }
@@ -8945,7 +9446,7 @@ mod tests {
         let mut state = make_state();
         let peer = make_peer(0);
 
-        let response = dispatch(&mut state, peer, "backup", &json!({}), &[]);
+        let response = dispatch(&mut state, peer, "backup", &json!({}));
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
     }
@@ -8964,7 +9465,6 @@ mod tests {
             peer,
             "workspace.connect",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -8984,7 +9484,6 @@ mod tests {
             peer,
             "workspace.file.refresh",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -9001,7 +9500,6 @@ mod tests {
             peer,
             "workspace.file.delete",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -9015,31 +9513,6 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.code, "internal_error");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_validate_snapshot_fd_rejects_invalid_fd() {
-        // fd = 99999 几乎肯定无效
-        let result = validate_snapshot_fd(99999, 0);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_validate_snapshot_fd_accepts_readonly_file() {
-        use std::os::unix::io::AsRawFd;
-        // 创建临时只读文件
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("test_readonly.db");
-        std::fs::write(&path, b"hello").unwrap();
-        let file = std::fs::File::open(&path).unwrap();
-        let fd = file.as_raw_fd();
-        // peer_uid=0 (root) 跳过 owner 检查
-        let result = validate_snapshot_fd(fd, 0);
-        assert!(result.is_ok());
-        let returned_path = result.unwrap();
-        assert_eq!(returned_path, format!("/proc/self/fd/{}", fd));
     }
 
     // ---- G7-T4/T5: 新增 6 个 RPC handler 的测试 ----
@@ -9059,7 +9532,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "qualified_name": "some_fn"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -9078,7 +9550,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "symbol_hash": "hash-a"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -9096,7 +9567,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "symbol_hash": "hash-a"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -9117,7 +9587,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "qualified_name": "some_fn"
             }),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -9135,7 +9604,6 @@ mod tests {
             peer,
             "query.call_chain_down",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
@@ -9152,7 +9620,6 @@ mod tests {
             peer,
             "query.topological_order",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -9169,7 +9636,6 @@ mod tests {
             peer,
             "query.detect_cycles",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -9186,7 +9652,6 @@ mod tests {
             peer,
             "snapshot.stats",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
@@ -9203,7 +9668,6 @@ mod tests {
             other_peer,
             "snapshot.stats",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
@@ -9220,7 +9684,6 @@ mod tests {
             peer,
             "snapshot.list_workspaces",
             &json!({}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert!(response["result"].is_array());
@@ -9238,7 +9701,6 @@ mod tests {
             peer,
             "snapshot.evict",
             &json!({"workspace_instance_id": "nonexistent_ws"}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_not_found");
@@ -9255,7 +9717,6 @@ mod tests {
             other_peer,
             "snapshot.evict",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], false);
         // snapshot.evict 在 ADMIN_ONLY_METHODS 中，非 admin 在 dispatch 层
@@ -9276,7 +9737,6 @@ mod tests {
             peer,
             "snapshot.evict",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["evicted"], false);
@@ -9298,7 +9758,6 @@ mod tests {
             peer,
             "snapshot.evict",
             &json!({"workspace_instance_id": ws_id}),
-            &[],
         );
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["evicted"], true);
@@ -9503,7 +9962,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "db_path": db_path.to_str().unwrap()
             }),
-            &[],
         );
         assert_eq!(
             response["ok"], true,
@@ -9544,7 +10002,6 @@ mod tests {
                 "workspace_instance_id": ws_id,
                 "db_path": db_path.to_str().unwrap()
             }),
-            &[],
         );
         assert_eq!(
             response["ok"], true,
@@ -9587,7 +10044,7 @@ mod tests {
             );
             let mut state = make_state();
             let peer = make_peer(0);
-            let response = dispatch(&mut state, peer, method, &json!({}), &[]);
+            let response = dispatch(&mut state, peer, method, &json!({}));
             assert_eq!(response["ok"], false, "{method} 空 params 不应成功");
             let code = response["error"]["code"].as_str().unwrap_or("");
             assert_ne!(
@@ -9824,7 +10281,6 @@ mod tests {
             peer,
             "query.uncommented_symbols",
             &json!({"workspace_instance_id": "ws-x", "limit": -1}),
-            &[],
         );
         assert_ne!(response["ok"], true, "负 limit 必须 fail-closed");
     }

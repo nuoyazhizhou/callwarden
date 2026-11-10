@@ -52,7 +52,7 @@ from callwarden.server.daemon_client import (  # noqa: E402
 )
 
 LIVE_URL = "http://127.0.0.1:12376"
-DEAD_URL = "http://127.0.0.1:9"
+DEAD_URL = "https://127.0.0.1:9"
 
 # 待解决的 quality finding id：隔离 daemon 的 task_quality_findings 已 seed id=1。
 FINDING_ID = "1"

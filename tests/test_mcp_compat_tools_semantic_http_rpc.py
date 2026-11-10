@@ -324,7 +324,7 @@ def test_methods_missing_workspace_instance_id(live_daemon, method):
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("method", ALL_METHODS)
 def test_methods_daemon_unavailable_fail_closed(method):
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     # DaemonUnavailableError 异常类型本身即 fail-closed 证据
     with pytest.raises(DaemonUnavailableError):

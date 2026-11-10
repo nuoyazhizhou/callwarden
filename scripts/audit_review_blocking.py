@@ -9,7 +9,7 @@
 import sqlite3
 from collections import Counter, defaultdict
 
-from callwarden.server.daemon_client import UnixDaemonRpcClient
+from callwarden.server.daemon_client import HttpDaemonRpcClient
 
 DB = r"C:\Users\wanpi\.callwarden\callwarden.db"
 SUB_EPIC = "T-1787293451688-c14b1e44"
@@ -31,7 +31,7 @@ def classify(blocking):
 
 
 def main():
-    cl = UnixDaemonRpcClient()
+    cl = HttpDaemonRpcClient.get_instance()
 
     # 1. 取子 Epic 下全部 review 任务（含嵌套更深的可能，但这里 parent 直接挂子 Epic）
     c = sqlite3.connect(DB)

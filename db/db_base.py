@@ -3836,6 +3836,23 @@ class CodeGraphBase:
                 self.conn = None
             raise
 
+    def checkpoint_and_close(self) -> None:
+        """WAL checkpoint(TRUNCATE) 后关闭连接，保证拷贝主 db 文件字节完整。
+
+        CodeGraphBase 默认 journal_mode=WAL，直接拷主文件会丢 -wal 数据；
+        S2 远端构建把临时工作库字节发布回 daemon（snapshot.upload）前用
+        本方法把 WAL 合并回主文件。连接已关闭（conn is None）则无操作。
+        """
+        conn, self.conn = self.conn, None
+        if conn is None:
+            return
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
     def _try_init_rust_parser(self):
         """R2-P0-3: 懒加载 Python RustParser（仅用于 ModuleResolver 模块结构发现）。
 

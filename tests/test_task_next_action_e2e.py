@@ -10,7 +10,7 @@ r"""任务 5D：`task.next_action` 进程级独立验收测试与证据（cw-rol
 WAITING、REVIEW、REVISE、ADJUDICATE、COMPLETE、BLOCKED、remediation、零写入、
 错误码）。5D 不重复单测，而是在**进程级**提供独立证据：
 
-1. **wire 级**：真实 `cw-daemon.exe`（隔离临时 task DB + Named Pipe）上经 RPC
+1. **wire 级**：真实 `cw-daemon.exe`（隔离临时 task DB + HTTPS/mTLS）上经 RPC
    round-trip 调用 `task.next_action`，禁 mock：
    - task 不存在 → `E_TASK_NOT_FOUND_OR_UNAUTHORIZED`（非泄露、结构化，不是 method_not_found）；
    - 无不可变 binding（CLI 旧路径创建）→ `E_WORKSPACE_AUTHORITY_UNAVAILABLE`；
@@ -23,7 +23,7 @@ WAITING、REVIEW、REVISE、ADJUDICATE、COMPLETE、BLOCKED、remediation、零�
      task_steps / task_workspace_bindings / workspace_authority_captures /
      task_contract_revisions / role_contract_* / task_step_role_contract_bindings`
      行数不变（§6 L612）。
-2. **CLI 进程级**：真实 `C:\Python314\python.exe cw.py task next-action` 子进程：
+2. **CLI 进程级**：真实 `python cw.py task next-action` 子进程：
    - `--json` 与人类可读双渲染正确（READY/CLAIM、错误码）；
    - local 模式 fail-closed（无 evaluator，输出 `E_DAEMON_UNAVAILABLE`，不伪造决策）；
    - enterprise 模式 daemon 不可用 fail-closed（不回退本地 SQLite）。
@@ -31,10 +31,10 @@ WAITING、REVIEW、REVISE、ADJUDICATE、COMPLETE、BLOCKED、remediation、零�
    只读约束 + 角色卡映射）与 `references/user-guide.md` 存在且结构达标。
 
 前置条件（与 test_lease_gate_empirical.py 一致）：
-1. Windows 平台（Named Pipe）；
-2. 已构建 `cw-daemon.exe`：`cargo build --release --no-default-features
-   --manifest-path rust_ext/Cargo.toml --bin cw-daemon`；
-3. 默认管道 `\\.\pipe\callwarden-<sid>` 未被其他 daemon 占用（占用则 skip）。
+1. Windows 平台；
+2. 已构建 `cw-daemon.exe`（含 HTTP/mTLS 支持）；
+3. 可用 mTLS PKI；隔离 daemon 与客户端共用真实 PKI（fixture 内设置
+   `CW_PKI_DIR`）。
 
 证据保存：运行本文件时的 pytest 输出 + 隔离 daemon 日志（fixture tmp 内 daemon.log）
 即原始证据，供任务 5 交付收尾。
@@ -55,23 +55,19 @@ import pytest
 
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
-_PY_EXE = r"C:\Python314\python.exe"
+_PY_EXE = sys.executable
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CW_PY = os.path.join(_REPO_ROOT, "cw.py")
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
 _SKILL_DIR = os.path.join(_REPO_ROOT, ".agents", "skills", "cw-task-loop")
 _SKILL_MD = os.path.join(_SKILL_DIR, "SKILL.md")
 _SKILL_USER_GUIDE = os.path.join(_SKILL_DIR, "references", "user-guide.md")
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
-    reason="task.next_action 进程级 E2E 需要 Windows + Named Pipe",
+    reason="task.next_action 进程级 E2E 需要 Windows 隔离 daemon",
 )
 
-requires_binaries = pytest.mark.skipif(
-    not os.path.exists(_DAEMON_BIN),
-    reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
-)
+_REAL_PKI_DIR = None
 
 # 任意 next_action 查询都不得改动的表（§6 L612 零写入）
 _ZERO_WRITE_TABLES = [
@@ -89,143 +85,82 @@ _ZERO_WRITE_TABLES = [
 ]
 
 # ----------------------------------------------------------------------
-# daemon fixture（复用 test_lease_gate_empirical.py 模式：隔离临时库 + Named Pipe）
+# daemon fixture（隔离 HTTPS daemon + mTLS）
 # ----------------------------------------------------------------------
-
-def _daemon_config(tmp: str) -> dict:
-    """生成隔离的 daemon JSON 配置（Windows 管道名由 transport 按 SID 派生）。"""
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 2,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 2,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
-
-
-@pytest.fixture(scope="module", autouse=True)
-def ensure_fresh_binary():
-    """复用已构建的 cw-daemon 二进制，不再现场 `cargo build`（B 类：环境）。
-
-    stale 依据（环境证据）：生产常驻 daemon 以
-    `rust_ext/target/release/cw-daemon.exe`（模块级 _DAEMON_BIN）运行并持有该文件
-    的 Windows 独占写锁；旧实现 `cargo build --release` 因此在锁上阻塞/被拒
-    （os error 5 / 拒绝访问），使本模块全部用例 setup 超时/报错。
-    二进制已由生产侧构建，且可由 `_w3_harness.find_daemon_binary()`（release/debug
-    按 mtime 取最新）定位，故改为直接复用；重建 freshness 门禁归生产侧。
-    """
-    from _w3_harness import find_daemon_binary
-
-    global _DAEMON_BIN
-    bin_path = find_daemon_binary()
-    if bin_path is None:
-        pytest.skip("未找到 cw-daemon 二进制（release/debug 均缺失），跳过")
-    _DAEMON_BIN = bin_path
-
 
 @pytest.fixture(scope="module")
 def lease_env():
-    """启动真实隔离 cw-daemon（临时 task DB + 默认 Named Pipe），返回
-    (client, tmp, task_db, proc, pipe)。
+    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。
 
-    与 test_lease_gate_empirical.py 一致：探针默认管道，被其他 daemon 占用则 skip
-    （不杀他人进程）；隔离库插入 workspace id=1，使 capture/binding 可绑定。
+    隔离 daemon 会生成自己的 CA；客户端使用真实 PKI，故 fixture 内临时设置
+    `CW_PKI_DIR`（隔离 daemon 继承该值，双方证书/CA 一致）。
     测试只用隔离临时任务库，绝不触碰真实用户任务库。
     """
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    from callwarden.config import _get_windows_user_sid
+    global _REAL_PKI_DIR
+    from callwarden.config import get_pki_dir
+    from _w3_harness import setup_w3_client
 
-    pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
-    probe = UnixDaemonRpcClient(socket_path=pipe, timeout=3)
-    try:
-        probe.call("ping")
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过")
-    except Exception:
-        pass
-
+    _REAL_PKI_DIR = get_pki_dir()
+    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
     tmp = tempfile.mkdtemp(prefix="cw_task_next_action_")
-    config = _daemon_config(tmp)
-    config_path = os.path.join(tmp, "daemon.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config, f)
-    log = open(os.path.join(tmp, "daemon.log"), "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-    )
-
-    client = UnixDaemonRpcClient(socket_path=pipe, timeout=10)
-    deadline = time.time() + 40
-    ready = False
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            break
-        try:
-            if client.call("ping").get("status") == "ok":
-                ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    if not ready:
-        log.flush()
-        pytest.fail("隔离 daemon 未在超时内响应")
-
-    task_db = os.path.join(tmp, "callwarden.db")
-    conn = sqlite3.connect(task_db)
+    proc = None
     try:
-        # 预插多个 workspace：capture 链按 workspace_id 聚合校验（COUNT==MAX），
-        # 每个测试用独立 workspace_id 播种，避免互相干扰。
-        for ws_id in range(1, 17):
-            conn.execute(
-                "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (?1, ?2, ?3, ?4)",
-                (ws_id, f"next-action-e2e-{ws_id}", f"ws-{ws_id}", time.time()),
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-    yield client, tmp, task_db, proc, pipe
-
-    if proc.poll() is None:
-        proc.terminate()
+        client, _inst, endpoint, proc = setup_w3_client(tmp, _REPO_ROOT, ws_id=1)
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        task_db = os.path.join(tmp, "task.db")
+        conn = sqlite3.connect(task_db, timeout=10)
         try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+            # 预插多个 workspace：capture 链按 workspace_id 聚合校验（COUNT==MAX），
+            # 每个测试用独立 workspace_id 播种，避免互相干扰。ws 1 已由
+            # setup_w3_client seed，INSERT OR IGNORE 保留其既有行。
+            for ws_id in range(1, 17):
+                conn.execute(
+                    "INSERT OR IGNORE INTO workspaces (id, name, root_path, created_at)"
+                    " VALUES (?1, ?2, ?3, ?4)",
+                    (ws_id, f"next-action-e2e-{ws_id}", f"ws-{ws_id}", time.time()),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        yield client, tmp, task_db, proc, endpoint
+    except BaseException:
+        if proc is not None and proc.poll() is None:
             proc.kill()
-    if not os.environ.get("CW_KEEP_5D_TMP"):
-        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if not os.environ.get("CW_KEEP_5D_TMP"):
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------
 # CLI 子进程辅助（复用 test_cli_task_lease_parity.py 模式）
 # ----------------------------------------------------------------------
 
-def _cli_env(pipe: str, mode: str = "enterprise", extra: dict = None) -> dict:
+def _cli_env(endpoint: str, data_root: str, mode: str = "enterprise",
+             extra: dict = None) -> dict:
     """构造 CLI 子进程环境：路由到指定 daemon、enterprise/auto、autostart 窗口 0。
 
-    - CW_DAEMON_TRANSPORT=named-pipe：显式使用 Named Pipe，避免 stale manifest
-      拦截导致测试读到错误的 endpoint。
+    - CW_DAEMON_HTTP_ENDPOINT/CW_DAEMON_TRANSPORT=http：显式使用 HTTPS。
+    - 隔离 USERPROFILE：CLI 读到本隔离 daemon 的 manifest。
     - CW_DAEMON_AUTOSTART_WINDOW=0：daemon 连接失败时立即 fail-closed。
     - CALLWARDEN_SKIP_AUTO_SETUP=1：跳过首次自动配置的副作用。
     """
     env = dict(os.environ)
     env.pop("CW_AGENT_SESSION_ID", None)
     env["CW_DAEMON_MODE"] = mode
-    env["CW_DAEMON_ENDPOINT"] = pipe
-    env["CW_DAEMON_TRANSPORT"] = "named-pipe"
+    if endpoint:
+        env["CW_DAEMON_HTTP_ENDPOINT"] = endpoint
+        env["CW_DAEMON_TRANSPORT"] = "http"
+    env["USERPROFILE"] = os.path.join(data_root, "userhome")
+    env["HOME"] = env["USERPROFILE"]
+    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
@@ -236,7 +171,7 @@ def _cli_env(pipe: str, mode: str = "enterprise", extra: dict = None) -> dict:
 
 
 def _run_cw_cli(args, env, cwd, timeout=90):
-    r"""真实 `C:\Python314\python.exe cw.py ...` CLI 子进程。"""
+    r"""真实 `python cw.py ...` CLI 子进程。"""
     return subprocess.run(
         [_PY_EXE, _CW_PY] + args,
         env=env, cwd=cwd, capture_output=True,
@@ -366,7 +301,7 @@ def _seed_full_chain(task_db: str, task_id: str, workspace_instance_id: str, wor
             "INSERT INTO task_contract_revisions "
             "(contract_id, revision, contract_hash, profile, task_id, workspace_id, envelope_payload, "
             " created_at, created_by, normalization_version, normalization_rules_hash) "
-            "VALUES (?1, 1, ?2, 'review', ?3, ?4, '{\"objective\":\"5d\"}', 0.0, '5d-test', "
+            "VALUES (?1, 1, ?2, 'review', ?3, ?4, '{\"objective\":\"5d\",\"identity_policy\":\"role_worker_v1\"}', 0.0, '5d-test', "
             " 'verdict-normalization/v1', 'norm-rules-5d')",
             (f"tc-{task_id}", f"sha256:tc-{task_id}", task_id, workspace_id),
         )
@@ -463,12 +398,11 @@ def _table_snapshot(task_db: str) -> dict:
 # 1) wire 级：真实 daemon 上的 task.next_action（禁 mock）
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestNextActionWireLevel:
-    """进程级 wire 验收：真实 cw-daemon.exe + Named Pipe 的 task.next_action。"""
+    """进程级 wire 验收：真实 cw-daemon.exe + HTTPS/mTLS 的 task.next_action。"""
 
     def test_task_not_found_returns_structured_error(self, lease_env):
-        client, tmp, _task_db, _proc, _pipe = lease_env
+        client, tmp, _task_db, _proc, _endpoint = lease_env
         ws = _ws_instance_for_root(tmp)
         with pytest.raises(DaemonRemoteError) as exc:
             client.call("task.next_action", {
@@ -481,7 +415,7 @@ class TestNextActionWireLevel:
 
     def test_task_no_binding_fail_closed(self, lease_env):
         """task 存在但无不可变 binding（CLI 旧路径创建）→ UNAVAILABLE（§3.2 规则 1）。"""
-        client, tmp, task_db, _proc, _pipe = lease_env
+        client, tmp, task_db, _proc, _endpoint = lease_env
         ws = _ws_instance_for_root(tmp)
         task_id = "T-5D-UNBOUND"
         _seed_unbound_task(task_db, task_id)
@@ -494,7 +428,7 @@ class TestNextActionWireLevel:
 
     def test_dangling_binding_capture_missing_fail_closed(self, lease_env):
         """binding 引用的 capture 行缺失（悬空）→ UNAVAILABLE（§3.2 规则 1）。"""
-        client, tmp, task_db, _proc, _pipe = lease_env
+        client, tmp, task_db, _proc, _endpoint = lease_env
         ws = _ws_instance_for_root(tmp)
         task_id = "T-5D-DANGLING"
         _seed_dangling_binding(task_db, task_id, ws)
@@ -507,7 +441,7 @@ class TestNextActionWireLevel:
 
     def test_workspace_instance_mismatch_fail_closed(self, lease_env):
         """capture 链合法但请求 instance 不匹配 → MISMATCH（§3.2 规则 3）。"""
-        client, tmp, task_db, _proc, _pipe = lease_env
+        client, tmp, task_db, _proc, _endpoint = lease_env
         ws = _ws_instance_for_root(tmp)
         task_id = "T-5D-MISMATCH"
         _seed_full_chain(task_db, task_id, ws, workspace_id=1)
@@ -521,8 +455,11 @@ class TestNextActionWireLevel:
 
     def test_seeded_full_chain_ready_claim_rendered_fields(self, lease_env):
         """完整不可变链 → READY/CLAIM，核验 §6 L586 的全部渲染字段。"""
-        client, tmp, task_db, _proc, _pipe = lease_env
-        ws = _ws_instance_for_root(tmp)
+        client, tmp, task_db, _proc, _endpoint = lease_env
+        # 独立 instance：daemon resolve_workspace_id_by_instance 对 capture 表
+        # LIMIT 1 解析，多个 workspace 复用同一 instance 会解析到首个 capture →
+        # E_WORKSPACE_AUTHORITY_MISMATCH。
+        ws = _ws_instance_for_root(os.path.join(tmp, "T-5D-READY-CLAIM"))
         task_id = "T-5D-READY-CLAIM"
         _seed_full_chain(task_db, task_id, ws, workspace_id=2)
 
@@ -551,10 +488,13 @@ class TestNextActionWireLevel:
         assert rc["prompt_template_id"] == "pt-5d"
         assert rc["handoff_to"] == ""
 
-        # authorization：acting_role=executor、lease_role=executor、READY 必须 lease+fencing
+        # authorization：acting_role=executor、lease_role=implementer、READY 必须 lease+fencing
+        # lease_role 按 daemon 37c825b 的刻意映射（next_action.rs:995-1010）：executor
+        # 角色的可领取 lease 以 implementer 对外发布，避免 task.handoff 侧挂死；
+        # acting_role 仍回显 executor。
         auth = result["authorization"]
         assert auth["acting_role"] == "executor"
-        assert auth["lease_role"] == "executor"
+        assert auth["lease_role"] == "implementer"
         assert auth["lease_required"] is True
         assert auth["fencing_required"] is True
         assert auth["different_session_from"] == ["reviewer"]
@@ -596,8 +536,8 @@ class TestNextActionWireLevel:
 
     def test_any_query_zero_write(self, lease_env):
         """任意 next_action 查询（成功 + 拒绝）都不得改动任何行（§6 L612）。"""
-        client, tmp, task_db, _proc, _pipe = lease_env
-        ws = _ws_instance_for_root(tmp)
+        client, tmp, task_db, _proc, _endpoint = lease_env
+        ws = _ws_instance_for_root(os.path.join(tmp, "T-5D-ZERO-WRITE"))
         task_id = "T-5D-ZERO-WRITE"
         _seed_full_chain(task_db, task_id, ws, workspace_id=3)
 
@@ -628,19 +568,18 @@ class TestNextActionWireLevel:
 # 2) CLI 进程级：真实 cw.py 子进程
 # ----------------------------------------------------------------------
 
-@requires_binaries
 class TestNextActionCliProcess:
     r"""真实 `C:\Python314\python.exe cw.py task next-action` 子进程验收。"""
 
     def test_cli_json_ready_claim(self, lease_env):
-        client, tmp, task_db, _proc, pipe = lease_env
-        ws = _ws_instance_for_root(tmp)
+        client, tmp, task_db, _proc, endpoint = lease_env
+        ws = _ws_instance_for_root(os.path.join(tmp, "T-5D-CLI-READY"))
         task_id = "T-5D-CLI-READY"
         _seed_full_chain(task_db, task_id, ws, workspace_id=4)
 
         proc = _run_cw_cli(
             ["task", "next-action", task_id, "--workspace-instance-id", ws, "--json"],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_ok(proc, f"next-action --json {task_id}")
         try:
             data = json.loads(proc.stdout)
@@ -655,14 +594,14 @@ class TestNextActionCliProcess:
         assert "from_role" not in data
 
     def test_cli_human_readable_ready_claim(self, lease_env):
-        client, tmp, task_db, _proc, pipe = lease_env
-        ws = _ws_instance_for_root(tmp)
+        client, tmp, task_db, _proc, endpoint = lease_env
+        ws = _ws_instance_for_root(os.path.join(tmp, "T-5D-CLI-HUMAN"))
         task_id = "T-5D-CLI-HUMAN"
         _seed_full_chain(task_db, task_id, ws, workspace_id=5)
 
         proc = _run_cw_cli(
             ["task", "next-action", task_id, "--workspace-instance-id", ws],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_ok(proc, f"next-action 人类可读 {task_id}")
         out = _all_out(proc)
         assert "系统派工" in out, out
@@ -673,24 +612,24 @@ class TestNextActionCliProcess:
         assert "system_evaluator" in out, out
 
     def test_cli_json_error_not_found(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         ws = _ws_instance_for_root(tmp)
         proc = _run_cw_cli(
             ["task", "next-action", "T-5D-CLI-NOT-EXIST",
              "--workspace-instance-id", ws, "--json"],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_ok(proc, "next-action --json 不存在任务")
         data = json.loads(proc.stdout)
         assert data["ok"] is False
         assert data["code"] == "E_TASK_NOT_FOUND_OR_UNAUTHORIZED", data
 
     def test_cli_human_error_not_found(self, lease_env):
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         ws = _ws_instance_for_root(tmp)
         proc = _run_cw_cli(
             ["task", "next-action", "T-5D-CLI-NOT-EXIST",
              "--workspace-instance-id", ws],
-            _cli_env(pipe), tmp)
+            _cli_env(endpoint, tmp), tmp)
         _assert_ok(proc, "next-action 人类可读不存在任务")
         out = _all_out(proc)
         assert "E_TASK_NOT_FOUND_OR_UNAUTHORIZED" in out, out
@@ -698,14 +637,14 @@ class TestNextActionCliProcess:
 
     def test_cli_unresolved_authority_fails_closed(self, lease_env):
         """项目根可定位但 daemon 无唯一权威配对：前置拒绝，不本地派生 instance。"""
-        client, tmp, _task_db, _proc, pipe = lease_env
+        client, tmp, _task_db, _proc, endpoint = lease_env
         # 独立子目录 + .git 标记，使项目根可定位；该 daemon registry 未注册它，
         # resolve_workspace_pair_from_daemon 必然 0 匹配 → fail-closed。
         proj = os.path.join(tmp, "no-authority-proj")
         os.makedirs(os.path.join(proj, ".git"), exist_ok=True)
         proc = _run_cw_cli(
             ["task", "next-action", "T-5D-NO-AUTHORITY", "--json"],
-            _cli_env(pipe), proj)
+            _cli_env(endpoint, tmp), proj)
         _assert_ok(proc, "next-action 无权威配对")
         data = json.loads(proc.stdout)
         assert data["ok"] is False
@@ -718,7 +657,7 @@ class TestNextActionCliProcess:
         try:
             proc = _run_cw_cli(
                 ["task", "next-action", "T-5D-LOCAL", "--json"],
-                _cli_env(r"\\.\pipe\placeholder-5d", mode="local"), tmp)
+                _cli_env("", tmp, mode="local"), tmp)
             _assert_ok(proc, "local 模式 next-action")
             data = json.loads(proc.stdout)
             assert data["ok"] is False
@@ -732,10 +671,10 @@ class TestNextActionCliProcess:
         """enterprise 模式 daemon 不可用：fail-closed，不回退本地 SQLite。"""
         tmp = tempfile.mkdtemp(prefix="cw_5d_unavail_")
         try:
-            fake_pipe = rf"\\.\pipe\nonexistent-5d-{os.getpid()}"
+            fake_endpoint = "https://127.0.0.1:1"
             proc = _run_cw_cli(
                 ["task", "next-action", "T-5D-UNAVAIL", "--json"],
-                _cli_env(fake_pipe, mode="enterprise"), tmp)
+                _cli_env(fake_endpoint, tmp, mode="enterprise"), tmp)
             _assert_ok(proc, "enterprise 无 daemon next-action")
             data = json.loads(proc.stdout)
             assert data["ok"] is False

@@ -72,8 +72,25 @@ import pytest
 from callwarden.server.daemon_client import DaemonUnavailableError
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
+import test_mtls_control_plane as _mtls
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
+
+
+def _find_daemon_binary():
+    """定位 current-HEAD 构建的 cw-daemon 二进制。
+
+    复用 _w3_harness.find_daemon_binary 的「多候选按修改时间取最新」解析：
+    陈旧 release 构建（ADR-002 单轨 HTTPS 之前）发布 http scheme manifest，
+    被单轨 client 以 E_TLS_REQUIRED 拒绝（fix-3 实测复现）；按 mtime 取最新
+    保证拿到 ADR-002 之后的 https 构建并显式打印路径与 sha256。
+    """
+    from _w3_harness import find_daemon_binary  # noqa: PLC0415
+
+    return find_daemon_binary()
+
+
+_DAEMON_BIN = _find_daemon_binary()
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
@@ -81,7 +98,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 requires_binaries = pytest.mark.skipif(
-    not os.path.exists(_DAEMON_BIN),
+    not _DAEMON_BIN or not os.path.exists(_DAEMON_BIN),
     reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
 )
 
@@ -354,17 +371,27 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     不读 CW_DAEMON_DATA_ROOT——隔离 daemon 的 manifest 与 single-instance 锁
     原本固定写真实 ~/.callwarden，与生产 daemon 的 authority 锁冲突 →
     E_DAEMON_ALREADY_RUNNING → daemon 立即退出 → 「未发布 manifest」。
-    现重定向 USERPROFILE=data_root，manifest 与锁完全隔离到 data_root/.callwarden，
-    生产 daemon 不受影响，无需 skip。
+    现重定向 USERPROFILE=data_root/userhome，manifest/锁/PKI 全隔离到
+    data_root/userhome/.callwarden，生产 daemon 不受影响，无需 skip。
+
+    ADR-002 mTLS 对齐（簇 E 修复，实证于 .temp/probe_pki.log）：USERPROFILE
+    必须重定向到 data_root/userhome（而非 data_root），daemon 的 PKI 根
+    （pki_api::pki_root = manifest 同目录 pki/）才与
+    test_mtls_control_plane.pki_dir_of(data_root) 一致；否则 daemon CA 落
+    data_root/.callwarden/pki、fixture bootstrap 的 pki_init 落
+    userhome/.callwarden/pki，两个互不信任的 CA → 客户端
+    `certificate verify failed: certificate signature failure`。
     """
+    home = os.path.join(data_root, "userhome")
+    os.makedirs(os.path.join(home, ".callwarden"), exist_ok=True)
     env = os.environ.copy()
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
     env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
-    # 重定向 manifest/lock 作用域：daemon http_manifest_dir() 读 USERPROFILE
-    env["USERPROFILE"] = data_root
+    # 重定向 manifest/lock/PKI 作用域：daemon http_manifest_dir() 读 USERPROFILE
+    env["USERPROFILE"] = home
     proc = subprocess.Popen(
         [bin_path, "--http-bind=" + http_bind],
         env=env,
@@ -377,14 +404,15 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
 def _wait_isolated_manifest(proc, data_root, timeout=15.0):
     """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配）。
 
-    stale 修正（族D）：manifest 现写入 data_root/.callwarden（USERPROFILE
-    重定向后），轮询 data_root 而非真实 HOME。
+    stale 修正（族D）：manifest 现写入 data_root/userhome/.callwarden
+    （USERPROFILE 重定向后），轮询 userhome 而非真实 HOME。PKI 根同目录
+    对齐见 _spawn_isolated_daemon（簇 E 修复）。
     """
     from callwarden.config import get_http_authority_id
     authority = get_http_authority_id()
     safe = authority.replace("/", "_").replace("\\", "_").replace(":", "_")
     manifest_path = os.path.join(
-        data_root, ".callwarden",
+        data_root, "userhome", ".callwarden",
         f"http-daemon.{safe}.manifest.json",
     )
     deadline = time.time() + timeout
@@ -425,9 +453,9 @@ class TestRealDaemonWriteRoundTrip:
     """
 
     @pytest.fixture
-    def real_daemon_client(self, tmp_path):
+    def real_daemon_client(self, tmp_path, monkeypatch):
         bin_path = _DAEMON_BIN
-        if not os.path.exists(bin_path):
+        if not bin_path or not os.path.exists(bin_path):
             pytest.skip("cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）")
         data_root = str(tmp_path / "data")
         os.makedirs(data_root, exist_ok=True)
@@ -441,6 +469,18 @@ class TestRealDaemonWriteRoundTrip:
                           if proc.stderr else "")
                 pytest.fail(
                     f"隔离 daemon 未在超时内发布 manifest\nstdout={stdout}\nstderr={stderr}")
+            # ADR-002 单轨 mTLS：客户端从隔离 PKI 取 owner 身份（daemon 信任根
+            # 为自签 ca/ca.crt；对齐 test_http_daemon_transport.py http_daemon
+            # fixture 的 bootstrap：pki init 幂等补齐 owner 身份后注入证书 env）
+            _mtls.pki_init(data_root)
+            cert, key = _mtls.identity_paths(data_root)
+            monkeypatch.setenv("CW_CLIENT_CERT", cert)
+            monkeypatch.setenv("CW_CLIENT_KEY", key)
+            monkeypatch.setenv(
+                "CW_CA_CERT",
+                os.path.join(_mtls.pki_dir_of(data_root), "ca", "ca.crt"),
+            )
+            monkeypatch.delenv("CW_PKI_DIR", raising=False)
             from callwarden.server.daemon_client import HttpDaemonRpcClient
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],

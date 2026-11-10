@@ -1,15 +1,18 @@
-"""TP-49 假阳性卡反证用例（关屿判定书定稿口径）。
+"""TP-49 假阳性卡反证用例（关屿判定书定稿口径；ADR-002 单轨适配）。
 
 隔离名未 arm 实例（无任何前置触碰）下：
-- 变体 1：``is_daemon_available()`` 必须为 False——未 arm 占位者可被
-  CreateFileW 连上（假阳性），但无法应答协议 ping；现实现（连接成功即
-  True）在本用例下为红，修复后绿。
-- 变体 2：先 exists() 再连接 → 连接失败——锁死「探测消耗」行为作为
-  回归记录（属性查询打开消耗 armed/un-armed 实例，与返回值无关；
-  Python ``os.path.exists`` 对存在的管道甚至返回 False 假阴性）。
+- 变体 1：``is_daemon_available(pipe_name)`` 必须为 False——管道实例
+  真实存在（CreateNamedPipeW 已创建），但单轨下非 http(s) 端点一律
+  fail-closed；False 不依赖「端点不存在」，TP-49 假阳性方向（占位者
+  可被 CreateFileW 连上）由形态门禁 + 协议探针关闭。
+- 变体 2：管道端点在单轨下 ``try_connect`` 恒返回 None（传输已删除，
+  触碰消耗机制无生产代码路径可达）——锁死「管道端点不可连接」作为
+  回归记录，并保留 Python ``os.path.exists`` 对存在的管道返回 False
+  的假阴性记录（属性查询消耗 armed/un-armed 实例，与返回值无关）。
 
 边界：全程 ``callwarden-isotest-*`` 隔离管道名，零生产接触（不碰
-``callwarden-<sid>`` 生产命名、不启 daemon）。仅 Windows 可跑。
+``callwarden-<sid>`` 生产命名、不启 daemon、不探测默认端点）。仅
+Windows 可跑。
 """
 
 import ctypes
@@ -80,36 +83,41 @@ def _close_handle(handle: int) -> None:
     ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
 
 
-def test_tp49_variant1_unarmed_pipe_not_available(monkeypatch):
-    """变体 1（闭环断言定稿）：未 arm 实例（无前置触碰）→ False。"""
+def test_tp49_variant1_unarmed_pipe_not_available():
+    """变体 1（闭环断言定稿，单轨适配）：未 arm 实例（无前置触碰）→ False。
+
+    单轨前：默认端点 monkeypatch 成管道，连接成功即 True（假阳性）；
+    单轨后：显式传管道端点，非 http(s) 形态门禁 fail-closed → False。
+    端点真实存在（未 arm 管道），证明 False 不靠「端点不存在」，
+    且不接触生产默认端点（零生产接触边界保留）。
+    """
     pipe_name = _isotest_pipe_name("v1")
     handle = _create_unarmed_pipe(pipe_name)
     try:
-        monkeypatch.setattr(
-            cw_config, "get_default_daemon_endpoint", lambda: pipe_name
-        )
-        # 修复前：连接成功即 True（假阳性，本断言红）
-        # 修复后：协议探针无应答 → False
-        assert cw_config.is_daemon_available() is False
+        # 单轨前（连接成功即 True，假阳性，本断言红）
+        # 单轨后：非 http(s) 端点 fail-closed → False
+        assert cw_config.is_daemon_available(pipe_name) is False
     finally:
         _close_handle(handle)
 
 
-def test_tp49_variant2_exists_touch_destroys_instance(monkeypatch):
-    """变体 2（回归记录）：先 exists() 触碰 → 实例被消耗 → 连接失败。
+def test_tp49_variant2_pipe_endpoint_never_connectable():
+    """变体 2（回归记录，单轨适配）：管道端点单轨下恒不可连接。
 
-    同时记录 Python ``os.path.exists`` 的假阴性方向（对存在的管道返回
-    False）——消耗与返回值无关。
+    单轨前：未触碰的未 arm 实例可连接（CreateFileW 假阳性方向），
+    exists() 触碰后实例被消耗而连接失败（探测即破坏）；
+    单轨后：``try_connect`` 仅处理 http(s) 端点，管道端点恒 None
+    （触碰机制无生产代码路径可达）。保留 ``os.path.exists`` 假阴性
+    记录（属性查询消耗实例，与返回值无关）。
     """
     pipe_name = _isotest_pipe_name("v2")
     handle = _create_unarmed_pipe(pipe_name)
     try:
-        # 对照组：未触碰时连接成功（证明后续失败由 exists() 消耗导致）
         from callwarden.server.daemon_autostart import try_connect
 
+        # 对照：未触碰 → None（单轨形态门禁，与实例状态无关）
         conn = try_connect(pipe_name)
-        assert conn is not None, "未触碰的未 arm 实例应可连接（批次 1 场景 C）"
-        conn.close()
+        assert conn is None, "单轨下管道端点应不可连接（形态门禁）"
 
         # 重建实例后做 exists() 触碰（Python 假阴性：返回 False 但消耗）
         _close_handle(handle)
@@ -118,8 +126,8 @@ def test_tp49_variant2_exists_touch_destroys_instance(monkeypatch):
             "Python os.path.exists 对存在的管道返回 False（假阴性方向，回归记录）"
         )
 
-        # 触碰后：连接失败（实例已被属性查询打开消耗）
+        # 触碰后同样 None（恒定性；非「触碰消耗」归因）
         conn_after = try_connect(pipe_name)
-        assert conn_after is None, "exists() 触碰后实例应已消耗（探测即破坏）"
+        assert conn_after is None, "单轨下管道端点恒不可连接（与触碰无关）"
     finally:
         _close_handle(handle)

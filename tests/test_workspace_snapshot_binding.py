@@ -21,6 +21,12 @@ def test_http_route_binds_project_root_and_publishes_snapshot_for_status(monkeyp
     client = MagicMock()
     client._project_root = None
     client._ensure_remote_snapshot.return_value = "authority-ws-1"
+    # S2（daemon_client.py route_rpc）：remote-profile 守卫决定是否向 daemon
+    # 取权威 db_path 并 publish。本用例验证 loopback/authority 注入路径
+    # （get_db_path_for_daemon + publish），须显式置为非 remote profile；
+    # MagicMock 缺省返回 truthy MagicMock 会让守卫误判为 remote 而跳过
+    # publish（生产路径 is_remote_profile() 返回真实 bool，无此问题）。
+    client.is_remote_profile.return_value = False
     client.call.side_effect = [
         {"db_path": r"C:\authority\callwarden.db"},
         {"workspace_instance_id": "authority-ws-1", "snapshot_id": "snap-1"},

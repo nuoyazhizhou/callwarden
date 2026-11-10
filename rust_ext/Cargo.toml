@@ -26,9 +26,8 @@ name = "cw"
 path = "src/bin/cw_cli.rs"
 
 [[bin]]
-# Phase 5-2 Slice 1: cw-client binary（daemon RPC client，clap 骨架 + ping 子命令）
-# 依赖 callwarden_core lib（daemon::client::unix::UnixDaemonRpcClient，仅 Unix）
-# 跨平台编译：Windows 上 UDS 分支被 #[cfg(not(unix))] 替换为平台提示
+# Phase 5-2 Slice 1: cw-client binary（Rust legacy RPC 客户端已按 ADR-002 退役）
+# RPC 子命令 fail-closed；实际 daemon 访问请使用 Python `cw-client` / `cw`（HTTPS+mTLS）
 # 契约：docs/design/phase5-2-slice1-daemon-client-contract.md §3.4
 name = "cw-client"
 path = "src/bin/cw_client.rs"

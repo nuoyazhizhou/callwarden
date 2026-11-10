@@ -2899,6 +2899,10 @@ review / apply，只能手工 `supersede` 收编。
 
 ### 38.2 S2 · 远端只读
 
+> 协议冻结（snapshot.upload 分块/内联格式、hash 契约、大小上限、幂等键、
+> `db_path`/绝对路径拒绝错误码、客户端执行工具清单与返回形态）见
+> `docs/design/mtls-remote-plane.md` §16（2026-11-09 冻结，S2 实现唯一契约源）。
+
 | 编号 | 验收项 | 命令 / 操作 | 期望 |
 | --- | --- | --- | --- |
 | S2-01 | 客户端本机 file.read | Windows 客户端 → WSL/Linux daemon | 返回客户端本地文件内容；daemon 未打开该路径 |
@@ -2928,13 +2932,22 @@ review / apply，只能手工 `supersede` 收编。
 
 ### 38.4 S4 · 清理与矩阵
 
+> 收口状态（2026-11-08，T-1793807024448-17d4cd60 步骤 5 verify）：
+> - **S4-01 已收口**：承载测试 `tests/test_single_track_kernel.py::test_s4_01_no_pipe_or_uds_rpc_branch_in_production`——Python 生产树（server/cli）严格子串断言，Rust 树按行剥离 `//` 注释后断言，无 `NamedPipe`/`UnixDaemonRpcClient` 活分支。
+> - **S4-02 已收口**：`tests/test_windows_bridge_e2e.py` 已删除（全仓 `tests/*bridge*` 无命中）；`test_no_cw_bridge_product_reference` 持续 guard 业务源码不回引 cw-bridge。
+> - **S4-03 已收口**：承载测试 `tests/test_single_track_kernel.py::test_s4_03_mcp_server_has_no_local_daemon_mode_branch`——AST 断言 `server/mcp_server.py` 无 `daemon_mode` 活引用，docstring 退役说明不误判。
+> - **S4-04 已收口**：`rust_ext/target/{release,debug}` 产物仅 `cw`、`cw-daemon`、`cw-client`（+ `cw-agent`/`cw_agent`），无 bridge 产物。
+> - **S4-05 已收口**：`scripts/check_e2e_matrix_closure.py` 已接入 S4-01/S4-03 行，实跑 PASS exit 0。
+> - **S4-06 pending**：Windows↔WSL/Linux 跨 OS 实机回归依赖 S2/S3 归属卡（仍 open），随其闭环后执行。
+> - **S4-07 已收口**：`docs/design/daemon-deploy-runbook.md` 现行部署节（§9/§10）pipe/UDS/bridge 说明已改 mTLS，§1–§8 标注为 v1 历史回滚参考。
+
 | 编号 | 验收项 | 命令 / 操作 | 期望 |
 | --- | --- | --- | --- |
 | S4-01 | pipe/UDS 代码删除 | 全仓 grep（排除 archive/docs） | 无生产 `NamedPipe`/`UnixDaemonRpcClient` 分支 |
 | S4-02 | bridge 夹具删除 | `pytest tests/test_windows_bridge_e2e.py` | 文件已移除或改为 HTTPS 矩阵 |
 | S4-03 | Python local 分支删除 | `server/mcp_server.py` 扫描 | 无 `daemon_mode=local` 分支 |
 | S4-04 | 发布产物 | 检查 release 目录 | 仅 `cw`、`cw-daemon`、`cw-client`（+ wheel），无 bridge |
-| S4-05 | 矩阵接入 | `python scripts/check_e2e_matrix_closure.py` | PASS，exit 0；含 S1–S3 行 |
+| S4-05 | 矩阵接入 | `python scripts/check_e2e_matrix_closure.py` | PASS，exit 0；含 S1–S4 行 |
 | S4-06 | 跨 OS 回归 | Windows↔WSL、Windows↔Linux | 双向只读 + 写治理链路 PASS |
 | S4-07 | 文档一致 | `docs/design/daemon-deploy-runbook.md` | 删除 pipe/UDS/bridge 部署说明，改为 mTLS |
 

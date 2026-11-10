@@ -119,7 +119,7 @@ def test_wrong_authority_fail_closed(tmp_path):
 
 def test_daemon_unavailable_fail_closed():
     with pytest.raises(DaemonUnavailableError) as ei:
-        HttpDaemonRpcClient(endpoint="http://127.0.0.1:9").health()
+        HttpDaemonRpcClient(endpoint="https://127.0.0.1:9").health()
     assert ei.value.code == "E_HTTP_DAEMON_UNAVAILABLE"
 
 

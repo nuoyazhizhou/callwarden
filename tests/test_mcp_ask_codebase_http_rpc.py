@@ -89,7 +89,7 @@ def test_ask_codebase_rag_context_shape(rpc):
 
 def test_ask_codebase_daemon_unavailable_fail_closed():
     """daemon 不可达 → 连接级错误（不回退、不伪装业务错误）。"""
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("ask_codebase", {"workspace_instance_id": CANONICAL_INSTANCE,
                                 "question": "x"})

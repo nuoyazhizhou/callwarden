@@ -53,7 +53,7 @@ def test_list_branches_shape(rpc):
 
 
 def test_list_branches_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("list_branches", {})
 

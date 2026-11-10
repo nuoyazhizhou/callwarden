@@ -300,7 +300,7 @@ fn identity_discovery_projection(conn: &Connection, workspace_id: i64, task_id: 
         "registered_agents": registered,
         "registration_hint": {
             "rpc_method": "agent.register",
-            "client": "UnixDaemonRpcClient.agent_register",
+            "client": "HttpDaemonRpcClient.agent_register",
             "required_fields": ["agent_id", "agent_instance_id", "session_id", "model_id", "role"],
         },
     })

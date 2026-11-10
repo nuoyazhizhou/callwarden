@@ -22,13 +22,11 @@ S8  返回结构化结果 {task_id, parent_id, status, step_count}
 S9  MCP wrapper 正确归一化 daemon dict（不把成功 dict 当字符串失败）
 S10 保留 request_id dedup / 权限 / 错误码语义
 """
-import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
 
 import pytest
 
@@ -152,59 +150,12 @@ def test_next_step_wrapper_returns_none_without_step():
 
 
 # ------------------------------------------------------------
-# 2. 真实 daemon round-trip（Windows Named Pipe + Rust daemon）
+# 2. 真实 daemon round-trip（HTTPS + mTLS + Rust daemon）
 # ------------------------------------------------------------
 
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-daemon.exe")
-_CLIENT_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-client.exe")
 _CW_BIN = os.path.join(_REPO_ROOT, "cw.py")
 
-_requires_bin = pytest.mark.skipif(
-    not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN)),
-    reason="cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）",
-)
-
-
-def _client(pipe: str, args: list, timeout: int = 15) -> dict:
-    """调用真实 cw-client.exe（Named Pipe 客户端），返回结构化结果。"""
-    try:
-        result = subprocess.run(
-            [_CLIENT_BIN, "--socket", pipe, "--timeout", str(timeout)] + args,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout + 10,
-        )
-    except subprocess.TimeoutExpired:
-        return {"code": -1, "json": {}, "stdout": "", "stderr": "client timeout"}
-    parsed = {}
-    try:
-        parsed = json.loads(result.stdout)
-    except Exception:
-        pass
-    return {
-        "code": result.returncode,
-        "json": parsed,
-        "stdout": result.stdout.strip(),
-        "stderr": result.stderr.strip(),
-    }
-
-
-def _daemon_config(tmp: str) -> dict:
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 4,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 4,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
+_REAL_PKI_DIR = None
 
 
 def _task_db_steps(task_db: str, task_id: str):
@@ -225,67 +176,60 @@ def _task_db_steps(task_db: str, task_id: str):
 
 @pytest.fixture(scope="module")
 def isolated_daemon():
-    """启动隔离临时目录的真实 cw-daemon（Named Pipe 按 SID 派生）。"""
-    from callwarden.config import _get_windows_user_sid
+    """启动隔离 HTTPS daemon，返回 {client, tmp, task_db, endpoint, proc}。"""
+    global _REAL_PKI_DIR
+    from callwarden.config import get_pki_dir
+    from _w3_harness import seed_cli_task_authority, setup_w3_client
 
-    sid = _get_windows_user_sid()
-    pipe = rf"\\.\pipe\callwarden-{sid}"
-
-    # 默认管道已被其他 daemon 占用则跳过（不杀他人进程）
-    occupied = _client(pipe, ["ping"], timeout=2)
-    if occupied["code"] == 0:
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过进程级 E2E")
-
+    _REAL_PKI_DIR = get_pki_dir()
+    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
     tmp = tempfile.mkdtemp(prefix="create-subtask-steps-e2e-")
-    config_path = os.path.join(tmp, "config.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(_daemon_config(tmp), f)
-
-    log_path = os.path.join(tmp, "daemon.log")
-    log = open(log_path, "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        stdout=log, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8",
-    )
+    proc = None
     try:
-        deadline = time.time() + 40.0
-        ok = False
-        time.sleep(1.5)
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                break
-            r = _client(pipe, ["ping"], timeout=2)
-            if r["code"] == 0 and r["json"].get("status") == "ok":
-                ok = True
-                break
-            time.sleep(0.5)
-        if not ok:
-            log_content = ""
-            try:
-                with open(log_path, "r", encoding="utf-8") as f:
-                    log_content = f.read()[-3000:]
-            except Exception:
-                pass
-            pytest.fail(f"daemon 未在超时内响应，日志：\n{log_content}")
-        yield {"pipe": pipe, "tmp": tmp, "task_db": os.path.join(tmp, "callwarden.db")}
+        client, inst, endpoint, proc = setup_w3_client(tmp, _REPO_ROOT, ws_id=1)
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        # seed task-DB canonical workspace 权威：workspace.status 的 task-DB 侧只读
+        # workspace_authority_captures（按 instance），setup_w3_client 只 seed
+        # workspaces 表 → CLI task.create 的 resolve_workspace_pair matches=0。
+        seed_cli_task_authority(
+            os.path.join(tmp, "task.db"), ws_id=1, name="subtask-steps",
+            root_path=_REPO_ROOT, instance_id=inst,
+        )
+        yield {
+            "client": client,
+            "inst": inst,
+            "tmp": tmp,
+            "task_db": os.path.join(tmp, "task.db"),
+            "endpoint": endpoint,
+            "proc": proc,
+        }
+    except BaseException:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+        raise
     finally:
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.wait(timeout=5)
-        log.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _env_with_daemon(pipe: str):
+def _env_with_daemon(endpoint: str, data_root: str) -> dict:
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     env["CW_DAEMON_MODE"] = "enterprise"
-    env["CW_DAEMON_ENDPOINT"] = pipe
+    env["CW_DAEMON_HTTP_ENDPOINT"] = endpoint
+    env["CW_DAEMON_TRANSPORT"] = "http"
+    env["USERPROFILE"] = os.path.join(data_root, "userhome")
+    env["HOME"] = env["USERPROFILE"]
+    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
+    env["CW_TASK_WRITE_POLICY"] = "shared"
+    env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     env.pop("CW_DAEMON_SOCKET_PATH", None)
+    env.pop("CW_DAEMON_ENDPOINT", None)
     return env
 
 
@@ -307,18 +251,17 @@ def _mcp_tool_text(result):
     return "\n".join(parts)
 
 
-@_requires_bin
 def test_daemon_create_subtask_persists_steps(isolated_daemon):
     """S1-S5：真实 daemon task.create_subtask 后 task_steps 完整（修复前 Steps(0)）。"""
-    pipe = isolated_daemon["pipe"]
+    endpoint = isolated_daemon["endpoint"]
     task_db = isolated_daemon["task_db"]
-    env = _env_with_daemon(pipe)
+    env = _env_with_daemon(endpoint, isolated_daemon["tmp"])
 
     # 父任务
     r1 = subprocess.run(
         [sys.executable, _CW_BIN, "task", "create", "--title", "E2E 父任务", "--desc", "parent"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        env=env, timeout=120,
+        env=env, cwd=_REPO_ROOT, timeout=120,
     )
     assert r1.returncode == 0, f"task create 失败: {r1.stdout} {r1.stderr}"
     parent_id = None
@@ -329,8 +272,7 @@ def test_daemon_create_subtask_persists_steps(isolated_daemon):
     assert parent_id, f"无法解析父任务 ID: {r1.stdout}"
 
     # 子任务：CLI 无 create-subtask 子命令，直接走 daemon RPC（验证 handle_task_create_subtask）
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    client = UnixDaemonRpcClient(socket_path=pipe)
+    client = isolated_daemon["client"]
     parent_res = client.call("task.status", {"task_id": parent_id})
     assert parent_res.get("status") == "open"
 
@@ -370,16 +312,16 @@ def test_daemon_create_subtask_persists_steps(isolated_daemon):
     assert all(row[0] for row in rows)
 
 
-@_requires_bin
 def test_daemon_claim_returns_step_details(isolated_daemon):
     """S1/S3：真实 daemon task.claim 返回下一步骤详情（含 step_id/action/target_file/...）。"""
-    pipe = isolated_daemon["pipe"]
-    _env = _env_with_daemon(pipe)
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    client = UnixDaemonRpcClient(socket_path=pipe)
+    endpoint = isolated_daemon["endpoint"]
+    _env = _env_with_daemon(endpoint, isolated_daemon["tmp"])
+    client = isolated_daemon["client"]
 
     create = client.call("task.create", {
         "title": "claim-contract",
+        "workspace_id": 1,
+        "workspace_instance_id": isolated_daemon["inst"],
         "steps": [
             {
                 "action": "audit",
@@ -405,16 +347,19 @@ def test_daemon_claim_returns_step_details(isolated_daemon):
     assert claim.get("step_status") == "in_progress"
 
 
-@_requires_bin
 def test_cli_task_show_displays_steps(isolated_daemon):
-    """S1：cw task show（树形）显示 Steps(N)，非 0。"""
-    pipe = isolated_daemon["pipe"]
-    env = _env_with_daemon(pipe)
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    client = UnixDaemonRpcClient(socket_path=pipe)
+    """S1：cw task show（树形）显示步骤（N 个），非 0。
+
+    CLI 现渲染中文标签「步骤（N 个）》（早期为英文 Steps(N)）——断言真实渲染。
+    """
+    endpoint = isolated_daemon["endpoint"]
+    env = _env_with_daemon(endpoint, isolated_daemon["tmp"])
+    client = isolated_daemon["client"]
 
     create = client.call("task.create", {
         "title": "show-steps",
+        "workspace_id": 1,
+        "workspace_instance_id": isolated_daemon["inst"],
         "steps": [{"action": "implement", "target_file": "a.rs", "check_items": "cargo"}],
     })
     task_id = create.get("task_id")
@@ -423,23 +368,32 @@ def test_cli_task_show_displays_steps(isolated_daemon):
     r = subprocess.run(
         [sys.executable, _CW_BIN, "task", "show", task_id],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        env=env, timeout=120,
+        env=env, cwd=_REPO_ROOT, timeout=120,
     )
     assert r.returncode == 0, f"task show 失败: {r.stdout} {r.stderr}"
-    assert "Steps" in r.stdout, f"task show 未显示 Steps 标签: {r.stdout}"
+    assert "步骤（1 个）" in r.stdout, f"task show 未显示步骤标签: {r.stdout}"
+    assert "#0 [pending] implement" in r.stdout, f"task show 未渲染步骤内容: {r.stdout}"
 
 
-@_requires_bin
-def test_mcp_create_subtask_roundtrip(isolated_daemon):
+def test_mcp_create_subtask_roundtrip(isolated_daemon, monkeypatch):
     """S9：真实 MCP task_create_subtask 走 daemon 返回归一化 task_id（修复前误判为类型错误）。"""
-    pipe = isolated_daemon["pipe"]
-    _env = _env_with_daemon(pipe)
+    endpoint = isolated_daemon["endpoint"]
+    tmp = isolated_daemon["tmp"]
     import asyncio
     import re as _re
 
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    client = UnixDaemonRpcClient(socket_path=pipe)
-    parent = client.call("task.create", {"title": "mcp-parent"})
+    client = isolated_daemon["client"]
+    # MCP 路由在同进程内解析 daemon 连接：显式注入隔离 daemon 的端点/manifest
+    # 根（USERPROFILE）与 PKI，避免读到真实 HOME 的 stale manifest。
+    for k, v in _env_with_daemon(endpoint, tmp).items():
+        if k in ("CW_DAEMON_MODE", "CW_DAEMON_HTTP_ENDPOINT", "CW_DAEMON_TRANSPORT",
+                 "USERPROFILE", "HOME", "CW_PKI_DIR", "CW_TASK_WRITE_POLICY"):
+            monkeypatch.setenv(k, v)
+    parent = client.call("task.create", {
+        "title": "mcp-parent",
+        "workspace_id": 1,
+        "workspace_instance_id": isolated_daemon["inst"],
+    })
     parent_id = parent.get("task_id")
 
     # 真实 MCP 工具调用：register(mcp) 闭包内的工具只能经 call_tool 访问，

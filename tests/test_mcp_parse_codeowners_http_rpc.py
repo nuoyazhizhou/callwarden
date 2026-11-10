@@ -67,7 +67,7 @@ def test_parse_codeowners_unknown_workspace(live_daemon):
 # daemon unavailable：fail-closed，绝不降级本地 SQLite
 # ---------------------------------------------------------------------------
 def test_parse_codeowners_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError):
         c.call("parse_codeowners", {"workspace_instance_id": CANONICAL_INSTANCE})

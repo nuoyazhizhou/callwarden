@@ -22,14 +22,6 @@ pub mod task_loop;
 /// renderer/RPC 由 RP-04/RP-05 后续接入）
 pub mod task_prompt;
 
-/// 平台无关传输抽象（D0 3.1：TransportListener / TransportConnection trait）
-/// Unix: UDS + SO_PEERCRED；Windows: 命名管道 + ImpersonateNamedPipeClient
-pub mod transport;
-
-/// Windows 命名管道传输实现（D0 3.1：SDDL + 实例保活 + 对端 SID）
-#[cfg(windows)]
-pub mod transport_windows;
-
 /// Daemon RPC Client（Phase 5-2 Slice 1）
 /// 跨平台协议层 + Unix UDS Client（`#[cfg(unix)]`）
 /// 契约：docs/design/phase5-2-slice1-daemon-client-contract.md
@@ -90,11 +82,11 @@ pub mod gate_session;
 /// P0–P4 三级作用域 + 前置阶段校验 + Independence_Policy 存取
 pub mod stage_toggle;
 
-/// Daemon server（跨平台：Unix UDS + Windows 命名管道，内部 cfg 分流）
+/// Daemon server（单轨 HTTPS + mTLS：只保留 HTTP(S) accept loop 启动器）
 pub mod server;
 
 /// P0 single-instance 守卫：authority-scoped 跨进程文件锁（fs2 flock），
-/// 防止重复启动导致 UDS 抢占 / manifest 覆盖 / lease-authority 分裂。
+/// 防止重复启动导致端点抢占 / manifest 覆盖 / lease-authority 分裂。
 /// 详见模块内文档与 `cw_daemon.rs` 启动序列。
 pub mod single_instance;
 
@@ -119,11 +111,6 @@ pub mod health;
 
 /// R7: cw_daemon binary 配置加载（DaemonConfig + 环境变量覆盖 + 文件加载）
 pub mod config;
-
-/// G10/G20: memfd / FD 读取四重校验（FD 类型 + 大小预检 + 容量上限 + 摘要比对）
-/// 仅 Unix 编译（Windows 无 FD 路径）
-#[cfg(unix)]
-pub mod memfd;
 
 /// G29: QueryBudget + BudgetTracker——查询预算控制（max_depth + max_nodes + timeout）
 /// 防止 BFS/DFS 在大型代码库中指数爆炸

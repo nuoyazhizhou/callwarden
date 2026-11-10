@@ -64,7 +64,7 @@ def test_merge_preview_known_branches(rpc):
 
 
 def test_merge_preview_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9")
     with pytest.raises(Exception):
         c.call("merge_preview", {"source_branch": "a", "target_branch": "b"})
 

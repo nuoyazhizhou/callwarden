@@ -12,9 +12,6 @@
 """
 
 import os
-import socket
-
-import pytest
 
 
 class TestLocalMode:
@@ -80,25 +77,7 @@ class TestEnterpriseMode:
         # 在 enterprise 模式下，daemon 不可用应抛异常而非静默回退
         assert hasattr(DaemonClient, 'is_daemon_ready')
 
-    def test_enterprise_mode_acl_failure(self):
-        """enterprise 模式下 ACL 失败应明确报错。"""
-        # ACL 检查在 daemon_server.py 的 dispatch 中实现
-        from callwarden.server.daemon_server import DaemonRpcError
-        # 验证 DaemonRpcError 有正确的错误码
-        err = DaemonRpcError("workspace_forbidden", "test")
-        assert err.code == "workspace_forbidden"
 
-    def test_enterprise_mode_refresh_failure(self):
-        """enterprise 模式下 refresh 失败应明确报错。"""
-        from callwarden.server.daemon_server import DaemonRpcError
-        err = DaemonRpcError("refresh_failed", "test")
-        assert err.code == "refresh_failed"
-
-
-@pytest.mark.skipif(
-    not hasattr(socket, "AF_UNIX"),
-    reason="需要 AF_UNIX 支持",
-)
 class TestMCPQueryConsistency:
     """MCP/CLI 查询一致性验证。"""
 

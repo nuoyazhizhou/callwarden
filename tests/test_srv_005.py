@@ -4,8 +4,9 @@
 ["success", "invalid", "authority", "unavailable", "restart"]。
 
 设计要点（SRV-005 = `control_plane` 端口，route B thin-client）：
-- Python `server/daemon_autostart.py` 原有三个直接执行本地 socket connect 的
-  探测权威函数：_try_connect_tcp / _try_connect_unix / try_http_connect。
+- Python `server/daemon_autostart.py` 原有两个直接执行本地 socket connect 的
+  探测权威函数：_try_connect_tcp / try_http_connect（`_try_connect_unix` 已在
+  ADR-002 单轨退休）。
 - SRV-005 后全部退化为 daemon RPC 薄客户端（`mcp.daemon_autostart.*`，
   Rust handler `rust_ext/src/daemon/daemon_autostart_handlers.rs`）。
 - RPC 无法传递 socket 对象：下沉为「connect + 立即关闭」的探测语义，
@@ -27,7 +28,6 @@ import pytest
 
 from callwarden.server.daemon_autostart import (
     _try_connect_tcp,
-    _try_connect_unix,
     try_http_connect,
 )
 from callwarden.server.daemon_client import DaemonUnavailableError
@@ -125,14 +125,6 @@ def test_success_try_connect_tcp_invalid_format_fail_soft(fake_daemon):
     assert isinstance(result["error"], str)
 
 
-def test_success_try_connect_unix(fake_daemon):
-    result = _try_connect_unix("/run/callwarden/callwarden.sock")
-    assert result["connectable"] is True
-    result_miss = _try_connect_unix("/nonexistent/callwarden.sock")
-    assert result_miss["connectable"] is False
-    assert isinstance(result_miss["error"], str)
-
-
 def test_success_try_http_connect_returns_bool(fake_daemon):
     assert try_http_connect("http://127.0.0.1:8456") is True
     assert try_http_connect("http://127.0.0.1:8456", timeout=0.5) is True
@@ -150,12 +142,6 @@ def test_invalid_try_connect_tcp_missing_endpoint(fake_daemon):
     assert exc.value.code == "invalid_params"
 
 
-def test_invalid_try_connect_unix_missing_endpoint(fake_daemon):
-    with pytest.raises(FakeDaemonRpcError) as exc:
-        _try_connect_unix("")
-    assert exc.value.code == "invalid_params"
-
-
 def test_invalid_try_http_connect_missing_endpoint(fake_daemon):
     with pytest.raises(FakeDaemonRpcError) as exc:
         try_http_connect("")
@@ -169,12 +155,10 @@ def test_invalid_try_http_connect_missing_endpoint(fake_daemon):
 
 def test_authority_all_calls_route_through_daemon(fake_daemon):
     _try_connect_tcp("tcp://127.0.0.1:8456")
-    _try_connect_unix("/run/callwarden/callwarden.sock")
     try_http_connect("http://127.0.0.1:8456")
     methods = [m for m, _ in fake_daemon.calls]
     assert methods == [
         "mcp.daemon_autostart.try_connect_tcp",
-        "mcp.daemon_autostart.try_connect_unix",
         "mcp.daemon_autostart.try_http_connect",
     ]
 
@@ -199,8 +183,6 @@ def test_unavailable_all_functions_raise(fake_daemon):
     fake_daemon.available = False
     with pytest.raises(DaemonUnavailableError):
         _try_connect_tcp("tcp://127.0.0.1:8456")
-    with pytest.raises(DaemonUnavailableError):
-        _try_connect_unix("/run/callwarden/callwarden.sock")
     with pytest.raises(DaemonUnavailableError):
         try_http_connect("http://127.0.0.1:8456")
 
@@ -237,7 +219,7 @@ def test_no_probe_authority_in_source():
     tree = ast.parse(full_src)
 
     banned_imports = {"sqlite3"}
-    target_funcs = {"_try_connect_tcp", "_try_connect_unix", "try_http_connect"}
+    target_funcs = {"_try_connect_tcp", "try_http_connect"}
     banned_tokens = {
         "socket.socket",
         ".connect(",

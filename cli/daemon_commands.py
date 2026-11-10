@@ -9,21 +9,18 @@ import sys
 from typing import Any, Dict, Optional, Sequence
 
 from callwarden.config import (
-    DAEMON_SOCKET_PATH,
     get_daemon_mode,
     is_daemon_available,
     is_daemon_required,
 )
 from callwarden.server.daemon_client import (
-    UnixDaemonRpcClient,
     HttpDaemonRpcClient,
     DaemonUnavailableError,
 )
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.daemon_autostart import resolve_http_endpoint_and_manifest
-# G1（2026-09-09）：`cw daemon serve` 影子 server 下线——EnterpriseDaemonServer/
-# Service 的 CLI 启动入口已摘除；daemon_server.py 模块保留（SRV-019 白名单退休 +
-# 测试直连 import），但用户不再有可达入口启动 Python 影子 daemon。
+# ADR-002 单轨：唯一 daemon RPC 传输是 HTTPS+mTLS；Python 影子 daemon
+# （server/daemon_server.py）已整体退休，用户不再有可达入口启动它。
 # Rust 原生 daemon 为唯一权威：cw-daemon.exe（启动模板见 docs/role-loop-templates/）。
 
 
@@ -40,8 +37,8 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
         description="daemon 管理与查询（Rust 原生 daemon 客户端；"
                     "serve 子命令已下线，daemon 启动见 cw-daemon.exe）",
     )
-    parser.add_argument("--socket", default=DAEMON_SOCKET_PATH,
-                        help="UDS 路径（默认 CW_DAEMON_SOCKET）")
+    parser.add_argument("--endpoint", "--socket", dest="socket", default=None,
+                        help="HTTPS endpoint（默认经 authority manifest 解析）")
     sub = parser.add_subparsers(dest="action", required=True)
 
     sub.add_parser("ping", help="检查 daemon 与 peer credential")
@@ -526,7 +523,7 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
             return 0
 
         # 默认路径：经 daemon RPC（Rust daemon 为唯一 authority），fail-closed
-        client = UnixDaemonRpcClient(args.socket)
+        client = HttpDaemonRpcClient(endpoint=args.socket)
         rpc_method = ("metrics.prometheus" if args.format == "prometheus"
                       else "metrics.snapshot")
         try:
@@ -573,7 +570,7 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
     if args.action in ("health", "manifest", "capability"):
         return _run_daemon_diag_http(args)
 
-    client = UnixDaemonRpcClient(args.socket)
+    client = HttpDaemonRpcClient(endpoint=args.socket)
     if args.action == "ping":
         result = client.call("ping")
     elif args.action == "register":
@@ -651,43 +648,24 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
             params.update(max_depth=args.max_depth)
         result = client.call(method, params)
     elif args.action == "bridge":
-        # 共存契约 §7.1：bridge health 检查（WSL 侧可执行）
-        from callwarden.config import (
-            get_bridge_endpoint,
-            get_bridge_token,
-        )
-        endpoint = args.endpoint or get_bridge_endpoint()
-        if args.token_file:
-            import os as _os
-
-            _os.environ["CW_BRIDGE_TOKEN_FILE"] = args.token_file
-        token = get_bridge_token()
-        # 复用函数顶部的 UnixDaemonRpcClient（避免局部 import 遮蔽导致
-        # 顶部 `client = UnixDaemonRpcClient(...)` UnboundLocalError）。
-        # transport_override="windows-bridge" 强制 token 注入，不依赖全局
-        # CW_DAEMON_TRANSPORT 环境变量。
-        bridge_client = client.__class__(
-            socket_path=endpoint,
-            transport_override="windows-bridge",
-            endpoint_override=True,
-        )
-
+        # ADR-002 单轨：windows-bridge（tcp/token）transport 已退休，唯一允许的
+        # daemon RPC 传输是 HTTPS+mTLS。此处仅做 HTTPS 可达性诊断，不再注入
+        # bridge token，也不回退任何 pipe/UDS/bridge RPC。
+        endpoint = args.endpoint or args.socket or ""
         result = {
             "authority": "windows-host",
-            "transport": "windows-bridge",
+            "transport": "https",
             "endpoint": endpoint,
-            "token_configured": bool(token),
+            "token_configured": False,
             "reachable": False,
         }
-        if not token:
-            result["error"] = "E_BRIDGE_TOKEN_MISSING: 未配置 bridge token"
-        else:
-            try:
-                # 顶层注入 token（与 call() 在 bridge transport 下的行为一致）
-                bridge_client.hello()
-                result["reachable"] = True
-            except Exception as exc:  # noqa: BLE001 - health 报告任何连接异常
-                result["error"] = f"bridge 不可达: {exc}"
+        try:
+            probe = HttpDaemonRpcClient(endpoint=endpoint or None)
+            probe.health()
+            result["endpoint"] = probe.discover()
+            result["reachable"] = True
+        except Exception as exc:  # noqa: BLE001 - 健康报告任何连接异常
+            result["error"] = f"daemon 不可达: {exc}"
         # 归一化：返回 {ok, bridge:{...}}，避免 CLI 打印裸 dict
         result = {"ok": bool(result["reachable"]), "bridge": result}
     elif args.action == "schema-version":

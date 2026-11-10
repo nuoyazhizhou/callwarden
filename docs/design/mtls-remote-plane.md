@@ -279,6 +279,9 @@ E_REMOTE_DB_PATH_FORBIDDEN
   `E_REMOTE_DB_PATH_FORBIDDEN`；FD 分支仅在同机 Unix 且显式 local 身份时保留（S4 删除）。
 - daemon 只提供索引查询（symbols/callers/callees/impact 等），不执行任何文件读取。
 
+> **协议冻结**：upload 的分块/内联格式、hash 契约、大小上限、幂等键、拒绝错误码、
+> 客户端执行工具清单与返回形态，全部冻结于 §16（S2 实现与验收的唯一契约源）。
+
 ### 8.2 写治理（S3）
 
 ```
@@ -381,7 +384,7 @@ python scripts/check_e2e_matrix_closure.py
 | S1 | `pytest tests/test_mtls_control_plane.py -q`；`cargo test --manifest-path rust_ext/Cargo.toml tls` |
 | S2 | `pytest tests/test_remote_read_plane.py -q`（Windows↔WSL/Linux 由环境变量选择方向） |
 | S3 | `pytest tests/test_remote_write_governance.py -q` |
-| S4 | `pytest tests/test_transport_single_track.py -q` + 矩阵脚本 |
+| S4 | `pytest tests/test_single_track_kernel.py -q` + 矩阵脚本（S4-01/S4-03 由 `test_s4_01`/`test_s4_03` 承载） |
 
 ---
 
@@ -559,3 +562,211 @@ S1 不得提前返回：
 - uid 授权点共 7 处，S1 必须全部切到 principal；其余 179 处 Rust / 48 处 Python
   为诊断、测试或待删除代码。
 - 未发现与 ADR §3.1 冲突的额外库存；本盘点不新增威胁面。
+
+---
+
+## 16. S2 协议冻结（snapshot.upload 与远端只读面）
+
+> 冻结时间：2026-11-09；归属卡 `[REMOTE-S2]`（`T-1793774130739-6e096a14`）。
+> 本节是 S2 实现与验收的**唯一契约源**；§8.1 的 ADR 级概述以本节为准。
+> 矩阵口径见 `docs/design/cli-mcp-matrix-backlog.md` §38.2（S2-01…S2-09）。
+
+**实施基线事实**（冻结前摸查证据，作为契约的可实施性依据）：
+
+- `snapshot.publish`（`rust_ext/src/daemon/snapshot_state.rs:698`）必填 `db_path`，
+  daemon 直接 attach 客户端给定 SQLite 路径；`build_and_publish_blocking`
+  （`rust_ext/src/snapshot.rs:267`）从该路径的 `file_instances`/`symbols`/`calls`
+  三表装载发布（DDL 见 `rust_ext/src/storage.rs`），**不复制 DB**。
+- Python 侧 codegraph builder 已存在：`db/db_build.py` 的 `BuildMixin`
+  （`build` / `build_full_graph` / `build_directory` / `refresh_file` …），
+  客户端本机构建工作库**无需重写 Rust 解析逻辑**。
+- 既有上限：daemon `MAX_BODY_BYTES = 64 MiB`（`http_server.rs:68`），
+  Python 通用 body 预检 `HTTP_MAX_BODY_BYTES = 8 MiB`（`config.py:1776`）。
+- 既有幂等面：HTTP 层 `http_dedup`（PK = `(workspace_instance_id, method,
+  request_id)`，24h 保留，`http_server.rs:254-336`）；`snapshot.publish` 属
+  PROTECTED_MUTATION，已受其覆盖。
+- 既有错误码：`E_REQUEST_TOO_LARGE`（413/预检）、`E_PAYLOAD_TOO_LARGE`
+  （`http_server.rs:1301`）、`E_HTTP_DAEMON_UNAVAILABLE`（客户端连接失败，
+  `daemon_client.py:76`）。
+
+### 16.1 profile 判定与路径拒绝（I4 落地）
+
+判定键：daemon 启动时的 **`bind_scope`**（manifest v2 字段，§15.4），运行时只读、
+不可变更；客户端从同一 manifest 读取，保证两端单一真源。
+
+- `bind_scope=loopback`：**同机语义**，`snapshot.publish` 的 `db_path` 兼容路径保留
+  （既有行为，回滚兼容）。
+- `bind_scope=remote`（`--bind <非 loopback> --allow-remote`）：以下 fail-closed：
+
+| 触发 | 错误码 | 约束 |
+| --- | --- | --- |
+| `snapshot.publish` params 含 `db_path` | `E_REMOTE_DB_PATH_FORBIDDEN` | daemon 不 open/attach 任何客户端路径；落审计 |
+| 任何 RPC params 含绝对路径（Posix `/` 前缀、Windows 盘符/UNC/`\` 前缀）或 `host_real_root` | `E_REMOTE_PATH_FORBIDDEN` | 路径解析只发生在客户端；daemon 无法验证跨 OS 路径，上送即拒 |
+| FD / multipart 载荷分支（`snapshot.publish`） | method_not_found | 单轨 HTTPS 无 FD（既有 `snapshot_state.rs:752` 语义） |
+
+- 矩阵口径（S2-08）：Windows↔WSL 与 Windows↔Linux 均以**对端 daemon 绑定
+  LAN/hostname + `--allow-remote`**（`bind_scope=remote`）为准；loopback 仅承载
+  同机语义（client 与 daemon 可见同一文件系统）。
+- **S2-05 落点**：远端 profile 下，只读工具的绝对路径参数由**客户端工具层先行
+  fail-closed**（返回同一 `E_REMOTE_PATH_FORBIDDEN` 结构化错误，不发起 RPC）；
+  直连 RPC 的绝对路径参数由 daemon 兜底拒绝。客户端本机路径一律以
+  workspace 相对位置表达。
+
+### 16.2 `snapshot.upload` 协议（新增 RPC，remote profile 唯一快照入口）
+
+**内容载体**：codegraph 工作库 SQLite 字节流，gzip 压缩。schema 契约 =
+`GraphStore::load_from_sqlite_blocking`（`rust_ext/src/graph.rs:1980`）消费的三表：
+`file_instances`（`id, rel_path, status, …`）、`symbols`（`id, file_instance_id,
+kind, name, qualified_name, module_path, start_line, end_line, depth`）、
+`calls`（`caller_id, callee_id, callee_name, call_line, is_cross_file`）。
+上游 builder（Python `db/db_build.py` BuildMixin 等价路径或本机 `cw` CLI）必须产出
+该 schema；多余表忽略；缺表/缺列 → `E_SNAPSHOT_UPLOAD_SCHEMA_INVALID`。
+
+**hash 契约**：`sha256` 与 `raw_size` 均针对**原始 SQLite 字节流**（gzip 解压后）；
+gzip 流与 base64 编码不参与 hash。任何 hash/size 不符 →
+`E_SNAPSHOT_UPLOAD_HASH_MISMATCH`，不导入、不残留（S2-06 篡改/截断防御）。
+
+**内联格式**（单请求，`snapshot.upload`）：
+
+```
+params = {
+  "workspace_instance_id": str,     // 必填；归属校验同 snapshot.publish 既有路径
+  "mode": "inline",                 // 固定
+  "content_encoding": "gzip",       // 固定 "gzip"（"identity" 为预留，本卡不实现）
+  "payload_b64": str,               // base64(gzip(sqlite bytes))
+  "sha256": str,                    // 64 位小写 hex，sqlite bytes 摘要
+  "raw_size": int,                  // sqlite bytes 字节数
+  "build_context_hash": str?,       // 可选，语义同 snapshot.publish
+  "snapshot_id": str?,              // 可选，与 workspace.register 权威值校验
+  "request_id": str                 // 幂等键
+}
+→ 200 { "generation", "symbol_count", "call_count", "workspace_instance_id",
+         "snapshot_id" }            // 与 snapshot.publish 返回同形（S2-03 回显口径）
+```
+
+**分块格式**（`snapshot.upload.chunk` + `snapshot.upload.commit`）：
+
+```
+snapshot.upload.chunk = {
+  "workspace_instance_id": str,
+  "upload_id": str,                 // 客户端生成（uuid4 hex），全部分块与 commit 复用
+  "chunk_index": int,               // 0-based
+  "total_chunks": int,              // ≥2（=1 应走内联）
+  "chunk_b64": str,                 // base64(gzip 流的第 i 段字节)；gzip 流按字节切片
+  "chunk_sha256": str,              // 该段字节摘要（逐段完整性）
+  "request_id": str                 // 幂等键，重传同一分块复用
+}
+→ 200 { "upload_id", "chunk_index", "chunks_received": int }
+
+snapshot.upload.commit = {
+  "workspace_instance_id": str,
+  "upload_id": str,
+  "total_chunks": int,              // 必须与各 chunk 一致
+  "sha256": str,                    // 完整 sqlite bytes 摘要
+  "raw_size": int,
+  "build_context_hash": str?,
+  "snapshot_id": str?,
+  "request_id": str                 // 提交级幂等键；Replay 返回首次结果
+}
+→ 200 同 snapshot.publish 返回形
+```
+
+**组装语义**：daemon 按 `chunk_index` 拼接成完整 gzip 流 → gunzip → 校验
+`raw_size` → `sha256` → 写 daemon 本机临时文件（owner-only ACL）→
+`build_and_publish_blocking(temp_path, …)`（复用既有发布路径）→
+发布后删除临时文件。任一环节失败：不发布、不落库、不残留临时文件。
+
+**大小上限**（冻结）：
+
+| 项 | 上限 | 超限 |
+| --- | --- | --- |
+| 单请求 HTTP body | 64 MiB（既有 `MAX_BODY_BYTES`） | HTTP 413 → 客户端 `E_REQUEST_TOO_LARGE` |
+| 内联 `payload_b64` 解码后 | 32 MiB | `E_PAYLOAD_TOO_LARGE` |
+| 单分块 `chunk_b64` 解码后 | 16 MiB | `E_PAYLOAD_TOO_LARGE` |
+| 组装后 raw sqlite bytes | 512 MiB | `E_PAYLOAD_TOO_LARGE` |
+| 分块数 `total_chunks` | 4096 | `E_PAYLOAD_TOO_LARGE` |
+
+- 上传面的客户端 body 预检按上表 64 MiB 口径，**不复用**通用
+  `HTTP_MAX_BODY_BYTES = 8 MiB`（upload 单独口径）。
+- S2-07 口径：接近 64 MiB body 的上传要么成功，要么 `E_PAYLOAD_TOO_LARGE`；
+  **禁止截断入库**。
+
+**幂等键**（复用 `http_dedup`，PK = `(workspace_instance_id, method, request_id)`，
+24h 保留）：
+
+- `snapshot.upload`（内联）与 `snapshot.upload.commit`：同 `request_id` + 相同
+  params → Replay 返回首次结果；同 `request_id` + 不同 params →
+  `E_REQUEST_ID_REUSE_MISMATCH`（既有语义，`config.py:1822`）。
+- `snapshot.upload.chunk`：同 `request_id` 重传 → Replay，不重复写盘；乱序到达按
+  `chunk_index` 归位。
+- `commit` 时分块不齐 → `E_SNAPSHOT_UPLOAD_CHUNK_MISSING`。
+- `upload_id` 生命周期：自首块到达起 2h 有效；超时 daemon 清理未提交的分块存储；
+  commit 命中已过期 `upload_id` → `E_SNAPSHOT_UPLOAD_EXPIRED`。
+
+**方法注册**：三个方法名纳入 daemon dispatch、capability registry 与
+PROTECTED_MUTATION 幂等面（与 `snapshot.publish` 同级）。
+
+**新增错误码**（稳定字符串；`E_REMOTE_*` 自 §15.3 “预留”转为 S2 实现；
+注册于 `rust_ext/src/daemon/error_codes.rs` 与 `server/config.py`）：
+
+```
+E_REMOTE_DB_PATH_FORBIDDEN        // §16.1
+E_REMOTE_PATH_FORBIDDEN           // §16.1
+E_SNAPSHOT_UPLOAD_SCHEMA_INVALID  // 三表 schema 不符
+E_SNAPSHOT_UPLOAD_HASH_MISMATCH   // sha256/raw_size 校验失败（S2-06）
+E_SNAPSHOT_UPLOAD_CHUNK_MISSING   // commit 时分块不齐
+E_SNAPSHOT_UPLOAD_EXPIRED         // upload_id 过期
+```
+
+`E_PAYLOAD_TOO_LARGE` / `E_REQUEST_TOO_LARGE` / `E_HTTP_DAEMON_UNAVAILABLE`
+复用既有码，不新增。
+
+### 16.3 与既有方法的关系
+
+- `snapshot.publish`：loopback 行为不变；remote profile 下被 §16.1 拒绝，快照入口
+  唯一为 `snapshot.upload`（S2-04）。
+- `build_graph` / `build_directory`（remote）：客户端用既有 Python builder
+  （`db/db_build.py` BuildMixin 等价路径）在本机构建工作库 → 经 `snapshot.upload`
+  上传 → 返回同形字段。落库与符号解析在客户端完成；daemon 只接收产物。
+  约束：不重写 tree-sitter 解析、不新增 Python 运行时依赖。
+- `mcp.common.get_db_path_for_daemon`（remote）：返回 daemon 本机权威任务库路径，
+  仅供客户端 publish 注入层使用，**不得**用于客户端路径上送。
+
+### 16.4 客户端本机执行工具清单与返回形态（remote profile）
+
+**执行位置与路径解析**：MCP 宿主进程（`server/tools/`）。路径解析键 = 客户端
+workspace 根（`CALLWARDEN_WORKSPACE` → MCP `_project_root`，同 F-5 修复的注入层
+口径）；相对路径按该根解析；绝对路径先行 fail-closed（§16.1）。`bind_scope=loopback`
+时维持既有 daemon 执行路径不变（回滚兼容，S2 落地以 remote profile 为条件）。
+
+**返回形态**：与 daemon 侧 handler **同构**（MCP 契约不变，S2-02「结果与客户端本地
+执行一致」的口径），object 形返回追加 `exec_origin: "client"` 元字段：
+
+| 工具 | 客户端执行体 | 返回字段（daemon 既有 + 追加） |
+| --- | --- | --- |
+| `file.read` | 本机按行读；`offset`(默认 0)/`limit`(默认 200) 分页 | `file_path, offset, limit, total_lines, content, exec_origin` |
+| `file.grep` | 本机正则/glob 过滤；`head_limit`(默认 50) | `matches:[{file_path,line,text}], count, exec_origin` |
+| `file.list` | 本机 walk + glob | 裸数组 `[{rel_path,size,is_dir}]`（保持数组契约，不追加字段） |
+| `build_graph` | 本机 builder 全量扫描 → `snapshot.upload` | `ok, scanned, inserted, unchanged, skipped_cached, deleted, archived, skipped_unparsed, symbols, calls, calls_resolved, calls_ambiguous, exec_origin` |
+| `build_directory` | 本机目录扫描（`recursive` 默认 false）→ 目录子集工作库 → `snapshot.upload` | `ok, scanned, refreshed, symbols, calls, calls_resolved, calls_ambiguous, exec_origin` |
+
+- 已知契约漂移（本卡不处理，登记）：Python tool 多发 `include_context`
+  （file.read）/`output_mode`（file.grep），Rust 侧未消费
+  （`tools_workspace.py:209/231` ↔ `fs_handlers.rs`）；remote 客户端执行体同样
+  不消费，保持与 daemon 侧行为一致。
+- **S2-09 落点**：daemon 不可达 / mTLS 握手失败 → 结构化错误
+  `E_HTTP_DAEMON_UNAVAILABLE`（含 endpoint 与原因），**禁止**回退本地 SQLite
+  直读（I1/I2 单轨 + fail-closed）。
+
+### 16.5 S2 验收映射
+
+| 矩阵行 | 契约落点 |
+| --- | --- |
+| S2-01 / S2-02 | §16.4 工具表 + `exec_origin` |
+| S2-03 | §16.2 全协议 + 返回形 |
+| S2-04 | §16.1 `db_path` 拒绝 |
+| S2-05 | §16.1 绝对路径拒绝（客户端先行 + daemon 兜底） |
+| S2-06 | §16.2 hash 契约 + 组装语义 fail-closed |
+| S2-07 | §16.2 大小上限表 |
+| S2-08 | §16.1 矩阵口径（Windows↔WSL、Windows↔Linux，对端 `--allow-remote`） |
+| S2-09 | §16.4 `E_HTTP_DAEMON_UNAVAILABLE` 无本地降级 |

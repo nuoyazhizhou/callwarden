@@ -1,7 +1,6 @@
-//! Enterprise daemon 的有界 UDS JSON-RPC 协议层。
+//! Enterprise daemon 的有界 JSON-RPC 协议层（HTTPS + mTLS 单轨，ADR-002）。
 //!
 //! 协议格式：4 字节大端 header（payload 长度）+ UTF-8 JSON payload。
-//! 附加能力：SCM_RIGHTS 文件描述符传递（仅 Unix）。
 //!
 //! 参考：server/daemon_protocol.py（Python 权威实现）。
 //! 本模块为 Rust 等价实现，供 cw_daemon binary 与 Python daemon 互通。
@@ -9,20 +8,11 @@
 use serde_json::{Map, Value};
 use std::io::{self, Read, Write};
 
-// P1-3（2026-07-21）：修复既有导入错误
-// _recv_msg_with_fd / call_with_fd 在 #[cfg(unix)] 函数签名中使用 RawFd，
-// 但原 use 只在 mod unix 内部，外层函数无法访问。这里在文件顶层补导入。
-#[cfg(unix)]
-use std::os::unix::io::RawFd;
-
 /// 4 字节大端 header（u32）
 pub const HEADER_SIZE: usize = 4;
 
 /// 默认最大消息字节数（8 MB），与 Python 一致
 pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
-
-/// 默认最大 FD 数量（SCM_RIGHTS），与 Python 一致
-pub const DEFAULT_MAX_FDS: usize = 1;
 
 /// IPC 帧或 JSON 请求不合法时返回的错误
 #[derive(Debug, thiserror::Error)]
@@ -41,14 +31,6 @@ pub enum ProtocolError {
     Utf8(#[from] std::string::FromUtf8Error),
     #[error("IO 错误: {0}")]
     Io(#[from] io::Error),
-    #[error("FD 数量必须在 1..={max} 之间")]
-    InvalidFdCount { max: usize },
-    #[error("收到过多 FD: {actual} > {max}")]
-    TooManyFds { actual: usize, max: usize },
-    #[error("SCM_RIGHTS ancillary data 被截断")]
-    AncillaryTruncated,
-    #[error("当前平台不支持 SCM_RIGHTS")]
-    ScmRightsUnsupported,
     #[error("duplicate JSON key: {0}")]
     DuplicateJsonKey(String),
     #[error("{0}")]
@@ -213,282 +195,16 @@ pub fn make_error_response(code: &str, message: &str) -> Value {
 }
 
 // ============================================
-// SCM_RIGHTS FD 传递（仅 Unix）
-// ============================================
-
-#[cfg(unix)]
-mod unix {
-    use super::*;
-    use libc::{
-        c_void, iovec, msghdr, recvmsg, sendmsg, CMSG_DATA, CMSG_FIRSTHDR, CMSG_LEN, CMSG_SPACE,
-        SCM_RIGHTS, SOL_SOCKET,
-    };
-    use std::os::unix::io::{AsRawFd, RawFd};
-    use std::os::unix::net::UnixStream;
-
-    /// 发送 JSON 帧并附带少量 SCM_RIGHTS 文件描述符
-    ///
-    /// 协议：与 send_message 相同，但通过 SCM_RIGHTS ancillary data 携带 FD
-    pub fn send_message_with_fds(
-        sock: &mut UnixStream,
-        message: &Value,
-        fds: &[RawFd],
-        max_bytes: usize,
-    ) -> Result<(), ProtocolError> {
-        if fds.is_empty() || fds.len() > DEFAULT_MAX_FDS {
-            return Err(ProtocolError::InvalidFdCount {
-                max: DEFAULT_MAX_FDS,
-            });
-        }
-        let payload = encode_message(message)?;
-        if payload.len() > max_bytes {
-            return Err(ProtocolError::MessageTooLarge {
-                actual: payload.len(),
-                limit: max_bytes,
-            });
-        }
-        let mut frame = Vec::with_capacity(HEADER_SIZE + payload.len());
-        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-        frame.extend_from_slice(&payload);
-
-        let fd_count = fds.len();
-        let cmsg_space =
-            unsafe { CMSG_SPACE((fd_count * std::mem::size_of::<RawFd>()) as u32) } as usize;
-
-        // 构建 iov
-        let mut iov = iovec {
-            iov_base: frame.as_mut_ptr() as *mut c_void,
-            iov_len: frame.len(),
-        };
-
-        // 构建 cmsg buffer
-        let mut cmsg_buf = vec![0u8; cmsg_space];
-        let mut msg: msghdr = unsafe { std::mem::zeroed() };
-        msg.msg_iov = &mut iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = cmsg_buf.as_mut_ptr() as *mut c_void;
-        // macOS 上 msg_controllen 是 socklen_t (u32)，Linux 上是 size_t (usize)，用 as _ 适配
-        msg.msg_controllen = cmsg_space as _;
-
-        // 填充 cmsg
-        unsafe {
-            let cmsg = CMSG_FIRSTHDR(&msg);
-            if cmsg.is_null() {
-                return Err(ProtocolError::Other("CMSG_FIRSTHDR 返回 null".to_string()));
-            }
-            (*cmsg).cmsg_level = SOL_SOCKET;
-            (*cmsg).cmsg_type = SCM_RIGHTS;
-            // cmsg_len: Linux 上为 size_t (usize)，macOS 上为 socklen_t (u32)
-            // 用 as _ 让编译器根据目标平台自动推导类型
-            (*cmsg).cmsg_len = CMSG_LEN((fd_count * std::mem::size_of::<RawFd>()) as u32) as _;
-            let data_ptr = CMSG_DATA(cmsg) as *mut RawFd;
-            for (i, &fd) in fds.iter().enumerate() {
-                *data_ptr.add(i) = fd;
-            }
-        }
-
-        let ret = unsafe { sendmsg(sock.as_raw_fd(), &msg, 0) };
-        if ret < 0 {
-            return Err(ProtocolError::Io(io::Error::last_os_error()));
-        }
-        // 如果 sendmsg 没发完所有数据，补发剩余
-        let sent = ret as usize;
-        if sent < frame.len() {
-            sock.write_all(&frame[sent..])?;
-        }
-        Ok(())
-    }
-
-    /// 接收 JSON 帧及首包携带的 SCM_RIGHTS FD
-    ///
-    /// 返回 (message, received_fds)
-    pub fn recv_message_with_fds(
-        sock: &mut UnixStream,
-        max_bytes: usize,
-        max_fds: usize,
-    ) -> Result<(Value, Vec<RawFd>), ProtocolError> {
-        let fd_size = std::mem::size_of::<RawFd>();
-        let cmsg_space = unsafe { CMSG_SPACE((max_fds * fd_size) as u32) } as usize;
-
-        // 先用 recvmsg 接收 header + ancillary data
-        let mut header_buf = [0u8; HEADER_SIZE];
-        let mut iov = iovec {
-            iov_base: header_buf.as_mut_ptr() as *mut c_void,
-            iov_len: HEADER_SIZE,
-        };
-        let mut cmsg_buf = vec![0u8; cmsg_space];
-        let mut msg: msghdr = unsafe { std::mem::zeroed() };
-        msg.msg_iov = &mut iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = cmsg_buf.as_mut_ptr() as *mut c_void;
-        // macOS 上 msg_controllen 是 socklen_t (u32)，Linux 上是 size_t (usize)，用 as _ 适配
-        msg.msg_controllen = cmsg_space as _;
-
-        let mut received_fds: Vec<RawFd> = Vec::new();
-        let ret = unsafe { recvmsg(sock.as_raw_fd(), &mut msg, 0) };
-        if ret < 0 {
-            return Err(ProtocolError::Io(io::Error::last_os_error()));
-        }
-        let n = ret as usize;
-        if n == 0 {
-            return Err(ProtocolError::ConnectionClosed);
-        }
-        // 检查 MSG_CTRUNC
-        if msg.msg_flags & libc::MSG_CTRUNC != 0 {
-            return Err(ProtocolError::AncillaryTruncated);
-        }
-
-        // 提取 FDs
-        unsafe {
-            let mut cmsg = CMSG_FIRSTHDR(&msg);
-            while !cmsg.is_null() {
-                if (*cmsg).cmsg_level == SOL_SOCKET && (*cmsg).cmsg_type == SCM_RIGHTS {
-                    let data_ptr = CMSG_DATA(cmsg) as *const RawFd;
-                    // 计算 cmsg 数据部分能容纳多少个 RawFd
-                    let cmsg_data_len =
-                        (*cmsg).cmsg_len as usize - (CMSG_DATA(cmsg) as usize - cmsg as usize);
-                    let fd_count = cmsg_data_len / fd_size;
-                    for i in 0..fd_count {
-                        received_fds.push(*data_ptr.add(i));
-                    }
-                }
-                cmsg = libc::CMSG_NXTHDR(&msg, cmsg);
-                if cmsg.is_null() {
-                    break;
-                }
-            }
-        }
-        if received_fds.len() > max_fds {
-            // 关闭已接收的 FD
-            for fd in &received_fds {
-                unsafe { libc::close(*fd) };
-            }
-            return Err(ProtocolError::TooManyFds {
-                actual: received_fds.len(),
-                max: max_fds,
-            });
-        }
-
-        // header 可能未完全接收（n < HEADER_SIZE），补读
-        let mut header = header_buf[..n].to_vec();
-        if header.len() < HEADER_SIZE {
-            let mut remaining = vec![0u8; HEADER_SIZE - header.len()];
-            sock.read_exact(&mut remaining)?;
-            header.extend_from_slice(&remaining);
-        }
-        let size = parse_header(&header)?;
-        if size == 0 || size as usize > max_bytes {
-            // 关闭已接收的 FD
-            for fd in &received_fds {
-                unsafe { libc::close(*fd) };
-            }
-            return Err(ProtocolError::InvalidMessageSize(size));
-        }
-
-        // 接收 payload
-        let mut payload = vec![0u8; size as usize];
-        sock.read_exact(&mut payload)?;
-        let s = String::from_utf8(payload)?;
-        // 任务 1D2（Req 15/AC26）：frame bytes 先经 strict duplicate-key parser。
-        if let Err(e) =
-            crate::daemon::task_loop::strict_transport::parse_strict_envelope(s.as_bytes())
-        {
-            if e.code == crate::daemon::task_loop::strict_transport::ERR_DUPLICATE_JSON_KEY {
-                // 关闭已接收的 FD
-                for fd in &received_fds {
-                    unsafe { libc::close(*fd) };
-                }
-                return Err(ProtocolError::DuplicateJsonKey(e.message));
-            }
-        }
-        let message: Value = serde_json::from_str(&s)?;
-        if !message.is_object() {
-            // 关闭已接收的 FD
-            for fd in &received_fds {
-                unsafe { libc::close(*fd) };
-            }
-            return Err(ProtocolError::NotJsonObject);
-        }
-        Ok((message, received_fds))
-    }
-}
-
-#[cfg(unix)]
-pub use unix::{recv_message_with_fds, send_message_with_fds};
-
-// ============================================
-// G21/G22: 命名统一包装
-//
-// 规范 daemon-ipc-security.md 中使用了简短命名：
-// - `send_msg`：对应 `send_message`
-// - `_recv_msg_with_fd`：对应 `recv_message_with_fds`（复数 fds）
-// - `call_with_fd`：请求-响应组合（send_msg + _recv_msg_with_fd）
-//
-// 现有代码已实现完整功能，仅函数名与规范文档不一致。这里新增简短别名，
-// 让按规范文档查阅代码的开发者能快速找到对应实现，避免命名困惑。
-//
-// 别名是 zero-cost：直接 re-export，不引入额外间接调用。
-// ============================================
-
-/// G21: `send_msg` 别名，对应规范文档中的简短命名
-///
-/// 等价于 [`send_message`]，详见原函数文档。
-pub fn send_msg<W: Write>(
-    writer: &mut W,
-    message: &Value,
-    max_bytes: usize,
-) -> Result<(), ProtocolError> {
-    send_message(writer, message, max_bytes)
-}
-
-/// G22: `_recv_msg_with_fd` 别名（单数 fd 命名，实际仍接收多个 FD）
-///
-/// 等价于 [`recv_message_with_fds`]（仅在 Unix 下可用）。
-/// 函数名前导下划线表示这是规范文档使用的"内部命名"，与生产代码命名
-/// （复数 fds）保持区分。功能完全相同。
-#[cfg(unix)]
-pub fn _recv_msg_with_fd(
-    sock: &mut std::os::unix::net::UnixStream,
-    max_bytes: usize,
-    max_fds: usize,
-) -> Result<(Value, Vec<RawFd>), ProtocolError> {
-    recv_message_with_fds(sock, max_bytes, max_fds)
-}
-
-/// G21/G22: `call_with_fd` 组合——发送请求 + 接收带 FD 的响应
-///
-/// 便利函数：封装 send_msg + _recv_msg_with_fd 的请求-响应模式。
-/// 适用于 daemon 客户端调用 "send FD → 接收处理结果" 的场景。
-///
-/// 参数：
-/// - `sock`: UDS socket（已连接）
-/// - `request`: 请求 JSON
-/// - `max_bytes`: 单条消息字节上限
-/// - `max_fds`: FD 数量上限
-///
-/// 返回 (response, received_fds)
-#[cfg(unix)]
-pub fn call_with_fd(
-    sock: &mut std::os::unix::net::UnixStream,
-    request: &Value,
-    max_bytes: usize,
-    max_fds: usize,
-) -> Result<(Value, Vec<RawFd>), ProtocolError> {
-    send_msg(sock, request, max_bytes)?;
-    _recv_msg_with_fd(sock, max_bytes, max_fds)
-}
-
-// ============================================
 // canonical_bytes_b64 载荷校验（Req 14.10，跨平台）
 // ============================================
 
-/// canonical_bytes_b64 默认最大载荷字节数（64 MB，与 FD 路径 DEFAULT_MAX_FD_READ_BYTES 对齐）
+/// canonical_bytes_b64 默认最大载荷字节数（64 MB）
 pub const DEFAULT_MAX_CANONICAL_BYTES: usize = 64 * 1024 * 1024;
 
 /// 校验 base64 编码的 canonical bytes 载荷（Req 14.10）。
 ///
-/// Windows 上 SCM_RIGHTS FD 传输不可用，客户端通过 `canonical_bytes_b64` 参数
-/// 直接提交规范化字节。使用前必须校验：
+/// 单轨 HTTPS+mTLS 传输（ADR-002）不支持 FD 传递，客户端通过
+/// `canonical_bytes_b64` 参数直接提交规范化字节。使用前必须校验：
 /// 1. base64 解码成功
 /// 2. 解码后尺寸不超过 `max_bytes` 配置上限
 /// 3. 若请求声明了 `expected_sha256`，实际内容 SHA-256 必须匹配
@@ -790,77 +506,12 @@ mod tests {
 }
 
 // ============================================
-// Unix 专属测试（SCM_RIGHTS FD 传递）
+// canonical_bytes_b64 测试（Req 14.10，跨平台）
 // ============================================
 
-#[cfg(all(unix, test))]
-mod unix_tests {
+#[cfg(test)]
+mod canonical_b64_tests {
     use super::*;
-    use std::os::unix::net::UnixStream;
-    use std::thread;
-
-    /// 验证 SCM_RIGHTS FD 传递 roundtrip
-    #[test]
-    fn test_scm_rights_fd_passing() {
-        let (mut sock_a, mut sock_b) = UnixStream::pair().unwrap();
-
-        // 创建临时文件并打开 FD
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_path = temp_dir.path().join("test_fd.txt");
-        std::fs::write(&temp_path, b"hello fd").unwrap();
-        let file = std::fs::File::open(&temp_path).unwrap();
-        let raw_fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);
-
-        // 发送端：发 JSON + FD
-        let msg = serde_json::json!({"method": "snapshot.publish", "fd_attached": true});
-        let send_result =
-            send_message_with_fds(&mut sock_a, &msg, &[raw_fd], DEFAULT_MAX_MESSAGE_BYTES);
-        if send_result.is_err() {
-            // 某些环境（如无权限的沙箱）可能失败，跳过
-            eprintln!("跳过 SCM_RIGHTS 测试：sendmsg 失败");
-            return;
-        }
-
-        // 接收端：收 JSON + FD
-        let (received_msg, received_fds) =
-            recv_message_with_fds(&mut sock_b, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_FDS).unwrap();
-        assert_eq!(received_msg, msg);
-        assert_eq!(received_fds.len(), 1);
-
-        // 验证接收到的 FD 可读
-        let mut received_file = unsafe { std::fs::File::from_raw_fd(received_fds[0]) };
-        let mut content = String::new();
-        use std::os::unix::io::FromRawFd;
-        received_file.read_to_string(&mut content).unwrap();
-        assert_eq!(content, "hello fd");
-    }
-
-    /// 验证空 FD 列表被拒绝
-    #[test]
-    fn test_empty_fds_rejected() {
-        let (mut sock_a, _sock_b) = UnixStream::pair().unwrap();
-        let msg = serde_json::json!({"method": "test"});
-        let result = send_message_with_fds(&mut sock_a, &msg, &[], DEFAULT_MAX_MESSAGE_BYTES);
-        match result {
-            Err(ProtocolError::InvalidFdCount { .. }) => (),
-            _ => panic!("期望 InvalidFdCount 错误"),
-        }
-    }
-
-    /// 验证过多 FD 被拒绝
-    #[test]
-    fn test_too_many_fds_rejected() {
-        let (mut sock_a, _sock_b) = UnixStream::pair().unwrap();
-        let msg = serde_json::json!({"method": "test"});
-        let fds = [0, 1, 2]; // 3 个 FD，超过 DEFAULT_MAX_FDS=1
-        let result = send_message_with_fds(&mut sock_a, &msg, &fds, DEFAULT_MAX_MESSAGE_BYTES);
-        match result {
-            Err(ProtocolError::InvalidFdCount { .. }) => (),
-            _ => panic!("期望 InvalidFdCount 错误"),
-        }
-    }
-
-    // ---- D0 3.6: validate_canonical_bytes_b64 测试（Req 14.10）----
 
     #[test]
     fn test_canonical_bytes_b64_valid_payload() {

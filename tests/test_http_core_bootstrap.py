@@ -81,8 +81,12 @@ def _echo_request_id(urlopen_mock, *, result=None, results_by_method=None,
 
 def _make_discovered_client(timeout=1.0):
     """创建一个已 mock discover 的 HttpDaemonRpcClient 实例。"""
+    import ssl
+
     from callwarden.server.daemon_client import HttpDaemonRpcClient
     client = HttpDaemonRpcClient(timeout=timeout, verify_health=False, validate_manifest=False)
+    # 单轨 mTLS：urlopen 已被 mock，注入空 SSLContext 避免依赖本机证书。
+    client._ssl_ctx = ssl.create_default_context()
     # 直接设置 _resolved_endpoint 绕过 discover()
     client._resolved_endpoint = "http://127.0.0.1:9999"
     client._manifest = {"manifest_id": "test", "pid": 12345}
@@ -188,15 +192,15 @@ class TestRouteFunctions:
         client = _get_rpc_client_for_route()
         assert isinstance(client, HttpDaemonRpcClient)
 
-    def test_get_rpc_client_legacy_mode(self, monkeypatch):
-        """legacy 模式下返回 UnixDaemonRpcClient 实例。"""
-        from callwarden.server.daemon_client import UnixDaemonRpcClient
+    def test_get_rpc_client_legacy_mode_single_track(self, monkeypatch):
+        """单轨（ADR-002）：legacy 模式也返回 HttpDaemonRpcClient，无 UDS 回退。"""
+        from callwarden.server.daemon_client import HttpDaemonRpcClient
         monkeypatch.setattr(
             "callwarden.server.daemon_client.is_http_transport_enabled",
             lambda: False,
         )
         client = _get_rpc_client_for_route()
-        assert isinstance(client, UnixDaemonRpcClient)
+        assert isinstance(client, HttpDaemonRpcClient)
 
     def test_route_task_write_local(self, monkeypatch):
         """local 模式下 route_task_write 执行 fallback。"""

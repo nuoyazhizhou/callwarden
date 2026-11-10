@@ -71,15 +71,14 @@ pub fn handle_is_rust_replicator_query_rolled_back(
 /// 将 replicator refresh RPC 接入现有 Rust workspace refresh 主链。
 ///
 /// `handle_workspace_file_refresh` 承担 peer/owned-workspace ACL、canonical
-/// bytes/FD 校验、session epoch、CAS、merge、manifest 和 replicate；此 wrapper
+/// bytes 校验、session epoch、CAS、merge、manifest 和 replicate；此 wrapper
 /// 只提供 SRV-014 的方法名，不重新实现或绕过这些控制。
 pub fn handle_daemon_handle_refresh<S: DaemonStateExt>(
     state: &mut S,
     peer: PeerCredential,
     params: &Value,
-    received_fds: &[i32],
 ) -> Result<Value, DaemonRpcError> {
-    state.handle_workspace_file_refresh(peer, params, received_fds, None)
+    state.handle_workspace_file_refresh(peer, params, None)
 }
 
 #[cfg(test)]

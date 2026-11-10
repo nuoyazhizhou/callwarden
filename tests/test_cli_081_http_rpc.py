@@ -99,9 +99,9 @@ def test_cli081_invalid_input_graceful(monkeypatch, capsys):
 
 
 def test_cli081_error_dict_printed(monkeypatch, capsys):
-    """daemon 返回 {"error": ...} → 渲染错误并以 RC=2 退出。
+    """daemon 返回 {"error": ...} → 渲染错误并以非零 RC=1 退出。
 
-    stale 依据：GOV-FIX-08（cli/main.py:5985）起该分支 `cprint(...); sys.exit(2)`，
+    stale 依据：GOV-FIX-08（cli/main.py）起该分支 `cprint(...); sys.exit(1)`，
     旧断言为 `is True`（RC=0 假成功）。
     """
     def _fake_route_write(method, params, fallback):
@@ -110,7 +110,7 @@ def test_cli081_error_dict_printed(monkeypatch, capsys):
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
     with pytest.raises(SystemExit) as ei:
         _handle_completion_review()
-    assert ei.value.code == 2
+    assert ei.value.code == 1
     assert "task not found" in capsys.readouterr().out
 
 
@@ -143,12 +143,11 @@ def test_cli081_daemon_unavailable_fails_closed(monkeypatch):
 def test_cli081_route_returns_inner_result_no_envelope(monkeypatch, capsys):
     """路由返回内层结果（无 {result,degraded} 信封），CLI 直接渲染。
 
-    stale 依据：`_get_rpc_client_for_route()`（server/daemon_client.py:3498）
-    只返回 `HttpDaemonRpcClient` 或 `UnixDaemonRpcClient`；
-    `UnixDaemonRpcClient.call_with_autostart`（:903）为 `return self.call(...)`，
-    不带信封；`HttpDaemonRpcClient` 无该方法故走 `call`。带信封的
-    `DaemonClient.call_with_autostart`（:1217）不在该路由上。旧用例断言
-    「{result, degraded:false} 包装被解包」针对的是路由永不产生的形态。
+    stale 依据：`_get_rpc_client_for_route()`（server/daemon_client.py）
+    单轨只返回 `HttpDaemonRpcClient`（ADR-002：无 UDS 分支）；
+    `HttpDaemonRpcClient` 无 `call_with_autostart`，CLI 经 hasattr 回退到
+    `call`，不带信封。带信封的 `DaemonClient.call_with_autostart` 不在该路由上。
+    旧用例断言「{result, degraded:false} 包装被解包」针对的是路由永不产生的形态。
     """
     def _fake_route_write(method, params, fallback):
         return {"task_id": "T-1", "decision": "pass", "findings": []}

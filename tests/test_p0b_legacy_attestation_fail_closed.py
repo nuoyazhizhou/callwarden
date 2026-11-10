@@ -27,7 +27,7 @@ def _read(path):
 def _reset_http_singleton():
     """单例前后双清，消除跨模块用例顺序依赖。
 
-    同进程内前序用例可能已经创建并缓存 HTTP 单例：``UnixDaemonRpcClient.call``
+    同进程内前序用例可能已经创建并缓存 HTTP 单例：``HttpDaemonRpcClient.call``
     → ``daemon_protocol.send_message`` → ``_is_rust_protocol_rolled_back`` →
     ``_mcp_common._call_daemon_rpc`` → ``get_daemon_client()``（HTTP transport 开启
     时返回 ``HttpDaemonRpcClient.get_instance()``）。该实例的 ``discover()`` 是幂等的
@@ -84,9 +84,12 @@ class TestP0BLegacyAttestClientFailClosed:
             # 直接调用权威 RPC；daemon 不可达时底层 call 必然抛连接级 fail-closed 错误。
             client.call("task.attest_legacy_workspace_binding", dict(_legacy_params()))
         text = str(ei.value)
-        assert "E_HTTP_" in text or "无法连接" in text or "unavailable" in text.lower(), (
-            f"daemon 不可达应抛 E_HTTP_* fail-closed, 实际: {text}"
-        )
+        assert (
+            "E_HTTP_" in text
+            or "E_TLS_REQUIRED" in text
+            or "无法连接" in text
+            or "unavailable" in text.lower()
+        ), f"daemon 不可达应抛 E_HTTP_*/E_TLS_REQUIRED fail-closed, 实际: {text}"
 
 
 class TestP0BLegacyAttestCliFailClosed:
@@ -102,9 +105,7 @@ class TestP0BLegacyAttestCliFailClosed:
         assert "DaemonUnavailableError" in src, "daemon 不可达必须抛 DaemonUnavailableError"
 
     def test_client_method_forwards_to_daemon_no_local_sql(self):
-        """daemon_client 仅透传 daemon，无本地 SQLite 写路径。"""
+        """daemon_client 仅经通用 route_task_write 透传 daemon，无本地 SQLite 写路径。"""
         src = _read(os.path.join(ROOT, "server", "daemon_client.py"))
-        assert "task_attest_legacy_workspace_binding" in src
-        assert 'self.call("task.attest_legacy_workspace_binding"' in src, (
-            "client 必须仅转发 daemon RPC"
-        )
+        assert "route_task_write(" in src, "task 写路由必须经 route_task_write 转发 daemon"
+        assert "sqlite3" not in src, "daemon_client 不得持有本地 SQLite 权威"

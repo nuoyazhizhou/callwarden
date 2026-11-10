@@ -225,14 +225,14 @@ def test_authority_python_module_declares_attribution():
 
 
 def test_unavailable_production_path_is_rust_short_circuit():
-    # 不变量核心：daemon_server 生产 health 路径默认 Rust 短路
-    # （callwarden_core.health_check_all），仅 rollback feature 或
-    # Rust 失败 fail-soft 时才走 Python——Python health_check 无
-    # 生产权威地位，daemon 不可用时也不存在可降级的本地权威路径
-    src = (ROOT / "server" / "daemon_server.py").read_text(encoding="utf-8")
-    assert "health_check_all" in src
-    assert "_rust_health_available()" in src
-    assert "rust_daemon_health_check" in src
+    # 不变量核心：单轨 HTTPS 后无 Python 生产服务器，原 daemon_server
+    # 生产 health 路径随 server/daemon_server.py 整体退役——生产权威
+    # 完全在 Rust daemon（PyO3 health_check_all 短路面）。Python
+    # health_check 无生产权威地位，daemon 不可用时也不存在可降级的
+    # 本地权威路径（no local fallback）
+    assert not (ROOT / "server" / "daemon_server.py").exists()
+    lib = (ROOT / "rust_ext" / "src" / "lib.rs").read_text(encoding="utf-8")
+    assert "health_check_all" in lib
 
 
 def test_no_business_fallback_in_module_doc():

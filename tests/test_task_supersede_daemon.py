@@ -7,14 +7,11 @@ r"""task.supersede P0-H daemon 层耐久性与往返测试（T-1787277487109-758
    （ledger 持久化 = 重启即恢复）；
 3. 历史任务字段不变：status/description/applied_at/closed_at 前后快照一致
    （append-only 语义）；
-4. CLI→RPC→Rust round-trip：CLI 子进程 → Named Pipe → Rust handler → 只读投影回读；
-   （HTTP 传输与 pipe 共用 dispatch.rs 同一 handler；/capabilities 的
-   pending_promotion manifest 由 rust http_server 单元测试覆盖）
+4. CLI→RPC→Rust round-trip：CLI 子进程 → HTTPS/mTLS → Rust handler → 只读投影回读；
 
 前置：Windows + 已构建 cw-daemon.exe（含 P0-H 新代码）。
 """
 
-import json
 import os
 import re
 import shutil
@@ -22,133 +19,82 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-import time
 
 import pytest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PY_EXE = sys.executable
 _CW_PY = os.path.join(_REPO_ROOT, "cw.py")
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-daemon.exe")
 
 _TASK_ID_RE = re.compile(r"T-[0-9A-Za-z-]+")
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
-    reason="task.supersede daemon 测试需要 Windows + Named Pipe",
-)
-
-requires_binaries = pytest.mark.skipif(
-    not os.path.exists(_DAEMON_BIN),
-    reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
+    reason="task.supersede daemon 测试需要 Windows 隔离 daemon",
 )
 
 _AGENT = "adjudicator-workbuddy-v1"
+_REVIEWER_AGENT = "reviewer-supersede-daemon-v1"
 _MODEL = "deepseek-v4"
 _EVIDENCE = "evidence/verdict-pass.json"
 _EVIDENCE_HASH = "sha256:ev-daemon-1"
 
-
-def _daemon_config(tmp: str) -> dict:
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 2,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 2,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
-
-
-def _spawn_daemon(tmp: str, pipe: str, log):
-    config = _daemon_config(tmp)
-    config_path = os.path.join(tmp, "daemon.json")
-    if not os.path.exists(config_path):
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config, f)
-    return subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        stdout=log, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-    )
+_REAL_PKI_DIR = None
 
 
 @pytest.fixture(scope="module")
 def daemon_env():
-    """启动真实隔离 cw-daemon（临时 task DB + 默认 Named Pipe；Windows transport
-    硬编码 `\\.\\pipe\\callwarden-<SID>`，无法自定义管道名——生产 daemon 占用时跳过）。"""
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
-    from callwarden.config import _get_windows_user_sid
+    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。
 
-    pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
-    probe = UnixDaemonRpcClient(socket_path=pipe, timeout=3)
-    try:
-        probe.call("ping")
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过")
-    except Exception:
-        pass
+    隔离 daemon 会生成自己的 CA；客户端使用真实 PKI，故 fixture 内临时设置
+    `CW_PKI_DIR`（隔离 daemon 继承该值，双方证书/CA 一致）。
+    """
+    global _REAL_PKI_DIR
+    from callwarden.config import get_pki_dir
+    from _w3_harness import seed_cli_task_authority, setup_w3_client
 
+    _REAL_PKI_DIR = get_pki_dir()
+    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
     tmp = tempfile.mkdtemp(prefix="cw_supersede_daemon_")
-    log = open(os.path.join(tmp, "daemon.log"), "w", encoding="utf-8")
-    proc = _spawn_daemon(tmp, pipe, log)
-
-    client = UnixDaemonRpcClient(socket_path=pipe, timeout=10)
-    deadline = time.time() + 40
-    ready = False
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            break
-        try:
-            if client.call("ping").get("status") == "ok":
-                ready = True
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    if not ready:
-        log.flush()
-        pytest.fail("隔离 daemon 未在超时内响应")
-
-    task_db = os.path.join(tmp, "callwarden.db")
-    conn = sqlite3.connect(task_db)
+    proc = None
     try:
-        conn.execute(
-            "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (1, 'supersede-daemon', '.', ?1)",
-            (time.time(),),
+        client, inst, endpoint, proc = setup_w3_client(tmp, _REPO_ROOT, ws_id=1)
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        task_db = os.path.join(tmp, "task.db")
+        seed_cli_task_authority(
+            task_db, ws_id=1, name="supersede-daemon",
+            root_path=_REPO_ROOT, instance_id=inst,
         )
-        conn.commit()
-    finally:
-        conn.close()
-
-    yield client, tmp, task_db, proc, pipe, log
-
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+        yield client, tmp, task_db, proc, endpoint
+    except BaseException:
+        if proc is not None and proc.poll() is None:
             proc.kill()
-    if not os.environ.get("CW_KEEP_SUPERSEDE_TMP"):
-        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if not os.environ.get("CW_KEEP_SUPERSEDE_TMP"):
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _cli_env(pipe: str, session: str = "") -> dict:
+def _cli_env(endpoint: str, data_root: str, session: str = "") -> dict:
     env = dict(os.environ)
     env.pop("CW_AGENT_SESSION_ID", None)
     env["CW_DAEMON_MODE"] = "enterprise"
-    env["CW_DAEMON_ENDPOINT"] = pipe
+    env["CW_DAEMON_HTTP_ENDPOINT"] = endpoint
+    env["CW_DAEMON_TRANSPORT"] = "http"
+    env["USERPROFILE"] = os.path.join(data_root, "userhome")
+    env["HOME"] = env["USERPROFILE"]
+    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     env["CALLWARDEN_LANG"] = "zh_CN"
-    env["PYTHONPATH"] = _REPO_ROOT
     if session:
         env["CW_AGENT_SESSION_ID"] = session
     return env
@@ -166,11 +112,11 @@ def _all_out(proc) -> str:
     return (proc.stdout or "") + "\n" + (proc.stderr or "")
 
 
-def _create_via_cli(tmp, pipe, title: str) -> str:
+def _create_via_cli(tmp, endpoint, title: str) -> str:
     proc = _run_cw_cli(
         ["task", "create", "--title", title,
          "--steps", '[{"action": "noop", "target_file": "f.py"}]'],
-        _cli_env(pipe), tmp)
+        _cli_env(endpoint, tmp), _REPO_ROOT)
     assert proc.returncode == 0, f"task create 失败:\n{_all_out(proc)}"
     m = _TASK_ID_RE.search(_all_out(proc))
     assert m, f"task create 未解析 task_id:\n{_all_out(proc)}"
@@ -178,12 +124,13 @@ def _create_via_cli(tmp, pipe, title: str) -> str:
 
 
 def _setup_governance(client, source_task: str, session: str) -> tuple:
-    """注册 adjudicator 身份 + 为 source task 获取 reviewer lease，返回 (token, counter)。
+    """注册 adjudicator/reviewer 身份 + 为 source task 获取 reviewer lease。
 
-    注意：agent_instance_id 留空——CLI 的 supersede parser 无 --agent-instance-id flag；
-    verify_registered_identity 对 instance 仅在"注册非空且与请求不一致"时拒绝，
-    注册为空则跳过该检查（与 task.claim 的 CLI 路径一致）。
+    daemon 治理校验要求 reviewer lease holder 是 active registered reviewer
+    且注册 session 与 lease session 一致；adjudicator 与 reviewer holder 不得
+    是同一 agent/session——因此注册两个不同 agent，reviewer 用独立派生 session。
     """
+    reviewer_session = f"reviewer-{session}"
     client.call("agent.register", {
         "agent_id": _AGENT,
         "identity": {
@@ -194,22 +141,32 @@ def _setup_governance(client, source_task: str, session: str) -> tuple:
             "role": "adjudicator",
         },
     })
+    client.call("agent.register", {
+        "agent_id": _REVIEWER_AGENT,
+        "identity": {
+            "agent_id": _REVIEWER_AGENT,
+            "agent_instance_id": "",
+            "session_id": reviewer_session,
+            "model_id": _MODEL,
+            "role": "reviewer",
+        },
+    })
     lease = client.call("lease.acquire", {
         "task_id": source_task,
         "role": "reviewer",
         "identity": {
-            "agent_id": _AGENT,
+            "agent_id": _REVIEWER_AGENT,
             "agent_instance_id": "",
-            "session_id": session,
+            "session_id": reviewer_session,
             "model_id": _MODEL,
-            "role": "adjudicator",
+            "role": "reviewer",
         },
         "ttl_seconds": 3600,
     })
     return lease["token"], lease["fencing_counter"]
 
 
-def _supersede_via_cli(tmp, pipe, old, new, reason, session, token, counter,
+def _supersede_via_cli(tmp, endpoint, old, new, reason, session, token, counter,
                        request_id) -> subprocess.CompletedProcess:
     return _run_cw_cli(
         ["task", "supersede", old, new, "--reason", reason,
@@ -218,19 +175,18 @@ def _supersede_via_cli(tmp, pipe, old, new, reason, session, token, counter,
          "--lease-token", token, "--fencing-counter", str(counter),
          "--evidence-path", _EVIDENCE, "--evidence-hash", _EVIDENCE_HASH,
          "--request-id", request_id],
-        _cli_env(pipe, session=session), tmp)
+        _cli_env(endpoint, tmp, session=session), _REPO_ROOT)
 
 
-@requires_binaries
 class TestSupersedeDaemonDurability:
     def test_durable_governance_all_rows_same_transaction(self, daemon_env):
-        client, tmp, task_db, _proc, pipe, _log = daemon_env
-        old = _create_via_cli(tmp, pipe, "DUR-OLD")
-        new = _create_via_cli(tmp, pipe, "DUR-NEW")
+        client, tmp, task_db, _proc, endpoint = daemon_env
+        old = _create_via_cli(tmp, endpoint, "DUR-OLD")
+        new = _create_via_cli(tmp, endpoint, "DUR-NEW")
         token, counter = _setup_governance(client, old, "session-dur")
         rid = f"req-dur-{old}"
 
-        proc = _supersede_via_cli(tmp, pipe, old, new, "durable", "session-dur",
+        proc = _supersede_via_cli(tmp, endpoint, old, new, "durable", "session-dur",
                                   token, counter, rid)
         assert proc.returncode == 0 and "已声明" in _all_out(proc), \
             f"supersede 未成功:\n{_all_out(proc)}"
@@ -267,9 +223,9 @@ class TestSupersedeDaemonDurability:
             conn.close()
 
     def test_historical_task_fields_unchanged(self, daemon_env):
-        client, tmp, task_db, _proc, pipe, _log = daemon_env
-        old = _create_via_cli(tmp, pipe, "HIST-OLD")
-        new = _create_via_cli(tmp, pipe, "HIST-NEW")
+        client, tmp, task_db, _proc, endpoint = daemon_env
+        old = _create_via_cli(tmp, endpoint, "HIST-OLD")
+        new = _create_via_cli(tmp, endpoint, "HIST-NEW")
         conn = sqlite3.connect(task_db)
         try:
             before = conn.execute(
@@ -279,7 +235,7 @@ class TestSupersedeDaemonDurability:
             conn.close()
 
         token, counter = _setup_governance(client, old, "session-hist")
-        proc = _supersede_via_cli(tmp, pipe, old, new, "hist", "session-hist",
+        proc = _supersede_via_cli(tmp, endpoint, old, new, "hist", "session-hist",
                                   token, counter, f"req-hist-{old}")
         assert proc.returncode == 0, f"supersede 失败:\n{_all_out(proc)}"
 
@@ -293,19 +249,19 @@ class TestSupersedeDaemonDurability:
         assert before == after, f"历史任务字段被修改: before={before} after={after}"
 
     def test_cli_rpc_rust_roundtrip_projection(self, daemon_env):
-        client, tmp, task_db, _proc, pipe, _log = daemon_env
-        old = _create_via_cli(tmp, pipe, "RT-OLD")
-        new = _create_via_cli(tmp, pipe, "RT-NEW")
+        client, tmp, task_db, _proc, endpoint = daemon_env
+        old = _create_via_cli(tmp, endpoint, "RT-OLD")
+        new = _create_via_cli(tmp, endpoint, "RT-NEW")
         token, counter = _setup_governance(client, old, "session-rt")
         rid = f"req-rt-{old}"
 
-        proc = _supersede_via_cli(tmp, pipe, old, new, "rt", "session-rt",
+        proc = _supersede_via_cli(tmp, endpoint, old, new, "rt", "session-rt",
                                   token, counter, rid)
         assert proc.returncode == 0 and "已声明" in _all_out(proc), \
             f"supersede 未成功:\n{_all_out(proc)}"
 
         # CLI 只读投影（workspace/provenance 字段）
-        q = _run_cw_cli(["task", "superseded", old], _cli_env(pipe), tmp)
+        q = _run_cw_cli(["task", "superseded", old], _cli_env(endpoint, tmp), _REPO_ROOT)
         assert q.returncode == 0
         qout = _all_out(q)
         assert new in qout
@@ -322,66 +278,47 @@ class TestSupersedeDaemonDurability:
 
     def test_restart_replay_same_request_id(self, daemon_env):
         """daemon 重启后同 request_id 重放：ledger 持久化，不追加任何行。"""
-        from callwarden.server.daemon_client import UnixDaemonRpcClient
+        from callwarden.config import get_http_authority_id
+        from callwarden.server.daemon_client import HttpDaemonRpcClient
+        from _w3_harness import find_daemon_binary, spawn_isolated_daemon, wait_manifest
 
-        client, tmp, task_db, proc, pipe, log = daemon_env
-        old = _create_via_cli(tmp, pipe, "RST-OLD")
-        new = _create_via_cli(tmp, pipe, "RST-NEW")
+        client, tmp, task_db, proc, endpoint = daemon_env
+        old = _create_via_cli(tmp, endpoint, "RST-OLD")
+        new = _create_via_cli(tmp, endpoint, "RST-NEW")
         token, counter = _setup_governance(client, old, "session-rst")
         rid = f"req-rst-{old}"
 
-        proc1 = _supersede_via_cli(tmp, pipe, old, new, "rst-1", "session-rst",
+        proc1 = _supersede_via_cli(tmp, endpoint, old, new, "rst-1", "session-rst",
                                    token, counter, rid)
         assert proc1.returncode == 0 and "已声明" in _all_out(proc1), \
             f"首次 supersede 失败:\n{_all_out(proc1)}"
 
-        # 重启 daemon（同一 task DB / config）；先等管道真正释放，避免 bind 冲突
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        deadline = time.time() + 15
-        while time.time() < deadline:
+        # 重启隔离 daemon（同一 data_root/task DB；随机端口，无需等待旧端口释放）
+        if proc.poll() is None:
+            proc.terminate()
             try:
-                UnixDaemonRpcClient(socket_path=pipe, timeout=1).call("ping")
-            except Exception:
-                break  # 管道已释放（连接失败）
-            time.sleep(0.5)
-        time.sleep(1)
-
-        proc2 = None
-        log2 = None
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        bin_path = find_daemon_binary()
+        if bin_path is None:
+            pytest.skip("cw-daemon 二进制不可用（重启前置缺失）")
+        proc2, _env = spawn_isolated_daemon(bin_path, tmp)
         try:
-            log2 = open(os.path.join(tmp, "daemon2.log"), "w", encoding="utf-8")
-            proc2 = _spawn_daemon(tmp, pipe, log2)
-            client2 = UnixDaemonRpcClient(socket_path=pipe, timeout=10)
-            deadline = time.time() + 40
-            ready = False
-            while time.time() < deadline:
-                if proc2.poll() is not None:
-                    break
-                try:
-                    if client2.call("ping").get("status") == "ok":
-                        ready = True
-                        break
-                except Exception:
-                    pass
-                time.sleep(0.5)
-            if not ready:
-                log2.flush()
-                tail = ""
-                if os.path.exists(os.path.join(tmp, "daemon2.log")):
-                    with open(os.path.join(tmp, "daemon2.log"), encoding="utf-8",
-                              errors="replace") as f:
-                        tail = f.read()[-3000:]
-                pytest.fail(f"重启后 daemon 未就绪 (exit={proc2.poll()})\n{tail}")
+            m, man_file = wait_manifest(tmp, proc2)
+            assert m is not None, \
+                f"重启后 daemon 未在超时内落盘 manifest (exit={proc2.poll()})"
+            endpoint2 = m["endpoint"]
+            client2 = HttpDaemonRpcClient(
+                endpoint=endpoint2, authority_id=get_http_authority_id(),
+                manifest_path=man_file)
 
             # 同 request_id 同参数 → 只读重放（ledger 重启后仍在）
-            proc3 = _supersede_via_cli(tmp, pipe, old, new, "rst-1", "session-rst",
+            proc3 = _supersede_via_cli(tmp, endpoint2, old, new, "rst-1", "session-rst",
                                        token, counter, rid)
             assert proc3.returncode == 0 and "已声明" in _all_out(proc3), \
                 f"重启后重放失败:\n{_all_out(proc3)}"
+            assert client2.call("task.superseded_by", {"task_id": old}).get("found") is True
 
             conn = sqlite3.connect(task_db)
             try:
@@ -394,11 +331,9 @@ class TestSupersedeDaemonDurability:
             finally:
                 conn.close()
         finally:
-            if proc2 is not None and proc2.poll() is None:
+            if proc2.poll() is None:
                 proc2.terminate()
                 try:
                     proc2.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     proc2.kill()
-            if log2 is not None:
-                log2.close()

@@ -47,7 +47,7 @@ from callwarden.server.daemon_client import (  # noqa: E402
     DaemonUnavailableError,
 )
 
-DEAD_URL = "http://127.0.0.1:9"
+DEAD_URL = "https://127.0.0.1:9"
 
 # 回滚目标：隔离 daemon 的 task-DB 由 cli_live fixture seed。
 TASK_ID = "T-1787322799980-efcb2090"

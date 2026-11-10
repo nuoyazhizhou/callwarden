@@ -7,7 +7,7 @@ import pytest
 from callwarden.server.daemon_client import (
     DaemonUnavailableError,
     HttpDaemonRpcClient,
-    UnixDaemonRpcClient,
+    HttpDaemonRpcClient,
 )
 
 
@@ -79,7 +79,7 @@ def test_http_snapshot_round_trip_rejects_identity_drift(monkeypatch, tmp_path):
 
 
 def test_unix_snapshot_publish_forwards_authority_identity(monkeypatch):
-    client = UnixDaemonRpcClient.__new__(UnixDaemonRpcClient)
+    client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
     client.call = MagicMock(
         side_effect=[
             {"db_path": r"C:\authority\callwarden.db"},

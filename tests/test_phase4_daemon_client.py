@@ -25,6 +25,15 @@ try:
 except ImportError:
     HAS_RUST = False
 
+from callwarden.config import get_pki_dir  # noqa: E402
+
+# ADR-002 单轨 mTLS：真实 PKI 必须在模块 import 期解析——conftest autouse
+# `_isolate_db_path` 会在每个测试的 fixture 运行前 monkeypatch
+# callwarden.config.CALLWARDEN_DIR 为 tmp 目录，fixture 内再调 get_pki_dir()
+# 将指向空临时 PKI（daemon 自举 CA 但无 owner 身份 → E_MTLS_CLIENT_CERT_MISSING）。
+# 与 test_query_tests_rpc / test_lease_rpc 的 _REAL_PKI_DIR 同形态。
+_REAL_PKI_DIR = get_pki_dir()
+
 
 def _make_test_db(db_path):
     """构造测试用 callwarden.db
@@ -172,8 +181,15 @@ class TestDeriveWorkspaceId:
 
 
 class TestRoutingStats:
-    def test_initial_stats_zero(self):
+    def test_initial_stats_zero(self, monkeypatch):
+        """初始 routing stats 全零（统计器为全局单例，重置后从零开始）。
+
+        local 模式：ADR-002 单轨契约下 is_daemon_ready() 在 auto/enterprise 模式
+        daemon 不可达时 fail-closed 抛 DaemonUnavailableError（不再返回 False）；
+        本测试断言「未就绪」语义，故 monkeypatch 到 local 跳过 RPC 探针。
+        """
         from callwarden.server.daemon_client import DaemonClient
+        monkeypatch.setattr("callwarden.server.daemon_client.get_daemon_mode", lambda: "local")
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         stats = client.get_routing_stats()
@@ -182,9 +198,10 @@ class TestRoutingStats:
         assert stats["total_queries"] == 0
         DaemonClient.reset_instance()
 
-    def test_stats_after_sql_fallback(self):
-        """无 db_path 时走 SQL 回退，sql_fallbacks 增加。"""
+    def test_stats_after_sql_fallback(self, monkeypatch):
+        """无 db_path 时走 SQL 回退，sql_fallbacks 增加（local 模式，同上）。"""
         from callwarden.server.daemon_client import DaemonClient
+        monkeypatch.setattr("callwarden.server.daemon_client.get_daemon_mode", lambda: "local")
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         # 不提供 db_path，应该走 SQL 回退
@@ -221,125 +238,56 @@ def _find_isolated_daemon_binary() -> Path | None:
 
 @pytest.fixture
 def daemon_route_ready(tmp_path, monkeypatch):
-    """保证 TestDaemonRoutingWithRust 六例有可用 daemon：生产端点优先，连不上则自起隔离 daemon。
+    """保证 TestDaemonRoutingWithRust 六例有可用 daemon（ADR-002 单轨 HTTPS+mTLS）。
 
-    设计意图（类 docstring）：这些测试测的是 DaemonClient 的 daemon 优先路由
-    （fail-loud：不允许静默 SQL 回退），daemon 是手段不是对象——故只要求路由
-    统计 daemon_hits>=1 / daemon_ready is True，不断言「哪个 daemon 应答」。
-
-    - 生产端点优先：先以协议级探针（UnixDaemonRpcClient.probe，不触发
-      autostart）试生产端点。Windows 本机常驻 daemon（named pipe）在场，
-      探针即过，行为与修改前完全一致。
-    - 连不上时（Linux CI fresh runner：无 deb 部署无 daemon，autostart 的
-      _start_daemon_linux 只试 systemctl --user，unit 不存在 → 10s 后失败）：
-      按 tests/test_w2_3_query_uds_e2e.py:213-260 real_rust_daemon 的同款形态
-      spawn 隔离 cw-daemon（tmp socket/registry/data root/task db + HOME
-      重定向 + CALLWARDEN_SKIP_AUTO_SETUP），等 socket 就绪后经
-      CW_DAEMON_SOCKET 注入 socket 路径（wsl-local/linux-system authority 的
-      resolve_daemon_endpoint_for_authority 读该 env，config.py:1661），
-      DaemonClient 单例重置后连隔离 daemon。
-    - 二进制未构建（CI 之外环境）：skip 附原因，不 fail。
-
-    Windows 不触发隔离分支：Windows 隔离 named-pipe 有历史 error 5 冲突
-    问题；生产端点不可用时维持 fail-loud 原行为（测试自身以
-    DaemonUnavailableError 失败，与修改前一致）。
+    生产端点在本机不可达（无 manifest → E_HTTP_MANIFEST_MISSING）。按
+    tests/_w3_harness.py setup_w3_client 的同款形态 spawn 隔离 HTTPS daemon，
+    并把进程内 DaemonClient 单例重定向到隔离 daemon：
+      CW_PKI_DIR=真实 PKI（daemon 继承同一 CA；与已验证可连通的
+        test_task_create_subtask_steps._env_with_daemon 同形态）
+      USERPROFILE/HOME=隔离 data root（manifest 发现同源）
+      CW_DAEMON_HTTP_ENDPOINT=隔离端点（显式发现路径）
+    二进制/PKI/端口前置缺失 → skip（不掩盖断言失败）。
     """
     from callwarden.server.daemon_client import DaemonClient
+    from _w3_harness import setup_w3_client
 
+    # CW_PKI_DIR=真实 PKI（模块 import 期求值；conftest autouse _isolate_db_path
+    # 在 fixture 前已 monkeypatch CALLWARDEN_DIR，fixture 内 get_pki_dir() 会
+    # 解析到空临时 PKI → 客户端证书缺失）。先于 USERPROFILE 重定向设置，
+    # 保证 daemon（os.environ.copy() 继承）与客户端同 CA 同身份。
+    monkeypatch.setenv("CW_PKI_DIR", _REAL_PKI_DIR)
+    data_root = str(tmp_path / "w3")
+    os.makedirs(data_root, exist_ok=True)
     DaemonClient.reset_instance()
-    client = DaemonClient.get_instance()
+    proc = None
     try:
-        client._rpc.probe()
-    except Exception:
-        pass
-    else:
-        # 生产端点可用：直接用（Windows 本机路径）
-        try:
-            yield
-        finally:
-            DaemonClient.reset_instance()
-        return
-    DaemonClient.reset_instance()
-
-    if sys.platform == "win32":
-        # 不尝试隔离 named-pipe spawn（历史 error 5 冲突），维持 fail-loud
-        try:
-            yield
-        finally:
-            DaemonClient.reset_instance()
-        return
-
-    binary = _find_isolated_daemon_binary()
-    if binary is None:
-        pytest.skip(
-            "cw-daemon 二进制未构建（rust_ext/target/{debug,release}/cw-daemon 不存在）"
+        harness_rpc, _inst, endpoint, proc = setup_w3_client(
+            data_root, os.getcwd(), ws_id=1,
         )
-
-    socket_path = tmp_path / "callwarden.sock"
-    registry_path = tmp_path / "registry.db"
-    data_root = tmp_path / "data"
-    home = tmp_path / "home"
-    home.mkdir()
-    env = os.environ.copy()
-    env.update(
-        {
-            "HOME": str(home),
-            "CW_DAEMON_SOCKET": str(socket_path),
-            "CW_DAEMON_REGISTRY_DB": str(registry_path),
-            "CW_DAEMON_DATA_ROOT": str(data_root),
-            "CW_DAEMON_TASK_DB": str(tmp_path / "task.db"),
-            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
-            "PYTHONHOME": "",
-            "PYTHONPATH": str(_repo_root()),
-        }
-    )
-    log_path = tmp_path / "daemon.log"
-    with log_path.open("w", encoding="utf-8") as log:
-        daemon = subprocess.Popen(
-            [
-                str(binary),
-                "--socket",
-                str(socket_path),
-                "--registry",
-                str(registry_path),
-                "serve",
-            ],
-            cwd=str(_repo_root()),
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-    try:
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            if daemon.poll() is not None:
-                pytest.fail(
-                    "隔离 cw-daemon 早亡:\n"
-                    + log_path.read_text(encoding="utf-8", errors="replace")
-                )
-            if socket_path.exists():
-                break
-            time.sleep(0.2)
-        else:
-            pytest.fail(
-                "隔离 cw-daemon 未创建 UDS:\n"
-                + log_path.read_text(encoding="utf-8", errors="replace")
-            )
-        # 注入隔离端点：resolve_daemon_endpoint_for_authority（config.py:1660-1661）
-        # 在 wsl-local/linux-system authority 下读 CW_DAEMON_SOCKET；单例重置后
-        # DaemonClient 重新解析端点即连隔离 daemon。
-        monkeypatch.setenv("CW_DAEMON_SOCKET", str(socket_path))
+        if harness_rpc is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        monkeypatch.setenv("CW_DAEMON_MODE", "enterprise")
+        monkeypatch.setenv("CW_DAEMON_HTTP_ENDPOINT", endpoint)
+        monkeypatch.setenv("CW_DAEMON_TRANSPORT", "http")
+        monkeypatch.setenv("CALLWARDEN_SKIP_AUTO_SETUP", "1")
+        monkeypatch.setenv("USERPROFILE", os.path.join(data_root, "userhome"))
+        monkeypatch.setenv("HOME", os.path.join(data_root, "userhome"))
+        monkeypatch.setenv("CW_TASK_WRITE_POLICY", "shared")
+        monkeypatch.delenv("CW_DAEMON_SOCKET", raising=False)
+        monkeypatch.delenv("CW_DAEMON_SOCKET_PATH", raising=False)
+        monkeypatch.delenv("CW_DAEMON_ENDPOINT", raising=False)
         DaemonClient.reset_instance()
         yield
     finally:
         DaemonClient.reset_instance()
-        if daemon.poll() is None:
-            daemon.terminate()
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
             try:
-                daemon.wait(timeout=10)
+                proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                daemon.kill()
-                daemon.wait(timeout=10)
+                proc.kill()
+                proc.wait(timeout=10)
 
 
 @pytest.mark.skipif(not HAS_RUST, reason="callwarden_core not available")
@@ -512,15 +460,23 @@ class TestSQLFallback:
 
 
 class TestDaemonReady:
-    def test_daemon_not_ready_without_workspace(self):
+    def test_daemon_not_ready_without_workspace(self, monkeypatch):
+        """未配置 workspace 时 is_daemon_ready() 为 False（local 模式跳过 RPC 探针。
+
+        auto/enterprise 模式下 daemon 不可达时 is_daemon_ready() fail-closed
+        抛 DaemonUnavailableError（ADR-002 单轨契约）。
+        """
         from callwarden.server.daemon_client import DaemonClient
+        monkeypatch.setattr("callwarden.server.daemon_client.get_daemon_mode", lambda: "local")
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         assert client.is_daemon_ready() is False
         DaemonClient.reset_instance()
 
-    def test_daemon_not_ready_with_nonexistent_db(self):
+    def test_daemon_not_ready_with_nonexistent_db(self, monkeypatch):
+        """db 不存在，不应该发布成功（local 模式，同上）。"""
         from callwarden.server.daemon_client import DaemonClient
+        monkeypatch.setattr("callwarden.server.daemon_client.get_daemon_mode", lambda: "local")
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         client._workspace_instance_id = "nonexistent_ws"
@@ -552,50 +508,78 @@ class TestDaemonEndpointRouting:
         DaemonClient.reset_instance()
 
     def test_auto_mode_autostarts_when_endpoint_is_missing(self):
+        """auto 模式 RPC 不可达 → ensure_http_daemon 尝试唤起一次；窗口耗尽后
+        query.stats（READ_ONLY）进入 Degraded_Mode 直读，而非抛异常（ADR-002 单轨）。"""
         from callwarden.server.daemon_client import DaemonClient, DaemonUnavailableError
 
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
-        client._rpc.probe = MagicMock(side_effect=DaemonUnavailableError("stale socket"))
-        with patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
-            with patch("callwarden.server.daemon_client.ensure_daemon", return_value=None) as start:
-                with patch.object(client, "_sql_fallback_get_stats", return_value={"files": 2}):
-                    assert client.get_stats(db_path="unused.db") == {"files": 2}
-                assert start.call_count == 1
-                assert start.call_args.args[0] == client._rpc.socket_path
-        client._rpc.probe.assert_called_once()
+        client._rpc.call = MagicMock(
+            side_effect=DaemonUnavailableError("endpoint missing")
+        )
+        client._rpc.discover = MagicMock(side_effect=RuntimeError("no manifest"))
+
+        mutex = MagicMock()
+        mutex.try_acquire.return_value = True
+        ensure_tgt = "callwarden.server.daemon_client.ensure_http_daemon"
+        mutex_tgt = "callwarden.server.daemon_client.DaemonMutex"
+        with patch("callwarden.server.daemon_client.get_daemon_mode",
+                   return_value="auto"):
+            with patch(ensure_tgt, return_value=None) as start:
+                with patch(mutex_tgt, return_value=mutex):
+                    result = client.call_with_autostart("query.stats")
+
+        assert start.call_count == 1
+        # discover() 失败 → 传给 ensure_http_daemon 的是空 endpoint
+        assert start.call_args.args[0] == ""
+        # 唤起失败 + query.stats 属 READ_ONLY → 降级直读
+        assert result["degraded"] is True
+        assert result["result"] is None
+        assert result["op_class"] == "read_only"
+        mutex.release.assert_called_once_with()
         DaemonClient.reset_instance()
 
     def test_auto_mode_retries_original_query_after_autostart(self):
+        """唤起成功（readiness_check 通过）→ 在同一 endpoint 上重试原请求并成功。
+
+        注：ADR-002 单轨后 daemon_hits 只在 _remote_query 的 RPC 命中路径上计数；
+        autostart 重试发生在 call_with_autostart 内，不再兼作路由统计。"""
         from callwarden.server.daemon_client import DaemonClient, DaemonUnavailableError
 
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
-        daemon_conn = MagicMock()
         rpc_call = MagicMock(side_effect=[
-            {"workspace_instance_id": "ws-auto"},
+            DaemonUnavailableError("starting"),
             {"files": 3},
         ])
         client._rpc.call = rpc_call
-        client._rpc.probe = MagicMock(side_effect=DaemonUnavailableError("not ready"))
-        client._rpc.publish_snapshot = MagicMock()
-        client._rpc._probe_connection = MagicMock(return_value=True)
+        client._rpc.discover = MagicMock(
+            return_value="https://127.0.0.1:18443"
+        )
+        client._rpc.verify_health = MagicMock(
+            return_value={"status": "ok"}
+        )
 
         def fake_ensure(endpoint, **kwargs):
-            assert endpoint == client._rpc.socket_path
-            kwargs["readiness_check"](daemon_conn)
-            return daemon_conn
+            kwargs["readiness_check"](endpoint)
+            return endpoint
 
-        with patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
-            with patch("callwarden.server.daemon_client.ensure_daemon", side_effect=fake_ensure):
-                with patch.object(client, "_sql_fallback_get_stats") as sql:
-                    result = client.get_stats(db_path="unused.db")
-        assert result == {"files": 3}
-        daemon_conn.close.assert_called_once_with()
-        client._rpc._probe_connection.assert_called_once_with(daemon_conn)
-        client._rpc.publish_snapshot.assert_called_once()
-        sql.assert_not_called()
-        assert client.daemon_hits == 1
+        mutex = MagicMock()
+        mutex.try_acquire.return_value = True
+        ensure_tgt = "callwarden.server.daemon_client.ensure_http_daemon"
+        mutex_tgt = "callwarden.server.daemon_client.DaemonMutex"
+        with patch("callwarden.server.daemon_client.get_daemon_mode",
+                   return_value="auto"):
+            with patch(ensure_tgt, side_effect=fake_ensure):
+                with patch(mutex_tgt, return_value=mutex):
+                    result = client.call_with_autostart("query.stats")
+
+        assert result == {"result": {"files": 3}, "degraded": False}
+        assert rpc_call.call_count == 2
+        client._rpc.verify_health.assert_called_once_with(
+            "https://127.0.0.1:18443"
+        )
+        mutex.release.assert_called_once_with()
         DaemonClient.reset_instance()
 
     def test_enterprise_mode_does_not_fallback_when_ping_fails(self):
@@ -612,7 +596,7 @@ class TestDaemonEndpointRouting:
         DaemonClient.reset_instance()
 
     def test_public_call_with_autostart_uses_protocol_readiness_probe(self):
-        """公开 RPC 入口不能绕过 auto 的协议级 readiness probe。"""
+        """公开 RPC 入口不能绕过 auto 的协议级 readiness probe（verify_health）。"""
         from callwarden.server.daemon_client import DaemonClient, DaemonUnavailableError
 
         DaemonClient.reset_instance()
@@ -621,37 +605,44 @@ class TestDaemonEndpointRouting:
             DaemonUnavailableError("starting"),
             {"files": 4},
         ])
-        client._rpc._probe_connection = MagicMock(return_value=True)
-        daemon_conn = MagicMock()
+        client._rpc.discover = MagicMock(
+            return_value="https://127.0.0.1:18443"
+        )
+        verify_health = MagicMock(return_value={"status": "ok"})
+        client._rpc.verify_health = verify_health
 
         def fake_ensure(endpoint, **kwargs):
-            assert endpoint == client._rpc.socket_path
-            kwargs["readiness_check"](daemon_conn)
-            return daemon_conn
+            kwargs["readiness_check"](endpoint)
+            return endpoint
 
         mutex = MagicMock()
         mutex.try_acquire.return_value = True
-        with patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
-            with patch("callwarden.server.daemon_client.ensure_daemon", side_effect=fake_ensure):
-                with patch("callwarden.server.daemon_client.DaemonMutex", return_value=mutex):
+        ensure_tgt = "callwarden.server.daemon_client.ensure_http_daemon"
+        mutex_tgt = "callwarden.server.daemon_client.DaemonMutex"
+        with patch("callwarden.server.daemon_client.get_daemon_mode",
+                   return_value="auto"):
+            with patch(ensure_tgt, side_effect=fake_ensure):
+                with patch(mutex_tgt, return_value=mutex):
                     result = client.call_with_autostart("query.stats")
 
         assert result == {"result": {"files": 4}, "degraded": False}
-        client._rpc._probe_connection.assert_called_once_with(daemon_conn)
-        daemon_conn.close.assert_called_once_with()
+        # readiness probe 必须是协议级 verify_health，且以 endpoint 字符串为入参
+        verify_health.assert_called_once_with("https://127.0.0.1:18443")
         mutex.release.assert_called_once_with()
         DaemonClient.reset_instance()
+
+        # 后半段：local 模式两次 SQL 回退 → routing stats
         client = DaemonClient.get_instance()
+        with patch("callwarden.server.daemon_client.get_daemon_mode",
+                   lambda: "local"):
+            with patch.object(client, "_sql_fallback_get_stats", return_value={}):
+                client.get_stats(db_path=None)
 
-        # 一次 SQL 回退
-        with patch.object(client, '_sql_fallback_get_stats', return_value={}):
-            client.get_stats(db_path=None)
+            with patch.object(client, "_sql_fallback_search_symbols",
+                              return_value=[]):
+                client.search_symbols("test", db_path=None)
 
-        # 再次 SQL 回退
-        with patch.object(client, '_sql_fallback_search_symbols', return_value=[]):
-            client.search_symbols("test", db_path=None)
-
-        stats = client.get_routing_stats()
+            stats = client.get_routing_stats()
         assert stats["sql_fallbacks"] == 2
         assert stats["daemon_hits"] == 0
         assert stats["total_queries"] == 2

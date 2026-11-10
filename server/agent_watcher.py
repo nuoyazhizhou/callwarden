@@ -103,7 +103,7 @@ class AgentWatcher:
 
         Args:
             agent_session: AgentSession 实例（持有 session_id/epoch/seq）
-            daemon_rpc_client: DaemonClient 单例（或 UnixDaemonRpcClient）
+            daemon_rpc_client: HttpDaemonRpcClient 单例
             workspace_instance_id: workspace 标识符（16 位 hex）
             watch_dir: 监控的目录绝对路径
             supported_exts: 支持的文件扩展名集合（如 {".py", ".rs"}）

@@ -52,7 +52,7 @@ _FAKE_DAEMON_PROMETHEUS = (
 )
 
 
-class _FakeDaemonRpcClient:
+class _FakeHttpDaemonRpcClient:
     """伪 daemon RPC 客户端：返回 Rust daemon metrics.snapshot/prometheus 形状。"""
 
     def __init__(self, socket_path=None, **kwargs):
@@ -116,7 +116,7 @@ def test_metrics_cli_from_file_missing_returns_error(capsys):
 def test_metrics_cli_json_output_has_daemon_gauges(capsys):
     """CLI json 输出来自 daemon RPC 快照（daemon.* gauge）。"""
     with patch(
-        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", _FakeDaemonRpcClient
+        "callwarden.cli.daemon_commands.HttpDaemonRpcClient", _FakeHttpDaemonRpcClient
     ):
         rc = run_daemon_command(["metrics", "--format", "json"], include_serve=False)
     out = capsys.readouterr().out
@@ -134,7 +134,7 @@ def test_metrics_cli_json_output_has_daemon_gauges(capsys):
 def test_metrics_cli_prometheus_output_starts_with_help(capsys):
     """CLI prometheus 输出直接透传 daemon metrics.prometheus 文本。"""
     with patch(
-        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", _FakeDaemonRpcClient
+        "callwarden.cli.daemon_commands.HttpDaemonRpcClient", _FakeHttpDaemonRpcClient
     ):
         rc = run_daemon_command(
             ["metrics", "--format", "prometheus"], include_serve=False
@@ -151,7 +151,7 @@ def test_metrics_cli_prometheus_output_starts_with_help(capsys):
 def test_metrics_cli_name_filter_returns_subset(capsys):
     """--name 过滤后只返回指定指标（daemon RPC 快照）。"""
     with patch(
-        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", _FakeDaemonRpcClient
+        "callwarden.cli.daemon_commands.HttpDaemonRpcClient", _FakeHttpDaemonRpcClient
     ):
         rc = run_daemon_command(
             ["metrics", "--name", "daemon.uptime_seconds"], include_serve=False
@@ -170,7 +170,7 @@ def test_metrics_cli_name_filter_returns_subset(capsys):
 def test_metrics_cli_name_filter_nonexistent_returns_found_false(capsys):
     """--name 不存在时 found=False。"""
     with patch(
-        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", _FakeDaemonRpcClient
+        "callwarden.cli.daemon_commands.HttpDaemonRpcClient", _FakeHttpDaemonRpcClient
     ):
         rc = run_daemon_command(
             ["metrics", "--name", "nonexistent_metric"], include_serve=False

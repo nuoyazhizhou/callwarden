@@ -237,7 +237,7 @@ def test_search_missing_query_invalid_params(live_daemon):
 def test_search_daemon_unavailable_fail_closed():
     """daemon 端点不可达：E_HTTP_DAEMON_UNAVAILABLE fail-closed。"""
     from callwarden.config import get_http_authority_id
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9", authority_id=get_http_authority_id())
+    c = HttpDaemonRpcClient(endpoint="https://127.0.0.1:9", authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError) as ei:
         c.call("query.search", {
             "workspace_instance_id": "ws-cli02-x",

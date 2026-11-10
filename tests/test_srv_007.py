@@ -11,7 +11,7 @@
   不再导入 callwarden.config.DB_PATH。
 - 只读 authority 读：daemon 不可用时 fail-soft 视为未回滚（返回 False），
   与 SRV-003 is_rust_backup_rolled_back 的 rollback 探测语义一致，绝不回退本地 SQLite。
-- 协议自依赖环：daemon_protocol 是 RPC 帧传输层本身（UnixDaemonRpcClient 经
+- 协议自依赖环：daemon_protocol 是 RPC 帧传输层本身（HttpDaemonRpcClient 经
   send_message/recv_message/parse_response 传输），缓存过期瞬间存在
   _is_rust_protocol_rolled_back → RPC → send_message → _is_rust_protocol_rolled_back
   递归；SRV-007 引入 _ROLLBACK_QUERY_STATE in-flight 重入守卫（in-flight 时
