@@ -9,7 +9,7 @@ CLI分类21，顶层84；快照叶子233，提取232，未提取['server']。
 MCP分类17，工具243；source/matrix/category名字集合静态一致。
 固化schema集合一致=True；缺当前工具=[]；历史额外项=[]。漂移阻断清单冻结，不能凭总数相等补绿。
 CLI snapshot未与当前runtime/argparse比对；MCP未取wire runtime schema。参数表亦为固化快照，默认值/类型/互斥和语义均待复核。
-skip reason语法分布：字符串字面量292/498；非字面量表达式183、无显式reason23。这是文本提取能力，不是根因归因比例；全部498处root_cause待复核（GAP-16）。importorskip模块名见condition_or_module，不等于reason。
+skip reason语法分布：字符串字面量267/456；非字面量表达式167、无显式reason22。这是文本提取能力，不是根因归因比例；全部456处root_cause待复核（GAP-16）。importorskip模块名见condition_or_module，不等于reason。
 所有行状态为待合同化/未计入语义覆盖，表示未完成逐入口证据映射，不表示存量测试完全不存在。
 
 ## 2. 每行的合同义务
