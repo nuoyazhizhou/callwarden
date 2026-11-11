@@ -11,7 +11,6 @@ import time
 
 import pytest
 
-from _w3_harness import _prereq_unavailable_reason as prereq_unavailable_reason
 
 # native 构建前置缺失标记：保守白名单，只认链接器/原生库缺失。
 NATIVE_BUILD_PREREQ_MARKERS = (

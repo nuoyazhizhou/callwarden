@@ -9,7 +9,6 @@
 import json
 import os
 
-import pytest
 
 from callwarden.cli import main as climain
 from callwarden.server import _mcp_common

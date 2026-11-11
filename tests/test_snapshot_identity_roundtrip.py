@@ -7,7 +7,6 @@ import pytest
 from callwarden.server.daemon_client import (
     DaemonUnavailableError,
     HttpDaemonRpcClient,
-    HttpDaemonRpcClient,
 )
 
 

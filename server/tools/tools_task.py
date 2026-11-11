@@ -25,9 +25,7 @@ from typing import Any, Dict, Optional
 
 from .._mcp_common import (
     _get_daemon_client,  # noqa: F401 —— re-export facade：测试与 legacy HTTP 路径经本模块访问
-    _get_db_path_for_daemon,
     _resolve_mcp_project_root,
-    get_db,
 )
 
 from mcp.server.fastmcp import FastMCP

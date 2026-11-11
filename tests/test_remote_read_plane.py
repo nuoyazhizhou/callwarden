@@ -34,7 +34,6 @@ rust_ext/src/daemon/snapshot_state.rs 的 `s2_upload_tests`（cargo test）与
 """
 
 import os
-import sys
 
 import pytest
 
@@ -638,10 +637,10 @@ class TestS208CrossOsReadOnlyMatrix:
 
     启用方式（在 Windows 端）：
       set CW_S2_REMOTE_ENDPOINT=https://<对侧 IP>:4014
-      set CW_S2_REMOTE_CERT=C:\path\to\client.crt
-      set CW_S2_REMOTE_KEY=C:\path\to\client.key
-      set CW_S2_REMOTE_CA=C:\path\to\remote-daemon-ca.crt
-      set CW_S2_REMOTE_ROOT=C:\path\to\client\workspace
+      set CW_S2_REMOTE_CERT=C:\\path\to\\client.crt
+      set CW_S2_REMOTE_KEY=C:\\path\to\\client.key
+      set CW_S2_REMOTE_CA=C:\\path\to\remote-daemon-ca.crt
+      set CW_S2_REMOTE_ROOT=C:\\path\to\\client\\workspace
     对侧 daemon 需 bind_scope=remote（manifest v2）。反方向（Linux 客户端
     → Windows daemon）由 CI 矩阵在对侧 OS 上以同款 env 运行本文件承载。
     """

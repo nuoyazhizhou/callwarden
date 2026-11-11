@@ -31,7 +31,6 @@ import shutil
 import sqlite3
 import sys
 import tempfile
-import time
 
 import pytest
 
