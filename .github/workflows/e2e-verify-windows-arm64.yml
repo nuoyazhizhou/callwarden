@@ -1,0 +1,222 @@
+# P2-H Step 1b: Windows arm64 artifact E2E 验证（T-9，2026-11-11）
+# 设计文档：docs/design/rust-only-parser-cutover-plan.md §8 Phase 6
+#
+# 背景（T-9）：pyinstaller-build.yml 矩阵含 windows-11-arm 且发布
+# callwarden-windows-arm64.zip，但三个 e2e-verify 均无对应验证——
+# arm64 frozen 包零 E2E 直接发布。本 workflow 补齐该缺口；
+# 仅验证 local bundle 角色（client/agent bundle 仅 Linux 构建，与 amd64 一致）。
+#
+# 平台约束：windows-arm64 上 cryptography 仅 46.0.x 系列有 win_arm64 wheel
+# （43-45/47-49 均无）。mcp[rich] → pyjwt[crypto] → cryptography 会拉最新版
+# 导致源码编译失败。沿用 pyinstaller-build.yml 的 constraints 方案：
+# cryptography==46.0.3 约束所有 pip 调用，防止升级回退。
+#
+# 触发：手动 workflow_dispatch、tag push (v*)、或 PR 改动 release/
+#
+# 验收（待 CI）：CI 无法本地验证；tag run 验证待 CI。注入失败 E2E
+# （临时改 EXPECTED_LANGUAGES）后 tag run 必须红、dispatch run 绿但
+# summary 置顶横幅（T-8 阻塞语义内建）。
+
+name: P2-H E2E Windows arm64
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_step5:
+        description: '跳过 step5（全量 build + refresh + watcher）'
+        type: boolean
+        default: false
+      skip_step7:
+        description: '跳过 step7（schema upgrade/rollback）'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - '.github/workflows/e2e-verify-windows-arm64.yml'
+      - '.github/workflows/e2e/**'
+      - 'release/**'
+      - 'pyproject.toml'
+      - 'rust_ext/**'
+      - 'cw.py'
+      - 'callwarden/**'
+      - 'db/**'
+      - 'server/**'
+      - 'cli/**'
+      - 'parsers/**'
+  pull_request:
+    paths:
+      - '.github/workflows/e2e-verify-windows-arm64.yml'
+      - '.github/workflows/e2e/**'
+      - 'release/**'
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p2h-windows-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-arm64-e2e:
+    name: Windows arm64 E2E (local bundle)
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
+
+      - name: Build Rust extension
+        run: python release/build.py --rust
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          # T-9：windows-arm64 cryptography 约束（仅 46.0.x 有 win_arm64 wheel）。
+          # constraints 文件约束所有 pip 调用，防止后续安装升级 cryptography。
+          $cwConstraints = "$env:RUNNER_TEMP\cw_constraints.txt"
+          "cryptography==46.0.3" | Out-File -FilePath $cwConstraints -Encoding ascii
+          python -m pip install -c $cwConstraints --prefer-binary --retries 5 --timeout 60 "cryptography==46.0.3"
+          # 冻结包只安装经过审计的运行时白名单，不安装 requirements.txt/[all]
+          python -m pip install -c $cwConstraints --prefer-binary --retries 5 --timeout 60 -r release/pyinstaller/requirements-build.txt
+          # 项目依赖已经由白名单提供，禁止 pip 再解析可选依赖
+          python -m pip install -c $cwConstraints . --no-deps
+          # psutil 用于 step8 RSS 度量
+          python -m pip install -c $cwConstraints --prefer-binary --retries 5 --timeout 60 psutil
+
+      - name: Run PyInstaller
+        run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+
+      - name: Smoke-test frozen executables (pre-E2E)
+        shell: pwsh
+        run: |
+          .\dist\callwarden\cw.exe --version
+          .\dist\callwarden\cw.exe --help | Out-Null
+          .\dist\callwarden\cw.exe server --check-imports
+
+      - name: Package artifact (zip)
+        shell: pwsh
+        run: |
+          $artifact = "callwarden-windows-arm64.zip"
+          Compress-Archive -Path 'dist\callwarden' -DestinationPath $artifact
+          Write-Host "Artifact size: $((Get-Item $artifact).Length) bytes"
+
+      - name: Run E2E verification (8 steps)
+        shell: pwsh
+        env:
+          SKIP_STEP5: ${{ inputs.skip_step5 }}
+          SKIP_STEP7: ${{ inputs.skip_step7 }}
+          # T-8：非 workflow_dispatch 触发（tag push v* / PR）时 E2E 非零退出
+          # 必须阻断流水线；dispatch 形态保留 advisory，失败状态写 GITHUB_ENV
+          # 由 Job summary 置顶横幅呈现。
+          E2E_BLOCKING: ${{ github.event_name != 'workflow_dispatch' }}
+        run: |
+          $skip5 = $env:SKIP_STEP5
+          $skip7 = $env:SKIP_STEP7
+          $extraArgs = @()
+          if ($skip5 -eq 'true') { $extraArgs += '--skip-step5' }
+          if ($skip7 -eq 'true') { $extraArgs += '--skip-step7' }
+
+          python `
+            .github/workflows/e2e/run_platform_e2e.py `
+            --bundle dist/callwarden `
+            --pyz-toc build/callwarden/PYZ-00.toc `
+            --artifact callwarden-windows-arm64.zip `
+            --platform windows-arm64 `
+            --role local `
+            --report e2e-report-windows-arm64.json `
+            @extraArgs
+
+          $exitCode = $LASTEXITCODE
+          Write-Host "E2E exit code: $exitCode"
+          if ($exitCode -ne 0) {
+            # 失败状态先落 GITHUB_ENV：Job summary（if: always()）据此置顶横幅
+            "E2E_LOCAL_FAILED=1" | Out-File -FilePath $env:GITHUB_ENV -Append
+            if ($env:E2E_BLOCKING -eq 'true') {
+              Write-Host "::error::E2E 验证失败（退出码 $exitCode），阻塞本次发布门禁（T-8）"
+              exit 1
+            }
+            Write-Host "::warning::E2E 验证返回非零退出码 $exitCode，请检查 e2e-report-windows-arm64.json（dispatch 形态，advisory）"
+          }
+
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: e2e-report-windows-arm64
+          path: |
+            e2e-report-windows-arm64.json
+            callwarden-windows-arm64.zip
+            dist/callwarden/e2e-step2-windows-arm64-bundle-report.json
+          retention-days: 30
+
+      - name: Job summary
+        if: always()
+        shell: pwsh
+        env:
+          # step 级 env 不跨步传递，此处重新声明以判定横幅形态
+          E2E_BLOCKING: ${{ github.event_name != 'workflow_dispatch' }}
+        run: |
+          $reportPath = "e2e-report-windows-arm64.json"
+          # T-8：失败横幅置顶——blocking 形态已在 E2E 步 exit 1 阻断流水线；
+          # dispatch 形态流水线绿，横幅是唯一可见失败信号，不得埋在报告详情下
+          if ($env:E2E_LOCAL_FAILED -eq '1') {
+            if ($env:E2E_BLOCKING -eq 'true') {
+              "> **E2E FAIL（阻断形态）**: E2E 非零退出，已阻断本次发布门禁（T-8）。" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            } else {
+              "> **E2E FAIL（advisory 形态）**: E2E 非零退出，报告已上传，等待人工复核裁决。" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            }
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+          if (Test-Path $reportPath) {
+            $report = Get-Content $reportPath -Raw | ConvertFrom-Json
+            "## P2-H Windows arm64 E2E 报告" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "**Overall status**: $($report.overall_status)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "### 步骤结果" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "| Step | Status |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "|------|--------|" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            $stepNames = @(
+              "step2_static_inspection",
+              "step3_no_system_python",
+              "step4_minimal_parse",
+              "step5_full_build_and_refresh",
+              "step6_client_daemon_query",
+              "step7_schema_upgrade_rollback",
+              "step8_performance_report"
+            )
+            foreach ($name in $stepNames) {
+              $step = $report.$name
+              if ($step) {
+                "| $name | $($step.status) |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              }
+            }
+            if ($report.all_errors -and $report.all_errors.Count -gt 0) {
+              "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "### 错误" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              foreach ($err in $report.all_errors) {
+                "- $err" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              }
+            }
+          } else {
+            "## P2-H Windows arm64 E2E 报告未生成" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
