@@ -1,15 +1,24 @@
-"""批次3-B Rust daemon 接线缺口修复验证测试（G10/G11/G20/G21/G22/G29）。
+"""批次3-B Rust daemon 接线缺口修复验证测试（G11/G29）。
 
-验证 _feature_matrix.md 中 6 个 🟡 部分完成条目的 Rust 端修复：
+验证 _feature_matrix.md 中 Rust 端接线修复（当前仍生效的条目）：
 
-- G10/G20 memfd 四重校验：新增 rust_ext/src/daemon/memfd.rs 模块 +
-  workspace.rs handle_workspace_file_refresh 接入 read_from_fd_with_validation
 - G11 Replicator 注入到 Rust refresh 主路径：DaemonConfig + WorkspaceDaemonState +
   SnapshotDaemonState + cw_daemon.rs state_factory + workspace.rs Replicator 创建点
-- G21/G22 send_msg / _recv_msg_with_fd / call_with_fd 命名统一包装：
-  protocol.rs 新增三个别名函数
 - G29 QueryBudget：新增 rust_ext/src/daemon/budget.rs 模块 + frontier.rs
   AffectedFrontier.partial + compute_frontier_with_budget + bfs_*_with_budget
+
+【已删除的守卫（登记，勿复活）】
+- G10/G20 memfd 四重（后六重）校验：ef28ab9（UDS→HTTPS+mTLS 单轨化，ADR-002）
+  整体删除 rust_ext/src/daemon/memfd.rs、test_phase5_g10_memfd_e2e.py 及
+  workspace.rs 的 read_from_fd_with_validation 调用点——SCM_RIGHTS/memfd FD
+  传递面在单轨架构下无存在路径，属有意移除而非迁移（protocol.rs 的
+  recv_message_with_fds 一并删除，见 _feature_matrix.md G10/G20 行 ⊘）。
+  对应测试类 TestG1020MemfdValidation 同步删除；其中与 memfd 无关的
+  workspace.rs「read_to_end 必须有界」守卫保留为
+  TestWorkspaceBoundedReads（gz 解压路径仍在）。
+- G21/G22 send_msg/_recv_msg_with_fd/call_with_fd 命名别名：ef28ab9 随 FD 面
+  删除 protocol.rs 三个别名函数，对应测试类 TestG2122NamingAliases 同步删除
+  （见 _feature_matrix.md G21/G22 行 ⊘）。
 
 测试策略：源码字符串匹配（不依赖 cargo build，Windows 也能跑）。
 对于需要在 Linux 实际跑 daemon 的场景，留给 E2E 测试覆盖。
@@ -36,74 +45,16 @@ def _read_daemon_module(name):
 
 
 # ============================================================
-# G10/G20: memfd 四重校验
+# G10/G20: memfd 四重校验 —— 已随 ef28ab9 单轨化移除（见模块 docstring 登记）；
+# 仅保留与 memfd 无关的 workspace.rs 有界读取守卫。
 # ============================================================
 
 
-class TestG1020MemfdValidation:
-    """G10/G20: 新增 memfd.rs 模块 + workspace.rs FD 读取路径接入。"""
+class TestWorkspaceBoundedReads:
+    """workspace.rs 的 read_to_end 必须出现在有界读取函数体内（.take() 限容）。"""
 
-    def test_g1020_memfd_module_exists(self):
-        """rust_ext/src/daemon/memfd.rs 应存在。"""
-        path = os.path.join(DAEMON_DIR, "memfd.rs")
-        assert os.path.exists(path), "G10/G20: memfd.rs 模块文件不存在"
-
-    def test_g1020_memfd_module_registered(self):
-        """daemon/mod.rs 应注册 memfd 模块。"""
-        source = _read_daemon_module("mod.rs")
-        assert "pub mod memfd;" in source, "G10/G20: mod.rs 未注册 memfd 模块"
-
-    def test_g1020_memfd_module_has_cfg_unix(self):
-        """memfd.rs 应有 #![cfg(unix)] 限定（FD 路径仅 Unix）。"""
-        source = _read_daemon_module("memfd.rs")
-        assert "#![cfg(unix)]" in source, "G10/G20: memfd.rs 缺少 #![cfg(unix)]"
-
-    def test_g1020_memfd_has_four_validations(self):
-        """memfd.rs 应实现四重校验函数 read_from_fd_with_validation。"""
-        source = _read_daemon_module("memfd.rs")
-        assert "pub fn read_from_fd_with_validation" in source, (
-            "G10/G20: memfd.rs 缺少 read_from_fd_with_validation 函数"
-        )
-        # 四重校验关键标志
-        assert "S_IFREG" in source, "G10/G20: 缺少 S_IFREG 类型校验"
-        assert "st_size" in source, "G10/G20: 缺少 st_size 大小预检"
-        assert "DEFAULT_MAX_FD_READ_BYTES" in source, "G10/G20: 缺少容量上限常量"
-        assert "Sha256" in source, "G10/G20: 缺少 SHA-256 摘要校验"
-
-    def test_g1020_memfd_has_default_max(self):
-        """memfd.rs 应定义 DEFAULT_MAX_FD_READ_BYTES = 64MB。"""
-        source = _read_daemon_module("memfd.rs")
-        assert "64 * 1024 * 1024" in source, (
-            "G10/G20: DEFAULT_MAX_FD_READ_BYTES 不是 64MB"
-        )
-
-    def test_g1020_memfd_has_error_variants(self):
-        """memfd.rs 应定义 FdReadError 枚举（含 5 个变体）。"""
-        source = _read_daemon_module("memfd.rs")
-        assert "pub enum FdReadError" in source, "G10/G20: 缺少 FdReadError 枚举"
-        assert "FstatFailed" in source, "G10/G20: 缺少 FstatFailed 变体"
-        assert "NotRegularFile" in source, "G10/G20: 缺少 NotRegularFile 变体"
-        assert "SizeExceedsLimit" in source, "G10/G20: 缺少 SizeExceedsLimit 变体"
-        assert "ReadFailed" in source, "G10/G20: 缺少 ReadFailed 变体"
-        assert "DigestMismatch" in source, "G10/G20: 缺少 DigestMismatch 变体"
-
-    def test_g1020_workspace_uses_memfd_validation(self):
-        """workspace.rs handle_workspace_file_refresh 应调用 memfd::read_from_fd_with_validation。"""
-        source = _read_daemon_module("workspace.rs")
-        assert "use crate::daemon::memfd;" in source, (
-            "G10/G20: workspace.rs 未 import memfd 模块"
-        )
-        assert "memfd::read_from_fd_with_validation" in source, (
-            "G10/G20: workspace.rs 未调用 read_from_fd_with_validation"
-        )
-        assert "memfd::DEFAULT_MAX_FD_READ_BYTES" in source, (
-            "G10/G20: workspace.rs 未使用 DEFAULT_MAX_FD_READ_BYTES"
-        )
-
-    def test_g1020_workspace_read_to_end_is_bounded(self):
-        """workspace.rs 中 read_to_end 必须出现在有界读取函数体内（.take() 限容）。
-
-        断言收窄说明（2026-10-17，CD-5 D3）：原断言是「任何非注释行出现
+    def test_workspace_read_to_end_is_bounded(self):
+        """断言收窄说明（2026-10-17，CD-5 D3）：原断言是「任何非注释行出现
         read_to_end 即 fail」，这是纯词法扫描，无法识别有界语义变体——
         decompress_gz_bounded（workspace.rs）用 GzDecoder::new(gz)
         .take(cap as u64) 先把读取流量限容再 read_to_end，事后还检查
@@ -148,14 +99,7 @@ class TestG1020MemfdValidation:
                     f"L{i+1} 的函数（fn 行 L{fn_idx+1}）使用 read_to_end "
                     f"但函数体内没有 .take( 限容：非有界读取")
         if violations:
-            pytest.fail("G10/G20: " + "; ".join(violations))
-
-    def test_g1020_workspace_supports_expected_sha256(self):
-        """workspace.rs FD 路径应支持客户端传入 expected_sha256 参数。"""
-        source = _read_daemon_module("workspace.rs")
-        assert "expected_sha256" in source, (
-            "G10/G20: workspace.rs 未支持 expected_sha256 参数"
-        )
+            pytest.fail("workspace bounded read: " + "; ".join(violations))
 
 
 # ============================================================
@@ -268,57 +212,9 @@ class TestG11ReplicatorWiring:
 
 
 # ============================================================
-# G21/G22: 命名统一包装
+# G21/G22: 命名统一包装 —— 已随 ef28ab9 单轨化移除（见模块 docstring 登记）。
+# protocol.rs 现仅保留 send_message/recv_message（无 FD 变体）。
 # ============================================================
-
-
-class TestG2122NamingAliases:
-    """G21/G22: protocol.rs 新增 send_msg / _recv_msg_with_fd / call_with_fd。"""
-
-    def test_g2122_protocol_has_send_msg_alias(self):
-        """protocol.rs 应有 send_msg 函数。"""
-        source = _read_daemon_module("protocol.rs")
-        assert "pub fn send_msg" in source, "G21: 缺少 send_msg 函数"
-
-    def test_g2122_protocol_has_recv_msg_with_fd_alias(self):
-        """protocol.rs 应有 _recv_msg_with_fd 函数。"""
-        source = _read_daemon_module("protocol.rs")
-        assert "pub fn _recv_msg_with_fd" in source, (
-            "G22: 缺少 _recv_msg_with_fd 函数"
-        )
-
-    def test_g2122_protocol_has_call_with_fd(self):
-        """protocol.rs 应有 call_with_fd 请求-响应组合函数。"""
-        source = _read_daemon_module("protocol.rs")
-        assert "pub fn call_with_fd" in source, (
-            "G21/G22: 缺少 call_with_fd 函数"
-        )
-
-    def test_g2122_send_msg_calls_send_message(self):
-        """send_msg 应委托给 send_message。"""
-        source = _read_daemon_module("protocol.rs")
-        # 找 send_msg 函数体，验证它调用 send_message
-        assert "send_message(writer, message, max_bytes)" in source, (
-            "G21: send_msg 未委托给 send_message"
-        )
-
-    def test_g2122_recv_msg_with_fd_calls_recv_message_with_fds(self):
-        """_recv_msg_with_fd 应委托给 recv_message_with_fds。"""
-        source = _read_daemon_module("protocol.rs")
-        assert "recv_message_with_fds(sock, max_bytes, max_fds)" in source, (
-            "G22: _recv_msg_with_fd 未委托给 recv_message_with_fds"
-        )
-
-    def test_g2122_call_with_fd_combines_both(self):
-        """call_with_fd 应组合 send_msg + _recv_msg_with_fd。"""
-        source = _read_daemon_module("protocol.rs")
-        # 验证 call_with_fd 函数体调用 send_msg + _recv_msg_with_fd
-        assert "send_msg(sock, request, max_bytes)" in source, (
-            "G21/G22: call_with_fd 未调用 send_msg"
-        )
-        assert "_recv_msg_with_fd(sock, max_bytes, max_fds)" in source, (
-            "G21/G22: call_with_fd 未调用 _recv_msg_with_fd"
-        )
 
 
 # ============================================================
@@ -414,28 +310,7 @@ class TestG29QueryBudget:
 # ============================================================
 # 集成验证：_feature_matrix.md 状态同步
 # ============================================================
-
-
-class TestFeatureMatrixStatusRust:
-    """_feature_matrix.md 中 6 个 Rust 接线条目状态应为 ✅。"""
-
-    @pytest.mark.parametrize(
-        "gid",
-        ["G10", "G20", "G21", "G22"],
-    )
-    def test_feature_matrix_rust_status_updated(self, gid):
-        """_feature_matrix.md 中对应条目状态应包含 ✅。
-
-        注：G11/G29 经复审回退为 ❌/🟡，不再断言 ✅。
-        """
-        matrix_path = os.path.join(ROOT, "docs", "design", "_feature_matrix.md")
-        source = _read_file(matrix_path)
-        pattern_prefix = f"| {gid} |"
-        lines = source.split("\n")
-        for line in lines:
-            if line.startswith(pattern_prefix):
-                assert "✅" in line, (
-                    f"{gid}: _feature_matrix.md 状态未更新为 ✅，line: {line.strip()}"
-                )
-                return
-        pytest.fail(f"{gid}: _feature_matrix.md 中找不到该条目")
+# 原 TestFeatureMatrixStatusRust 断言 _feature_matrix.md 中 G10/G20/G21/G22
+# 四行状态为 ✅；ef28ab9（HTTPS+mTLS 单轨化）移除 memfd.rs 与 protocol.rs FD
+# 别名后，四行已改记为 ⊘ 已移除（见 _feature_matrix.md），不再有可断言的
+# ✅ 状态，该测试类随之删除；G11/G29 经复审回退本就不断言 ✅。

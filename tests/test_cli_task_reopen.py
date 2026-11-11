@@ -207,7 +207,12 @@ class TestTaskReopenE2E:
         assert route_stub.last_params("task.reopen")["task_id"] == "T-2"
 
     def test_reopen_open_task_fails_e2e(self, db, route_stub, capsys):
-        """open 任务无需 reopen：daemon 错误信封 → CLI 渲染并 RC=2。"""
+        """open 任务无需 reopen：daemon 错误信封 → CLI 渲染并 RC=1。
+
+        退出码口径经 8b8e4a1 统一：「daemon 拒绝/传输失败属运行时失败
+        RC=1，用法错误 RC=2」；daemon 状态拒绝属运行时失败，RC 由 2 改 1。
+        GOV-FIX-08 的核心不变量（禁止 RC=0 假成功）不变。
+        """
         route_stub.reply("task.reopen", {
             "error": "任务当前状态为 'open'，无需重新打开",
             "task_id": "T-3",
@@ -216,19 +221,22 @@ class TestTaskReopenE2E:
         with pytest.raises(SystemExit) as exc_info:
             cli_main._handle_task(_make_argv(task_id="T-3"), db)
         # GOV-FIX-08：daemon/传输错误路径禁止 RC=0 假成功
-        assert exc_info.value.code == 2
+        assert exc_info.value.code == 1
         out = capsys.readouterr().out
         assert "无需重新打开" in out or "失败" in out
 
     def test_reopen_nonexistent_task_e2e(self, db, route_stub, capsys):
-        """任务不存在：daemon 错误信封 → CLI 渲染并 RC=2。"""
+        """任务不存在：daemon 错误信封 → CLI 渲染并 RC=1。
+
+        退出码口径经 8b8e4a1 统一：daemon 权威拒绝属运行时失败 RC=1。
+        """
         route_stub.reply("task.reopen", {
             "error": "未找到任务: T-nonexistent",
             "task_id": "T-nonexistent",
         })
         with pytest.raises(SystemExit) as exc_info:
             cli_main._handle_task(_make_argv(task_id="T-nonexistent"), db)
-        assert exc_info.value.code == 2
+        assert exc_info.value.code == 1
         out = capsys.readouterr().out
         assert "未找到任务" in out or "失败" in out
 

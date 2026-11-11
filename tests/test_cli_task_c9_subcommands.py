@@ -158,28 +158,31 @@ class TestHandlerDispatch:
         assert route_stub.last_params("task.completion_review")["step_id"] == "S-abc"
 
     def test_completion_review_handles_error(self, db, route_stub):
-        """completion-review 对 daemon 回包 error 的处理：fail-closed RC=2
+        """completion-review 对 daemon 回包 error 的处理：fail-closed RC=1
 
-        stale 依据（A 桶：薄客户端 RPC seam）：`cli/main.py:5981-5986` 在
-        `"error" in result` 时打印 task_completion_review_failed 并 `sys.exit(2)`
-        （GOV-FIX-08：socket 传输失败禁止 RC=0 假成功）。旧期望「返回 True」已过期。
+        stale 依据（A 桶：薄客户端 RPC seam）：`cli/main.py` 在
+        `"error" in result` 时打印 task_completion_review_failed 并 `sys.exit(1)`
+        （GOV-FIX-08：socket 传输失败禁止 RC=0 假成功；退出码口径经 8b8e4a1
+        统一为「daemon 拒绝/传输失败属运行时失败 RC=1，用法错误 RC=2」）。
+        旧期望「返回 True」及中间版 RC=2 均已过期。
         """
         route_stub.reply("task.completion_review", {"error": "task not found"})
         task_id = db.task_create(title="test", steps=[], creator="test")
         # daemon 返回 error 属传输/权威失败，禁止 RC=0 假成功
         with pytest.raises(SystemExit) as exc_info:
             cli_main._handle_task(["completion-review", task_id], db)
-        assert exc_info.value.code == 2
+        assert exc_info.value.code == 1
 
     def test_completion_review_handles_missing_db_method(
             self, db, route_stub, monkeypatch):
-        """completion-review 的 local 回落在 db 无方法时 fail-closed RC=2
+        """completion-review 的 local 回落在 db 无方法时 fail-closed RC=1
 
         stale 依据（A 桶：薄客户端 RPC seam）：生产 local 回落（
-        `route_task_write` → `_local_completion_review`，`cli/main.py:5969-5973`）
+        `route_task_write` → `_local_completion_review`）
         中 `hasattr(db, "run_task_completion_review")` 为假则返回 `{"error": ...}`，
-        handler 于 `cli/main.py:5981-5986` `sys.exit(2)`。旧期望「打印不可用并
-        返回 True」已过期（GOV-FIX-08 禁止假成功）。
+        handler 打印失败并 `sys.exit(1)`（GOV-FIX-08 禁止假成功；退出码口径经
+        8b8e4a1 统一为运行时失败 RC=1）。旧期望「打印不可用并返回 True」及
+        中间版 RC=2 均已过期。
         """
         # 从 mixin 类上移除方法（影响所有实例的 hasattr 检查）
         from callwarden.db.db_task_quality import TaskQualityMixin
@@ -190,7 +193,7 @@ class TestHandlerDispatch:
         task_id = db.task_create(title="test", steps=[], creator="test")
         with pytest.raises(SystemExit) as exc_info:
             cli_main._handle_task(["completion-review", task_id], db)
-        assert exc_info.value.code == 2
+        assert exc_info.value.code == 1
 
     def test_split_calls_db_task_split(self, db, route_stub, tmp_path):
         """split handler 经 RPC 路由到 task.split（子任务解析后透传）

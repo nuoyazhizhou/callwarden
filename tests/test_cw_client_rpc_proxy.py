@@ -176,7 +176,8 @@ def test_run_client_mode_no_args_prints_intro_on_linux(capsys):
     assert rc == 0, "无参数应返回 0"
     captured = capsys.readouterr()
     assert "Call Warden Client Mode" in captured.out
-    assert "Connects to Enterprise Daemon via UDS" in captured.out
+    # ef28ab9 单轨化：远程平面 UDS→HTTPS+mTLS，简介文案随之切换
+    assert "Connects to Enterprise Daemon via HTTPS+mTLS" in captured.out
     assert "ping" in captured.out
     assert "toolchain" in captured.out
 
