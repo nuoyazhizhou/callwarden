@@ -6,7 +6,7 @@
 ## 1. 清单与证据边界
 
 CLI分类21，顶层84；快照叶子233，提取232，未提取['server']。
-MCP分类17，工具243；source/matrix/category名字集合静态一致。
+MCP分类17，工具244；source/matrix/category名字集合静态一致。
 固化schema集合一致=True；缺当前工具=[]；历史额外项=[]。漂移阻断清单冻结，不能凭总数相等补绿。
 CLI snapshot未与当前runtime/argparse比对；MCP未取wire runtime schema。参数表亦为固化快照，默认值/类型/互斥和语义均待复核。
 skip reason语法分布：字符串字面量267/456；非字面量表达式167、无显式reason22。这是文本提取能力，不是根因归因比例；全部456处root_cause待复核（GAP-16）。importorskip模块名见condition_or_module，不等于reason。
@@ -307,6 +307,7 @@ C1正常语义；C2逐参数等价类/默认/边界/互斥；C3精确负向及�
 | MCP:file_list | query_search | rust_native / READ_ONLY |  | glob, path | 待合同化；wire快照待复核 |
 | MCP:file_read | query_search | rust_native / READ_ONLY | file_path | include_context, limit, offset | 待合同化；wire快照待复核 |
 | MCP:file_symbol_content | query_search | rust_native / READ_ONLY | file_path, symbol_name |  | 待合同化；wire快照待复核 |
+| MCP:file_write | workspace_database | rust_native / PROTECTED_MUTATION | file_path, content, task_id, step_id | workspace_instance_id | 待合同化；wire快照待复核 |
 | MCP:find_evidence | collab | rust_native / READ_ONLY |  | contract_id, limit, task_id, verifier | 待合同化；wire快照待复核 |
 | MCP:find_issues | semgrep_defects | rust_native / READ_ONLY |  | issue_type, limit | 待合同化；wire快照待复核 |
 | MCP:find_shared_symbols | diagnostics | rust_native / READ_ONLY |  | workspace_a, workspace_b | 待合同化；wire快照待复核 |
