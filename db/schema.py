@@ -2149,6 +2149,11 @@ CREATE INDEX IF NOT EXISTS idx_task_supersede_events_workspace
 #      解析 raw 边，避免全表扫描 calls。CREATE INDEX IF NOT EXISTS 幂等。
 SCHEMA_VERSION = 61
 
+# 注：S3 远端写治理表（write_grants / write_audit_events）与 S1 PKI 表同策略，
+# 属于 daemon 扩展 schema，由 db/db_base.py::ensure_write_governance_schema 在
+# 每次启动幂等创建；不进入 SCHEMA_SQL、不 bump SCHEMA_VERSION，避免 Rust
+# canonical checksum 强制重建已安装二进制。
+
 
 # ============================================
 # P12: Schema 拆分 — 全新数据库延迟建索引

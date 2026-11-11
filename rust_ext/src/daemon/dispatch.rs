@@ -2529,6 +2529,12 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "workspace.build_directory",
     "workspace.file.remove",
     "workspace.file.refresh_file",
+    // S3 远端写治理（review F4）：write.grant 签发写租约、write.commit 消费
+    // grant + 更新索引 + 写审计，均属 Protected_Mutation；与 route_matrix 的
+    // file_write → write.commit（OpClass::ProtectedMutation）分类一致，
+    // 必须经唯一串行化点并参与 request_id 去重。
+    "write.grant",
+    "write.commit",
     // 异步长任务
     "task.job_submit",
     "task.job_cancel",
@@ -2673,6 +2679,9 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
     "workspace.file.remove",
     "workspace.file.health",
     "workspace.file.refresh_file",
+    // S3（ADR-002 §8.2）：远端写治理（grant/commit）
+    "write.grant",
+    "write.commit",
     // 度量/状态面（T02-metrics，9）
     "query.code_health",
     "query.metrics_summary",
@@ -3096,6 +3105,62 @@ fn workspace_scope_of(params: &Value) -> Option<String> {
     }
 }
 
+/// 远端 profile 顶层参数绝对路径兜底扫描（S2-05 / S3 review F1）。
+///
+/// 排除键：
+/// - `db_path`：由 `snapshot.publish` 专属判 E_REMOTE_DB_PATH_FORBIDDEN；
+/// - base64 内容载体：合法 base64 可以 `/` 开头，非路径语义；
+/// - `write.commit` 的 `content` / `delta`：整份文件正文可以 `//`、`/*`、`/**`
+///   开头，是载荷而非路径。仅对写治理方法豁免，避免扩大全局豁免面。
+fn check_remote_path_guard(method: &str, params: &Value) -> Result<(), DaemonRpcError> {
+    const PATH_SCAN_EXEMPT_KEYS: &[&str] = &[
+        "db_path",
+        "payload_b64",
+        "chunk_b64",
+        "canonical_bytes_gz_b64",
+        "canonical_bytes_b64",
+    ];
+    const WRITE_PAYLOAD_KEYS: &[&str] = &["content", "delta"];
+
+    let payload_exempt: &[&str] = if method == "write.commit" {
+        WRITE_PAYLOAD_KEYS
+    } else {
+        &[]
+    };
+    let Some(obj) = params.as_object() else {
+        return Ok(());
+    };
+    for (key, val) in obj.iter() {
+        if key == "host_real_root" {
+            if let Some(s) = val.as_str() {
+                if !s.trim().is_empty() {
+                    return Err(DaemonRpcError::new(
+                        "E_REMOTE_PATH_FORBIDDEN",
+                        format!("远端 profile 禁止 host_real_root 参数（method={}）", method),
+                    ));
+                }
+            }
+            continue;
+        }
+        if PATH_SCAN_EXEMPT_KEYS.contains(&key.as_str()) || payload_exempt.contains(&key.as_str())
+        {
+            continue;
+        }
+        if let Some(s) = val.as_str() {
+            if looks_like_path(s) {
+                return Err(DaemonRpcError::new(
+                    "E_REMOTE_PATH_FORBIDDEN",
+                    format!(
+                        "远端 profile 禁止绝对路径参数（method={}, key={}）",
+                        method, key
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// dispatch 内部实现（返回 Result<Value, DaemonRpcError>）
 ///
 /// `inline_payload`：multipart 传输的带外 payload（Q10 2026-09-17）——
@@ -3173,45 +3238,7 @@ fn dispatch_inner<S: DaemonStateExt>(
     // - `db_path`：由 `snapshot.publish` 专属判 E_REMOTE_DB_PATH_FORBIDDEN；
     // - base64 内容载体：合法 base64 可以 `/` 开头，非路径语义。
     if state.bind_scope() == "remote" {
-        if let Some(obj) = params.as_object() {
-            const PATH_SCAN_EXEMPT_KEYS: &[&str] = &[
-                "db_path",
-                "payload_b64",
-                "chunk_b64",
-                "canonical_bytes_gz_b64",
-                "canonical_bytes_b64",
-            ];
-            for (key, val) in obj.iter() {
-                if key == "host_real_root" {
-                    if let Some(s) = val.as_str() {
-                        if !s.trim().is_empty() {
-                            return Err(DaemonRpcError::new(
-                                "E_REMOTE_PATH_FORBIDDEN",
-                                format!(
-                                    "远端 profile 禁止 host_real_root 参数（method={}）",
-                                    method
-                                ),
-                            ));
-                        }
-                    }
-                    continue;
-                }
-                if PATH_SCAN_EXEMPT_KEYS.contains(&key.as_str()) {
-                    continue;
-                }
-                if let Some(s) = val.as_str() {
-                    if looks_like_path(s) {
-                        return Err(DaemonRpcError::new(
-                            "E_REMOTE_PATH_FORBIDDEN",
-                            format!(
-                                "远端 profile 禁止绝对路径参数（method={}, key={}）",
-                                method, key
-                            ),
-                        ));
-                    }
-                }
-            }
-        }
+        check_remote_path_guard(method, params)?;
     }
     match method {
         // ---- 基础方法（R3 默认实现）----
@@ -4634,6 +4661,9 @@ mod tests {
         assert!(is_protected_mutation("task.apply"));
         assert!(is_protected_mutation("task.reconcile"));
         assert!(is_protected_mutation("lease.acquire"));
+        // S3（review F4）：远端写治理与 route_matrix 的 ProtectedMutation 对齐
+        assert!(is_protected_mutation("write.grant"));
+        assert!(is_protected_mutation("write.commit"));
 
         // 非 Protected_Mutation 方法
         assert!(!is_protected_mutation("ping"));
@@ -4995,5 +5025,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// S3 review F1：远端 path 守卫必须放行 `write.commit` 的文件正文载荷，
+    /// 但继续拦截路径字符串；豁免只对写治理方法生效，不扩大全局豁免面。
+    #[test]
+    fn test_remote_path_guard_exempts_write_commit_payload() {
+        // 正文以 `//`、`/*`、`/**` 开头（C/JS/Rust 常见许可证头），不得被判为路径。
+        let ok = check_remote_path_guard(
+            "write.commit",
+            &json!({
+                "grant_id": "G-1",
+                "workspace_instance_id": "ws-1",
+                "path": "src/a.py",
+                "content": "// license\n/* block */\n/** doc */\nint x;\n",
+                "delta": "// leading comment\n"
+            }),
+        );
+        assert!(
+            ok.is_ok(),
+            "write.commit 的 content/delta 不得被路径守卫拒绝: {ok:?}"
+        );
+
+        // 同方法内的真实路径参数仍必须拦截。
+        let err = check_remote_path_guard(
+            "write.commit",
+            &json!({"path": "C:/repo/src/a.py", "content": "x"}),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "E_REMOTE_PATH_FORBIDDEN");
+
+        // 豁免仅限 write.commit：其他方法携带以 `/` 开头的内容仍 fail-closed。
+        let err =
+            check_remote_path_guard("file_remove", &json!({"content": "//x"})).unwrap_err();
+        assert_eq!(err.code, "E_REMOTE_PATH_FORBIDDEN");
+
+        // base64 载体键维持既有豁免。
+        assert!(check_remote_path_guard(
+            "snapshot.publish",
+            &json!({"payload_b64": "/9j/4AAQSkZJRg=="})
+        )
+        .is_ok());
     }
 }

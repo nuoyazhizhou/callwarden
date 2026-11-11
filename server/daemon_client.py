@@ -14,6 +14,7 @@
 """
 
 import base64
+import contextlib
 import gzip
 import hashlib
 import json
@@ -21,6 +22,7 @@ import logging
 import os
 import ssl
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -3444,6 +3446,159 @@ def _resolve_ws_instance_by_id_or_name(rpc_client, id_or_name: str) -> str:
         f"workspace_id_or_name={id_or_name!r} 无法解析为已注册 workspace"
         "（fail-closed：禁止回退当前活动 workspace）",
     )
+
+
+def _normalize_write_rel_path(path: str) -> str:
+    """与 daemon fs_handlers::normalize_write_rel_path 同构。"""
+    rel = (path or "").replace("\\", "/").strip()
+    if not rel or rel.startswith("/") or ":" in rel:
+        raise DaemonRemoteError(
+            "E_WRITE_PATH_FORBIDDEN", f"write path 必须是 workspace 相对路径: {path!r}"
+        )
+    parts: List[str] = []
+    for segment in rel.split("/"):
+        if segment in ("", "."):
+            continue
+        if segment == "..":
+            raise DaemonRemoteError(
+                "E_WRITE_PATH_FORBIDDEN", f"write path 禁止上跳穿越: {path!r}"
+            )
+        parts.append(segment)
+    if not parts:
+        raise DaemonRemoteError(
+            "E_WRITE_PATH_FORBIDDEN", f"write path 无有效路径段: {path!r}"
+        )
+    return "/".join(parts)
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _atomic_write_bytes(target: str, data: bytes) -> None:
+    """本机原子替换：同目录临时文件 + fsync + os.replace。"""
+    parent = os.path.dirname(target) or "."
+    mode: Optional[int] = None
+    try:
+        mode = os.stat(target).st_mode & 0o7777
+    except OSError:
+        mode = None
+    fd, tmp_path = tempfile.mkstemp(prefix=".cw-write-", dir=parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            os.chmod(tmp_path, mode)
+        os.replace(tmp_path, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
+
+
+def governed_write_file(
+    file_path: str,
+    content: Any,
+    task_id: str,
+    step_id: str,
+    workspace_instance_id: str = "",
+    request_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """S3（ADR-002 §8.2）客户端治理写：grant → 本机原子写 → commit。
+
+    - 仅 remote profile 启用；loopback 直接 fail-closed，杜绝本地旁路；
+    - commit 失败不回滚已落地的本地文件，错误信息显式标注且不自动重试；
+    - CLI 与 MCP 共用本函数，语义唯一。
+    """
+    client = HttpDaemonRpcClient.get_instance()
+    if not client.is_remote_profile():
+        raise DaemonRemoteError(
+            "E_WRITE_REMOTE_ONLY",
+            "治理写仅支持 bind_scope=remote 的 daemon；loopback 不允许旁路写",
+        )
+    root = getattr(client, "_project_root", None) or os.getcwd()
+    root = os.path.realpath(root)
+    rel = _normalize_write_rel_path(file_path)
+    target = os.path.realpath(os.path.join(root, rel))
+    if os.path.commonpath([root, target]) != root:
+        raise DaemonRemoteError(
+            "E_WRITE_PATH_FORBIDDEN", f"write path 越出 workspace 根: {file_path!r}"
+        )
+
+    data = content if isinstance(content, bytes) else str(content).encode("utf-8")
+    try:
+        with open(target, "rb") as handle:
+            base_hash = _sha256_hex(handle.read())
+    except FileNotFoundError:
+        base_hash = ""
+    except OSError as exc:
+        raise DaemonRemoteError(
+            "E_WRITE_LOCAL_IO", f"读取本地文件失败（{rel}）: {exc}"
+        ) from exc
+
+    ws_id = workspace_instance_id or client._ensure_remote_snapshot(None) or ""
+    grant_request_id = request_id or str(uuid.uuid4())
+    grant = client.call(
+        "write.grant",
+        {
+            "workspace_instance_id": ws_id,
+            "task_id": task_id,
+            "step_id": step_id,
+            "path": rel,
+            "base_hash": base_hash,
+            "request_id": grant_request_id,
+        },
+        request_id=grant_request_id,
+    )
+    grant_id = grant["grant_id"]
+    new_hash = _sha256_hex(data)
+
+    try:
+        _atomic_write_bytes(target, data)
+    except OSError as exc:
+        raise DaemonRemoteError(
+            "E_WRITE_LOCAL_IO",
+            f"本地原子写失败（{rel}, grant={grant_id}）: {exc}；grant 未 commit，将在过期后释放",
+        ) from exc
+
+    commit_request_id = str(uuid.uuid4())
+    try:
+        commit = client.call(
+            "write.commit",
+            {
+                "workspace_instance_id": ws_id,
+                "grant_id": grant_id,
+                "path": rel,
+                "new_hash": new_hash,
+                "content": data.decode("utf-8", errors="strict"),
+                "request_id": commit_request_id,
+            },
+            request_id=commit_request_id,
+        )
+    except DaemonRemoteError as exc:
+        raise DaemonRemoteError(
+            exc.code,
+            "本地文件已更新但 write.commit 失败，未自动回滚且不会静默重试；"
+            f"path={rel} new_hash={new_hash} grant_id={grant_id}；daemon: {exc.message}",
+        ) from exc
+    except Exception as exc:  # DaemonUnavailableError 等连接类失败
+        raise DaemonRemoteError(
+            "E_WRITE_COMMIT_UNCONFIRMED",
+            "本地文件已更新但 write.commit 结果未确认，未自动回滚且不会静默重试；"
+            f"path={rel} new_hash={new_hash} grant_id={grant_id}；{exc}",
+        ) from exc
+
+    return {
+        "ok": True,
+        "path": rel,
+        "grant_id": grant_id,
+        "base_hash": base_hash,
+        "new_hash": new_hash,
+        "bytes_written": len(data),
+        "commit": commit,
+    }
 
 
 def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any:

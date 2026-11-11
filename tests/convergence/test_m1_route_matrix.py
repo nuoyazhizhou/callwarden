@@ -26,7 +26,7 @@ _DISPATCH = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "dispatch.rs")
 _HTTP_SERVER = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "http_server.rs")
 _COMPAT_REG = os.path.join(_REPO_ROOT, "server", "compat_registry.py")
 _TOOLS_DIR = os.path.join(_REPO_ROOT, "server", "tools")
-_EXPECTED_TOTAL = 243
+_EXPECTED_TOTAL = 244
 
 
 def _load_matrix():

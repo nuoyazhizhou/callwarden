@@ -334,6 +334,131 @@ def ensure_pki_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# S3（ADR-002 §8.2）：远端写治理表（write_grants / write_audit_events）与 S1 PKI
+# 同策略：属于 daemon 扩展 schema，DDL 不进 SCHEMA_SQL、不 bump SCHEMA_VERSION，
+# 由 ensure_write_governance_schema 在每次启动幂等创建。原因：Rust storage.rs 以
+# include_str! 嵌入 db/schema.py 的 SCHEMA_SQL 并计算 canonical checksum；把仅
+# daemon 使用的扩展表放进 canonical 会强制重建所有已安装二进制。
+#
+# daemon 是这些表的唯一写者：write.grant 写入 grant（同 (workspace_id, path) 的
+# 活跃逻辑租约由部分唯一索引保证），write.commit 原子消费 grant 并更新索引；
+# Python 侧只补 schema，不写 grant/审计业务行。write_audit_events 只允许 INSERT，
+# UPDATE/DELETE 由触发器 ABORT（fail-closed）；每条事件同时由 daemon 写入
+# audit_chain（table_name='remote_write_events'，record_id=event_id）形成哈希链。
+WRITE_GOVERNANCE_TABLE_NAMES = (
+    "write_grants",
+    "write_audit_events",
+)
+
+WRITE_GOVERNANCE_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS write_grants (
+        grant_id TEXT PRIMARY KEY,
+        workspace_id INTEGER NOT NULL,
+        db_workspace_id INTEGER NOT NULL DEFAULT 0,
+        path TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        step_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        base_hash TEXT NOT NULL,
+        intent TEXT NOT NULL DEFAULT '',
+        allowed_paths_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'active'
+            CHECK(status IN ('active','consumed','expired','revoked')),
+        consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)),
+        created_at REAL NOT NULL,
+        expires_at REAL NOT NULL,
+        consumed_at REAL NOT NULL DEFAULT 0,
+        new_hash TEXT NOT NULL DEFAULT '',
+        request_id TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    # S3-07：同 (workspace_id, path) 只允许一个未消费的活跃 grant（逻辑租约）。
+    # 过期 grant 由 daemon 在同一事务内先置 status='expired' 再签发新 grant。
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_write_grants_active_path "
+    "ON write_grants(workspace_id, path) "
+    "WHERE status = 'active' AND consumed = 0",
+    "CREATE INDEX IF NOT EXISTS idx_write_grants_principal "
+    "ON write_grants(workspace_id, principal_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_write_grants_task "
+    "ON write_grants(workspace_id, task_id, step_id)",
+    "CREATE INDEX IF NOT EXISTS idx_write_grants_expires "
+    "ON write_grants(workspace_id, expires_at)",
+    """
+    CREATE TABLE IF NOT EXISTS write_audit_events (
+        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id INTEGER NOT NULL,
+        db_workspace_id INTEGER NOT NULL DEFAULT 0,
+        event_type TEXT NOT NULL CHECK(event_type IN ('grant','commit','reject')),
+        outcome TEXT NOT NULL CHECK(outcome IN ('allow','deny')),
+        grant_id TEXT NOT NULL DEFAULT '',
+        principal_id TEXT NOT NULL DEFAULT '',
+        task_id TEXT NOT NULL DEFAULT '',
+        step_id TEXT NOT NULL DEFAULT '',
+        path TEXT NOT NULL DEFAULT '',
+        base_hash TEXT NOT NULL DEFAULT '',
+        new_hash TEXT NOT NULL DEFAULT '',
+        reason_code TEXT NOT NULL DEFAULT '',
+        request_id TEXT NOT NULL DEFAULT '',
+        detail_json TEXT NOT NULL DEFAULT '{}',
+        audit_record_id TEXT NOT NULL DEFAULT '',
+        recorded_at REAL NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_write_audit_events_grant "
+    "ON write_audit_events(workspace_id, grant_id, event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_write_audit_events_path "
+    "ON write_audit_events(workspace_id, path, event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_write_audit_events_type "
+    "ON write_audit_events(workspace_id, event_type, event_id)",
+    # S3-09：审计事件只追加，任何 DELETE 直接 ABORT。
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_write_audit_events_no_delete
+    BEFORE DELETE ON write_audit_events
+    BEGIN
+        SELECT RAISE(ABORT, 'write_audit_events is append-only');
+    END
+    """,
+)
+
+
+def ensure_write_governance_schema(conn: sqlite3.Connection) -> None:
+    """S3：远端写治理表幂等补齐（只补 schema，不写 grant/审计数据）。
+
+    扩展 schema，可重复执行；daemon 是唯一写者。write.grant / write.commit 的
+    授权、租约、消费与审计判定全部在 Rust daemon 权威路径，不在 Python 侧实现。
+    """
+    for statement in WRITE_GOVERNANCE_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+    # S3 修复（review F3）：grant/审计与 file_instances 的 workspace id 空间不同。
+    # workspace_id 保留 registry 自增 id（ACL 身份），db_workspace_id 记录 codegraph
+    # 侧 id（file_instances 关联键）。旧表用 ADD COLUMN 增量补齐。
+    for table, column, decl in (
+        ("write_grants", "db_workspace_id", "INTEGER NOT NULL DEFAULT 0"),
+        ("write_audit_events", "db_workspace_id", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    # review F5：audit_record_id 是写入后一次性回填的链回链列，必须允许单独
+    # UPDATE；其余业务列保持 append-only。触发器在 ALTER 之后创建，避免旧库
+    # 缺 db_workspace_id 列时 CREATE TRIGGER 失败。
+    conn.execute("DROP TRIGGER IF EXISTS trg_write_audit_events_no_update")
+    conn.execute(
+        """
+        CREATE TRIGGER trg_write_audit_events_no_update
+        BEFORE UPDATE OF workspace_id, db_workspace_id, event_type, outcome, grant_id,
+            principal_id, task_id, step_id, path, base_hash, new_hash, reason_code,
+            request_id, detail_json, recorded_at
+        ON write_audit_events
+        BEGIN
+            SELECT RAISE(ABORT, 'write_audit_events is append-only');
+        END
+        """
+    )
+    conn.commit()
+
+
 def _migrate_v1_to_v2(conn: sqlite3.Connection):
     """v1 -> v2: 新增 Semgrep 相关表和索引"""
     conn.execute("""
@@ -4231,6 +4356,8 @@ class CodeGraphBase:
                 ensure_role_worker_schema(self.conn)
                 # S1：PKI / principal 授权表幂等补齐（辅助 schema，不 bump 版本）。
                 ensure_pki_schema(self.conn)
+                # S3：远端写治理表幂等补齐（辅助 schema，不 bump 版本）。
+                ensure_write_governance_schema(self.conn)
                 return
 
         # 显式 rollback 或 Rust 扩展不存在时才进入兼容迁移路径。
@@ -4280,6 +4407,8 @@ class CodeGraphBase:
         ensure_role_worker_schema(self.conn)
         # S1：PKI / principal 授权表幂等补齐（辅助 schema，不 bump 版本）。
         ensure_pki_schema(self.conn)
+        # S3：远端写治理表幂等补齐（辅助 schema，不 bump 版本）。
+        ensure_write_governance_schema(self.conn)
 
         # Phase 6/7 扩展 schema（CREATE IF NOT EXISTS，幂等）
         # 这些 schema 由独立模块管理，不进入 SCHEMA_SQL 的版本化迁移流，

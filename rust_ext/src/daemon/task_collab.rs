@@ -1984,6 +1984,34 @@ impl TaskCollabStore {
         self.verify_task_binding_owner(peer_uid, task_id, true)
     }
 
+    /// 任务 canonical workspace binding 的 workspace_instance_id（无 binding 为 None）。
+    ///
+    /// S3 review F2：`write.grant` 用它校验「task 所属 workspace == 请求 workspace」，
+    /// 防止跨 workspace 拿他人任务签发写 grant。
+    pub fn task_workspace_instance_id(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<String>, DaemonRpcError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| DaemonRpcError::internal_error("task collab store 连接锁 poisoned"))?;
+        conn.query_row(
+            "SELECT c.workspace_instance_id
+               FROM task_workspace_bindings b
+               JOIN workspace_authority_captures c
+                 ON c.workspace_capture_id = b.workspace_capture_id
+              WHERE b.task_id = ?1
+              LIMIT 1",
+            params![task_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("task workspace binding 查询失败: {e}"))
+        })
+    }
+
     fn verify_task_binding_owner(
         &self,
         peer_uid: u32,

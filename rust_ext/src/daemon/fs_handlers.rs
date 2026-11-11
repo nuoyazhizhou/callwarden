@@ -21,9 +21,14 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::dispatch::{
-    get_int_param_or, get_str_param, require_str_param, DaemonRpcError, PeerCredential,
+    get_int_param_or, get_str_param, get_str_param_or, require_str_param, DaemonRpcError,
+    PeerCredential,
 };
-use super::workspace::{owned_workspace, validate_owned_path, validate_owned_path_any, WorkspaceRegistry};
+use super::task_collab::TaskCollabStore;
+use super::workspace::{
+    owned_workspace, owned_workspace_by_id, validate_owned_path, validate_owned_path_any,
+    WorkspaceRegistry,
+};
 
 /// 可索引的源文件扩展名（文件面扫描白名单，与 db 层解析面一致）。
 const INDEXABLE_EXTS: &[&str] = &[
@@ -222,6 +227,61 @@ fn ensure_root_containment(
         ));
     }
     Ok(())
+}
+
+/// review F6：daemon 侧 symlink containment（写治理路径）。
+///
+/// `normalize_write_rel_path` 只做词法归一化（拒绝绝对路径与 `..`），无法
+/// 识别 workspace 根内指向根外的 symlink。本 helper 逐级解析 `rel_path` 的
+/// **已存在前缀**：任一组件是 symlink 且其 canonical 目标落在根外即
+/// fail-closed；不存在的前缀（新建文件/目录）无需检查。
+fn ensure_no_symlink_escape(root: &Path, rel_path: &str) -> Result<(), DaemonRpcError> {
+    use std::path::Component;
+    let root_real = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut cur = root_real.clone();
+    for comp in Path::new(rel_path).components() {
+        match comp {
+            Component::Normal(seg) => cur.push(seg),
+            _ => {
+                return Err(DaemonRpcError::new(
+                    "E_WRITE_PATH_ESCAPE",
+                    format!("write path 含非法路径段: {rel_path}"),
+                ))
+            }
+        }
+        match std::fs::symlink_metadata(&cur) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let resolved = std::fs::canonicalize(&cur).map_err(|e| {
+                    DaemonRpcError::new(
+                        "E_WRITE_PATH_ESCAPE",
+                        format!("symlink 无法解析（{rel_path}）: {e}"),
+                    )
+                })?;
+                if !resolved.starts_with(&root_real) {
+                    return Err(DaemonRpcError::new(
+                        "E_WRITE_PATH_ESCAPE",
+                        format!("write path 经 symlink 逃逸 workspace: {rel_path}"),
+                    ));
+                }
+                cur = resolved;
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+            Err(e) => {
+                return Err(DaemonRpcError::internal_error(format!(
+                    "write path symlink 检查失败（{rel_path}）: {e}"
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// review F6：写路径 containment 组合校验（词法根内 + symlink 解析后根内）。
+fn check_write_containment(root: &Path, rel_path: &str) -> Result<(), DaemonRpcError> {
+    let root_real = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    ensure_root_containment(&root_real, &root_real.join(rel_path).to_string_lossy())?;
+    ensure_no_symlink_escape(&root_real, rel_path)
 }
 
 /// 把路径参数锚定到 workspace 根：相对路径一律 `root.join(path)`。
@@ -2022,6 +2082,1126 @@ fn glob_match(path: &str, glob: &str) -> bool {
     re.is_match(path)
 }
 
+// ---------------------------------------------------------------------------
+// S3（ADR-002 §8.2）：远端写治理 write.grant / write.commit
+//
+// 不变量：
+// - grant 绑定 principal / workspace / task / step / path / base_hash / 过期；
+// - 同 (workspace_id, path) 逻辑租约（部分唯一索引，默认拒绝 E_WRITE_LOCKED）；
+// - commit 复核 grant 未过期/未消费/principal 匹配/base_hash 仍一致；
+// - 拒绝时审计留痕且不更新索引；成功时审计、索引、grant 消费同事务提交；
+// - 审计事件写 write_audit_events 并同步进 audit_chain（remote_write_events）。
+// ---------------------------------------------------------------------------
+
+/// 与 `db/db_base.py::WRITE_GOVERNANCE_SCHEMA_STATEMENTS` 保持一致。
+/// daemon 在每次写连接上幂等补齐，保证旧库/未跑 Python 初始化的库也可用。
+pub fn ensure_write_governance_tables(
+    conn: &rusqlite::Connection,
+) -> Result<(), DaemonRpcError> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS write_grants (
+            grant_id TEXT PRIMARY KEY,
+            workspace_id INTEGER NOT NULL,
+            db_workspace_id INTEGER NOT NULL DEFAULT 0,
+            path TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            step_id TEXT NOT NULL,
+            principal_id TEXT NOT NULL,
+            base_hash TEXT NOT NULL,
+            intent TEXT NOT NULL DEFAULT '',
+            allowed_paths_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active','consumed','expired','revoked')),
+            consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)),
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            consumed_at REAL NOT NULL DEFAULT 0,
+            new_hash TEXT NOT NULL DEFAULT '',
+            request_id TEXT NOT NULL DEFAULT ''
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_write_grants_active_path
+            ON write_grants(workspace_id, path)
+            WHERE status = 'active' AND consumed = 0;
+        CREATE INDEX IF NOT EXISTS idx_write_grants_principal
+            ON write_grants(workspace_id, principal_id, status);
+        CREATE INDEX IF NOT EXISTS idx_write_grants_task
+            ON write_grants(workspace_id, task_id, step_id);
+        CREATE INDEX IF NOT EXISTS idx_write_grants_expires
+            ON write_grants(workspace_id, expires_at);
+        CREATE TABLE IF NOT EXISTS write_audit_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            db_workspace_id INTEGER NOT NULL DEFAULT 0,
+            event_type TEXT NOT NULL CHECK(event_type IN ('grant','commit','reject')),
+            outcome TEXT NOT NULL CHECK(outcome IN ('allow','deny')),
+            grant_id TEXT NOT NULL DEFAULT '',
+            principal_id TEXT NOT NULL DEFAULT '',
+            task_id TEXT NOT NULL DEFAULT '',
+            step_id TEXT NOT NULL DEFAULT '',
+            path TEXT NOT NULL DEFAULT '',
+            base_hash TEXT NOT NULL DEFAULT '',
+            new_hash TEXT NOT NULL DEFAULT '',
+            reason_code TEXT NOT NULL DEFAULT '',
+            request_id TEXT NOT NULL DEFAULT '',
+            detail_json TEXT NOT NULL DEFAULT '{}',
+            audit_record_id TEXT NOT NULL DEFAULT '',
+            recorded_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_write_audit_events_grant
+            ON write_audit_events(workspace_id, grant_id, event_id);
+        CREATE INDEX IF NOT EXISTS idx_write_audit_events_path
+            ON write_audit_events(workspace_id, path, event_id);
+        CREATE INDEX IF NOT EXISTS idx_write_audit_events_type
+            ON write_audit_events(workspace_id, event_type, event_id);
+        CREATE TRIGGER IF NOT EXISTS trg_write_audit_events_no_delete
+        BEFORE DELETE ON write_audit_events
+        BEGIN
+            SELECT RAISE(ABORT, 'write_audit_events is append-only');
+        END;
+        "#,
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("write governance schema 初始化失败: {e}")))?;
+    // review F3：write_grants/write_audit_events 的 workspace_id 是 registry 自增 id，
+    // 与 file_instances 使用的 codegraph workspace id 不同空间；db_workspace_id 记录
+    // 后者作为索引关联键。旧库用 ADD COLUMN 增量补齐（幂等）。
+    for (table, column) in [
+        ("write_grants", "db_workspace_id"),
+        ("write_audit_events", "db_workspace_id"),
+    ] {
+        let exists = {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 {table} schema 失败: {e}")))?;
+            let mut rows = stmt
+                .query([])
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 {table} 列失败: {e}")))?;
+            let mut found = false;
+            while let Some(row) = rows
+                .next()
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 {table} 列失败: {e}")))?
+            {
+                let name: String = row
+                    .get(1)
+                    .map_err(|e| DaemonRpcError::internal_error(format!("读取 {table} 列失败: {e}")))?;
+                if name == column {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !exists {
+            conn.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"),
+                [],
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("{table}.{column} 增量补齐失败: {e}"))
+            })?;
+        }
+    }
+    // review F5：`audit_record_id` 是写入后一次性回填的链回链列，必须允许单独
+    // UPDATE；其余业务列保持 append-only，DELETE 仍整体禁止。触发器放在 ALTER
+    // 之后创建，避免旧库缺 db_workspace_id 列时 CREATE TRIGGER 失败。
+    conn.execute_batch(
+        r#"
+        DROP TRIGGER IF EXISTS trg_write_audit_events_no_update;
+        CREATE TRIGGER trg_write_audit_events_no_update
+        BEFORE UPDATE OF workspace_id, db_workspace_id, event_type, outcome, grant_id,
+            principal_id, task_id, step_id, path, base_hash, new_hash, reason_code,
+            request_id, detail_json, recorded_at
+        ON write_audit_events
+        BEGIN
+            SELECT RAISE(ABORT, 'write_audit_events is append-only');
+        END;
+        "#,
+    )
+    .map_err(|e| {
+        DaemonRpcError::internal_error(format!("write audit append-only 触发器初始化失败: {e}"))
+    })?;
+    Ok(())
+}
+
+const WRITE_AUDIT_CHAIN_TABLE: &str = "remote_write_events";
+const WRITE_GRANT_DEFAULT_TTL_SECS: f64 = 900.0;
+const WRITE_GRANT_MAX_TTL_SECS: f64 = 900.0;
+
+/// 统一授权主语：mTLS SAN principal；loopback 合成 owner 身份。
+fn write_caller_principal(peer: &PeerCredential) -> String {
+    peer.principal_id()
+        .map(str::to_string)
+        .unwrap_or_else(|| "local-owner".to_string())
+}
+
+fn is_lower_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// workspace 相对路径归一化（拒绝绝对路径、盘符、UNC 与 `..` 穿越）。
+fn normalize_write_rel_path(raw: &str) -> Result<String, DaemonRpcError> {
+    let normalized = raw.trim().replace('\\', "/");
+    if normalized.is_empty() {
+        return Err(DaemonRpcError::new(
+            "E_WRITE_PATH_FORBIDDEN",
+            "write path 不能为空",
+        ));
+    }
+    if normalized.starts_with('/') || normalized.contains(':') {
+        return Err(DaemonRpcError::new(
+            "E_WRITE_PATH_FORBIDDEN",
+            format!("write path 必须是 workspace 相对路径: {raw}"),
+        ));
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in normalized.split('/') {
+        match seg {
+            "" | "." => continue,
+            ".." => {
+                return Err(DaemonRpcError::new(
+                    "E_WRITE_PATH_FORBIDDEN",
+                    format!("write path 禁止上跳穿越: {raw}"),
+                ))
+            }
+            other => parts.push(other),
+        }
+    }
+    if parts.is_empty() {
+        return Err(DaemonRpcError::new(
+            "E_WRITE_PATH_FORBIDDEN",
+            format!("write path 无有效路径段: {raw}"),
+        ));
+    }
+    Ok(parts.join("/"))
+}
+
+#[derive(Debug, Clone)]
+struct WriteGrantRow {
+    grant_id: String,
+    workspace_id: i64,
+    db_workspace_id: i64,
+    path: String,
+    task_id: String,
+    step_id: String,
+    principal_id: String,
+    base_hash: String,
+    allowed_paths_json: String,
+    status: String,
+    consumed: i64,
+    created_at: f64,
+    expires_at: f64,
+}
+
+fn load_write_grant(
+    conn: &rusqlite::Connection,
+    grant_id: &str,
+) -> Result<Option<WriteGrantRow>, DaemonRpcError> {
+    conn.query_row(
+        "SELECT grant_id, workspace_id, db_workspace_id, path, task_id, step_id, \
+                principal_id, base_hash, allowed_paths_json, status, consumed, created_at, \
+                expires_at \
+         FROM write_grants WHERE grant_id = ?1",
+        rusqlite::params![grant_id],
+        |row| {
+            Ok(WriteGrantRow {
+                grant_id: row.get(0)?,
+                workspace_id: row.get(1)?,
+                db_workspace_id: row.get(2)?,
+                path: row.get(3)?,
+                task_id: row.get(4)?,
+                step_id: row.get(5)?,
+                principal_id: row.get(6)?,
+                base_hash: row.get(7)?,
+                allowed_paths_json: row.get(8)?,
+                status: row.get(9)?,
+                consumed: row.get(10)?,
+                created_at: row.get(11)?,
+                expires_at: row.get(12)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| DaemonRpcError::internal_error(format!("write_grants 查询失败: {e}")))
+}
+
+fn write_allowed_paths(grant: &WriteGrantRow) -> Vec<String> {
+    serde_json::from_str(&grant.allowed_paths_json).unwrap_or_default()
+}
+
+struct WriteAuditEvent<'a> {
+    workspace_id: i64,
+    db_workspace_id: i64,
+    event_type: &'a str,
+    outcome: &'a str,
+    grant_id: &'a str,
+    principal_id: &'a str,
+    task_id: &'a str,
+    step_id: &'a str,
+    path: &'a str,
+    base_hash: &'a str,
+    new_hash: &'a str,
+    reason_code: &'a str,
+    request_id: &'a str,
+    detail: &'a Value,
+    recorded_at: f64,
+}
+
+fn append_write_audit(
+    conn: &rusqlite::Connection,
+    event: &WriteAuditEvent<'_>,
+) -> Result<i64, DaemonRpcError> {
+    // review F5：事件行与 audit_chain 必须原子写入。SAVEPOINT 在事务内外均可用；
+    // 任一步失败都回滚到保存点，杜绝「event 已落库、chain 未写」的哈希链缺口。
+    const SP: &str = "cw_write_audit_append";
+    conn.execute_batch(&format!("SAVEPOINT {SP}")).map_err(|e| {
+        DaemonRpcError::internal_error(format!("write audit savepoint 开启失败: {e}"))
+    })?;
+    match append_write_audit_inner(conn, event) {
+        Ok(event_id) => {
+            conn.execute_batch(&format!("RELEASE {SP}")).map_err(|e| {
+                DaemonRpcError::internal_error(format!("write audit savepoint 提交失败: {e}"))
+            })?;
+            Ok(event_id)
+        }
+        Err(err) => {
+            let _ = conn.execute_batch(&format!("ROLLBACK TO {SP}; RELEASE {SP}"));
+            Err(err)
+        }
+    }
+}
+
+fn append_write_audit_inner(
+    conn: &rusqlite::Connection,
+    event: &WriteAuditEvent<'_>,
+) -> Result<i64, DaemonRpcError> {
+    conn.execute(
+        "INSERT INTO write_audit_events(\
+             workspace_id, db_workspace_id, event_type, outcome, grant_id, principal_id, \
+             task_id, step_id, path, base_hash, new_hash, reason_code, request_id, \
+             detail_json, recorded_at\
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+        rusqlite::params![
+            event.workspace_id,
+            event.db_workspace_id,
+            event.event_type,
+            event.outcome,
+            event.grant_id,
+            event.principal_id,
+            event.task_id,
+            event.step_id,
+            event.path,
+            event.base_hash,
+            event.new_hash,
+            event.reason_code,
+            event.request_id,
+            event.detail.to_string(),
+            event.recorded_at,
+        ],
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("write_audit_events 写入失败: {e}")))?;
+    let event_id = conn.last_insert_rowid();
+    // 同步哈希链（S3-09）：payload 与事件行一一对应，可用 audit_verify_chain 回放。
+    crate::cli::task::sign_audit_chain(
+        conn,
+        WRITE_AUDIT_CHAIN_TABLE,
+        &event_id.to_string(),
+        &json!({
+            "event_id": event_id,
+            "workspace_id": event.workspace_id,
+            "db_workspace_id": event.db_workspace_id,
+            "event_type": event.event_type,
+            "outcome": event.outcome,
+            "grant_id": event.grant_id,
+            "principal_id": event.principal_id,
+            "task_id": event.task_id,
+            "step_id": event.step_id,
+            "path": event.path,
+            "base_hash": event.base_hash,
+            "new_hash": event.new_hash,
+            "reason_code": event.reason_code,
+            "request_id": event.request_id,
+            "recorded_at": event.recorded_at,
+        }),
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("write audit_chain 写入失败: {e}")))?;
+    // review F5：回填链行 id，形成 event ↔ audit_chain 双向可追溯的硬关联。
+    // 触发器只允许更新 audit_record_id，其余业务列仍 append-only。
+    let chain_id = conn.last_insert_rowid();
+    conn.execute(
+        "UPDATE write_audit_events SET audit_record_id = ?2 WHERE event_id = ?1",
+        rusqlite::params![event_id, chain_id.to_string()],
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("audit_record_id 回填失败: {e}")))?;
+    Ok(event_id)
+}
+
+/// 拒绝事件审计（fail-closed）：返回调用方应回给客户端的错误。
+///
+/// review F5：不再 `let _` 吞掉审计失败——append_write_audit 内部以 SAVEPOINT
+/// 保证 event+chain 原子，失败时两者都不落库；此时用 `E_WRITE_AUDIT_UNAVAILABLE`
+/// 明确覆盖原始错误，避免「拒绝已发生但审计静默丢失」。
+#[allow(clippy::too_many_arguments)]
+fn audit_write_reject(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    db_workspace_id: i64,
+    principal_id: &str,
+    task_id: &str,
+    step_id: &str,
+    grant_id: &str,
+    path: &str,
+    base_hash: &str,
+    new_hash: &str,
+    reason_code: &str,
+    request_id: &str,
+    detail: Value,
+    original_code: &str,
+    original_message: &str,
+) -> DaemonRpcError {
+    let now = now_ts_secs();
+    let event = WriteAuditEvent {
+        workspace_id,
+        db_workspace_id,
+        event_type: "reject",
+        outcome: "deny",
+        grant_id,
+        principal_id,
+        task_id,
+        step_id,
+        path,
+        base_hash,
+        new_hash,
+        reason_code,
+        request_id,
+        detail: &detail,
+        recorded_at: now,
+    };
+    match append_write_audit(conn, &event) {
+        Ok(_) => DaemonRpcError::new(original_code, original_message.to_string()),
+        Err(audit_err) => DaemonRpcError::new(
+            "E_WRITE_AUDIT_UNAVAILABLE",
+            format!("{original_message}（拒绝审计写入失败: {}）", audit_err.message),
+        ),
+    }
+}
+
+/// task/step 关闭或不属于该 task → E_WRITE_TASK_FORBIDDEN。
+fn validate_task_step_for_write(
+    store: Option<&TaskCollabStore>,
+    task_id: &str,
+    step_id: &str,
+) -> Result<(), DaemonRpcError> {
+    // 精简 state / 测试无 task store 时跳过（与 check_task_owner 语义一致）。
+    let Some(store) = store else {
+        return Ok(());
+    };
+    let conn = store
+        .conn
+        .lock()
+        .map_err(|_| DaemonRpcError::internal_error("task_collab_store 锁不可用"))?;
+    let task_status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM tasks WHERE id = ?1",
+            rusqlite::params![task_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("tasks 查询失败: {e}")))?;
+    let task_status = task_status.ok_or_else(|| {
+        DaemonRpcError::new(
+            "E_WRITE_TASK_FORBIDDEN",
+            format!("task 不存在: {task_id}"),
+        )
+    })?;
+    if !matches!(task_status.as_str(), "open" | "in_progress") {
+        return Err(DaemonRpcError::new(
+            "E_WRITE_TASK_FORBIDDEN",
+            format!("task 状态 {task_status} 不允许远端写: {task_id}"),
+        ));
+    }
+    let step: Option<(String, String)> = conn
+        .query_row(
+            "SELECT task_id, status FROM task_steps WHERE id = ?1",
+            rusqlite::params![step_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("task_steps 查询失败: {e}")))?;
+    let (step_task_id, step_status) = step.ok_or_else(|| {
+        DaemonRpcError::new(
+            "E_WRITE_TASK_FORBIDDEN",
+            format!("step 不存在: {step_id}"),
+        )
+    })?;
+    if step_task_id != task_id {
+        return Err(DaemonRpcError::new(
+            "E_WRITE_TASK_FORBIDDEN",
+            format!("step {step_id} 不属于 task {task_id}"),
+        ));
+    }
+    if matches!(
+        step_status.as_str(),
+        "done" | "completed" | "closed" | "cancelled" | "skipped" | "failed"
+    ) {
+        return Err(DaemonRpcError::new(
+            "E_WRITE_TASK_FORBIDDEN",
+            format!("step 状态 {step_status} 不允许远端写: {step_id}"),
+        ));
+    }
+    Ok(())
+}
+
+/// review F2：principal ↔ workspace ↔ task 三重归属校验（fail-closed）。
+
+/// - 已认证 principal 必须在其 `allowed_workspace_ids` 内（HTTP peer 的 uid 对所有
+///   mTLS principal 都是 daemon owner，单靠 uid 无法区分 principal）；
+/// - task 绑定 workspace 时，必须与本次请求的 workspace_instance_id 一致，禁止用
+///   A workspace 的任务给 B workspace 签 grant。
+fn enforce_write_scope(
+    peer: &PeerCredential,
+    registry_workspace_id: i64,
+    workspace_key: &str,
+    task_store: Option<&TaskCollabStore>,
+    task_id: &str,
+) -> Result<(), DaemonRpcError> {
+    if peer.principal.is_authenticated()
+        && !peer
+            .principal
+            .workspace_allowed(&registry_workspace_id.to_string())
+    {
+        return Err(DaemonRpcError::new(
+            "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
+            format!(
+                "principal 未被授权访问 workspace {registry_workspace_id}（write.grant 拒绝）"
+            ),
+        ));
+    }
+    if let Some(store) = task_store {
+        if let Some(bound) = store.task_workspace_instance_id(task_id)? {
+            let bound = bound.trim();
+            if !bound.is_empty() && bound != workspace_key {
+                return Err(DaemonRpcError::new(
+                    "E_WRITE_TASK_FORBIDDEN",
+                    format!("task {task_id} 绑定的 workspace 与请求不一致"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `write.grant`：签发一次性写 grant 并对 (workspace, path) 加逻辑租约。
+pub fn handle_write_grant(
+    registry: &WorkspaceRegistry,
+    peer: &PeerCredential,
+    params: &Value,
+    codegraph_db: Option<&Path>,
+    task_store: Option<&TaskCollabStore>,
+) -> Result<Value, DaemonRpcError> {
+    let workspace_key = params
+        .get("workspace_instance_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            params.get("workspace_id").and_then(|v| match v {
+                Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+                Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+        })
+        .ok_or_else(|| {
+            DaemonRpcError::invalid_params(
+                "write.grant 需要 workspace_instance_id 或 workspace_id",
+            )
+        })?;
+    let task_id = require_str_param(params, "task_id")?.trim().to_string();
+    let step_id = require_str_param(params, "step_id")?.trim().to_string();
+    let raw_path = require_str_param(params, "path")?;
+    let path = normalize_write_rel_path(raw_path)?;
+    let base_hash = get_str_param_or(params, "base_hash", "").trim().to_string();
+    if !base_hash.is_empty() && !is_lower_sha256_hex(&base_hash) {
+        return Err(DaemonRpcError::invalid_params(
+            "base_hash 必须为空（新文件）或 64 位小写 hex",
+        ));
+    }
+    let intent = get_str_param_or(params, "intent", "");
+    let request_id = get_str_param_or(params, "request_id", "");
+    let requested_ttl = params
+        .get("ttl_seconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(WRITE_GRANT_DEFAULT_TTL_SECS);
+    if !(requested_ttl > 0.0) {
+        return Err(DaemonRpcError::invalid_params("ttl_seconds 必须大于 0"));
+    }
+    let ttl = requested_ttl.min(WRITE_GRANT_MAX_TTL_SECS);
+    let now = now_ts_secs();
+    let principal_id = write_caller_principal(peer);
+
+    // workspace ACL / root（fail-closed）
+    let (registry_workspace_id, root) = resolve_workspace(registry, peer, &workspace_key)?;
+
+    // 允许路径集合：默认仅本次 path；不在集合内自动补入（避免签发不可用 grant）。
+    let mut allowed_paths: Vec<String> = params
+        .get("allowed_paths")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(|s| normalize_write_rel_path(s).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !allowed_paths.iter().any(|p| p == &path) {
+        allowed_paths.push(path.clone());
+    }
+    let allowed_paths_json = serde_json::to_string(&allowed_paths)
+        .map_err(|e| DaemonRpcError::internal_error(format!("allowed_paths 序列化失败: {e}")))?;
+
+    let conn = open_codegraph_write(codegraph_db)?;
+    ensure_write_governance_tables(&conn)?;
+    let db_workspace_id = ensure_workspace_row_by_root(&conn, &root)
+        .map_err(|e| DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}")))?;
+
+    // review F2：principal/workspace/task 归属先于任务状态校验（防止跨 workspace 签发）。
+    if let Err(err) =
+        enforce_write_scope(peer, registry_workspace_id, &workspace_key, task_store, &task_id)
+    {
+        return Err(audit_write_reject(
+            &conn,
+            registry_workspace_id,
+            db_workspace_id,
+            &principal_id,
+            &task_id,
+            &step_id,
+            "",
+            &path,
+            &base_hash,
+            "",
+            &err.code,
+            &request_id,
+            json!({"phase": "grant", "detail": err.message}),
+            &err.code,
+            &err.message,
+        ));
+    }
+
+    // task/step 归属与关闭态校验（S3-08）
+    if let Err(err) = validate_task_step_for_write(task_store, &task_id, &step_id) {
+        return Err(audit_write_reject(
+            &conn,
+            registry_workspace_id,
+            db_workspace_id,
+            &principal_id,
+            &task_id,
+            &step_id,
+            "",
+            &path,
+            &base_hash,
+            "",
+            &err.code,
+            &request_id,
+            json!({"phase": "grant", "detail": err.message}),
+            &err.code,
+            &err.message,
+        ));
+    }
+
+    // review F6：授权通过后再做 symlink containment（词法根内 + 解析后根内），
+    // 避免向无 workspace 权限的 principal 泄露根内文件系统状态。
+    if let Err(err) = check_write_containment(&root, &path) {
+        return Err(audit_write_reject(
+            &conn,
+            registry_workspace_id,
+            db_workspace_id,
+            &principal_id,
+            &task_id,
+            &step_id,
+            "",
+            &path,
+            &base_hash,
+            "",
+            &err.code,
+            &request_id,
+            json!({"phase": "grant", "detail": err.message}),
+            &err.code,
+            &err.message,
+        ));
+    }
+
+    // base_hash 必须与 daemon 当前索引一致；不一致说明已有写入（S3-07 stale）。
+    let current_hash: Option<String> = conn
+        .query_row(
+            "SELECT current_content_hash FROM file_instances \
+             WHERE workspace_id = ?1 AND rel_path = ?2",
+            rusqlite::params![db_workspace_id, path],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 查询失败: {e}")))?;
+    let expected_base = current_hash.unwrap_or_default();
+    if base_hash != expected_base {
+        let err = DaemonRpcError::new(
+            "E_WRITE_STALE_BASE",
+            format!(
+                "base_hash 与 daemon 索引不一致（path={path}，expected={expected_base}，got={base_hash}）"
+            ),
+        );
+        return Err(audit_write_reject(
+            &conn,
+            registry_workspace_id,
+            db_workspace_id,
+            &principal_id,
+            &task_id,
+            &step_id,
+            "",
+            &path,
+            &base_hash,
+            "",
+            "E_WRITE_STALE_BASE",
+            &request_id,
+            json!({"phase": "grant", "expected_base_hash": expected_base}),
+            &err.code,
+            &err.message,
+        ));
+    }
+
+    // grant_id：16 字节 CSPRNG。
+    let mut entropy = [0u8; 16];
+    getrandom::fill(&mut entropy).map_err(|e| {
+        DaemonRpcError::internal_error(format!("grant_id 熵源不可用: {e}"))
+    })?;
+    let grant_id = format!("wg_{}", hex::encode(entropy));
+
+    let grant_tx = |conn: &rusqlite::Connection| -> Result<i64, DaemonRpcError> {
+        // 过期 grant 先收敛，释放逻辑租约（daemon 是唯一写者，事务内安全）。
+        conn.execute(
+            "UPDATE write_grants SET status = 'expired' \
+             WHERE workspace_id = ?1 AND path = ?2 AND status = 'active' AND consumed = 0 \
+               AND expires_at <= ?3",
+            rusqlite::params![registry_workspace_id, path, now],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("过期 grant 收敛失败: {e}")))?;
+        let active: Option<String> = conn
+            .query_row(
+                "SELECT grant_id FROM write_grants \
+                 WHERE workspace_id = ?1 AND path = ?2 AND status = 'active' AND consumed = 0 \
+                 LIMIT 1",
+                rusqlite::params![registry_workspace_id, path],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("活跃 grant 查询失败: {e}")))?;
+        if active.is_some() {
+            return Err(DaemonRpcError::new(
+                "E_WRITE_LOCKED",
+                format!("path 已被活跃 grant 租约占用: {path}"),
+            ));
+        }
+        let expires_at = now + ttl;
+        conn.execute(
+            "INSERT INTO write_grants(\
+                 grant_id, workspace_id, db_workspace_id, path, task_id, step_id, principal_id, \
+                 base_hash, intent, allowed_paths_json, status, consumed, created_at, expires_at\
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'active',0,?11,?12)",
+            rusqlite::params![
+                grant_id,
+                registry_workspace_id,
+                db_workspace_id,
+                path,
+                task_id,
+                step_id,
+                principal_id,
+                base_hash,
+                intent,
+                allowed_paths_json,
+                now,
+                expires_at,
+            ],
+        )
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE constraint failed") {
+                DaemonRpcError::new(
+                    "E_WRITE_LOCKED",
+                    format!("path 已被活跃 grant 租约占用: {path}"),
+                )
+            } else {
+                DaemonRpcError::internal_error(format!("write_grants 写入失败: {e}"))
+            }
+        })?;
+        let detail = json!({
+            "phase": "grant",
+            "intent": intent,
+            "allowed_paths": allowed_paths,
+            "expires_at": expires_at,
+        });
+        append_write_audit(
+            conn,
+            &WriteAuditEvent {
+                workspace_id: registry_workspace_id,
+                db_workspace_id,
+                event_type: "grant",
+                outcome: "allow",
+                grant_id: &grant_id,
+                principal_id: &principal_id,
+                task_id: &task_id,
+                step_id: &step_id,
+                path: &path,
+                base_hash: &base_hash,
+                new_hash: "",
+                reason_code: "",
+                request_id: &request_id,
+                detail: &detail,
+                recorded_at: now,
+            },
+        )
+    };
+
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| DaemonRpcError::internal_error(format!("grant 事务开启失败: {e}")))?;
+    match grant_tx(&conn) {
+        Ok(audit_event_id) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| DaemonRpcError::internal_error(format!("grant 事务提交失败: {e}")))?;
+            Ok(json!({
+                "ok": true,
+                "grant_id": grant_id,
+                "workspace_id": registry_workspace_id,
+                "db_workspace_id": db_workspace_id,
+                "path": path,
+                "task_id": task_id,
+                "step_id": step_id,
+                "principal_id": principal_id,
+                "base_hash": base_hash,
+                "allowed_paths": allowed_paths,
+                "expires_at": now + ttl,
+                "ttl_seconds": ttl,
+                "audit_event_id": audit_event_id,
+            }))
+        }
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(audit_write_reject(
+                &conn,
+                registry_workspace_id,
+                db_workspace_id,
+                &principal_id,
+                &task_id,
+                &step_id,
+                "",
+                &path,
+                &base_hash,
+                "",
+                &err.code,
+                &request_id,
+                json!({"phase": "grant", "detail": err.message}),
+                &err.code,
+                &err.message,
+            ))
+        }
+    }
+}
+
+/// `write.commit`：校验 grant 后原子更新索引、写审计并消费 grant。
+pub fn handle_write_commit(
+    registry: &WorkspaceRegistry,
+    peer: &PeerCredential,
+    params: &Value,
+    codegraph_db: Option<&Path>,
+    task_store: Option<&TaskCollabStore>,
+) -> Result<Value, DaemonRpcError> {
+    let grant_id = require_str_param(params, "grant_id")?.trim().to_string();
+    let new_hash = require_str_param(params, "new_hash")?.trim().to_string();
+    if !is_lower_sha256_hex(&new_hash) {
+        return Err(DaemonRpcError::invalid_params(
+            "new_hash 必须为 64 位小写 hex",
+        ));
+    }
+    let request_id = get_str_param_or(params, "request_id", "");
+    let content = params.get("content").and_then(Value::as_str);
+    let delta = params.get("delta").and_then(Value::as_str);
+    let principal_id = write_caller_principal(peer);
+    let now = now_ts_secs();
+
+    let conn = open_codegraph_write(codegraph_db)?;
+    ensure_write_governance_tables(&conn)?;
+    let grant = load_write_grant(&conn, &grant_id)?.ok_or_else(|| {
+        DaemonRpcError::new("E_WRITE_GRANT_NOT_FOUND", format!("grant 不存在: {grant_id}"))
+    })?;
+
+    let commit_path = match params.get("path").and_then(Value::as_str) {
+        Some(raw) if !raw.trim().is_empty() => normalize_write_rel_path(raw)?,
+        _ => grant.path.clone(),
+    };
+    let reject = |reason: &str, code: &str, detail: Value| {
+        audit_write_reject(
+            &conn,
+            grant.workspace_id,
+            grant.db_workspace_id,
+            &principal_id,
+            &grant.task_id,
+            &grant.step_id,
+            &grant.grant_id,
+            &commit_path,
+            &grant.base_hash,
+            &new_hash,
+            reason,
+            &request_id,
+            detail,
+            code,
+            reason,
+        )
+    };
+
+    // ---- 静态 fail-closed 检查（不产生索引副作用）----
+    if grant.principal_id != principal_id {
+        return Err(reject(
+            "E_WRITE_GRANT_PRINCIPAL_MISMATCH",
+            "E_WRITE_GRANT_PRINCIPAL_MISMATCH",
+            json!({"phase": "commit", "grant_principal": grant.principal_id, "caller": principal_id}),
+        ));
+    }
+    if grant.consumed != 0 || grant.status == "consumed" {
+        return Err(reject(
+            "E_WRITE_GRANT_CONSUMED",
+            "E_WRITE_GRANT_CONSUMED",
+            json!({"phase": "commit", "grant_id": grant_id}),
+        ));
+    }
+    if grant.status == "expired" || now > grant.expires_at {
+        return Err(reject(
+            "E_WRITE_GRANT_EXPIRED",
+            "E_WRITE_GRANT_EXPIRED",
+            json!({"phase": "commit", "expires_at": grant.expires_at, "now": now}),
+        ));
+    }
+    if grant.status != "active" {
+        return Err(reject(
+            "E_WRITE_GRANT_CONSUMED",
+            "E_WRITE_GRANT_CONSUMED",
+            json!({"phase": "commit", "status": grant.status}),
+        ));
+    }
+    let allowed_paths = write_allowed_paths(&grant);
+    if commit_path != grant.path || !allowed_paths.iter().any(|p| p == &commit_path) {
+        return Err(reject(
+            "E_WRITE_PATH_FORBIDDEN",
+            "E_WRITE_PATH_FORBIDDEN",
+            json!({"phase": "commit", "grant_path": grant.path, "allowed_paths": allowed_paths}),
+        ));
+    }
+    if let Err(err) = validate_task_step_for_write(task_store, &grant.task_id, &grant.step_id) {
+        return Err(reject(&err.code, &err.code, json!({"phase": "commit", "detail": err.message})));
+    }
+
+    // commit 复核 workspace ACL，避免 grant 签发后 workspace 被移除/归档。
+    let workspace = owned_workspace_by_id(registry, peer.uid, grant.workspace_id)?;
+    let root = workspace
+        .get("host_real_root")
+        .and_then(Value::as_str)
+        .or_else(|| workspace.get("client_view_root").and_then(Value::as_str))
+        .map(PathBuf::from)
+        .ok_or_else(|| DaemonRpcError::internal_error("workspace 缺少 host_real_root"))?;
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
+    let db_workspace_id = ensure_workspace_row_by_root(&conn, &root)
+        .map_err(|e| DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}")))?;
+
+    // review F6：写前 containment（事务内会再次复核）。
+    if let Err(err) = check_write_containment(&root, &commit_path) {
+        return Err(reject(
+            &err.message,
+            &err.code,
+            json!({"phase": "commit", "detail": err.message}),
+        ));
+    }
+
+    let mtime = params
+        .get("mtime")
+        .and_then(Value::as_f64)
+        .unwrap_or(now);
+    let delta_detail = json!({
+        "phase": "commit",
+        "content_supplied": content.is_some(),
+        "delta_bytes": delta.map(|d| d.len()).unwrap_or(0),
+        "delta_sha256": delta.map(|d| sha256_hex(d.as_bytes())).unwrap_or_default(),
+        "request_id": request_id,
+    });
+
+    let commit_tx = |conn: &rusqlite::Connection| -> Result<(i64, i64), DaemonRpcError> {
+        // 事务内重读，避免与过期/并发路径竞态。
+        let grant = load_write_grant(conn, &grant_id)?.ok_or_else(|| {
+            DaemonRpcError::new("E_WRITE_GRANT_NOT_FOUND", format!("grant 不存在: {grant_id}"))
+        })?;
+        if grant.consumed != 0 || grant.status != "active" {
+            return Err(DaemonRpcError::new(
+                "E_WRITE_GRANT_CONSUMED",
+                "grant 已被消费或不再活跃",
+            ));
+        }
+        if now > grant.expires_at {
+            return Err(DaemonRpcError::new(
+                "E_WRITE_GRANT_EXPIRED",
+                "grant 已过期",
+            ));
+        }
+        // review F6：事务内重放静态授权复核，缩小 TOCTOU 窗口（principal /
+        // path / workspace 归属 / task 状态 / symlink containment）。
+        if grant.principal_id != principal_id {
+            return Err(DaemonRpcError::new(
+                "E_WRITE_GRANT_PRINCIPAL_MISMATCH",
+                "grant principal 与调用方不一致",
+            ));
+        }
+        if grant.path != commit_path {
+            return Err(DaemonRpcError::new(
+                "E_WRITE_PATH_FORBIDDEN",
+                "commit path 与 grant 不一致",
+            ));
+        }
+        if grant.db_workspace_id != db_workspace_id {
+            return Err(DaemonRpcError::new(
+                "E_WRITE_WORKSPACE_MISMATCH",
+                "grant workspace 与当前 workspace 不一致",
+            ));
+        }
+        validate_task_step_for_write(task_store, &grant.task_id, &grant.step_id)?;
+        check_write_containment(&root, &commit_path)?;
+        let current: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT current_content_hash, total_lines FROM file_instances \
+                 WHERE workspace_id = ?1 AND rel_path = ?2",
+                rusqlite::params![db_workspace_id, commit_path],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 查询失败: {e}")))?;
+        let (current_hash, existing_total_lines) = current.unwrap_or_default();
+        if current_hash != grant.base_hash {
+            let consumed_after: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM write_grants \
+                     WHERE db_workspace_id = ?1 AND path = ?2 AND status = 'consumed' \
+                       AND consumed_at > ?3",
+                    rusqlite::params![grant.db_workspace_id, commit_path, grant.created_at],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            let code = if consumed_after > 0 {
+                "E_WRITE_STALE_BASE"
+            } else {
+                "E_WRITE_BASE_HASH_MISMATCH"
+            };
+            return Err(DaemonRpcError::new(
+                code,
+                format!(
+                    "base_hash 已变化（grant={}，index={current_hash}）",
+                    grant.base_hash
+                ),
+            ));
+        }
+        let total_lines = match content {
+            Some(text) => text.bytes().filter(|b| *b == b'\n').count() as i64,
+            None => existing_total_lines,
+        };
+        conn.execute(
+            "INSERT OR IGNORE INTO file_contents(content_hash, language, total_lines, first_seen_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![new_hash, infer_language(&commit_path), total_lines, now],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("file_contents 写入失败: {e}")))?;
+        upsert_file_instance(
+            conn,
+            db_workspace_id,
+            &commit_path,
+            &root.join(&commit_path),
+            &new_hash,
+            mtime,
+            total_lines,
+            false,
+        )?;
+        let audit_event_id = append_write_audit(
+            conn,
+            &WriteAuditEvent {
+                workspace_id: grant.workspace_id,
+                db_workspace_id,
+                event_type: "commit",
+                outcome: "allow",
+                grant_id: &grant_id,
+                principal_id: &principal_id,
+                task_id: &grant.task_id,
+                step_id: &grant.step_id,
+                path: &commit_path,
+                base_hash: &grant.base_hash,
+                new_hash: &new_hash,
+                reason_code: "",
+                request_id: &request_id,
+                detail: &delta_detail,
+                recorded_at: now,
+            },
+        )?;
+        let updated = conn
+            .execute(
+                "UPDATE write_grants SET status = 'consumed', consumed = 1, consumed_at = ?2, \
+                        new_hash = ?3, request_id = ?4 \
+                 WHERE grant_id = ?1 AND status = 'active' AND consumed = 0",
+                rusqlite::params![grant_id, now, new_hash, request_id],
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("grant 消费失败: {e}")))?;
+        if updated != 1 {
+            return Err(DaemonRpcError::new(
+                "E_WRITE_GRANT_CONSUMED",
+                "grant 已被并发消费",
+            ));
+        }
+        Ok((audit_event_id, db_workspace_id))
+    };
+
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| DaemonRpcError::internal_error(format!("commit 事务开启失败: {e}")))?;
+    match commit_tx(&conn) {
+        Ok((audit_event_id, db_workspace_id)) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| DaemonRpcError::internal_error(format!("commit 事务提交失败: {e}")))?;
+            Ok(json!({
+                "ok": true,
+                "grant_id": grant_id,
+                "workspace_id": grant.workspace_id,
+                "db_workspace_id": db_workspace_id,
+                "path": commit_path,
+                "base_hash": grant.base_hash,
+                "new_hash": new_hash,
+                "consumed_at": now,
+                "audit_event_id": audit_event_id,
+            }))
+        }
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(audit_write_reject(
+                &conn,
+                grant.workspace_id,
+                db_workspace_id,
+                &principal_id,
+                &grant.task_id,
+                &grant.step_id,
+                &grant_id,
+                &commit_path,
+                &grant.base_hash,
+                &new_hash,
+                &err.code,
+                &request_id,
+                json!({"phase": "commit", "detail": err.message}),
+                &err.code,
+                &err.message,
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2734,5 +3914,719 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1, "不得为同一目录建第二行");
+    }
+
+    #[test]
+    fn test_write_governance_schema_idempotent_lease_and_append_only() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::daemon::cas_merge::init_codegraph_schema(&conn).unwrap();
+        // 两次 ensure 必须幂等
+        ensure_write_governance_tables(&conn).unwrap();
+        ensure_write_governance_tables(&conn).unwrap();
+
+        let insert_grant = "INSERT INTO write_grants(grant_id, workspace_id, path, task_id, \
+             step_id, principal_id, base_hash, created_at, expires_at) \
+             VALUES (?1, 1, 'src/a.py', 'T-1', 'S-1', 'pr-a', 'base', 1.0, 2.0)";
+        conn.execute(insert_grant, rusqlite::params!["G-1"]).unwrap();
+        assert!(
+            conn.execute(insert_grant, rusqlite::params!["G-2"]).is_err(),
+            "同 workspace/path 的第二个活跃 grant 必须被逻辑租约拒绝"
+        );
+
+        conn.execute(
+            "INSERT INTO write_audit_events(workspace_id, event_type, outcome, grant_id, \
+             path, base_hash, new_hash, recorded_at) \
+             VALUES (1, 'grant', 'allow', 'G-1', 'src/a.py', 'base', '', 1.0)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "UPDATE write_audit_events SET outcome = 'deny' WHERE event_id = 1",
+                [],
+            )
+            .is_err(),
+            "审计事件必须只追加"
+        );
+        assert!(
+            conn.execute("DELETE FROM write_audit_events WHERE event_id = 1", [])
+                .is_err(),
+            "审计事件必须只追加"
+        );
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM write_audit_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(events, 1);
+
+        // review F3：grant/审计与 file_instances 的 workspace id 双空间显式记录
+        for table in ["write_grants", "write_audit_events"] {
+            let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
+            let cols: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect();
+            assert!(
+                cols.iter().any(|c| c == "db_workspace_id"),
+                "{table} 缺少 db_workspace_id"
+            );
+        }
+    }
+
+    #[test]
+    fn test_write_grant_commit_end_to_end() {
+        let root = std::env::temp_dir().join(format!(
+            "cw_write_gov_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let workspace = registry
+            .register_workspace(
+                1000,
+                root.to_str().unwrap(),
+                root.to_str().unwrap(),
+                "",
+                "",
+                "",
+            )
+            .unwrap();
+        let instance_id = workspace["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let peer = PeerCredential::new_unix(1000, 1000, 1);
+        let grant_params = json!({
+            "workspace_instance_id": instance_id,
+            "task_id": "T-1",
+            "step_id": "S-1",
+            "path": "src/a.py",
+            "base_hash": "",
+            "request_id": "r1",
+        });
+        let grant =
+            handle_write_grant(&registry, &peer, &grant_params, Some(&db_path), None).unwrap();
+        let grant_id = grant["grant_id"].as_str().unwrap().to_string();
+        assert_eq!(grant["base_hash"], "");
+
+        // 同 path 活跃租约 → E_WRITE_LOCKED
+        let locked =
+            handle_write_grant(&registry, &peer, &grant_params, Some(&db_path), None).unwrap_err();
+        assert_eq!(locked.code, "E_WRITE_LOCKED");
+
+        let content = "def f():\n    return 1\n";
+        let new_hash = sha256_hex(content.as_bytes());
+        let commit = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({
+                "grant_id": grant_id,
+                "new_hash": new_hash,
+                "content": content,
+                "request_id": "r2",
+                "workspace_instance_id": instance_id,
+            }),
+            Some(&db_path),
+            None,
+        )
+        .unwrap();
+        assert_eq!(commit["ok"], true);
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let (indexed_hash, grant_status): (String, String) = conn
+            .query_row(
+                "SELECT fi.current_content_hash, wg.status \
+                 FROM file_instances fi, write_grants wg \
+                 WHERE fi.rel_path = 'src/a.py' AND wg.grant_id = ?1",
+                rusqlite::params![grant_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(indexed_hash, new_hash);
+        assert_eq!(grant_status, "consumed");
+        let allow_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM write_audit_events \
+                 WHERE outcome = 'allow' AND event_type IN ('grant','commit')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(allow_events, 2, "grant + commit 各一条 allow 审计");
+        let chain_records: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_chain WHERE table_name = 'remote_write_events'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(chain_records, 3, "grant/locked/commit 均进入审计哈希链");
+
+        // 重放 → E_WRITE_GRANT_CONSUMED
+        let replay = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({
+                "grant_id": grant_id,
+                "new_hash": new_hash,
+                "content": content,
+            }),
+            Some(&db_path),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(replay.code, "E_WRITE_GRANT_CONSUMED");
+
+        // 旧 base_hash 再申请 grant → E_WRITE_STALE_BASE
+        let stale =
+            handle_write_grant(&registry, &peer, &grant_params, Some(&db_path), None).unwrap_err();
+        assert_eq!(stale.code, "E_WRITE_STALE_BASE");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// backlog §38.3 S3-02/03/05/06/08/09 daemon 侧 fail-closed 与审计回放矩阵。
+    #[test]
+    fn test_write_governance_fail_closed_matrix() {
+        let root = std::env::temp_dir().join(format!(
+            "cw_write_gov_matrix_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let workspace = registry
+            .register_workspace(1000, root.to_str().unwrap(), root.to_str().unwrap(), "", "", "")
+            .unwrap();
+        let instance_id = workspace["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let peer = PeerCredential::new_unix(1000, 1000, 1);
+        let grant_params = json!({
+            "workspace_instance_id": instance_id,
+            "task_id": "T-1",
+            "step_id": "S-1",
+            "path": "src/a.py",
+            "base_hash": "",
+            "request_id": "rm",
+        });
+        let content = "line1\nline2\n";
+        let new_hash = sha256_hex(content.as_bytes());
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+
+        // S3-06 跨 principal → PRINCIPAL_MISMATCH，索引不变
+        let grant =
+            handle_write_grant(&registry, &peer, &grant_params, Some(&db_path), None).unwrap();
+        let grant_id = grant["grant_id"].as_str().unwrap().to_string();
+        let real_principal: String = conn
+            .query_row(
+                "SELECT principal_id FROM write_grants WHERE grant_id = ?1",
+                rusqlite::params![grant_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "UPDATE write_grants SET principal_id = 'intruder' WHERE grant_id = ?1",
+            rusqlite::params![grant_id],
+        )
+        .unwrap();
+        let mismatch = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": grant_id, "new_hash": new_hash, "content": content,
+                    "path": "src/a.py"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(mismatch.code, "E_WRITE_GRANT_PRINCIPAL_MISMATCH");
+        let indexed: Option<String> = conn
+            .query_row(
+                "SELECT current_content_hash FROM file_instances WHERE rel_path = 'src/a.py'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert!(indexed.is_none(), "拒绝路径不得产生索引副作用");
+
+        // S3-05 commit path 越出 grant → PATH_FORBIDDEN
+        conn.execute(
+            "UPDATE write_grants SET principal_id = ?1 WHERE grant_id = ?2",
+            rusqlite::params![real_principal, grant_id],
+        )
+        .unwrap();
+        let forbidden = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": grant_id, "new_hash": new_hash, "content": content,
+                    "path": "src/other.py"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(forbidden.code, "E_WRITE_PATH_FORBIDDEN");
+
+        // S3-03 过期 → GRANT_EXPIRED
+        conn.execute(
+            "UPDATE write_grants SET expires_at = 1.0 WHERE grant_id = ?1",
+            rusqlite::params![grant_id],
+        )
+        .unwrap();
+        let expired = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": grant_id, "new_hash": new_hash, "content": content,
+                    "path": "src/a.py"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(expired.code, "E_WRITE_GRANT_EXPIRED");
+
+        // S3-01 成功一次 → 索引推进
+        let ok_grant =
+            handle_write_grant(&registry, &peer, &grant_params, Some(&db_path), None).unwrap();
+        let ok_gid = ok_grant["grant_id"].as_str().unwrap().to_string();
+        handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": ok_gid, "new_hash": new_hash, "content": content,
+                    "path": "src/a.py"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap();
+        let indexed_hash: String = conn
+            .query_row(
+                "SELECT current_content_hash FROM file_instances WHERE rel_path = 'src/a.py'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed_hash, new_hash);
+
+        // S3-02 grant 后索引被外部推进（非本次 grant 消费）→ BASE_HASH_MISMATCH
+        let second = handle_write_grant(
+            &registry,
+            &peer,
+            &json!({
+                "workspace_instance_id": instance_id,
+                "task_id": "T-1",
+                "step_id": "S-1",
+                "path": "src/a.py",
+                "base_hash": new_hash,
+                "request_id": "rm2",
+            }),
+            Some(&db_path),
+            None,
+        )
+        .unwrap();
+        let second_gid = second["grant_id"].as_str().unwrap().to_string();
+        let external_hash = sha256_hex(b"external-writer");
+        conn.execute(
+            "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, \
+             first_seen_at) VALUES (?1, 'python', 1, 1.0)",
+            rusqlite::params![external_hash],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE file_instances SET current_content_hash = ?1 WHERE rel_path = 'src/a.py'",
+            rusqlite::params![external_hash],
+        )
+        .unwrap();
+        let base_mismatch = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": second_gid, "new_hash": sha256_hex(b"v2"),
+                    "content": "v2", "path": "src/a.py"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(base_mismatch.code, "E_WRITE_BASE_HASH_MISMATCH");
+        let after: String = conn
+            .query_row(
+                "SELECT current_content_hash FROM file_instances WHERE rel_path = 'src/a.py'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(after, external_hash, "失败 commit 必须保持索引不变");
+
+        // S3-08 task closed → TASK_FORBIDDEN（真实 TaskCollabStore 注入）
+        let store = TaskCollabStore::from_connection(
+            rusqlite::Connection::open_in_memory().unwrap(),
+        )
+        .unwrap();
+        {
+            let tconn = store.conn.lock().unwrap();
+            tconn
+                .execute(
+                    "INSERT INTO tasks (id, title, description, creator, status, created_at, \
+                     updated_at) VALUES ('T-CLOSED', 't', '', 'agent', 'closed', 1.0, 1.0)",
+                    [],
+                )
+                .unwrap();
+            tconn
+                .execute(
+                    "INSERT INTO task_steps (id, task_id, step_index, action, status, created_at) \
+                     VALUES ('S-CLOSED', 'T-CLOSED', 0, 'implement', 'pending', 1.0)",
+                    [],
+                )
+                .unwrap();
+        }
+        let task_forbidden = handle_write_grant(
+            &registry,
+            &peer,
+            &json!({
+                "workspace_instance_id": instance_id,
+                "task_id": "T-CLOSED",
+                "step_id": "S-CLOSED",
+                "path": "src/b.py",
+                "base_hash": "",
+            }),
+            Some(&db_path),
+            Some(&store),
+        )
+        .unwrap_err();
+        assert_eq!(task_forbidden.code, "E_WRITE_TASK_FORBIDDEN");
+
+        // S3-09 审计回放：grant/commit/拒绝全部入链且无缺口
+        let verify = crate::cli::security::verify_audit_chain(
+            &conn,
+            "remote_write_events",
+            500,
+        )
+        .unwrap();
+        assert!(
+            verify.total_count >= 6,
+            "审计应覆盖 grant/commit/拒绝，实际 {}",
+            verify.total_count
+        );
+        assert_eq!(
+            verify.broken_count, 0,
+            "审计链不得有缺口: {:?}",
+            verify.broken_records
+        );
+        assert_eq!(verify.verified_count, verify.total_count);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_write_path_normalization_rejects_escape() {
+        assert_eq!(normalize_write_rel_path(" src/a.py ").unwrap(), "src/a.py");
+        assert_eq!(normalize_write_rel_path("./src//a.py").unwrap(), "src/a.py");
+        for bad in ["../a.py", "src/../../a.py", "/abs/a.py", "C:/a.py", "//host/share/a.py", ""] {
+            assert!(
+                normalize_write_rel_path(bad).is_err(),
+                "path 应被拒绝: {bad}"
+            );
+        }
+        assert!(is_lower_sha256_hex(&"a".repeat(64)));
+        assert!(!is_lower_sha256_hex(&"A".repeat(64)));
+        assert!(!is_lower_sha256_hex("short"));
+    }
+
+    /// review F2：principal/workspace/task 归属 fail-closed。
+    #[test]
+    fn test_write_grant_scope_fail_closed() {
+        use crate::daemon::peercred::{FixedStr, PrincipalIdentity};
+
+        let root = std::env::temp_dir().join(format!(
+            "cw_write_grant_scope_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let workspace = registry
+            .register_workspace(1000, root.to_str().unwrap(), root.to_str().unwrap(), "", "", "")
+            .unwrap();
+        let instance_id = workspace["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let peer = PeerCredential::new_unix(1000, 1000, 1);
+        let grant_params = json!({
+            "workspace_instance_id": instance_id,
+            "task_id": "T-1",
+            "step_id": "S-1",
+            "path": "src/a.py",
+            "base_hash": "",
+            "request_id": "scope",
+        });
+
+        // (a) 已认证 principal 未被授权该 workspace → 拒绝且不签 grant
+        let restricted = peer.clone().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("999").unwrap(),
+            ..Default::default()
+        });
+        let denied = handle_write_grant(
+            &registry,
+            &restricted,
+            &grant_params,
+            Some(&db_path),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(denied.code, "E_PRINCIPAL_WORKSPACE_FORBIDDEN");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let grants: i64 = conn
+            .query_row("SELECT COUNT(*) FROM write_grants", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(grants, 0, "拒绝的 principal 不得产生 grant");
+        let (reason, audit_db_ws): (String, i64) = conn
+            .query_row(
+                "SELECT reason_code, db_workspace_id FROM write_audit_events \
+                 WHERE outcome = 'deny' ORDER BY event_id DESC LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(reason, "E_PRINCIPAL_WORKSPACE_FORBIDDEN");
+        let capture_ws: i64 = conn
+            .query_row(
+                "SELECT id FROM workspaces ORDER BY id LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(audit_db_ws, capture_ws, "拒绝审计也应绑定 codegraph workspace id");
+
+        // (b) task 绑定 workspace 与请求不一致 → E_WRITE_TASK_FORBIDDEN
+        let store = TaskCollabStore::from_connection(
+            rusqlite::Connection::open_in_memory().unwrap(),
+        )
+        .unwrap();
+        {
+            let tconn = store.conn.lock().unwrap();
+            tconn
+                .execute(
+                    "INSERT OR IGNORE INTO workspaces (id, name, root_path, created_at, is_active) \
+                     VALUES (1, 'test-ws', '/tmp/test-ws', 1.0, 1)",
+                    [],
+                )
+                .unwrap();
+            tconn
+                .execute(
+                    "INSERT OR IGNORE INTO tasks (id, title, description, creator, status, \
+                     created_at, updated_at, parent_id) \
+                     VALUES ('T-1', 'test task', '', 'test', 'open', 1.0, 1.0, '')",
+                    [],
+                )
+                .unwrap();
+            tconn
+                .execute(
+                    "INSERT OR IGNORE INTO task_steps (id, task_id, step_index, action, status, \
+                     created_at) VALUES ('S-1', 'T-1', 1, 'edit', 'pending', 1.0)",
+                    [],
+                )
+                .unwrap();
+            tconn
+                .execute(
+                    "INSERT INTO workspace_authority_captures(workspace_capture_id, workspace_id, \
+                     capture_revision, supersedes_capture_id, daemon_workspace_id, \
+                     workspace_instance_id, capture_canonicalization_version, \
+                     capture_canonicalization_rules_hash, registry_identity_payload_json, \
+                     registry_identity_hash, workspace_manifest_payload_json, \
+                     workspace_manifest_hash, client_view_root_hash, host_real_root_hash, \
+                     created_by, authoritative_created_at) \
+                     VALUES ('cap-other', 1, 1, NULL, 0, 'inst-other', 'workspace-capture-c14n/v1', \
+                     'rules-hash', '{}', 'identity-hash', '{}', 'manifest-hash', 'root-hash', \
+                     'root-hash', 'test', 1.0)",
+                    [],
+                )
+                .unwrap();
+            tconn
+                .execute(
+                    "INSERT INTO task_workspace_bindings(task_id, workspace_id, \
+                     workspace_binding_id, workspace_capture_id, created_by, \
+                     authoritative_created_at) \
+                     VALUES ('T-1', 1, 'tb-other', 'cap-other', 'test', 1.0)",
+                    [],
+                )
+                .unwrap();
+        }
+        let mismatch = handle_write_grant(
+            &registry,
+            &peer,
+            &grant_params,
+            Some(&db_path),
+            Some(&store),
+        )
+        .unwrap_err();
+        assert_eq!(mismatch.code, "E_WRITE_TASK_FORBIDDEN");
+
+        // (c) task 绑定与请求一致 → 放行
+        {
+            let tconn = store.conn.lock().unwrap();
+            tconn
+                .execute(
+                    "UPDATE workspace_authority_captures SET workspace_instance_id = ?1 \
+                     WHERE workspace_capture_id = 'cap-other'",
+                    rusqlite::params![instance_id],
+                )
+                .unwrap();
+        }
+        let granted = handle_write_grant(
+            &registry,
+            &peer,
+            &grant_params,
+            Some(&db_path),
+            Some(&store),
+        )
+        .unwrap();
+        assert_eq!(granted["ok"], true);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// review F3：grant/审计的 db_workspace_id 必须与 file_instances 的 workspace id 对齐。
+    #[test]
+    fn test_write_governance_db_workspace_id_correlation() {
+        let root = std::env::temp_dir().join(format!(
+            "cw_write_gov_corr_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let workspace = registry
+            .register_workspace(1000, root.to_str().unwrap(), root.to_str().unwrap(), "", "", "")
+            .unwrap();
+        let instance_id = workspace["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let peer = PeerCredential::new_unix(1000, 1000, 1);
+        let content = "body\n";
+        let new_hash = sha256_hex(content.as_bytes());
+        let grant_params = json!({
+            "workspace_instance_id": instance_id,
+            "task_id": "T-1",
+            "step_id": "S-1",
+            "path": "src/a.py",
+            "base_hash": "",
+        });
+        let grant =
+            handle_write_grant(&registry, &peer, &grant_params, Some(&db_path), None).unwrap();
+        let grant_id = grant["grant_id"].as_str().unwrap().to_string();
+        handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": grant_id, "new_hash": new_hash, "content": content,
+                    "path": "src/a.py"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap();
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let index_ws: i64 = conn
+            .query_row(
+                "SELECT workspace_id FROM file_instances WHERE rel_path = 'src/a.py'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let grant_ws: i64 = conn
+            .query_row(
+                "SELECT db_workspace_id FROM write_grants WHERE grant_id = ?1",
+                rusqlite::params![grant_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let commit_audit_ws: i64 = conn
+            .query_row(
+                "SELECT db_workspace_id FROM write_audit_events \
+                 WHERE event_type = 'commit' AND outcome = 'allow' \
+                 ORDER BY event_id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(grant_ws, index_ws, "grant 必须记录 codegraph workspace id");
+        assert_eq!(
+            commit_audit_ws, index_ws,
+            "commit 审计必须与 file_instances 同一 workspace id 空间"
+        );
+
+        // review F5：审计事件必须回填链行号，且 event 与 audit_chain 一一对应。
+        let (record_id, chain_id): (String, i64) = conn
+            .query_row(
+                "SELECT e.audit_record_id, c.id \
+                   FROM write_audit_events e \
+                   JOIN audit_chain c ON c.id = CAST(e.audit_record_id AS INTEGER) \
+                  WHERE e.event_type = 'commit' AND e.outcome = 'allow' \
+                  ORDER BY e.event_id DESC LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(
+            !record_id.is_empty(),
+            "review F5: audit_record_id 必须回填 audit_chain 行号"
+        );
+        assert_eq!(record_id, chain_id.to_string());
+        let (events, chains): (i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM write_audit_events), \
+                        (SELECT COUNT(*) FROM audit_chain WHERE table_name = ?1)",
+                rusqlite::params![WRITE_AUDIT_CHAIN_TABLE],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            events, chains,
+            "review F5: write_audit_events 与 audit_chain 必须一一对应，不得有链缺口"
+        );
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// review F6：写路径 symlink containment（根内 symlink 指向根外必须拒绝）。
+    #[test]
+    fn test_write_containment_rejects_symlink_escape() {
+        let base = std::env::temp_dir().join(format!(
+            "cw_write_sym_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let link = root.join("link");
+        #[cfg(unix)]
+        let created = std::os::unix::fs::symlink(&outside, &link).is_ok();
+        #[cfg(windows)]
+        let created = std::os::windows::fs::symlink_dir(&outside, &link).is_ok();
+        // 无 symlink 权限的环境（如未开开发者模式的 Windows）跳过逃逸断言。
+        if created {
+            let err = check_write_containment(&root, "link/evil.py").unwrap_err();
+            assert_eq!(err.code, "E_WRITE_PATH_ESCAPE");
+        }
+        assert!(
+            check_write_containment(&root, "src/ok.py").is_ok(),
+            "根内普通路径（含尚不存在的前缀）必须放行"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -223,6 +223,9 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     # ============ tools_workspace（27） ============
     "build_directory": {"rpc_method": "workspace.build_directory", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-fs", "status": "migrated"},
     "build_graph": {"rpc_method": "workspace.build_graph", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-fs", "status": "migrated"},
+    # S3（ADR-002 §8.2）：write_file 编排 write.grant → 本机原子写 → write.commit；
+    # 矩阵以权威提交面 write.commit 登记，客户端编排语义见 daemon_client.governed_write_file。
+    "file_write": {"rpc_method": "write.commit", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "S3", "status": "migrated"},
     "check_file_health": {"rpc_method": "workspace.file.health", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-fs", "status": "migrated"},
     "delete_workspace": {"rpc_method": "workspace.remove", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "existing-native", "status": "stable"},
     "file_grep": {"rpc_method": "workspace.file.grep", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-fs", "status": "migrated"},

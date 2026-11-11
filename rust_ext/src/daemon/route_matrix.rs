@@ -311,6 +311,7 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     ToolRoute { name: "file_list", module: "tools_workspace", target_backend: Backend::RustNative, rpc_method: "workspace.file.list", op_class: OpClass::ReadOnly, batch: "T02-fs", status: "migrated" },
     ToolRoute { name: "file_read", module: "tools_workspace", target_backend: Backend::RustNative, rpc_method: "workspace.file.read", op_class: OpClass::ReadOnly, batch: "T02-fs", status: "migrated" },
     ToolRoute { name: "file_symbol_content", module: "tools_workspace", target_backend: Backend::RustNative, rpc_method: "workspace.file.symbol_content", op_class: OpClass::ReadOnly, batch: "T02-fs", status: "migrated" },
+    ToolRoute { name: "file_write", module: "tools_workspace", target_backend: Backend::RustNative, rpc_method: "write.commit", op_class: OpClass::ProtectedMutation, batch: "S3", status: "migrated" },
     ToolRoute { name: "get_active_workspace", module: "tools_workspace", target_backend: Backend::RustNative, rpc_method: "workspace.status", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },
     ToolRoute { name: "get_code_health_check", module: "tools_workspace", target_backend: Backend::RustNative, rpc_method: "query.code_health", op_class: OpClass::ReadOnly, batch: "T02-metrics", status: "migrated" },
     ToolRoute { name: "get_code_metrics_summary", module: "tools_workspace", target_backend: Backend::RustNative, rpc_method: "query.metrics_summary", op_class: OpClass::ReadOnly, batch: "T02-metrics", status: "migrated" },

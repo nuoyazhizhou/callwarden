@@ -83,7 +83,9 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 # P2 依赖图与环检测诊断（Req 9.1-9.10）
                 "dependency",
                 # P3 Identity/Attestation（Req 10.1-10.18）
-                "identity"}
+                "identity",
+                # S3（ADR-002 §8.2）：远端治理写（write.grant → 本机原子写 → write.commit）
+                "write"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -1244,8 +1246,12 @@ def _run_subcommand_mode():
         # 会与 daemon writer 竞争）。
         daemon_mode = get_daemon_mode()
         remote_task_cmd = sys.argv[1] == "task" and daemon_mode in ("enterprise", "auto")
+        # S3：write 走 daemon 治理 RPC，禁止本地 SQLite 注册/激活旁路。
+        remote_write_cmd = sys.argv[1] == "write"
         skip_workspace_write = (
-            _is_readonly_command(sys.argv[1], sub_argv) or remote_task_cmd
+            _is_readonly_command(sys.argv[1], sub_argv)
+            or remote_task_cmd
+            or remote_write_cmd
         )
         if workspace_root and not skip_workspace_write:
             try:
@@ -1511,6 +1517,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_symbol(argv, db)
         elif cmd == "file":
             return _handle_file(argv, db)
+        elif cmd == "write":
+            return _handle_write(argv, db)
         elif cmd == "query":
             return _handle_query(argv, db)
         elif cmd == "callers":
@@ -10215,6 +10223,68 @@ def _handle_symbol(args, db):
         print()
         print(
             f"Issues: {issues_total} total (filtered, use 'cw issues {opts.name} --include-info')")
+    return True
+
+
+def _handle_write(args, db):
+    """S3（ADR-002 §8.2）：CLI 治理写入口。
+
+    与 MCP ``write_file`` 共用 ``governed_write_file``：
+    write.grant → 本机原子替换 → write.commit。daemon 不可达/拒绝时 fail closed，
+    不做本地 SQLite 回退；commit 失败不回滚本地文件且不静默重试。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw write",
+        description="经 daemon 治理写（write.grant → 原子替换 → write.commit）",
+    )
+    parser.add_argument("--path", required=True, help="workspace 相对路径")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--content", help="新文件内容（UTF-8 文本）")
+    source.add_argument("--content-file", metavar="FILE",
+                        help="从文件读取内容；'-' 表示 stdin")
+    parser.add_argument("--task-id", required=True, help="写入绑定的 task ID")
+    parser.add_argument("--step-id", required=True, help="写入绑定的 step ID")
+    parser.add_argument("--workspace-instance-id", default="",
+                        help="目标 workspace 实例 ID（缺省由 daemon 注册解析）")
+    parser.add_argument("--json", action="store_true", help="以 JSON 输出结果")
+    opts = parser.parse_args(args)
+
+    if opts.content_file is not None:
+        if opts.content_file == "-":
+            content = sys.stdin.read()
+        else:
+            with open(opts.content_file, "r", encoding="utf-8") as handle:
+                content = handle.read()
+    else:
+        content = opts.content
+
+    from callwarden.server.daemon_client import governed_write_file
+    from callwarden.server.daemon_protocol import DaemonRemoteError
+
+    try:
+        result = governed_write_file(
+            file_path=opts.path,
+            content=content,
+            task_id=opts.task_id,
+            step_id=opts.step_id,
+            workspace_instance_id=opts.workspace_instance_id,
+        )
+    except DaemonRemoteError as exc:
+        if opts.json:
+            print(json.dumps({"ok": False, "code": exc.code, "message": exc.message},
+                             ensure_ascii=False, indent=2))
+        else:
+            cprint(f"✗ {exc.code}: {exc.message}", "red")
+        sys.exit(1)
+
+    if opts.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        cprint(
+            f"✓ 已治理写入 {result['path']}（{result['bytes_written']} bytes）"
+            f" grant={result['grant_id']} new_hash={result['new_hash'][:12]}…",
+            "green",
+        )
     return True
 
 

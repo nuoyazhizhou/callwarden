@@ -3498,6 +3498,49 @@ impl DaemonStateExt for SnapshotDaemonState {
             }
             "workspace.file.health" => fs::handle_file_health(&self.base.registry, &peer, params),
 
+            // ---- S3 远端写治理（ADR-002 §8.2）----
+            "write.grant" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let db = codegraph_db(self, ws)?;
+                let store = self
+                    .daemon_state()
+                    .task_collab_store
+                    .as_ref()
+                    .map(|v| v.as_ref());
+                fs::handle_write_grant(
+                    &self.base.registry,
+                    &peer,
+                    params,
+                    db.as_deref(),
+                    store,
+                )
+            }
+            "write.commit" => {
+                // 单库部署可省略 workspace_instance_id；per-workspace 模板必须显式给出，
+                // 否则无法唯一定位 grant 所在的权威库（fail-closed）。
+                let ws = params
+                    .get("workspace_instance_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let db = if ws.is_empty() && !self.base.codegraph_db_path_template.is_empty() {
+                    None
+                } else {
+                    codegraph_db(self, ws)?
+                };
+                let store = self
+                    .daemon_state()
+                    .task_collab_store
+                    .as_ref()
+                    .map(|v| v.as_ref());
+                fs::handle_write_commit(
+                    &self.base.registry,
+                    &peer,
+                    params,
+                    db.as_deref(),
+                    store,
+                )
+            }
+
             // ---- CLI tests 面（CLI-067：db/db_tests.py → Rust daemon）----
             // 🔴 此前 handler 已写好但未声明模块、未注册路由，导致 CLI
             // `tests --import` / `tests compute` 报 method_not_found

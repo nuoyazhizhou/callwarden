@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-10-07T19:38:32",
-  "total_tools": 243,
+  "generated_at": "2026-11-11T00:22:31",
+  "total_tools": 244,
   "backends": [
     "rust_native",
     "task_rpc",
@@ -2268,6 +2268,16 @@
       "rpc_method": "workspace.file.symbol_content",
       "op_class": "READ_ONLY",
       "batch": "T02-fs",
+      "status": "migrated"
+    },
+    {
+      "name": "file_write",
+      "module": "tools_workspace",
+      "current_backend": "rust_native",
+      "target_backend": "rust_native",
+      "rpc_method": "write.commit",
+      "op_class": "PROTECTED_MUTATION",
+      "batch": "S3",
       "status": "migrated"
     },
     {

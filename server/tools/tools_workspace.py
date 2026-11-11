@@ -30,7 +30,7 @@ from .._mcp_common import _call_daemon_rpc, get_db  # noqa: F401 —— re-expor
 from mcp.server.fastmcp import FastMCP
 
 
-from ..daemon_client import HttpDaemonRpcClient, route_rpc as _route
+from ..daemon_client import HttpDaemonRpcClient, governed_write_file, route_rpc as _route
 from ..daemon_protocol import DaemonRemoteError
 
 # ----------------------------------------------------------------------
@@ -504,6 +504,23 @@ def register(mcp: FastMCP) -> None:
         workspace 语义替代 legacy is_active）。
         """
         return _route('workspace.status', {}, 'READ_ONLY')
+
+    @mcp.tool()
+    def file_write(file_path: str, content: str, task_id: str, step_id: str,
+                   workspace_instance_id: str = "") -> dict:
+        """S3（ADR-002 §8.2）治理写文件：write.grant → 本机原子替换 → write.commit。
+
+        - 仅 bind_scope=remote 的 daemon 启用；loopback fail-closed，无本地旁路；
+        - base_hash 由客户端读取原文件计算，commit 失败不回滚本地文件且不静默重试；
+        - 与 CLI `cw write` 共用 governed_write_file，语义单一。
+        """
+        return governed_write_file(
+            file_path=file_path,
+            content=content,
+            task_id=task_id,
+            step_id=step_id,
+            workspace_instance_id=workspace_instance_id,
+        )
 
     @mcp.tool()
     def file_read(file_path: str, offset: int = 0, limit: int = 200, include_context: bool = False) -> Optional[dict]:
