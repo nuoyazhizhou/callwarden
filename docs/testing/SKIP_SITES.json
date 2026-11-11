@@ -3482,18 +3482,6 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_phase5_git_clean_dirty.py:390:1:pytest.mark.skipif",
-      "file": "tests/test_phase5_git_clean_dirty.py",
-      "line": 390,
-      "column": 1,
-      "mechanism": "pytest.mark.skipif",
-      "reason_literal": "双 UID 测试需要 Linux root 才能 setuid",
-      "reason_expression": "'双 UID 测试需要 Linux root 才能 setuid'",
-      "condition_or_module": "os.name != 'posix' or not hasattr(os, 'geteuid') or os.geteuid() != 0",
-      "file_sha256": "b7ce8a9c480fc39f82e42dcb6291243e04a43dfca71e7b0a3a8fb8b51574eee2",
-      "root_cause": "UNREVIEWED"
-    },
-    {
       "site_id": "tests/test_phase5_hash_diff.py:33:13:pytest.mark.skipif",
       "file": "tests/test_phase5_hash_diff.py",
       "line": 33,

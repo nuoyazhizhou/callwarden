@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "a8002ccef957ca3cd7ed24e035b14572982f53d8",
+  "supplied_source_revision": "1c2533c3cc77d9c03bbdf99df3fd1d0b2078b3bd",
   "revision_note": "Externally verified HEAD; input hashes, not HEAD alone, bind working-tree content.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -43,16 +43,16 @@
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 24,
-      "pytest.mark.skipif": 222,
+      "pytest.mark.skipif": 221,
       "pytest.skip": 210
     },
-    "classic_skip_sites": 432,
-    "classic_skip_files": 131,
+    "classic_skip_sites": 431,
+    "classic_skip_files": 130,
     "parser_contract_classic_sites": 44,
     "core_not_installed_exact_sites": 46,
     "core_not_built_exact_sites": 4,
     "parser_core_not_installed_exact_sites": 18,
-    "reason_literal_sites": 267,
+    "reason_literal_sites": 266,
     "reason_expression_sites": 167,
     "reason_absent_sites": 22,
     "reason_nonliteral_or_absent_sites": 189,
@@ -3247,7 +3247,7 @@
     },
     {
       "path": "tests/test_phase5_git_clean_dirty.py",
-      "sha256": "b7ce8a9c480fc39f82e42dcb6291243e04a43dfca71e7b0a3a8fb8b51574eee2"
+      "sha256": "c3153e2c0b137a59cc2c5a3ce2486b67ba088791f23a176388c8d384f82880ce"
     },
     {
       "path": "tests/test_phase5_hash_diff.py",
