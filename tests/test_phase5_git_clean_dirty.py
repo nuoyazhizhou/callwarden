@@ -383,21 +383,50 @@ def multiply(a, b):
 
 
 # ============================================================
-# 双 UID 隔离测试（需要 Linux root）
+# 双 UID 隔离测试（权限层注入，全平台可跑）
 # ============================================================
 
 
-@pytest.mark.skipif(
-    os.name != "posix" or not hasattr(os, "geteuid") or os.geteuid() != 0,
-    reason="双 UID 测试需要 Linux root 才能 setuid",
-)
 class TestDualUIDIsolation:
-    """验收 §5.4: UID A 无法查询 UID B 未授权 workspace。"""
+    """验收 §5.4: UID A 无法查询 UID B 未授权 workspace。
 
-    def test_uid_isolation(self, tmp_path):
-        """两个 UID 各自 workspace 隔离。"""
-        # 这个测试需要 Linux root 环境，这里只做框架验证
-        pass
+    T-11（DEFECT_HANDOFF_20261109）：原 body 为 `pass`，被 Linux root skipif
+    保护 ⇒ CI 永远空跑通过，安全关键路径假绿。现改为直接对 AccessChecker
+    权限层注入越权场景（不依赖 setuid，Windows/Linux 均执行）：
+    UID 1000 查询 UID 1001 的 workspace，在 allow_cross_uid_query 关闭且
+    角色无 can_query_other_workspace 时必须抛 AccessDeniedError。
+    """
+
+    def test_uid_isolation(self):
+        """跨 UID 查询未授权时必须被拒绝。"""
+        from callwarden.server.daemon_config import (
+            AccessChecker,
+            AccessDeniedError,
+            DaemonConfig,
+            PermissionTemplate,
+        )
+
+        def _checker(allow_cross_uid: bool) -> AccessChecker:
+            cfg = DaemonConfig.load_from_dict(
+                {"security": {"allow_cross_uid_query": allow_cross_uid}}
+            )
+            return AccessChecker(cfg, PermissionTemplate())
+
+        # 越权查询：cross_uid_query 关闭 + user 角色无跨查权限 → 必须拒绝
+        with pytest.raises(AccessDeniedError, match="cross_uid_query disabled"):
+            _checker(False).check_workspace_access(
+                uid=1000, workspace_owner_uid=1001
+            )
+
+        # 同 UID 查询自己的 workspace → 放行
+        _checker(False).check_workspace_access(
+            uid=1000, workspace_owner_uid=1000
+        )
+
+        # 显式开启跨 UID 查询 → 放行（配置开关是唯一旁路）
+        _checker(True).check_workspace_access(
+            uid=1000, workspace_owner_uid=1001
+        )
 
 
 # ============================================================
