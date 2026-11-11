@@ -25,19 +25,19 @@
 | ID | 标题 | 级别 | 建议路由域 | 状态 |
 |---|---|---|---|---|
 | DEF-01 | 提交树账本 CI false-fail（远端未同步） | P0 | CI/Infra | 本地已修，待 push |
-| DEF-02 | CRLF 根因（`.gitattributes` 缺 `eol=lf`） | P0 | CI/Infra | OPEN |
+| DEF-02 | CRLF 根因（`.gitattributes` 缺 `eol=lf`） | P0 | CI/Infra | **DONE**（a8002cc：三账本 eol=lf + renormalize，2026-11-11） |
 | DEF-03 | GAP-15 治理语义冲突 | P0 | Governance/Rust | OPEN（需人签字） |
-| T-1 | KR-C nightly 验收门零证据 | P0 | CI/Acceptance | OPEN |
+| T-1 | KR-C nightly 验收门零证据 | P0 | CI/Acceptance | **DONE**（登记过期：semgrep 已移 extras，KR-C closed，known_red.json 有 nightly 绿+Gate 证据） |
 | T-2 | Gate 1/2 汇总行污染（反篡改门恒红） | P0 | CI/Gate | OPEN |
-| T-3 | known-red 零隔离 | P0 | CI/Quarantine | OPEN |
-| T-4 | KR-A 83 条 residue | P0 | Security/Authority | OPEN |
+| T-3 | known-red 零隔离 | P0 | CI/Quarantine | **DONE**（登记过期：ci.yml 已有 deselect step + quarantine job，KR-A/B/C 全 closed） |
+| T-4 | KR-A 83 条 residue | P0 | Security/Authority | **DONE**（登记过期：KR-A closed——audit passed=true/finding_count=0/transition=79/sunset 未过期，migrate.py 已退役，MASKING 守卫 tests/test_srv_019.py:144 在位） |
 | T-5 | 写路径无 workspace 根约束（越权写） | P0 | Security | OPEN |
-| T-6 | bandit 门禁范围外 75 条 | P0 | Security | OPEN |
-| T-7 | Rust 集成测试只编译不执行 | P0 | Rust/CI | OPEN |
-| T-8 | E2E 结果 advisory 不阻断 | P0 | CI/E2E | OPEN |
-| T-9 | windows-arm64 产物零 E2E | P0 | CI/E2E | OPEN |
-| T-10 | Windows Python 全量零执行 | P1 | CI/Python | OPEN |
-| T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | OPEN |
+| T-6 | bandit 门禁范围外 75 条 | P0 | Security | **DONE**（登记过期：bandit 范围已含 db/ scripts/ cw.py config.py，75 条逐条处置入注释） |
+| T-7 | Rust 集成测试只编译不执行 | P0 | Rust/CI | **DONE**（登记过期：rust-unit-test job 已有 cargo test --tests 执行步） |
+| T-8 | E2E 结果 advisory 不阻断 | P0 | CI/E2E | DONE 本地（a6b1458，2026-11-11：按触发形态阻断；tag run 验证待 CI） |
+| T-9 | windows-arm64 产物零 E2E | P0 | CI/E2E | DONE 本地（260d066：新增 e2e-verify-windows-arm64.yml + cryptography 46.0.3 约束；tag run 验证待 CI） |
+| T-10 | Windows Python 全量零执行 | P1 | CI/Python | DONE 本地（c4b1df1：test-windows job，windows-latest × py3.14 + junction；3 连绿验收待 CI） |
+| T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
 | T-12 | 门禁脚本零单测 | P1 | CI/Gate | OPEN |
 | GAP-16 | skip 站点 root_cause 0/498 复核 | 已知未知 | Audit | OPEN |
 | D-MATRIX | D 专项矩阵未写 | 已知未知 | Test Design | OPEN |
