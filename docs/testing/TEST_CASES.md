@@ -5,7 +5,7 @@
 
 ## 1. 清单与证据边界
 
-CLI分类21，顶层84；快照叶子233，提取232，未提取['server']。
+CLI分类21，顶层86；快照叶子233，提取232，未提取['server']。
 MCP分类17，工具244；source/matrix/category名字集合静态一致。
 固化schema集合一致=True；缺当前工具=[]；历史额外项=[]。漂移阻断清单冻结，不能凭总数相等补绿。
 CLI snapshot未与当前runtime/argparse比对；MCP未取wire runtime schema。参数表亦为固化快照，默认值/类型/互斥和语义均待复核。

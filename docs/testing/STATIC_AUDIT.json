@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "69ed29370229aaadc2682862486f713e49de4a5a",
+  "supplied_source_revision": "6ebde03d9599400efe7c38f5ac203c86d3a7d8a1",
   "revision_note": "Externally verified HEAD; input hashes, not HEAD alone, bind working-tree content.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -13,7 +13,7 @@
   },
   "inventory": {
     "cli_categories": 21,
-    "cli_top_levels": 84,
+    "cli_top_levels": 86,
     "cli_snapshot_leaves": 233,
     "cli_extracted": 232,
     "cli_unextracted": [
@@ -63,7 +63,7 @@
   "inputs": [
     {
       "path": "cli/categories.py",
-      "sha256": "0f126e1716fbfa7f35fdf9cb42a91168290a74d9356989f2ecd82479a3a3f15d"
+      "sha256": "ed115c7f64ab9c5143e8c24e1928df1d8f86de005f2302c088e8e6e1c8826847"
     },
     {
       "path": "deliverables/software-company/tool_migration_matrix.json",
@@ -75,7 +75,7 @@
     },
     {
       "path": "docs/testing/manifests/mcp/mcp_tools.json",
-      "sha256": "5391cf667954bb40d3c9744e3110018fad942b7ff2338d7c36a9a45c39dc0a4d"
+      "sha256": "d420fcda891342766cfb07e6de6b6a54d26497b817a92690ff67c79d9372fbc5"
     },
     {
       "path": "rust_ext/src/abi_contract.rs",
@@ -991,7 +991,7 @@
     },
     {
       "path": "server/tools/_categories.py",
-      "sha256": "bd07d38ec279d69c061f9739216b941dbea9519a8a895daa031b6f7ca7b838df"
+      "sha256": "b4aba58b12eb15f649feb53cda0e8ba5feb54a699f59cf5463716d021a209639"
     },
     {
       "path": "server/tools/tools_collab.py",
@@ -1283,11 +1283,11 @@
     },
     {
       "path": "tests/acceptance/inventory/cli/extract_cli_tree.py",
-      "sha256": "9ee3e71272d6d0ddc4aa2a43d43e93c5b5542522818755f63d5a4e744b02f6fa"
+      "sha256": "70b2d553b489fae70686ba41dd83bad81cfe0d30cb6df75a6ae70e25065c9b30"
     },
     {
       "path": "tests/acceptance/inventory/cli/test_cli_tree.py",
-      "sha256": "51ea50f6e3ddc55dafeafecbb9d6ada693d50d6771ce123cd7fb760f7849d183"
+      "sha256": "fe2c3ac2c5332fbe3b867b9e27a32f8f5112f841f4a4046fb033859037eed26d"
     },
     {
       "path": "tests/acceptance/inventory/mcp/extract_mcp_tools.py",
@@ -1295,19 +1295,19 @@
     },
     {
       "path": "tests/acceptance/inventory/mcp/test_mcp_tools.py",
-      "sha256": "cba194c482907dec476b87ddfecf99407a759169a5ccc7cbe08c40329f7b9e7f"
+      "sha256": "bbaf14897d7cbeb5b7345fc62010a3bc752c7470e7524246373ea9e9448382b2"
     },
     {
       "path": "tests/acceptance/mcp/mcp_wire_harness.py",
-      "sha256": "29421121adf9e7873464622c3d4f4af37c5c18d980d5811ecb596b2850cde538"
+      "sha256": "3449f45085f82b927f2cdfafbcd7176fceffa10e298fdbe0b55176c6e001d025"
     },
     {
       "path": "tests/acceptance/mcp/test_mcp_c1_wire.py",
-      "sha256": "b9a42ee5d12d6e13e2c02819e2420454ceeb4d716f7a185b88abeb936b5d58e6"
+      "sha256": "50e3f41f7f1c6aa3a5d8bccff5e30d2a3e07b96168485a5c8310c56455f5f8b5"
     },
     {
       "path": "tests/acceptance/mcp/test_mcp_c2_params.py",
-      "sha256": "fa4872c7833ebb5da16142de615b7c069858aea9e20b0e78119b2101258fc3ae"
+      "sha256": "3f2df18d7b415c6c6484b20a4ac2e8156a0d16b6b66568f5493b0367b35aa4ca"
     },
     {
       "path": "tests/acceptance/mcp/test_mcp_c3_negatives.py",
@@ -1315,7 +1315,7 @@
     },
     {
       "path": "tests/acceptance/mcp/test_mcp_wire_contract.py",
-      "sha256": "ae98aa88d35ad6be6819a5e21eb2bc3578781b3b10c11f0159cd213e7788c437"
+      "sha256": "ac53e5e6f19cce96d98a1270e5b77b002ddc0dad4b3eee6b477fd27247c8ecce"
     },
     {
       "path": "tests/bench_phase2_6_3_register.py",
@@ -1331,7 +1331,7 @@
     },
     {
       "path": "tests/convergence/fixtures/audit_mcp_inventory.json",
-      "sha256": "edc1a40ae7f399b875f48d2669df64fbb5d6656e001b31c71235ce81ca1244fb"
+      "sha256": "44aa806e7a396de8af0432f2bcf5a77892b8c53c42cbd39289c1b03429d1c3f1"
     },
     {
       "path": "tests/convergence/fixtures/cli_full_params.json",
@@ -1343,7 +1343,7 @@
     },
     {
       "path": "tests/convergence/param_provider.py",
-      "sha256": "a63366ae2864843d110029ef9eb69db1f7995c8154d5f7991678189e1647af34"
+      "sha256": "f5e44ce4b93bd19ff80ad2741018afc48aea2ebb38a0ed9ea638acfc7d13cbd9"
     },
     {
       "path": "tests/convergence/seed_sample/calc.py",
@@ -1355,7 +1355,7 @@
     },
     {
       "path": "tests/convergence/t2_mcp_runner.py",
-      "sha256": "8743b9f3df52400d23f77bfd32bd35681939529efb4823027c3710947fb4be65"
+      "sha256": "b1899d2892391d5bba840ccfbf6023972b8287c0fd84edd844a587e39d76087e"
     },
     {
       "path": "tests/convergence/t3_cli_runner.py",
@@ -1371,7 +1371,7 @@
     },
     {
       "path": "tests/convergence/test_m1_route_matrix.py",
-      "sha256": "57f13a705dc43ebe80ebca7a3bfbf5f852177fc0a7bcf80dd73a609a1223515b"
+      "sha256": "0291b72bfcbb3416edbf8d67cba919df6058b0dbeb89b9111d48f02e61d3b125"
     },
     {
       "path": "tests/convergence/test_m2_client_purity.py",
@@ -1391,11 +1391,11 @@
     },
     {
       "path": "tests/convergence/test_t1_seed_and_provider.py",
-      "sha256": "95750848901bb3dc186f7425f26dacfce2e930a4c7982a469d1c32c06e03d076"
+      "sha256": "96ec1a2204ae27b8bd7f790f710b8697405a189556adb8b68522167801911faa"
     },
     {
       "path": "tests/convergence/test_t2_mcp_full_invocation.py",
-      "sha256": "343ac2f67e2593b13d96db79b9c3b76c84d6bf93d272b0a1ae51cbad4f24ce58"
+      "sha256": "e6a2243e1e6f61e8d4d9be3f4e3b628b89eb10f2db4a43db4bb514cb4cf3ffd0"
     },
     {
       "path": "tests/convergence/test_t3_cli_full_invocation.py",
@@ -1675,7 +1675,7 @@
     },
     {
       "path": "tests/test_category_source.py",
-      "sha256": "408fc69244348a6e077ff3e8918000c4ac4144f114f56433ea58fa1ab4515d55"
+      "sha256": "d914e0ccaee11d7c4919ef6ecc5925fbe0ac5e77d34130bb1e58a7012a119398"
     },
     {
       "path": "tests/test_cicd_gates.py",
@@ -2111,7 +2111,7 @@
     },
     {
       "path": "tests/test_cli_main_help.py",
-      "sha256": "f573b8c7a8662be7a33dc81e59247e2d3c22f628676586e17bf7c39290bf518c"
+      "sha256": "1a5e5885408c8aa89b7ec5eaed24444aa128ad22654660b62a7ea904f92ac6ac"
     },
     {
       "path": "tests/test_cli_reference_sections.py",
@@ -2163,7 +2163,7 @@
     },
     {
       "path": "tests/test_coverage_manifest.py",
-      "sha256": "f2d460731e8f95d7bd77e8ce04b2be216cba00126eab0a940ce39eb000b263a7"
+      "sha256": "4141768ea97a123b5429b81de10b84b6c62f7ed78d0c447e2165fbb604cde296"
     },
     {
       "path": "tests/test_coverage_review_rpc_http.py",
@@ -2431,7 +2431,7 @@
     },
     {
       "path": "tests/test_integration_full_matrix.py",
-      "sha256": "a810de0c511426083718d0a7d91e22a19a516be181a1448bc9facfa604c01b2e"
+      "sha256": "03433e903c6580551e062da8176e895107975900799cc06024d95db85731c5fd"
     },
     {
       "path": "tests/test_integration_phase3_8.py",
@@ -3395,7 +3395,7 @@
     },
     {
       "path": "tests/test_phase8_metrics_endpoint.py",
-      "sha256": "49bc6399517b4f1d3469fb12253deaec4c385d1757727ef06c227ef5ab41c8b9"
+      "sha256": "fdcd23f898e157da9bea88dc78204affe6db4f4bbfddcc5b5061c1a3d911ba6a"
     },
     {
       "path": "tests/test_phase8_rust_backup_restore.py",
@@ -3507,7 +3507,7 @@
     },
     {
       "path": "tests/test_route_matrix_generation.py",
-      "sha256": "5fd9d2bf592ba0866a0964fd5af3f0fc1a724a7d3c709a5dec7e6ca5c706b35b"
+      "sha256": "9b5b901a71c02c3f4c57d76b5bcd130402bb98c202d9fc2df1ae6f73244a1a9e"
     },
     {
       "path": "tests/test_runtime_policy_gate.py",

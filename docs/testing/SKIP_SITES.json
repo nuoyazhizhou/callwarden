@@ -166,7 +166,7 @@
       "reason_literal": null,
       "reason_expression": "f'manifest not generated: {MANIFEST}'",
       "condition_or_module": null,
-      "file_sha256": "51ea50f6e3ddc55dafeafecbb9d6ada693d50d6771ce123cd7fb760f7849d183",
+      "file_sha256": "fe2c3ac2c5332fbe3b867b9e27a32f8f5112f841f4a4046fb033859037eed26d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -178,7 +178,7 @@
       "reason_literal": null,
       "reason_expression": "f'manifest not generated: {MANIFEST}'",
       "condition_or_module": null,
-      "file_sha256": "cba194c482907dec476b87ddfecf99407a759169a5ccc7cbe08c40329f7b9e7f",
+      "file_sha256": "bbaf14897d7cbeb5b7345fc62010a3bc752c7470e7524246373ea9e9448382b2",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -190,7 +190,7 @@
       "reason_literal": "production .callwarden absent",
       "reason_expression": "'production .callwarden absent'",
       "condition_or_module": null,
-      "file_sha256": "cba194c482907dec476b87ddfecf99407a759169a5ccc7cbe08c40329f7b9e7f",
+      "file_sha256": "bbaf14897d7cbeb5b7345fc62010a3bc752c7470e7524246373ea9e9448382b2",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -202,7 +202,7 @@
       "reason_literal": null,
       "reason_expression": "f'无已知散列 daemon 候选且未显式指定 CW_TP10M_SRC_DAEMON（candidates={[str(c) for c in _DAEMON_CANDIDATES]}）：TP-10M MCP wire 用例仅在有已验收候选时真跑；acceptance-gates 或本地经 CW_TP10M_SRC_DAEMON 注入候选后运行'",
       "condition_or_module": null,
-      "file_sha256": "29421121adf9e7873464622c3d4f4af37c5c18d980d5811ecb596b2850cde538",
+      "file_sha256": "3449f45085f82b927f2cdfafbcd7176fceffa10e298fdbe0b55176c6e001d025",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -250,7 +250,7 @@
       "reason_literal": "snapshot publish/stats 未就绪(隔离 daemon 环境限制)",
       "reason_expression": "'snapshot publish/stats 未就绪(隔离 daemon 环境限制)'",
       "condition_or_module": null,
-      "file_sha256": "95750848901bb3dc186f7425f26dacfce2e930a4c7982a469d1c32c06e03d076",
+      "file_sha256": "96ec1a2204ae27b8bd7f790f710b8697405a189556adb8b68522167801911faa",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1594,7 +1594,7 @@
       "reason_literal": null,
       "reason_expression": "f'无最小参数集，跳过：{subcmd}'",
       "condition_or_module": null,
-      "file_sha256": "a810de0c511426083718d0a7d91e22a19a516be181a1448bc9facfa604c01b2e",
+      "file_sha256": "03433e903c6580551e062da8176e895107975900799cc06024d95db85731c5fd",
       "root_cause": "UNREVIEWED"
     },
     {
