@@ -40,7 +40,7 @@ class ToolCategory:
 
 
 # ====================================================================
-# 17 分类 × 243 工具（清单迁自 docs/mcp_tools.md L193-259，已逐条核实）
+# 17 分类 × 244 工具（清单迁自 docs/mcp_tools.md L193-259，已逐条核实）
 # ====================================================================
 
 TOOL_CATEGORIES: List[ToolCategory] = [
@@ -52,7 +52,8 @@ TOOL_CATEGORIES: List[ToolCategory] = [
         tools=[
             "list_workspaces", "register_workspace", "set_active_workspace",
             "delete_workspace", "get_active_workspace", "build_graph",
-            "refresh_file", "build_directory", "remove_file", "get_stats",
+            "refresh_file", "build_directory", "remove_file", "file_write",
+            "get_stats",
             "get_status", "register_branch", "list_branches", "diff_branches",
             "switch_branch", "merge_preview",
         ],
@@ -321,6 +322,7 @@ TOOL_CLI_MAPPING: "dict[str, tuple[str, str] | None]" = {
     "refresh_file": ("refresh", "刷新指定文件（cw refresh <paths>）"),
     "build_directory": None,
     "remove_file": None,
+    "file_write": ("write", "治理写文件（write.grant → 原子替换 → write.commit）"),
     "get_stats": ("stats", "代码图谱统计信息"),
     "get_status": ("status", "完整状态概览"),
     "register_branch": None,

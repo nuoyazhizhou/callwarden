@@ -1044,6 +1044,66 @@
    "annotations": null
   },
   {
+   "name": "file_write",
+   "title": null,
+   "description": "S3（ADR-002 §8.2）治理写文件：write.grant → 本机原子替换 → write.commit\n\n仅 bind_scope=remote 的 daemon 启用；loopback fail-closed，无本地旁路。\nbase_hash 由客户端读取原文件计算，commit 失败不回滚本地文件且不静默重试；\n与 CLI cw write 共用 governed_write_file，语义单一。\n\nArgs:\n    file_path: workspace 相对路径\n    content: 新文件内容（UTF-8 文本）\n    task_id: 写入绑定的 task ID\n    step_id: 写入绑定的 step ID\n    workspace_instance_id: 目标 workspace 实例 ID（缺省由 daemon 注册解析）\n\nReturns:\n    dict: write.commit 结果（含 grant_id / 路径 / 哈希与审计落库状态）\n",
+   "inputSchema": {
+    "properties": {
+     "file_path": {
+      "title": "File Path",
+      "type": "string"
+     },
+     "content": {
+      "title": "Content",
+      "type": "string"
+     },
+     "task_id": {
+      "title": "Task Id",
+      "type": "string"
+     },
+     "step_id": {
+      "title": "Step Id",
+      "type": "string"
+     },
+     "workspace_instance_id": {
+      "default": "",
+      "title": "Workspace Instance Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file_path",
+     "content",
+     "task_id",
+     "step_id"
+    ],
+    "title": "file_writeArguments",
+    "type": "object"
+   },
+   "outputSchema": {
+    "properties": {
+     "result": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Result"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "title": "file_writeOutput",
+    "type": "object"
+   },
+   "annotations": null
+  },
+  {
    "name": "file_grep",
    "title": null,
    "description": "在工作区内搜索文件内容（ripgrep 风格）\n\nAgent 通过此工具搜索代码内容，替代 IDE 内置 Grep 工具。\n支持正则表达式、glob 过滤、多种输出模式。\n\nArgs:\n    pattern: 搜索模式（支持正则表达式）\n    path: 搜索起始路径（相对或绝对，默认为工作区根）\n    glob: 文件 glob 过滤（如 \"*.py\"、\"**/*.ts\"）\n    output_mode: 输出模式（files_with_matches / content / count）\n    head_limit: 最大返回结果数（默认 50）\n\nReturns:\n    dict: {results, count}\n",

@@ -5,6 +5,14 @@
 # （TP-11G CI 首跑实证：21 issues）。manifest 哈希按 LF 计算，故强制 eol=lf。
 rust_ext/resources/role_prompts/v1/** text eol=lf
 
+# 三份机器账本（STATIC_AUDIT / SKIP_SITES / TEST_CASES）由 gen_test_cases.py
+# 按 LF 字节写出，--check 做字节比对。core.autocrlf=true 下 checkout/stash 会
+# 把 LF 翻成 CRLF 导致恒红（DEFECT_HANDOFF_20261109 DEF-02，≥4 次实锤）。
+# 钉 eol=lf 保证任意平台检出均为 LF，--check 在干净 checkout 下稳定 PASS。
+docs/testing/STATIC_AUDIT.json eol=lf
+docs/testing/SKIP_SITES.json eol=lf
+docs/testing/TEST_CASES.md eol=lf
+
 # MCP 237 工具矩阵契约基线：matrix-sha256.txt 的哈希/大小按 CRLF 工作副本记录
 # （Windows 生成）。core.autocrlf=input 会把 CRLF 规范成 LF blob，Linux CI 检出
 # 即 LF 字节 → test_legacy_237_tools_baseline.py 的 SHA-256/大小校验必失败。
