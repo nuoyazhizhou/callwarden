@@ -12,7 +12,7 @@ Call Warden 把 84 个顶层命令按功能聚合为 21 个主分类（[1]-[17] 
 
 | # | 主分类 | 命令数 | 涵盖范围 | 主要 subcommand |
 | --- | --- | --- | --- | --- |
-| 1 | **Workspace & Database** | 6 | 工作区管理、数据库刷新、状态概览、分支感知、分层配置、C 图构建 | `workspace`、`refresh`、`stats`、`status`、`graph`、`config` |
+| 1 | **Workspace & Database** | 7 | 工作区管理、数据库刷新、状态概览、分支感知、分层配置、C 图构建、S3 治理写 | `workspace`、`refresh`、`stats`、`status`、`graph`、`config`、`write` |
 | 2 | **Query & Search** | 13 | 符号/文件/语义搜索、摘要、RAG、版本对比、最近变更、FTS 全文索引 | `search`、`grep`、`symbol`、`file`、`query`、`brief`、`map`、`fts`、`semantic-search`、`similar`、`embed`、`diff`、`changes` |
 | 3 | **Call Chain Analysis** | 12 | 调用链、拓扑、循环、孤儿、模块图、热力图、变更影响半径 | `callers`、`callees`、`call-chain`、`topo`、`impact`、`deepest`、`module-calls`、`detect-cycles`、`export-module-graph`、`call-heatmap`、`top-callers`、`orphan-symbols` |
 | 4 | **Code Health & Metrics** | 11 | 度量、复杂度、耦合、演化、热点、流失、健康报告、驾驶舱 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`health-report`、`dashboard` |
@@ -28,12 +28,12 @@ Call Warden 把 84 个顶层命令按功能聚合为 21 个主分类（[1]-[17] 
 | 14 | **只读协同查询** | 1 | 协同证据、门禁决策、角色视图、新鲜度 | `collab` |
 | 15 | **依赖图与环检测** | 1 | 依赖边、接口提供者、环检测、版本校验、工件身份 | `dependency` |
 | 16 | **Assignment 与 Lease** | 2 | lease 获取/续租/释放、assignment 创建/查询/撤销 | `lease`、`assignment` |
-| 17 | **Identity 与 Attestation** | 1 | Attestation 撤销（CLI 仅暴露 revoke，避免 T=M=D） | `identity` |
+| 17 | **Identity 与 Attestation** | 2 | PKI 生命周期（委托 cw-daemon）与 Attestation 撤销（CLI 仅暴露 revoke，避免 T=M=D） | `pki`、`identity` |
 | 18 | **Migration Rollback（CLI 独有）** | 1 | 全量迁移自举计划的回滚配置登记与紧急回滚开关 | `rollback` |
 | 19 | **Daemon 运维（CLI 独有）** | 1 | daemon 启动/状态/查询/快照/备份等运维操作（UDS/HTTP 客户端） | `daemon` |
 | 20 | **安装与初始化（CLI 独有）** | 6 | 安装部署、Agent 集成包、Git hook、MCP Server、测试运行器 | `install`、`install-agent`、`install-hook`、`setup`、`server`、`test` |
 | 21 | **盲评实验（CLI 独有）** | 1 | P0 盲评对照实验的批次/纳样/指标记录/揭示全生命周期 | `experiment` |
-| **合计** | | **84** | | |
+| **合计** | | **86** | | |
 
 <!-- END:generated-overview -->
 
@@ -4694,6 +4694,6 @@ cw task report <task-id> <step-id> --result "实现完成" \
 
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 243 个工具
+- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 244 个工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署与多容器共享

@@ -36,7 +36,7 @@ stale 依据（daemon authority / HTTP thin-client 迁移）
   并把其 endpoint（+ 隔离 USERPROFILE 以命中 authority-scoped manifest）注入
   子进程 env / 进程内 env。断言语义不变：只验证「不抛未捕获异常」。
 - **A 桶（陈旧期望对齐现状）**：`test_mcp_tool_count` 旧断言 206（文档宣称 205），
-  生产工具注册表已增至 243，直接对齐现状（工具数由 `mcp_server` 注册表权威给出）。
+  生产工具注册表已增至 244，直接对齐现状（工具数由 `mcp_server` 注册表权威给出）。
 - `TestCLISmokeHelp`（`--help` 注册校验）不依赖 daemon，保持原样。
 """
 import asyncio
@@ -447,13 +447,13 @@ class TestMCPSmokeCall:
         return [t.name for t in mcp_tools]
 
     def test_mcp_tool_count(self, mcp_tools):
-        """A 桶：MCP 工具数对齐生产注册表现状（243）。
+        """A 桶：MCP 工具数对齐生产注册表现状（244）。
 
         stale 依据：daemon authority 迁移后 `@mcp.tool()` 注册表持续扩张，
         旧断言 206（文档宣称 205）已过期；以 `mcp_server` 注册表权威结果为准。
         """
-        assert len(mcp_tools) == 243, (
-            f"实际 MCP 工具数 {len(mcp_tools)}，与注册表权威数 243 不一致"
+        assert len(mcp_tools) == 244, (
+            f"实际 MCP 工具数 {len(mcp_tools)}，与注册表权威数 244 不一致"
         )
 
     def test_mcp_all_tools_smoke(self, mcp_server, mcp_tools, w3_live, monkeypatch):

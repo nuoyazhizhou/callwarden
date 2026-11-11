@@ -2,7 +2,7 @@
 
 输入（真实提取产物，均已冻结）：
 - docs/testing/manifests/cli/cli_tree.json      （TP-08C：84 顶层 + 144 嵌套，parser 级参数）
-- docs/testing/manifests/mcp/mcp_tools.json     （TP-08M：243 工具，wire 级 schema）
+- docs/testing/manifests/mcp/mcp_tools.json     （TP-08M：244 工具，wire 级 schema）
 
 合并规则：
 1. CLI 入口展开为**调用叶**：
@@ -10,12 +10,12 @@
    - 位置参数带 choices 的叶（`install-agent <agent>` / `install-hook <hook>`）→ 逐 choice 展开；
    - 旗标 choices（如 `map --format text|mermaid`）**不**展开为独立入口，落为 C2 参数等价类
      （与 TP-01 静态快照把 map 拆成两条的处理不同，此处按真实 parser 结构归类并在对账中显式标注）。
-2. MCP 入口 = 243 wire 工具，逐工具带 inputSchema。
+2. MCP 入口 = 244 wire 工具，逐工具带 inputSchema。
 3. 逐入口义务：C1–C6 适用性 + profile 适用性（冻结 profile = Windows + Py3.14）。
 4. 对账：与 TP-01 静态候选集逐条比对，差异必须分类（reclassified / deeper_level /
    real_new / static_only），不允许静默差异。
 5. GAP-14 闭合：以 TP-08M wire 实测证据闭合（detect_call_cycles / detect_dependency_cycle
-   均在 243 中，陈旧名 detect_cycle / detect_cycles 不在）。
+   均在 244 中，陈旧名 detect_cycle / detect_cycles 不在）。
 6. 版本绑定：source_revision + 两个输入 manifest 的 sha256。
 
 输出：docs/testing/manifests/frozen/inventory_frozen.json
@@ -38,6 +38,12 @@ OUT = REPO_ROOT / "docs" / "testing" / "manifests" / "frozen" / "inventory_froze
 
 PROFILE = "P-COMMITTED-windows-amd64-py314"
 CW_PY_ENTRIES = ("install", "server", "test", "setup", "daemon")
+# 已审 CLI 静态候选移除（静态候选存在但源码有意退役；登记理由后不计入未审漂移）
+REVIEWED_CLI_REMOVALS = {
+    "gc db-migrate-single":
+        "ceef53c 退役 cw gc db-migrate-single（db-retire：删除 server/migrate.py、"
+        "db/db_migrate.py 及 CLI 接线）",
+}
 # cw.py 层、且带真实 subparser 嵌套、需第 3 层提取的入口
 DAEMON_NESTED = ["ping", "start", "register", "list", "status", "publish", "query", "mode",
                  "health", "manifest", "capability", "schema-version", "bridge", "backup",
@@ -241,12 +247,19 @@ def reconcile(cli_entries: list[dict], mcp_entries: list[dict], tp01: dict) -> d
     # 分类：静态多出的 map text/mermaid 在真实 parser 里是 --format 旗标 choices
     reclassified = [x for x in static_only_cli if x.startswith("map ")]
     static_only_cli = [x for x in static_only_cli if not x.startswith("map ")]
+    # 分类：已审移除的静态候选（源码有意退役，见 REVIEWED_CLI_REMOVALS 登记理由）
+    reviewed_removed = [x for x in static_only_cli if x in REVIEWED_CLI_REMOVALS]
+    static_only_cli = [x for x in static_only_cli if x not in REVIEWED_CLI_REMOVALS]
 
     return {
         "cli": {
             "real": len(real_cli), "static": len(static_cli),
             "static_only": static_only_cli, "real_new": real_new_cli,
             "reclassified_as_flag_variant": reclassified,
+            "reclassified_as_removed": [
+                {"invocation": x, "reason": REVIEWED_CLI_REMOVALS[x]}
+                for x in reviewed_removed
+            ],
             "note": "static_only 中的 daemon * 与 install-agent * / install-hook * 已由"
                     "第3层提取与位置参数 choices 展开覆盖；map text/mermaid 在真实 parser "
                     "中为 --format 旗标 choices，归为参数等价类而非独立入口",

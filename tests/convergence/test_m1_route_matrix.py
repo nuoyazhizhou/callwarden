@@ -1,11 +1,11 @@
-"""M1 243/243 路由验证（PRD §3.2 M1 + R1.1）。
+"""M1 244/244 路由验证（PRD §3.2 M1 + R1.1）。
 
 验证目标：
-- 路由矩阵（tool_migration_matrix.json）243/243 覆盖；
+- 路由矩阵（tool_migration_matrix.json）244/244 覆盖；
 - 四端一致：矩阵 ↔ dispatch.rs 分支 ↔ http_server.rs 白名单 ↔ compat_registry.py
   两端对齐 ↔ server/tools 薄壳注册；
 - 无 local 隐式路径（每个工具都有 daemon 路由）；
-- MCP server 注册工具数 = 243 且与矩阵 1:1（工具名不变，对外契约不破坏）。
+- MCP server 注册工具数 = 244 且与矩阵 1:1（工具名不变，对外契约不破坏）。
 
 方法：独立重跑 scripts/verify_route_matrix.py，并用独立断言复刻其关键核对
 （不完全信任脚本自身——测试与脚本双写，互证）。
@@ -71,7 +71,7 @@ def _registered_tool_names():
 
 
 class TestMatrixCoverage:
-    def test_matrix_has_243_tools(self):
+    def test_matrix_has_244_tools(self):
         m = _load_matrix()
         assert m["total_tools"] == _EXPECTED_TOTAL
         assert len(m["tools"]) == _EXPECTED_TOTAL
@@ -159,7 +159,7 @@ class TestMatrixCoverage:
         assert r.returncode == 0, f"verify_route_matrix 退出码 {r.returncode}\n{r.stdout}\n{r.stderr}"
 
     def test_mcp_server_registers_all_matrix_tools(self):
-        """create_mcp_server 注册工具数 = 243 且与矩阵 1:1（签名不丢）。"""
+        """create_mcp_server 注册工具数 = 244 且与矩阵 1:1（签名不丢）。"""
         m = _load_matrix()
         matrix_names = {t["name"] for t in m["tools"]}
         from callwarden.server.mcp_server import create_mcp_server

@@ -2,7 +2,7 @@
 
 selector: tests/acceptance/inventory/mcp/test_mcp_tools.py
 
-正向：真实子进程 stdio wire 提取（initialize + list_tools 翻页）；243 工具与源码
+正向：真实子进程 stdio wire 提取（initialize + list_tools 翻页）；244 工具与源码
       `@mcp.tool()` 装饰器数一致；无重名；每个工具 inputSchema 为 object 且带
       properties；initialize 握手字段完整。
 负向：重名拒绝、缺/空 inputSchema 拒绝、未知 schema 形状拒绝、

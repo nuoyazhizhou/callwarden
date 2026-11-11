@@ -2,7 +2,7 @@
 
 selector: docs/testing/manifests/frozen/test_frozen_inventory.py
 
-正向：验证器 self-check/verify-freeze 通过；508 入口（CLI 265 + MCP 243）；
+正向：验证器 self-check/verify-freeze 通过；510 入口（CLI 266 + MCP 244）；
       GAP-14 以 wire 实测闭合；对账完备（静态多出=0、MCP 集合相等）。
 负向：**未审漂移阻断**——重提取 wire 工具集与冻结集比对，任何差异即失败；
       源码装饰器数与冻结 MCP 数对拍；反证（篡改 manifest 必须被验证器拒绝）；
@@ -51,9 +51,9 @@ def test_validator_verify_freeze_passes():
 
 def test_counts_and_profiles(frozen):
     c = frozen["counts"]
-    assert c["mcp_entries"] == 243
-    assert c["cli_entries"] == 265
-    assert c["total"] == 508
+    assert c["mcp_entries"] == 244
+    assert c["cli_entries"] == 266
+    assert c["total"] == 510
     assert frozen["profile"] == "P-COMMITTED-windows-amd64-py314"
 
 
@@ -63,7 +63,7 @@ def test_gap14_closed_with_evidence(frozen):
     ev = gaps["GAP-14"]["evidence"]
     assert set(ev["required_present"]) == {"detect_call_cycles", "detect_dependency_cycle"}
     assert set(ev["stale_absent"]) == {"detect_cycle", "detect_cycles"}
-    assert ev["wire_tool_count"] == ev["source_decorator_count"] == 243
+    assert ev["wire_tool_count"] == ev["source_decorator_count"] == 244
 
 
 def test_reconciliation_complete(frozen):
@@ -94,7 +94,7 @@ def test_entry_kinds_cover_expansion_basis(frozen):
         kinds[e["entry_kind"]] = kinds.get(e["entry_kind"], 0) + 1
     assert kinds.get("positional_choice_expansion", 0) > 0, "positional choices must be expanded"
     assert kinds.get("nested_subcommand_level3", 0) == 23, "daemon level-3 must be 23"
-    assert kinds.get("mcp_wire_tool") == 243
+    assert kinds.get("mcp_wire_tool") == 244
 
 
 # ---------------- 负向 ----------------
@@ -119,7 +119,7 @@ def test_source_decorator_count_matches_frozen(frozen):
     for p in (REPO_ROOT / "server" / "tools").glob("tools_*.py"):
         total += len(re.findall(r"@mcp\.tool\(", p.read_text(encoding="utf-8", errors="replace")))
     frozen_mcp = len([e for e in frozen["entries"] if e["surface"] == "mcp"])
-    assert total == frozen_mcp == 243, f"source={total} frozen={frozen_mcp}"
+    assert total == frozen_mcp == 244, f"source={total} frozen={frozen_mcp}"
 
 
 def test_tampered_manifest_is_rejected(tmp_path):

@@ -1,5 +1,5 @@
 {
-  "total": 243,
+  "total": 244,
   "tools": [
     {
       "name": "append_evidence",
@@ -1076,6 +1076,48 @@
           "type": "string",
           "default": null,
           "title": "Symbol Name",
+          "description": ""
+        }
+      }
+    },
+    {
+      "name": "file_write",
+      "description": "S3（ADR-002 §8.2）治理写文件：write.grant → 本机原子替换 → write.commit\n\n仅 bind_scope=remote 的 daemon 启用；loopback fail-closed，无本地旁路。\nbase_hash 由客户端读取原文件计算，commit 失败不回滚本地文件且不静默重试；\n与 CLI cw write 共用 governed_write_file，语义单一。\n\nArgs:\n    file_path: workspace 相对路径\n    content: 新文件内容（UTF-8 文本）\n    task_id: 写入绑定的 task ID\n    step_id: 写入绑定的 step ID\n    workspace_instance_id: 目标 workspace 实例 ID（缺省由 daemon 注册解析）\n\nReturns:\n    dict: write.commit 结果（含 grant_id / 路径 / 哈希与审计落库状态）\n",
+      "required": [
+        "file_path",
+        "content",
+        "task_id",
+        "step_id"
+      ],
+      "params": {
+        "file_path": {
+          "type": "string",
+          "default": null,
+          "title": "File Path",
+          "description": ""
+        },
+        "content": {
+          "type": "string",
+          "default": null,
+          "title": "Content",
+          "description": ""
+        },
+        "task_id": {
+          "type": "string",
+          "default": null,
+          "title": "Task Id",
+          "description": ""
+        },
+        "step_id": {
+          "type": "string",
+          "default": null,
+          "title": "Step Id",
+          "description": ""
+        },
+        "workspace_instance_id": {
+          "type": "string",
+          "default": "",
+          "title": "Workspace Instance Id",
           "description": ""
         }
       }

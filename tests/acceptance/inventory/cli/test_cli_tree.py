@@ -2,7 +2,7 @@
 
 selector: tests/acceptance/inventory/cli/test_cli_tree.py
 
-正向：84 顶层入口不重不漏、每个顶层命令的 parser 可提取、嵌套子命令可展开、
+正向：86 顶层入口不重不漏、每个顶层命令的 parser 可提取、嵌套子命令可展开、
       关键参数契约（required/type/default/choices/互斥）如实落 manifest、
       cw.py 层 5 个 standalone 入口有真实 help。
 负向：提取不写生产目录（auto-setup marker / db mtime 不变）、未决入口（原生
@@ -104,11 +104,11 @@ def test_cli_tree_no_unreviewed_drift(tree):
             f"removed={sorted(f_nested - l_nested)[:5]}")
 
 
-def test_all_84_top_level_entries_present(tree):
-    """84 个顶层入口（_SUBCOMMANDS 79 + cw.py standalone 5）一个不少。"""
-    assert tree["top_level_count"] == 84
+def test_all_86_top_level_entries_present(tree):
+    """86 个顶层入口（_SUBCOMMANDS 81 + cw.py standalone 5）一个不少。"""
+    assert tree["top_level_count"] == 86
     entries = tree["entries"]
-    assert len(entries) == 84, f"entries={len(entries)}"
+    assert len(entries) == 86, f"entries={len(entries)}"
     assert tree["error_count"] == 0, f"extraction errors: {tree['errors'][:5]}"
     # cw.py 层 5 个入口必须由真实子进程取得
     for entry in ("install", "server", "test", "setup", "daemon"):

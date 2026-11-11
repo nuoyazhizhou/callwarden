@@ -84,7 +84,7 @@ for _p in (str(REPO_ROOT), str(CONV)):
 
 import param_provider as pp  # noqa: E402
 
-EXPECTED_TOOL_COUNT = 243
+EXPECTED_TOOL_COUNT = 244
 # 单次 call_tool 超时（秒）。重操作在 SKIP_TOOLS 里已排除；播种的 build_graph
 # 单独走更长的 _SEED_BUILD_TIMEOUT。
 CALL_TIMEOUT = 120.0

@@ -66,7 +66,7 @@ def self_check() -> list:
 
     _cli = [e for e in entries if e["surface"] == "cli"]
     mcp = [e for e in entries if e["surface"] == "mcp"]
-    check(len(mcp) == 243, f"mcp entries must be 243, got {len(mcp)}", f)
+    check(len(mcp) == 244, f"mcp entries must be 244, got {len(mcp)}", f)
     check(d["counts"]["total"] == len(entries), "counts.total mismatch", f)
 
     # GAP-14 闭合证据

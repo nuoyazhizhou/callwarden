@@ -3,7 +3,7 @@
 
 设计契约（cli-mcp-surface-audit Phase 3）：
 - `cli/categories.py` 的 COMMAND_CATEGORIES（84 顶层命令 / 21 分类）与
-  `server/tools/_categories.py` 的 TOOL_CATEGORIES（243 工具 / 17 分类）
+  `server/tools/_categories.py` 的 TOOL_CATEGORIES（244 工具 / 17 分类）
   是**单一真相源**；本脚本只做读取与派生，不修改分类内容。
 - 文档中 `<!-- BEGIN:generated-overview ... -->` 等 marker 标记块内的
   内容由本脚本生成，标记块外的文字手工维护。
@@ -12,7 +12,7 @@
 - `--emit-cli`    把 CLI 概览表写回 docs/cli_reference.md 生成区间
                   （BEGIN/END marker 之间，header/footer 不动）。
 - `--emit-mcp`    把 MCP 概览表写回 docs/mcp_tools.md 生成区间。
-- `--emit-mapping` 把「CLI↔MCP 命名映射对照表」（243 工具全量，17 小节）
+- `--emit-mapping` 把「CLI↔MCP 命名映射对照表」（244 工具全量，17 小节）
                   与「[1]-[17] 域内 CLI 独有命令」两块写回 docs/mcp_tools.md。
 - `--print-cli` / `--print-mcp` / `--print-mapping`
                   打印生成内容（人工核对，不写文件）。
@@ -125,7 +125,7 @@ def build_mcp_overview() -> str:
 
 
 def build_mapping_doc() -> str:
-    """生成 243 工具全量 CLI 映射表（docs/mcp_tools.md mapping 生成区间）。
+    """生成 244 工具全量 CLI 映射表（docs/mcp_tools.md mapping 生成区间）。
 
     17 个 `### [N]` 小节与概览表同构；每工具一行（含 MCP 专属 `—` 行），
     小节末尾附分类统计注释。数据源 TOOL_CLI_MAPPING（单一真相源）。

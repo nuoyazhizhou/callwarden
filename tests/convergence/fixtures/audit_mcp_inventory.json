@@ -1,8 +1,8 @@
 {
   "source": "server/tools/*.py @mcp.tool() (via gen_route_matrix) + tool_migration_matrix.json",
-  "src_tool_count": 243,
-  "matrix_tool_count": 243,
-  "matrix_total_tools_field": 243,
+  "src_tool_count": 244,
+  "matrix_tool_count": 244,
+  "matrix_total_tools_field": 244,
   "consistent": true,
   "only_in_source_code": [],
   "only_in_matrix": [],
@@ -18,20 +18,20 @@
     "tools_summary": 31,
     "tools_task": 55,
     "tools_task_prompt": 1,
-    "tools_workspace": 27
+    "tools_workspace": 28
   },
   "by_target_backend": {
-    "rust_native": 200,
+    "rust_native": 201,
     "task_rpc": 43
   },
   "by_current_backend": {
-    "rust_native": 200,
+    "rust_native": 201,
     "task_rpc": 43
   },
   "by_op_class": {
     "GOVERNANCE_WRITE": 5,
     "READ_ONLY": 161,
-    "PROTECTED_MUTATION": 77
+    "PROTECTED_MUTATION": 78
   },
   "tools": [
     {
@@ -2048,6 +2048,15 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
+      "status": "migrated"
+    },
+    {
+      "name": "file_write",
+      "module": "tools_workspace",
+      "rpc_method": "write.commit",
+      "target_backend": "rust_native",
+      "current_backend": "rust_native",
+      "op_class": "PROTECTED_MUTATION",
       "status": "migrated"
     },
     {

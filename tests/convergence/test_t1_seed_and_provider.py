@@ -1,11 +1,11 @@
 """T1 全量测试基建冒烟验证(种子 workspace fixture + param_provider 骨架)。
 
-本文件是全功能全量测试(243 MCP 工具 + 234 CLI 命令全参数真实调用)的 T1
+本文件是全功能全量测试(244 MCP 工具 + 234 CLI 命令全参数真实调用)的 T1
 基建交付验证。它不测业务功能,只验证:
 
 1. 种子 workspace fixture 能在隔离 daemon 上 register + build_graph + publish
    snapshot,并产出真实可查询的符号图谱(query.stats 符号数 > 0);
-2. param_provider 能读取固化的 243 工具 / 234 命令 schema,并为**每一个**
+2. param_provider 能读取固化的 244 工具 / 234 命令 schema,并为**每一个**
    工具/命令生成参数(全参数与仅必填两种模式)而不抛异常 —— 证明骨架覆盖
    了所有工具的参数名族/类型,T2/T3 可直接在其上做真实调用。
 
@@ -52,12 +52,12 @@ def test_seed_context_populated(seed_workspace):
 
 
 # ----------------------------------------------------------------------
-# 2. param_provider:为全部 243 MCP 工具生成参数(骨架完整性)
+# 2. param_provider:为全部 244 MCP 工具生成参数(骨架完整性)
 # ----------------------------------------------------------------------
-def test_mcp_schema_loads_243_tools():
+def test_mcp_schema_loads_244_tools():
     schema = pp.load_mcp_schema()
     assert schema.get("total") == len(schema.get("tools", []))
-    assert schema.get("total", 0) >= 240, "MCP 工具数异常(预期 243 附近)"
+    assert schema.get("total", 0) >= 240, "MCP 工具数异常(预期 244)"
 
 
 def test_provider_generates_params_for_all_mcp_tools():

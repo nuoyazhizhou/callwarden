@@ -1,8 +1,8 @@
-"""TP-10M C1：243 个 MCP 工具真实 wire 全量调用（验收套件）。
+"""TP-10M C1：244 个 MCP 工具真实 wire 全量调用（验收套件）。
 
 selector: tests/acceptance/mcp/test_mcp_c1_wire.py
 
-对冻结清单的全部 243 个 MCP 工具做**真实 wire 调用**：
+对冻结清单的全部 244 个 MCP 工具做**真实 wire 调用**：
 ClientSession.call_tool(name, arguments) → 结构化结果分类。
 
 分类语义（沿用 tests/convergence/t2_mcp_runner.py）：
@@ -12,7 +12,7 @@ ClientSession.call_tool(name, arguments) → 结构化结果分类。
     传输层失败 / 超时）；
   - SKIP：破坏性 / 重操作（SKIP_TOOLS，带原因）。
 
-硬断言：**DEFECT == 0**（243 工具全部可路由、无崩溃、无传输失败）。
+硬断言：**DEFECT == 0**（244 工具全部可路由、无崩溃、无传输失败）。
 TP-10M 验收标准（TASK_BREAKDOWN.md:122）：**业务写不是普通文本成功**——
 写工具（PROTECTED_MUTATION / GOVERNANCE_WRITE）若 PASS，结果必须是结构化
 MCP 内容（structuredContent 或可解析 JSON），纯文本成功记为
@@ -86,7 +86,7 @@ def seeded():
 
 @pytest.fixture(scope="module")
 def sweep_report(seeded):
-    """全量扫描只跑一次，三个断言用例共用其结果（243 次 wire 调用）。"""
+    """全量扫描只跑一次，三个断言用例共用其结果（244 次 wire 调用）。"""
     return _sweep(seeded)
 
 
@@ -149,8 +149,8 @@ def _sweep(harness: McpWireHarness) -> dict:
     }
 
 
-def test_c1_wire_sweep_covers_all_243_tools(seeded, sweep_report):
-    """C1 扫描必须覆盖 wire 上的全部 243 个工具（不遗漏）。"""
+def test_c1_wire_sweep_covers_all_244_tools(seeded, sweep_report):
+    """C1 扫描必须覆盖 wire 上的全部 244 个工具（不遗漏）。"""
     covered = [r["name"] for r in sweep_report["results"]]
     assert len(covered) == len(seeded.tool_names), (
         f"sweep covered {len(covered)} of {len(seeded.tool_names)} tools")
@@ -158,14 +158,14 @@ def test_c1_wire_sweep_covers_all_243_tools(seeded, sweep_report):
 
 
 def test_c1_zero_defect_across_all_tools(seeded, sweep_report):
-    """硬断言：243 工具真实 wire 调用 DEFECT == 0。"""
+    """硬断言：244 工具真实 wire 调用 DEFECT == 0。"""
     report = sweep_report
     counts = report["counts"]
     total = sum(counts.values())
     defects = report["defects"]
     evidence = {
         **seeded.meta(),
-        "suite": "TP-10M C1 243 MCP 工具真实 wire 全量调用",
+        "suite": "TP-10M C1 244 MCP 工具真实 wire 全量调用",
         "counts": counts,
         "total": total,
         "defect_count": len(defects),

@@ -9,7 +9,7 @@
 | 输入 | 内容 | sha256 绑定 |
 |---|---|---|
 | `docs/testing/manifests/cli/cli_tree.json` | TP-08C：84 顶层 + 144 嵌套，parser 级参数 | `version_binding.cli_tree_sha256` |
-| `docs/testing/manifests/mcp/mcp_tools.json` | TP-08M：243 工具，wire 级 schema | `version_binding.mcp_tools_sha256` |
+| `docs/testing/manifests/mcp/mcp_tools.json` | TP-08M：244 工具，wire 级 schema | `version_binding.mcp_tools_sha256` |
 | `docs/testing/planning/inventory/candidate_entries.json` | TP-01 静态候选集（对账基线） | `version_binding.tp01_candidates_sha256` |
 
 ## 2. 合并规则（CLI 入口展开为调用叶）
@@ -20,15 +20,15 @@
 | 第 3 层（`daemon`） | cw.py 层入口不经 `_dispatch_subcommand`，经**真实子进程** `cw.py daemon <sub> --help` 提取 23 条 |
 | 位置参数 choices | `install-agent <agent>`（24 个 agent）、`install-hook <hook>`（post-commit）逐 choice 展开为独立入口，并保留不带 choice 的父入口 |
 | 旗标 choices | `map --format text\|mermaid` **不**展开为独立入口，落为 C2 参数等价类（`param_equivalence_classes`） |
-| MCP 入口 | 243 wire 工具，逐工具带 inputSchema（type/required/properties） |
+| MCP 入口 | 244 wire 工具，逐工具带 inputSchema（type/required/properties） |
 
 ## 3. 冻结规模
 
 | 项 | 值 |
 |---|---|
-| CLI 入口 | **265**（199 dispatch 叶 + 5 cw.py standalone + 23 daemon 第3层 + 38 位置参数 choice 展开/父） |
-| MCP 入口 | **243** |
-| **合计** | **508** |
+| CLI 入口 | **266**（194 dispatch 叶 + 5 cw.py standalone + 23 daemon 第3层 + 44 位置参数 choice 展开/父） |
+| MCP 入口 | **244** |
+| **合计** | **510** |
 | profile | `P-COMMITTED-windows-amd64-py314`（唯一冻结 profile） |
 | 义务模型 | C1–C6 全入口绑定（`applicable_pending_case`，逐 case 合同留 TP-10C/M） |
 
@@ -36,10 +36,10 @@
 
 | 维度 | 静态（TP-01） | 真实（冻结） | 对账 |
 |---|---|---|---|
-| MCP 集合 | 243 | 243 | **static_only=0、real_new=0，集合完全相等** → GAP-14 集合级闭合 |
-| CLI 集合 | 234 | 265 | static_only=**0**（49 条静态多出全部由第3层提取 + 位置参数展开覆盖）；real_new=**33**；reclassified=**2**（`map text`/`map mermaid` 归为 `--format` 旗标等价类） |
+| MCP 集合 | 244 | 244 | **static_only=0、real_new=0，集合完全相等** → GAP-14 集合级闭合 |
+| CLI 集合 | 234 | 266 | static_only=**0**（48 条静态多出由第3层提取 + 位置参数展开覆盖；1 条 `gc db-migrate-single` 为已审退役，登记于 `reclassified_as_removed`，理由引 ceef53c）；real_new=**35**（S3 `write`/`pki` 等 TP-01 后新增顶层命令）；reclassified=**2**（`map text`/`map mermaid` 归为 `--format` 旗标等价类） |
 
-real_new 33 条示例：`call-heatmap`、`changes`、`deepest`、`detect-cycles`、`diff`、`embed`、
+real_new 35 条示例：`call-heatmap`、`changes`、`deepest`、`detect-cycles`、`diff`、`embed`、
 `export-module-graph`、`module-calls`、`orphan-symbols`、`restore-comment`、
 `restore-all-comments`、`semantic-search`、`similar`、`top-callers`、`coverage test`、
 `daemon`、`install-agent`、`install-hook`、`map` 等——TP-01 静态 AST 快照漏登或其后新增，
@@ -49,7 +49,7 @@ real_new 33 条示例：`call-heatmap`、`changes`、`deepest`、`detect-cycles`
 
 - wire 实测集合**含** `detect_call_cycles`、`detect_dependency_cycle`；
 - **不含**陈旧名 `detect_cycle`、`detect_cycles`；
-- wire 工具数 243 == 源码 12 个 `tools_*.py` 的 `@mcp.tool()` 装饰器总数 243；
+- wire 工具数 244 == 源码 12 个 `tools_*.py` 的 `@mcp.tool()` 装饰器总数 244；
 - 结论：总数相等不再掩盖集合漂移，`MCP:detect_call_cycles` /
   `MCP:detect_dependency_cycle` 的 `blocked_schema_drift` 状态解除。
 
@@ -76,14 +76,14 @@ real_new 33 条示例：`call-heatmap`、`changes`、`deepest`、`detect-cycles`
 | 对账完备（静态多出=0、MCP 集合相等、重分类显式） | `test_reconciliation_complete` |
 | 每入口 C1–C6 + profile + provenance + status 全绑定 | `test_every_entry_has_full_obligation_binding` |
 | entry_id 无重复 | `test_no_duplicate_entry_ids` |
-| 展开依据可查（choice 展开 / daemon 第3层 23 / MCP 243） | `test_entry_kinds_cover_expansion_basis` |
+| 展开依据可查（choice 展开 / daemon 第3层 23 / MCP 244） | `test_entry_kinds_cover_expansion_basis` |
 
 ## 8. 负向义务（未审漂移阻断）
 
 | 场景 | 测试 / 期望 |
 |---|---|
 | **MCP wire 未审漂移** | `test_unreviewed_wire_drift_blocks`：**真实重提取** wire 工具名集与冻结集逐一比对，任何增删即失败 |
-| 源码装饰器数漂移 | `test_source_decorator_count_matches_frozen`：源码 `@mcp.tool()` 总数必须 == 冻结 MCP 数 == 243 |
+| 源码装饰器数漂移 | `test_source_decorator_count_matches_frozen`：源码 `@mcp.tool()` 总数必须 == 冻结 MCP 数 == 244 |
 | 篡改 manifest | `test_tampered_manifest_is_rejected`：删入口 / 破坏 C1–C6 覆盖 / 散列漂移三种篡改均须被验证器 fail-closed 拒绝（反证，防验证器空转） |
 | 行尾/编码漂移 | `test_manifest_is_lf_and_utf8` |
 

@@ -11,7 +11,7 @@ selector: tests/acceptance/mcp/test_mcp_c2_params.py
   (b) 类型错配（数字/布尔/数组处传字符串 "tp10m-wrong-type"）→ 结构化错误，
       绝不能是传输层失败。
 
-这是「参数合同」验收：243 工具的输入面在任何非法输入下都 fail-closed 到
+这是「参数合同」验收：244 工具的输入面在任何非法输入下都 fail-closed 到
 结构化错误，而不是崩溃或静默接受。
 """
 
@@ -193,7 +193,7 @@ def test_c2_schema_coverage(harness):
         "tools_with_typed_required": with_typed,
     }
     harness.write_report("tp10m_c2_coverage.json", evidence)
-    # 冻结清单里 148/243 工具有 required 属性；显著偏离说明 schema 拉取异常
+    # 冻结清单里 149/244 工具有 required 属性；显著偏离说明 schema 拉取异常
     assert with_required > 100, (
         f"only {with_required} tools expose required params on the wire")
 

@@ -8,7 +8,7 @@
 
 | 层 | 手段 |
 |---|---|
-| 顶层命令集合 | `cli/categories.py::all_command_names()` —— 唯一权威分类源（84 入口 = `_SUBCOMMANDS` 79 + cw.py standalone 5），由 `tests/test_category_source.py` 锁定不重不漏 |
+| 顶层命令集合 | `cli/categories.py::all_command_names()` —— 唯一权威分类源（86 入口 = `_SUBCOMMANDS` 81 + cw.py standalone 5），由 `tests/test_category_source.py` 锁定不重不漏 |
 | 每命令 argparse 树 | **进程内捕获真实 parser 对象**：挂钩 `argparse.ArgumentParser.format_help`，经 CLI 自带 help 快路径 `_dispatch_subcommand_help()` 触发。得到 help 文本之外的 `default / choices / nargs / required / type / 互斥组` |
 | cw.py 层 5 入口 | install / server / test / setup / daemon 在 `cw.py main()` 内分发，不经 `_dispatch_subcommand`，改用真实子进程 `cw.py <entry> --help` |
 
@@ -28,7 +28,7 @@
 
 ## 3. 产出规模（r1 实测）
 
-- 顶层入口 **84**（含 cw.py 层 5 个 standalone）
+- 顶层入口 **86**（含 cw.py 层 5 个 standalone）
 - 嵌套子命令 **144**（task 31 / gc 13 / rule 8 / workspace 6 / lease 5 / assignment 3 / …）
 - standalone 脚本 3 个（cw-client / cw-agent / cw-daemon）
 - 提取错误 **0**
@@ -40,7 +40,7 @@
 
 | 义务 | 测试 |
 |---|---|
-| 84 顶层入口不重不漏 | `test_all_84_top_level_entries_present` |
+| 86 顶层入口不重不漏 | `test_all_86_top_level_entries_present` |
 | 每个入口有分类归属 | `test_every_entry_has_category` |
 | 嵌套一层完整展开 | `test_nested_subcommands_expanded` |
 | required/type/default/choices 如实落 manifest | `test_parameter_contract_fields_captured` |

@@ -49,7 +49,7 @@ daemon**。实测确认：未覆盖 `CW_DAEMON_BIN` 时，日志出现
 
 ## 4. 产出规模（r1 实测）
 
-- 工具数 **243**，翻页 **1** 页（单页即穷尽，cursor 逻辑仍走完整循环）
+- 工具数 **244**，翻页 **1** 页（单页即穷尽，cursor 逻辑仍走完整循环）
 - 重复名 **0**，缺/空 inputSchema **0**
 - initialize：`serverName=callwarden` / `serverVersion=1.28.1` / `protocolVersion=2025-11-25`
 - manifest 290659 bytes，LF + UTF-8
@@ -60,7 +60,7 @@ daemon**。实测确认：未覆盖 `CW_DAEMON_BIN` 时，日志出现
 |---|---|
 | schema + source_revision 绑定、stdio 传输 | `test_schema_and_source_binding` |
 | 真实子进程 wire + initialize 握手完整 | `test_real_subprocess_wire_extraction` |
-| **wire 工具数 == 源码 `@mcp.tool()` 数**（12 模块合计 243） | `test_wire_count_matches_source_decorators` |
+| **wire 工具数 == 源码 `@mcp.tool()` 数**（12 模块合计 244） | `test_wire_count_matches_source_decorators` |
 | 无重名 | `test_no_duplicate_tool_names` |
 | 每个工具 inputSchema 为 object 且带 properties | `test_every_tool_has_object_input_schema` |
 | 翻页至穷尽 | `test_pagination_exhausted` |

@@ -2,7 +2,7 @@
 
 提取方式（真实树，非静态解析）：
 - 顶层命令集合取 `cli/categories.py`（`all_command_names()`，唯一权威分类源，
-  由 tests/test_category_source.py 锁定 84 入口不重不漏）；
+  由 tests/test_category_source.py 锁定 86 入口不重不漏）；
 - 每个命令的 argparse 树通过**进程内捕获真实 parser 对象**取得：CLI 自身提供
   `_dispatch_subcommand_help()`（跳过 db 初始化的 help 快路径），本脚本在其执行
   期间挂钩 `ArgumentParser.format_help`，把被打印的那个 parser 连同全部
@@ -167,6 +167,9 @@ def extract() -> dict:
     names = cats.all_command_names()
     # cw.py 层入口：不走 _dispatch_subcommand，单独按真实子进程提取
     cw_py_entries = {"install", "server", "test", "setup", "daemon"}
+    # Rust passthrough：经 cli.main dispatch 但直接委托 cw-daemon（ADR-002），
+    # Python 侧无 argparse parser，help 由 Rust 侧打印 —— 按真实子进程提取
+    rust_passthrough = {"pki"}
     dispatch_names = [n for n in names if n not in cw_py_entries]
 
     entries: dict = {}
@@ -179,6 +182,17 @@ def extract() -> dict:
             "nested": {},
             "error": None,
         }
+        if cmd in rust_passthrough:
+            p, err = capture_cw_py_entry(cmd)
+            node["top_parser"] = p
+            node["error"] = err
+            node["dispatch"] = (
+                "Rust passthrough（cw-daemon " + cmd + "），help 由 Rust 侧打印，"
+                "无 argparse parser；参数契约由 Rust 侧自带校验")
+            if err:
+                errors.append({"command": cmd, "stage": "rust_passthrough", "error": err})
+            entries[cmd] = node
+            continue
         p, err = capture(cmd, ["-h"])
         if err:
             node["error"] = err
@@ -240,7 +254,7 @@ def extract() -> dict:
         ],
         "extraction_method": {
             "top_level_source": "cli/categories.py::all_command_names()（唯一权威分类源，"
-                                "tests/test_category_source.py 锁定 84 入口不重不漏）",
+                                "tests/test_category_source.py 锁定 86 入口不重不漏）",
             "parser_capture": "进程内挂钩 argparse.ArgumentParser.format_help，"
                               "经 CLI 自带 help 快路径 _dispatch_subcommand_help 捕获真实 parser",
             "cw_py_entries": "install/server/test/setup/daemon 经真实子进程 cw.py <entry> --help",

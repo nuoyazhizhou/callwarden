@@ -4,9 +4,9 @@
 
 闸门语义：命令/工具增删若未重新生成 manifest（或未归类）直接挂测试。
 
-- CLI 顶层集合 == cli.categories.COMMAND_CATEGORIES 展开（当前 84）
+- CLI 顶层集合 == cli.categories.COMMAND_CATEGORIES 展开（当前 86）
 - MCP 集合 == server.tools._categories.TOOL_CATEGORIES
-           == scripts.gen_route_matrix.build_matrix() 工具集（当前 243）
+           == scripts.gen_route_matrix.build_matrix() 工具集（当前 244）
 - op_class 三值枚举合法；id 全局唯一；cli_leaf.parent 必须是已登记顶层
 - counts 与条目实际数量一致
 
@@ -121,10 +121,10 @@ def test_cli_top_matches_source_of_truth(entries: list) -> None:
     assert not mismatched, f"顶层命令分类不一致: {mismatched}"
 
 
-def test_cli_top_count_is_84(entries: list) -> None:
-    """当前事实锚点：84 顶层。增减命令时本用例与真相源同步更新。"""
+def test_cli_top_count_is_86(entries: list) -> None:
+    """当前事实锚点：86 顶层。增减命令时本用例与真相源同步更新。"""
     n = sum(1 for e in entries if e["kind"] == "cli_top")
-    assert n == 84, f"CLI 顶层命令数漂移: {n} != 84（若为合法增减，"
+    assert n == 86, f"CLI 顶层命令数漂移: {n} != 86（若为合法增减，"
     "请同步 cli/categories.py 与本锚点）"
 
 
@@ -166,10 +166,10 @@ def test_mcp_matches_source_of_truth(entries: list) -> None:
     assert not mismatched, f"MCP 工具分类/op_class 不一致: {mismatched}"
 
 
-def test_mcp_count_is_243(entries: list) -> None:
-    """当前事实锚点：243 工具。增减工具时本用例与真相源同步更新。"""
+def test_mcp_count_is_244(entries: list) -> None:
+    """当前事实锚点：244 工具。增减工具时本用例与真相源同步更新。"""
     n = sum(1 for e in entries if e["kind"] == "mcp")
-    assert n == 243, f"MCP 工具数漂移: {n} != 243（若为合法增减，"
+    assert n == 244, f"MCP 工具数漂移: {n} != 244（若为合法增减，"
     "请同步 server/tools/_categories.py 与本锚点）"
 
 
@@ -194,10 +194,12 @@ def test_leaf_extract_errors_are_intentional(manifest: dict) -> None:
     """叶级提取失败必须逐个显式豁免（防止静默降级造成假覆盖）。
 
     cw test 为无 argparse 的 pytest 直通入口（cw.py:150-168），--help 被
-    当作模块名导入而失败 —— 属已知形态，豁免；新增失败命令须人工核实后
-    在 EXPECTED_EXTRACT_ERRORS 登记，否则测试挂。
+    当作模块名导入而失败 —— 属已知形态，豁免；cw pki 为 Rust passthrough
+    （ADR-002：直接委托 cw-daemon pki，help 由 Rust 侧打印，Python 侧无
+    argparse parser），argparse 叶提取天然捕获不到 —— 属已知形态，豁免；
+    新增失败命令须人工核实后在 EXPECTED_EXTRACT_ERRORS 登记，否则测试挂。
     """
-    EXPECTED_EXTRACT_ERRORS = {"test"}
+    EXPECTED_EXTRACT_ERRORS = {"test", "pki"}
     actual = set(manifest.get("leaf_extract_errors", {}))
     unexpected = actual - EXPECTED_EXTRACT_ERRORS
     assert not unexpected, (

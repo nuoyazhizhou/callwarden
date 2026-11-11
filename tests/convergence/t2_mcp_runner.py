@@ -1,7 +1,7 @@
-"""t2_mcp_runner.py —— T2:243 个 MCP 工具全参数真实调用运行器。
+"""t2_mcp_runner.py —— T2:244 个 MCP 工具全参数真实调用运行器。
 
 通道(最贴近 LLM 实际使用):
-  create_mcp_server() 装配全部 243 工具 → FastMCP.call_tool(name, arguments)
+  create_mcp_server() 装配全部 244 工具 → FastMCP.call_tool(name, arguments)
   经 MCP 参数校验(pydantic schema)+ 工具壳参数适配 + route_rpc → daemon RPC。
 
 参数来源:param_provider.build_mcp_params(全参数模式),用种子 workspace 的真实

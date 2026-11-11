@@ -1,6 +1,6 @@
-"""T2:243 个 MCP 工具全参数真实调用(收敛套件正式化)。
+"""T2:244 个 MCP 工具全参数真实调用(收敛套件正式化)。
 
-通过 create_mcp_server() 装配全部 243 工具,用 param_provider 生成全参数,对
+通过 create_mcp_server() 装配全部 244 工具,用 param_provider 生成全参数,对
 seed_workspace(已 build_graph)真实 call_tool,断言无 DEFECT(方法不存在/
 daemon 不可用/代码级 internal_error)。
 
@@ -48,14 +48,14 @@ def mcp_on_isolated_daemon(seed_workspace):
         HttpDaemonRpcClient._instance = saved
 
 
-def test_mcp_server_assembles_243_tools(mcp_on_isolated_daemon):
+def test_mcp_server_assembles_244_tools(mcp_on_isolated_daemon):
     mcp = mcp_on_isolated_daemon["mcp"]
     tools = mcp._tool_manager.list_tools()
-    assert len(tools) >= 240, f"MCP 工具数异常: {len(tools)}(预期 243)"
+    assert len(tools) >= 240, f"MCP 工具数异常: {len(tools)}(预期 244)"
 
 
 def test_all_mcp_tools_no_defect(mcp_on_isolated_daemon):
-    """全量真实调用 243 工具,断言无 DEFECT(真实缺陷)。
+    """全量真实调用 244 工具,断言无 DEFECT(真实缺陷)。
 
     分层:READ_ONLY 全调;PROTECTED_MUTATION 非破坏性全调,破坏性 SKIP;
     GOVERNANCE_WRITE 需 lease/状态机前置,SKIP。分类见 t2_mcp_runner。
@@ -66,7 +66,7 @@ def test_all_mcp_tools_no_defect(mcp_on_isolated_daemon):
     report = asyncio.run(runner.run_all(mcp, ctx, op_filter="ALL"))
     counts = report["counts"]
 
-    # 全覆盖:PASS + EXPECTED_BUSINESS + DEFECT + SKIP == 243
+    # 全覆盖:PASS + EXPECTED_BUSINESS + DEFECT + SKIP == 244
     total = sum(counts.values())
     assert total >= 240, f"覆盖工具数异常: {total}"
 

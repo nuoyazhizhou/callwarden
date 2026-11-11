@@ -1,13 +1,13 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 243 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 244 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 > **HTTP 路由状态（2026-09-29 文档-实现审计后刷新，权威核对：`scripts/verify_route_matrix.py` 三向一致，exit 0）**：
-> 243 个公开工具的调用链为 **243/243 工具壳 route_rpc → HTTP → rust daemon**，HTTP fail-closed
+> 244 个公开工具的调用链为 **244/244 工具壳 route_rpc → HTTP → rust daemon**，HTTP fail-closed
 > 仅对未知方法生效。当前 backend（`deliverables/software-company/tool_migration_matrix.json`，
 > `gen_route_matrix.py --report` 实测）：
-> **rust_native 200 / task_rpc 43 / python_compat 0**。HTTP 模式下：
-> - 243 个方法（rust_native 200 + task_rpc 43）全部走 Rust daemon dispatch 原生执行（无 Python 业务逻辑）；
+> **rust_native 201 / task_rpc 43 / python_compat 0**。HTTP 模式下：
+> - 244 个方法（rust_native 201 + task_rpc 43）全部走 Rust daemon dispatch 原生执行（无 Python 业务逻辑）；
 > - `python_compat` 已清零：`http_server.rs` 的 `COMPAT_ROUTE_WHITELIST` 与
 >   `compat_registry.py RUST_COMPAT_ROUTE` 均为 0，H3 compat worker 迁移承接卡
 >   T-1787293451688-c14b1e44 已分期清零完毕；
@@ -33,7 +33,7 @@ cw server --transport sse    # SSE 模式
 
 ## 按 17 大功能分类
 
-Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个主分类（[1]-[12] 与 CLI 主分类对齐；[13]-[17] 为构建上下文感知 / 协同 / 依赖图 / Assignment-Lease / Identity 能力域，CLI 侧亦有同构分类）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。分类真相源为 `server/tools/_categories.py`（`TOOL_CATEGORIES`），下表由 `scripts/gen_category_overview.py --emit-mcp` 生成，勿手工编辑标记块内内容。
+Call Warden 通过 MCP Server 暴露 244 个工具，按功能聚合为 17 个主分类（[1]-[12] 与 CLI 主分类对齐；[13]-[17] 为构建上下文感知 / 协同 / 依赖图 / Assignment-Lease / Identity 能力域，CLI 侧亦有同构分类）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。分类真相源为 `server/tools/_categories.py`（`TOOL_CATEGORIES`），下表由 `scripts/gen_category_overview.py --emit-mcp` 生成，勿手工编辑标记块内内容。
 
 ### 概览表
 
@@ -41,7 +41,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 
 | # | 主分类 | 工具数 | 涵盖范围 | 对应 CLI 主分类 |
 | --- | --- | --- | --- | --- |
-| 1 | **Workspace & Database** | 16 | workspace / db 构建 / branch | Workspace & Database |
+| 1 | **Workspace & Database** | 17 | workspace / db 构建 / branch | Workspace & Database |
 | 2 | **Query & Search** | 24 | 符号 / 文件 / 语义搜索 / 摘要 / RAG / Token 账本 | Query & Search |
 | 3 | **Call Chain Analysis** | 14 | 调用链 / 拓扑 / 循环 / 孤儿 / 模块图 / 热力图 / 调用差异 | Call Chain Analysis |
 | 4 | **Code Health & Metrics** | 12 | 度量 / 健康检查 / 演化 / 热点 / 流失 / 缺陷关联 | Code Health & Metrics |
@@ -58,11 +58,11 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 15 | **依赖图与环检测** | 10 | 依赖边 / 接口提供者 / 环检测 / 版本校验 / 工件身份 | 依赖图与环检测 |
 | 16 | **Assignment 与 Lease** | 8 | lease 获取 / 续租 / 释放 / assignment 创建撤销 | Assignment 与 Lease |
 | 17 | **Identity 与 Attestation** | 7 | 动作身份 / 会话隔离 / attestation 撤销 / 注册 | Identity 与 Attestation |
-| **合计** | | **243** | | |
+| **合计** | | **244** | | |
 
 <!-- END:generated-overview -->
 
-> **注**：合计 243 与注册的 MCP 工具数一致（243 个工具全部归入 17 个主分类，无遗漏；权威核对 `scripts/gen_route_matrix.py --report`）。[1]-[17] 与 CLI 21 主分类中的 [1]-[17] 同构对齐（分类 key 一致，见 `cli/categories.py` 与 `server/tools/_categories.py`）；CLI 的 [18]-[21]（Migration Rollback / Daemon 运维 / 安装与初始化 / 盲评实验）为 CLI 独有运维面，无 MCP 对应分类。
+> **注**：合计 244 与注册的 MCP 工具数一致（244 个工具全部归入 17 个主分类，无遗漏；权威核对 `scripts/gen_route_matrix.py --report`）。[1]-[17] 与 CLI 21 主分类中的 [1]-[17] 同构对齐（分类 key 一致，见 `cli/categories.py` 与 `server/tools/_categories.py`）；CLI 的 [18]-[21]（Migration Rollback / Daemon 运维 / 安装与初始化 / 盲评实验）为 CLI 独有运维面，无 MCP 对应分类。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 
@@ -2092,7 +2092,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ## CLI↔MCP 命名映射对照表（C8 Step #6）
 
-> 本表为 **243 个 MCP 工具的全量 CLI 入口映射**（每工具一行，`—` 表示 MCP 专属、无 CLI 入口），
+> 本表为 **244 个 MCP 工具的全量 CLI 入口映射**（每工具一行，`—` 表示 MCP 专属、无 CLI 入口），
 > 按 17 大类分组（与上方概览表同构）。数据源 `server/tools/_categories.py` 的
 > `TOOL_CLI_MAPPING`（单一真相源），由 `scripts/gen_category_overview.py --emit-mapping`
 > 生成，marker 区间请勿手改；映射的机器校验（顶层命令 + 子命令级存在性）见
@@ -2113,6 +2113,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | `cw refresh` | `refresh_file` | 刷新指定文件（cw refresh <paths>） |
 | — | `build_directory` | MCP 专属，无 CLI 入口 |
 | — | `remove_file` | MCP 专属，无 CLI 入口 |
+| `cw write` | `file_write` | 治理写文件（write.grant → 原子替换 → write.commit） |
 | `cw stats` | `get_stats` | 代码图谱统计信息 |
 | `cw status` | `get_status` | 完整状态概览 |
 | — | `register_branch` | MCP 专属，无 CLI 入口 |
@@ -2121,7 +2122,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | — | `switch_branch` | MCP 专属，无 CLI 入口 |
 | — | `merge_preview` | MCP 专属，无 CLI 入口 |
 
-<!-- [1]: 16 工具（8 有 CLI 对应 / 8 MCP 专属） -->
+<!-- [1]: 17 工具（9 有 CLI 对应 / 8 MCP 专属） -->
 
 ### [2] Query & Search
 
@@ -2475,6 +2476,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | Query & Search | `cw fts` | FTS5 全文索引构建与状态（rebuild/status） |
 | Code Health & Metrics | `cw dashboard` | 项目综合状态驾驶舱 |
 | Diagnostics | `cw doctor` | 环境诊断与维护 |
+| Identity 与 Attestation | `cw pki` | PKI 生命周期（init/token/enroll/renew/revoke/rotate-server） |
 
 > [18]-[21] CLI-only 分类（rollback / daemon / setup_install / experiment）为有意的 CLI 独有能力域，不在此表统计。
 
@@ -2549,13 +2551,13 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ## 路由矩阵与收敛架构（T01/T05）
 
-> 2026-08-20 起，243 个 MCP 工具的路由由
+> 2026-08-20 起，MCP 工具的路由由
 > `deliverables/software-company/tool_migration_matrix.json` 单一真相源维护
 > （项目：cw-rust-client-convergence）。
 
-- **自描述接口**：daemon 提供 `GET /v1/meta/tools`，返回 243 工具
+- **自描述接口**：daemon 提供 `GET /v1/meta/tools`，返回 244 工具
   `{name, module, target_backend, rpc_method, op_class, batch, status}`。
-- **一致性门禁**：`scripts/verify_route_matrix.py`（243/243 机器核对）、
+- **一致性门禁**：`scripts/verify_route_matrix.py`（244/244 机器核对）、
   `scripts/check_client_purity.py`（Python 薄壳 0 业务 SQL）。
 - **协议**：`docs/design/rust-client-convergence-protocol.md`。
 - **迁移指南**：`docs/design/cw-rust-client-convergence-migration-guide.md`。

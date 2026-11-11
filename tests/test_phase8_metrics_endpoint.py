@@ -225,13 +225,13 @@ def test_get_metrics_mcp_tool_registered():
 
 
 def test_get_metrics_mcp_tool_count_increased():
-    """MCP 工具总数 243（拆分后注册在 server/tools 功能域模块）。"""
+    """MCP 工具总数 244（拆分后注册在 server/tools 功能域模块）。"""
     import re
     content = _mcp_sources_combined()
     matches = re.findall(r'(?m)^    @mcp\.tool\(\)$', content)
     # P4 assignment/lease 新增 8 工具（227→235），P3/P4 后 237；
-    # 后续批次（SRV/backup/gc/snapshot/mount/toolchain 等）增至 243。
-    assert len(matches) == 243, f"MCP 工具数应为 243，实际 {len(matches)}"
+    # 后续批次（SRV/backup/gc/snapshot/mount/toolchain 等）增至 244（S3 file_write）。
+    assert len(matches) == 244, f"MCP 工具数应为 244，实际 {len(matches)}"
 
 
 def test_get_metrics_mcp_function_callable():

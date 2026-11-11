@@ -1,6 +1,6 @@
 """param_provider.py —— 全功能全量测试的参数 provider(T1 基建骨架)。
 
-目标(全量测试 T2/T3):为 243 个 MCP 工具与 234 个 CLI 叶子命令的**全参数
+目标(全量测试 T2/T3):为 244 个 MCP 工具与 234 个 CLI 叶子命令的**全参数
 真实调用**提供"真实前置状态"参数值。provider 不臆造随机值,而是:
 
 1. 读取固化的工具/命令 schema(fixtures/mcp_full_schema.json、

@@ -1,18 +1,18 @@
 {
  "schema": "frozen-inventory/v1",
  "card": "TP-08F",
- "frozen_at": "2026-10-26T00:14:41",
- "source_revision": "0fc6ba2d3c6cf7d377a756c976a07ace0e08e40c",
+ "frozen_at": "2026-11-11T21:00:04",
+ "source_revision": "cda275de20230fe7d73f46da02ba25801be1f040",
  "profile": "P-COMMITTED-windows-amd64-py314",
  "version_binding": {
-  "cli_tree_sha256": "ab6c8328b532fed9eeb7f12fd1cbe9bbd943d645d2e3f7a884220dc63d89d86e",
-  "mcp_tools_sha256": "4f9b1c221aefff527ab2eeb9d23ccc0a29c367ea7a4b6eb0a32479f410589054",
-  "tp01_candidates_sha256": "1029101cbbacc38bfeb34429d15d91a85da2cdc95d5ecf6120aae287295ed778"
+  "cli_tree_sha256": "95e42f5ed6854c1d4313359ee1de82841126b3d5f99f16d3a85b5cee7a081503",
+  "mcp_tools_sha256": "d420fcda891342766cfb07e6de6b6a54d26497b817a92690ff67c79d9372fbc5",
+  "tp01_candidates_sha256": "e775c08419ed94e02e6db228ebc53aa58d85b538e6214502f6bcdc93839e1f2d"
  },
  "counts": {
-  "cli_entries": 264,
-  "mcp_entries": 243,
-  "total": 507
+  "cli_entries": 266,
+  "mcp_entries": 244,
+  "total": 510
  },
  "obligation_model": {
   "C1": "正常业务语义：有效前置下至少一条正常场景，独立oracle与业务结果一致",
@@ -36,19 +36,17 @@
      "detect_cycle",
      "detect_cycles"
     ],
-    "wire_tool_count": 243,
-    "source_decorator_count": 243
+    "wire_tool_count": 244,
+    "source_decorator_count": 244
    },
    "statement": "wire 实测集合含 detect_call_cycles/detect_dependency_cycle，不含陈旧名 detect_cycle/detect_cycles；总数相等不再掩盖集合漂移"
   }
  ],
  "reconciliation": {
   "cli": {
-   "real": 264,
+   "real": 266,
    "static": 234,
-   "static_only": [
-    "gc db-migrate-single"
-   ],
+   "static_only": [],
    "real_new": [
     "call-heatmap",
     "changes",
@@ -72,6 +70,7 @@
     "map",
     "module-calls",
     "orphan-symbols",
+    "pki",
     "restore-all-comments",
     "restore-comment",
     "rollback set 0",
@@ -82,17 +81,24 @@
     "rule candidate reject",
     "semantic-search",
     "similar",
-    "top-callers"
+    "top-callers",
+    "write"
    ],
    "reclassified_as_flag_variant": [
     "map mermaid",
     "map text"
    ],
+   "reclassified_as_removed": [
+    {
+     "invocation": "gc db-migrate-single",
+     "reason": "ceef53c 退役 cw gc db-migrate-single（db-retire：删除 server/migrate.py、db/db_migrate.py 及 CLI 接线）"
+    }
+   ],
    "note": "static_only 中的 daemon * 与 install-agent * / install-hook * 已由第3层提取与位置参数 choices 展开覆盖；map text/mermaid 在真实 parser 中为 --format 旗标 choices，归为参数等价类而非独立入口"
   },
   "mcp": {
-   "real": 243,
-   "static": 243,
+   "real": 244,
+   "static": 244,
    "static_only": [],
    "real_new": []
   },
@@ -12200,6 +12206,34 @@
    }
   },
   {
+   "entry_id": "CLI:pki",
+   "surface": "cli",
+   "invocation": "pki",
+   "top_level": "pki",
+   "category": "identity",
+   "entry_kind": "top_level_leaf",
+   "parent": null,
+   "params": {
+    "available": false,
+    "reason": "cw_py_level_help_text_only"
+   },
+   "obligations": {
+    "C1": "applicable_pending_case",
+    "C2": "applicable_pending_case",
+    "C3": "applicable_pending_case",
+    "C4": "applicable_pending_case",
+    "C5": "applicable_pending_case",
+    "C6": "applicable_pending_case"
+   },
+   "profile": "P-COMMITTED-windows-amd64-py314",
+   "applicability": "applicable",
+   "status": "frozen_inventory",
+   "provenance": {
+    "method": "argparse parser capture (real)",
+    "source": "cli_tree.json"
+   }
+  },
+  {
    "entry_id": "CLI:query",
    "surface": "cli",
    "invocation": "query",
@@ -18878,6 +18912,125 @@
    }
   },
   {
+   "entry_id": "CLI:write",
+   "surface": "cli",
+   "invocation": "write",
+   "top_level": "write",
+   "category": "workspace_database",
+   "entry_kind": "top_level_leaf",
+   "parent": null,
+   "params": {
+    "available": true,
+    "prog": "cw write",
+    "positionals": [],
+    "options": [
+     {
+      "dest": "path",
+      "nargs": null,
+      "required": true,
+      "type": "",
+      "choices": null,
+      "default": null,
+      "flags": [
+       "--path"
+      ]
+     },
+     {
+      "dest": "content",
+      "nargs": null,
+      "required": false,
+      "type": "",
+      "choices": null,
+      "default": null,
+      "flags": [
+       "--content"
+      ]
+     },
+     {
+      "dest": "content_file",
+      "nargs": null,
+      "required": false,
+      "type": "",
+      "choices": null,
+      "default": null,
+      "flags": [
+       "--content-file"
+      ]
+     },
+     {
+      "dest": "task_id",
+      "nargs": null,
+      "required": true,
+      "type": "",
+      "choices": null,
+      "default": null,
+      "flags": [
+       "--task-id"
+      ]
+     },
+     {
+      "dest": "step_id",
+      "nargs": null,
+      "required": true,
+      "type": "",
+      "choices": null,
+      "default": null,
+      "flags": [
+       "--step-id"
+      ]
+     },
+     {
+      "dest": "workspace_instance_id",
+      "nargs": null,
+      "required": false,
+      "type": "",
+      "choices": null,
+      "default": "",
+      "flags": [
+       "--workspace-instance-id"
+      ]
+     },
+     {
+      "dest": "json",
+      "nargs": 0,
+      "required": false,
+      "type": "",
+      "choices": null,
+      "default": false,
+      "flags": [
+       "--json"
+      ]
+     }
+    ],
+    "mutually_exclusive_groups": [
+     [
+      [
+       "--content"
+      ],
+      [
+       "--content-file"
+      ]
+     ]
+    ],
+    "param_equivalence_classes": []
+   },
+   "obligations": {
+    "C1": "applicable_pending_case",
+    "C2": "applicable_pending_case",
+    "C3": "applicable_pending_case",
+    "C4": "applicable_pending_case",
+    "C5": "applicable_pending_case",
+    "C6": "applicable_pending_case"
+   },
+   "profile": "P-COMMITTED-windows-amd64-py314",
+   "applicability": "applicable",
+   "status": "frozen_inventory",
+   "provenance": {
+    "method": "argparse parser capture (real)",
+    "source": "cli_tree.json"
+   }
+  },
+  {
    "entry_id": "CLI:install",
    "surface": "cli",
    "invocation": "install",
@@ -21042,6 +21195,48 @@
      "offset"
     ],
     "property_count": 4,
+    "description_present": true
+   },
+   "obligations": {
+    "C1": "applicable_pending_case",
+    "C2": "applicable_pending_case",
+    "C3": "applicable_pending_case",
+    "C4": "applicable_pending_case",
+    "C5": "applicable_pending_case",
+    "C6": "applicable_pending_case"
+   },
+   "profile": "P-COMMITTED-windows-amd64-py314",
+   "applicability": "applicable",
+   "status": "frozen_inventory",
+   "provenance": {
+    "method": "MCP stdio wire list_tools (real subprocess)",
+    "source": "mcp_tools.json"
+   }
+  },
+  {
+   "entry_id": "MCP:file_write",
+   "surface": "mcp",
+   "tool_name": "file_write",
+   "invocation": "file_write",
+   "category": null,
+   "entry_kind": "mcp_wire_tool",
+   "params": {
+    "available": true,
+    "inputSchema_type": "object",
+    "required": [
+     "file_path",
+     "content",
+     "task_id",
+     "step_id"
+    ],
+    "properties": [
+     "content",
+     "file_path",
+     "step_id",
+     "task_id",
+     "workspace_instance_id"
+    ],
+    "property_count": 5,
     "description_present": true
    },
    "obligations": {

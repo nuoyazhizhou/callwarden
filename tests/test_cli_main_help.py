@@ -1,12 +1,12 @@
 """主 --help 输出（分类分组结构）测试。
 
 Phase 2 重构后（cli-mcp-surface-audit）：help 从 cli/categories.py
-COMMAND_CATEGORIES 渲染（21 分类 / 84 顶层命令），不再有手写
+COMMAND_CATEGORIES 渲染（21 分类 / 86 顶层命令），不再有手写
 _MAIN_HELP_GROUPS 静态块。
 
 覆盖：
 - cw --help 输出包含全部分类标题（[1]-[17] 与 MCP 对齐 + [18]-[21] CLI-only）
-- 顶层命令全覆盖（84 个，与 categories 真相源一致）
+- 顶层命令全覆盖（86 个，与 categories 真相源一致）
 - 无裸 i18n key（cli.messages 字样不得出现）
 - 包含全局选项章节（--lang/--workspace/--help）
 - 不再包含旧的 4-pillar 字样（"Four Pillars" / "四大支柱"）
@@ -78,7 +78,7 @@ _GROUP_KEYS = [
     "help_group_diagnostics",
 ]
 
-# 主 --help 必须覆盖的顶层命令抽样（全量 84 个覆盖有专项测试；
+# 主 --help 必须覆盖的顶层命令抽样（全量 86 个覆盖有专项测试；
 # 集合一致性由 tests/test_category_source.py 校验 categories ↔ dispatch）
 _TOP_LEVEL_COMMANDS_SAMPLE = [
     "task", "audit", "bootstrap", "rule",
@@ -183,8 +183,8 @@ def test_main_help_contains_top_level_commands(cmd_str):
     )
 
 
-def test_main_help_covers_all_84_commands():
-    """cw --help 覆盖全部 84 个顶层命令（与 categories 真相源一致，AC-2）"""
+def test_main_help_covers_all_86_commands():
+    """cw --help 覆盖全部 86 个顶层命令（与 categories 真相源一致，AC-2）"""
     output = _run_cw_help("zh_CN")
     missing = [name for name in all_command_names()
                if not re.search(rf"^  {re.escape(name)}\s", output, re.M)]

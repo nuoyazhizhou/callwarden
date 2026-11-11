@@ -17,7 +17,7 @@
     b. 隔离 daemon（候选二进制，revision/hash 自洽 manifest）上
        `cw workspace list`；
     c. 种子 workspace `cw refresh --all` 全链路建图 rc=0；
-    d. MCP wire：venv `cw server`（stdio）+ tools/list == 243。
+    d. MCP wire：venv `cw server`（stdio）+ tools/list == 244。
 
 honesty 声明（写入 verdict）：
  - callwarden_core.pyd 被 .gitignore 忽略（非 revision 钉住），本机 wheel
@@ -50,7 +50,7 @@ for _p in (str(REPO_ROOT), str(HERE),
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-EXPECTED_TOOLS = 243
+EXPECTED_TOOLS = 244
 DEFAULT_DAEMON_SRC = Path(
     os.environ.get(
         "CW_ARTIFACT_DAEMON_SRC",
@@ -224,7 +224,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         step("cw_refresh_all", r.returncode == 0,
              (r.stdout or r.stderr)[:200])
 
-        # ---- 5d. MCP wire：venv cw server + tools/list == 243 ----
+        # ---- 5d. MCP wire：venv cw server + tools/list == 244 ----
         tools = _mcp_tools_list(venv_py, cw, env)
         if tools != EXPECTED_TOOLS:
             raise E2EError(f"MCP tools/list = {tools}，期望 {EXPECTED_TOOLS}")

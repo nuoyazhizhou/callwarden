@@ -349,7 +349,7 @@ db.conn.commit()
 - **任务/规则/维护类**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect learn/build`、`gc archive/import`、`identity revoke`、`setup`
 - **构建/工作区/恢复类**：`refresh --all`、`refresh <paths>`、`watch`、`workspace register/set/delete`、`restore-comment`、`restore-all-comments`、`coverage import`
 
-## MCP 工具分组（节选；完整 243 个见 docs/mcp_tools.md）
+## MCP 工具分组（节选；完整 244 个见 docs/mcp_tools.md）
 
 **查询类**：get_stats、search_symbols、get_symbol、get_callers、get_callees、get_symbol_history、get_file_history、get_recent_changes、get_topological_order
 
@@ -477,10 +477,10 @@ CLI 模式的"慢"是 Python 解释器启动 + 模块导入的固定成本，与
 
 ## 路由矩阵与收敛架构（T01/T05）
 
-243 个 MCP 工具的路由矩阵（单一真相源）：
+244 个 MCP 工具的路由矩阵（单一真相源）：
 `deliverables/software-company/tool_migration_matrix.json`。
 daemon 自描述接口 `GET /v1/meta/tools` 返回工具级
 `{name, module, target_backend, rpc_method, op_class, batch, status}`；
-一致性由 `scripts/verify_route_matrix.py`（243/243）+ `scripts/check_client_purity.py`
+一致性由 `scripts/verify_route_matrix.py`（244/244）+ `scripts/check_client_purity.py`
 （0 业务 SQL）门禁。详见 `docs/design/rust-client-convergence-protocol.md` 与
 `docs/design/cw-rust-client-convergence-migration-guide.md`。

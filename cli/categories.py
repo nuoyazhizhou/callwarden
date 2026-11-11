@@ -1,14 +1,14 @@
 """CLI 顶层命令分类真相源（cli-mcp-surface-audit Phase 1）。
 
-本模块是全部 84 个 CLI 顶层命令归属的唯一权威数据：
+本模块是全部 86 个 CLI 顶层命令归属的唯一权威数据：
 
 - 调用链 1：cli.main._print_main_help() 导入 COMMAND_CATEGORIES 渲染主
   --help（替代手写 _MAIN_HELP_GROUPS 静态块，防再漂移）；
 - 调用链 2：scripts/gen_category_overview.py 读取本模块生成
   docs/cli_reference.md「命令概览」标记块；
 - 调用链 3：tests/test_category_source.py 校验「每个顶层命令恰好归一类」，
-  与 cli.main._SUBCOMMANDS（79）+ cw.py standalone（install/server/test）
-  + setup + daemon = 84 个入口做集合比对。
+  与 cli.main._SUBCOMMANDS（81）+ cw.py standalone（install/server/test）
+  + setup + daemon = 86 个入口做集合比对。
 
 分类体系与 server/tools/_categories.py 的 MCP 17 分类同构
 （key 一一对应）；[18]-[21] 为 CLI-only 能力域（MCP 无对应分类）。
@@ -64,7 +64,7 @@ def _cmd(name: str, desc_key: str = "", default_desc: str = "") -> CommandInfo:
 
 
 # ====================================================================
-# 命令分类数据（84 个顶层命令，以 MCP 17 分类为基准统一 + CLI-only 行）
+# 命令分类数据（86 个顶层命令，以 MCP 17 分类为基准统一 + CLI-only 行）
 # --------------------------------------------------------------------
 # 排列顺序即 --help 与 cli_reference.md 概览表的输出顺序。
 # desc_key 仅为 i18n 已有 key 的命令填写；新命令留空走 default_desc，
@@ -76,7 +76,7 @@ COMMAND_CATEGORIES: List[CommandCategory] = [
         key="workspace_database",
         title="Workspace & Database",
         title_key="cli.messages.help_group_workspace",
-        scope="工作区管理、数据库刷新、状态概览、分支感知、分层配置、C 图构建",
+        scope="工作区管理、数据库刷新、状态概览、分支感知、分层配置、C 图构建、S3 治理写",
         cli_only=False,
         commands=[
             _cmd("workspace",
@@ -86,6 +86,8 @@ COMMAND_CATEGORIES: List[CommandCategory] = [
             _cmd("status", desc_key="cli.messages.help_status"),
             _cmd("graph", default_desc="构建 C 文件调用图（build-from-c）"),
             _cmd("config", default_desc="分层配置查看与解释（explain/paths）"),
+            _cmd("write",
+                 default_desc="治理写文件（write.grant → 本机原子替换 → write.commit）"),
         ],
     ),
     CommandCategory(
@@ -318,9 +320,11 @@ COMMAND_CATEGORIES: List[CommandCategory] = [
         key="identity",
         title="Identity 与 Attestation",
         title_key="",
-        scope="Attestation 撤销（CLI 仅暴露 revoke，避免 T=M=D）",
+        scope="PKI 生命周期（委托 cw-daemon）与 Attestation 撤销（CLI 仅暴露 revoke，避免 T=M=D）",
         cli_only=False,
         commands=[
+            _cmd("pki",
+                 default_desc="PKI 生命周期（init/token/enroll/renew/revoke/rotate-server）"),
             _cmd("identity", default_desc="Identity/Attestation 撤销（revoke）"),
         ],
     ),

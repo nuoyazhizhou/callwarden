@@ -10,7 +10,7 @@
 - 两个非 MCP 残留条目已移除（final_zero_python_authority_audit /
   task_cascade_close）；
 - 三个新治理工具已在矩阵且路由正确；
-- N=243 本轮验收记录（生产脚本不保留该常量）；
+- N=244 本轮验收记录（生产脚本不保留该常量）；
 - P1 current_backend 回填（2026-09-22）：从实际接线证据派生，
   全工具可证明已接线（0 unknown），且 verifier 门禁 4b 能咬住过期矩阵。
 
@@ -136,9 +136,9 @@ def test_new_governance_tools_routed(name: str, rpc_method: str, op_class: str) 
 
 
 def test_n_baseline_acceptance_record() -> None:
-    """N=243 本轮验收记录（RP-08 N+1；仅测试断言；生产脚本不保留常量）。"""
-    assert _load_disk_matrix()["total_tools"] == 243
-    assert len(gen.build_matrix()["tools"]) == 243
+    """N=244 本轮验收记录（RP-08 N+1；仅测试断言；生产脚本不保留常量）。"""
+    assert _load_disk_matrix()["total_tools"] == 244
+    assert len(gen.build_matrix()["tools"]) == 244
 
 
 def test_verifier_and_generator_share_single_source() -> None:

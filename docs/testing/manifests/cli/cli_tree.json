@@ -1,14 +1,14 @@
 {
  "schema": "cli-tree/v1",
  "card": "TP-08C",
- "source_revision": "0fc6ba2d3c6cf7d377a756c976a07ace0e08e40c",
- "generated_at": "2026-10-26T00:14:25",
- "top_level_count": 84,
+ "source_revision": "cda275de20230fe7d73f46da02ba25801be1f040",
+ "generated_at": "2026-11-11T20:56:03",
+ "top_level_count": 86,
  "nested_total": 143,
  "standalone_entries": {
   "cw-client": {
    "parser": {
-    "help_text": "usage: cw daemon [-h] [--socket SOCKET]\n                 {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain} ...\n\ndaemon 管理与查询（Rust 原生 daemon 客户端；serve 子命令已下线，daemon 启动见 cw-daemon.exe）\n\npositional arguments:\n  {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain}\n    ping                检查 daemon 与 peer credential\n    start               启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client\n                        退出后仍存活\n    register            注册当前 UID 的 workspace\n    list                列出当前 UID 的 workspace\n    status              查询 workspace 和 snapshot 状态\n    publish             发布已刷新 DB 为共享 snapshot\n    query               查询共享 snapshot\n    mode                查看 daemon 模式\n    health              检查 daemon 健康状态（HTTP /health，Rust 权威）\n    manifest            显示 daemon HTTP manifest（authority/endpoint/registry\n                        revision）\n    capability          查询 daemon capability registry（MCP/RPC 工具矩阵）\n    schema-version      查询 registry DB schema 版本\n    bridge              检查 Windows bridge 配置与连通性\n    backup              备份 registry DB\n    restore             从备份恢复 registry DB\n    gc-cas              GC CAS 存储（清理未引用 content）\n    gc-snapshots        GC 快照（保留最近 N 个）\n    snapshot-stats      查询 daemon 内 SnapshotCache 统计（不带参数聚合所有\n                        workspace；--workspace-instance-id 查单个）\n    snapshot-list       列出 daemon 已知的所有 workspace snapshot\n    snapshot-evict      驱逐指定 workspace 的 snapshot 缓存\n    metrics             查询 daemon 运行时指标（counters/gauges/histograms）\n    mount               容器挂载映射管理\n    toolchain           工具链与 build context 管理\n\noptions:\n  -h, --help            show this help message and exit\n  --socket SOCKET       UDS 路径（默认 CW_DAEMON_SOCKET）\n",
+    "help_text": "usage: cw daemon [-h] [--endpoint SOCKET]\n                 {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain} ...\n\ndaemon 管理与查询（Rust 原生 daemon 客户端；serve 子命令已下线，daemon 启动见 cw-daemon.exe）\n\npositional arguments:\n  {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain}\n    ping                检查 daemon 与 peer credential\n    start               启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client\n                        退出后仍存活\n    register            注册当前 UID 的 workspace\n    list                列出当前 UID 的 workspace\n    status              查询 workspace 和 snapshot 状态\n    publish             发布已刷新 DB 为共享 snapshot\n    query               查询共享 snapshot\n    mode                查看 daemon 模式\n    health              检查 daemon 健康状态（HTTP /health，Rust 权威）\n    manifest            显示 daemon HTTP manifest（authority/endpoint/registry\n                        revision）\n    capability          查询 daemon capability registry（MCP/RPC 工具矩阵）\n    schema-version      查询 registry DB schema 版本\n    bridge              检查 Windows bridge 配置与连通性\n    backup              备份 registry DB\n    restore             从备份恢复 registry DB\n    gc-cas              GC CAS 存储（清理未引用 content）\n    gc-snapshots        GC 快照（保留最近 N 个）\n    snapshot-stats      查询 daemon 内 SnapshotCache 统计（不带参数聚合所有\n                        workspace；--workspace-instance-id 查单个）\n    snapshot-list       列出 daemon 已知的所有 workspace snapshot\n    snapshot-evict      驱逐指定 workspace 的 snapshot 缓存\n    metrics             查询 daemon 运行时指标（counters/gauges/histograms）\n    mount               容器挂载映射管理\n    toolchain           工具链与 build context 管理\n\noptions:\n  -h, --help            show this help message and exit\n  --endpoint, --socket SOCKET\n                        HTTPS endpoint（默认经 authority manifest 解析）\n",
     "rc": 0
    },
    "error": null
@@ -22,7 +22,7 @@
   },
   "cw-daemon": {
    "parser": {
-    "help_text": "Call Warden Enterprise Daemon (Windows, named pipe endpoint)\n\nUsage: cw-daemon.exe [OPTIONS] [COMMAND]\n\nCommands:\n  serve         启动命名管道 server（默认动作）\n  schema-check  schema 兼容性检查（与 Unix 一致，纯 DB 只读检查）\n  health-check  健康检查（连接命名管道，发送 ping，等待响应）\n  help          Print this message or the help of the given subcommand(s)\n\nOptions:\n      --config <CONFIG>\n          配置文件路径（JSON 格式，字段优先级：CLI > env > 文件 > 默认）\n\n      --foreground\n          前台运行（Rust 实现天然前台，flag 仅为 CLI 兼容）\n\n      --socket <SOCKET>\n          命名管道端点 `\\\\.\\pipe\\callwarden-<sid>`。\n          \n          Windows 上管道名始终由当前用户 SID 派生（NamedPipeListener::bind）， 该参数仅作 CLI 兼容（daemon_autostart 以 `--socket <pipe>` 唤起）。\n\n      --workers <WORKERS>\n          工作线程数（覆盖配置文件）\n\n      --registry <REGISTRY>\n          registry DB 路径（覆盖配置文件）\n\n      --cache-capacity <CACHE_CAPACITY>\n          snapshot cache 容量（覆盖配置文件）\n\n      --no-sd-notify\n          兼容 Unix CLI（Windows 无 sd_notify，忽略）\n\n      --http-bind <HTTP_BIND>\n          HTTP transport 绑定地址（dev_loopback_unauthenticated，迁移期默认）。 缺省（未设置 --http-bind / CW_DAEMON_TRANSPORT）时默认启用 loopback-only HTTP 监听（127.0.0.1:0 动态端口 + manifest）；显式 CW_DAEMON_TRANSPORT= named-pipe/uds 等回落旧通道（HTTP 不启用）。\n\n  -h, --help\n          Print help (see a summary with '-h')\n\n  -V, --version\n          Print version\n",
+    "help_text": "Call Warden Enterprise Daemon (Windows, named pipe endpoint)\n\nUsage: cw-daemon.exe [OPTIONS] [COMMAND]\n\nCommands:\n  serve         启动命名管道 server（默认动作）\n  schema-check  schema 兼容性检查（与 Unix 一致，纯 DB 只读检查）\n  health-check  健康检查（连接命名管道，发送 ping，等待响应）\n  pki           PKI 生命周期管理（init / token issue / enroll / renew / revoke / rotate-server）\n  help          Print this message or the help of the given subcommand(s)\n\nOptions:\n      --config <CONFIG>\n          配置文件路径（JSON 格式，字段优先级：CLI > env > 文件 > 默认）\n\n      --foreground\n          前台运行（Rust 实现天然前台，flag 仅为 CLI 兼容）\n\n      --socket <SOCKET>\n          命名管道端点 `\\\\.\\pipe\\callwarden-<sid>`。\n          \n          Windows 上管道名始终由当前用户 SID 派生（NamedPipeListener::bind）， 该参数仅作 CLI 兼容（daemon_autostart 以 `--socket <pipe>` 唤起）。\n\n      --workers <WORKERS>\n          工作线程数（覆盖配置文件）\n\n      --registry <REGISTRY>\n          registry DB 路径（覆盖配置文件）\n\n      --cache-capacity <CACHE_CAPACITY>\n          snapshot cache 容量（覆盖配置文件）\n\n      --no-sd-notify\n          兼容 Unix CLI（Windows 无 sd_notify，忽略）\n\n      --http-bind <HTTP_BIND>\n          HTTP transport 绑定地址（dev_loopback_unauthenticated，迁移期默认）。 缺省（未设置 --http-bind / CW_DAEMON_TRANSPORT）时默认启用 loopback-only HTTP 监听（127.0.0.1:0 动态端口 + manifest）；显式 CW_DAEMON_TRANSPORT= named-pipe/uds 等回落旧通道（HTTP 不启用）。\n\n  -h, --help\n          Print help (see a summary with '-h')\n\n  -V, --version\n          Print version\n",
     "rc": 0
    },
    "error": null
@@ -33,7 +33,7 @@
    "category": "workspace_database",
    "top_parser": {
     "prog": "cw workspace",
-    "description": "Workspace management (list/register/set/delete)",
+    "description": "工作区管理（list/register/set/delete）",
     "usage": "usage: cw workspace [-h] {list,register,set,delete,scan,generate-ignore} ...",
     "arguments": [
      {
@@ -160,7 +160,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Workspace name",
+        "help": "工作区名称",
         "metavar": null
        },
        {
@@ -171,7 +171,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Workspace root path",
+        "help": "工作区根路径",
         "metavar": null
        }
       ],
@@ -207,7 +207,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Workspace ID or name",
+        "help": "工作区 ID 或名称",
         "metavar": null
        }
       ],
@@ -243,7 +243,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Workspace ID or name",
+        "help": "工作区 ID 或名称",
         "metavar": null
        }
       ],
@@ -382,7 +382,7 @@
    "category": "workspace_database",
    "top_parser": {
     "prog": "cw refresh",
-    "description": "Refresh code graph (incremental or by file)",
+    "description": "刷新代码图谱（增量或按文件）",
     "usage": "usage: cw refresh [-h] [--all] [--force] [paths ...]",
     "arguments": [
      {
@@ -409,7 +409,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Refresh all files in the workspace",
+      "help": "刷新工作区内的所有文件",
       "metavar": null
      },
      {
@@ -422,7 +422,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Force full rebuild (only with --all)",
+      "help": "强制全量重建（仅配合 --all）",
       "metavar": null
      },
      {
@@ -433,7 +433,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "File paths to refresh",
+      "help": "待刷新的文件路径",
       "metavar": null
      }
     ],
@@ -447,7 +447,7 @@
    "category": "workspace_database",
    "top_parser": {
     "prog": "cw stats",
-    "description": "Show database statistics",
+    "description": "显示数据库统计信息",
     "usage": "usage: cw stats [-h]",
     "arguments": [
      {
@@ -475,7 +475,7 @@
    "category": "workspace_database",
    "top_parser": {
     "prog": "cw status",
-    "description": "Show full status overview",
+    "description": "显示完整状态概览",
     "usage": "usage: cw status [-h]",
     "arguments": [
      {
@@ -793,11 +793,139 @@
    },
    "error": null
   },
+  "write": {
+   "category": "workspace_database",
+   "top_parser": {
+    "prog": "cw write",
+    "description": "经 daemon 治理写（write.grant → 原子替换 → write.commit）",
+    "usage": "usage: cw write [-h] --path PATH (--content CONTENT | --content-file FILE)\n                --task-id TASK_ID --step-id STEP_ID\n                [--workspace-instance-id WORKSPACE_INSTANCE_ID] [--json]",
+    "arguments": [
+     {
+      "option_strings": [
+       "-h",
+       "--help"
+      ],
+      "dest": "help",
+      "nargs": 0,
+      "required": false,
+      "default": "==SUPPRESS==",
+      "type": "",
+      "choices": null,
+      "help": "show this help message and exit",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--path"
+      ],
+      "dest": "path",
+      "nargs": null,
+      "required": true,
+      "default": null,
+      "type": "",
+      "choices": null,
+      "help": "workspace 相对路径",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--content"
+      ],
+      "dest": "content",
+      "nargs": null,
+      "required": false,
+      "default": null,
+      "type": "",
+      "choices": null,
+      "help": "新文件内容（UTF-8 文本）",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--content-file"
+      ],
+      "dest": "content_file",
+      "nargs": null,
+      "required": false,
+      "default": null,
+      "type": "",
+      "choices": null,
+      "help": "从文件读取内容；'-' 表示 stdin",
+      "metavar": "FILE"
+     },
+     {
+      "option_strings": [
+       "--task-id"
+      ],
+      "dest": "task_id",
+      "nargs": null,
+      "required": true,
+      "default": null,
+      "type": "",
+      "choices": null,
+      "help": "写入绑定的 task ID",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--step-id"
+      ],
+      "dest": "step_id",
+      "nargs": null,
+      "required": true,
+      "default": null,
+      "type": "",
+      "choices": null,
+      "help": "写入绑定的 step ID",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--workspace-instance-id"
+      ],
+      "dest": "workspace_instance_id",
+      "nargs": null,
+      "required": false,
+      "default": "",
+      "type": "",
+      "choices": null,
+      "help": "目标 workspace 实例 ID（缺省由 daemon 注册解析）",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--json"
+      ],
+      "dest": "json",
+      "nargs": 0,
+      "required": false,
+      "default": false,
+      "type": "",
+      "choices": null,
+      "help": "以 JSON 输出结果",
+      "metavar": null
+     }
+    ],
+    "mutually_exclusive_groups": [
+     [
+      [
+       "--content"
+      ],
+      [
+       "--content-file"
+      ]
+     ]
+    ],
+    "subparsers": []
+   },
+   "nested": {},
+   "error": null
+  },
   "search": {
    "category": "query_search",
    "top_parser": {
     "prog": "cw search",
-    "description": "Search symbols",
+    "description": "搜索符号",
     "usage": "usage: cw search [-h] [--kind KIND] [--limit LIMIT] query",
     "arguments": [
      {
@@ -822,7 +950,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Search query",
+      "help": "搜索查询",
       "metavar": null
      },
      {
@@ -835,7 +963,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Filter by kind",
+      "help": "按类型过滤",
       "metavar": null
      },
      {
@@ -848,7 +976,7 @@
       "default": 50,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 50)",
+      "help": "最大结果数（默认 50）",
       "metavar": null
      }
     ],
@@ -966,7 +1094,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw symbol",
-    "description": "Show symbol detail",
+    "description": "显示符号详情",
     "usage": "usage: cw symbol [-h] name",
     "arguments": [
      {
@@ -991,7 +1119,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Qualified symbol name",
+      "help": "限定符号名",
       "metavar": null
      }
     ],
@@ -1005,7 +1133,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw file",
-    "description": "List symbols in a file",
+    "description": "列出文件中的符号",
     "usage": "usage: cw file [-h] path",
     "arguments": [
      {
@@ -1030,7 +1158,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "File path",
+      "help": "文件路径",
       "metavar": null
      }
     ],
@@ -1044,7 +1172,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw query",
-    "description": "Query symbol location",
+    "description": "查询符号位置",
     "usage": "usage: cw query [-h] name file",
     "arguments": [
      {
@@ -1069,7 +1197,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Symbol name",
+      "help": "符号名",
       "metavar": null
      },
      {
@@ -1080,7 +1208,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "File path",
+      "help": "文件路径",
       "metavar": null
      }
     ],
@@ -1094,7 +1222,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw brief",
-    "description": "Show project brief",
+    "description": "显示项目简介",
     "usage": "usage: cw brief [-h]",
     "arguments": [
      {
@@ -1122,7 +1250,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw map",
-    "description": "Show repo module map",
+    "description": "显示仓库模块图",
     "usage": "usage: cw map [-h] [--format {text,mermaid}]",
     "arguments": [
      {
@@ -1152,7 +1280,7 @@
        "text",
        "mermaid"
       ],
-      "help": "Output format (default text)",
+      "help": "输出格式（默认 text）",
       "metavar": null
      }
     ],
@@ -1166,7 +1294,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw fts",
-    "description": "FTS5 full-text index maintenance (rebuild/status)",
+    "description": "FTS5 全文索引维护（rebuild/status）",
     "usage": "usage: cw fts [-h] {rebuild,status} ...",
     "arguments": [
      {
@@ -1273,7 +1401,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw semantic-search",
-    "description": "Vector semantic search over symbols",
+    "description": "对符号做向量语义搜索",
     "usage": "usage: cw semantic-search [-h] [--top-k TOP_K] query",
     "arguments": [
      {
@@ -1298,7 +1426,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Search query",
+      "help": "搜索查询",
       "metavar": null
      },
      {
@@ -1311,7 +1439,7 @@
       "default": 10,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 10)",
+      "help": "最大结果数（默认 10）",
       "metavar": null
      }
     ],
@@ -1325,7 +1453,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw similar",
-    "description": "Find functions similar to a given symbol",
+    "description": "查找与给定符号相似的函数",
     "usage": "usage: cw similar [-h] [--threshold THRESHOLD] name",
     "arguments": [
      {
@@ -1350,7 +1478,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Symbol name",
+      "help": "符号名",
       "metavar": null
      },
      {
@@ -1363,7 +1491,7 @@
       "default": 0.7,
       "type": "float",
       "choices": null,
-      "help": "Similarity threshold (default 0.7)",
+      "help": "相似度阈值（默认 0.7）",
       "metavar": null
      }
     ],
@@ -1377,7 +1505,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw embed",
-    "description": "Generate vector embeddings for symbols",
+    "description": "为符号生成向量嵌入",
     "usage": "usage: cw embed [-h] [--force]",
     "arguments": [
      {
@@ -1404,7 +1532,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Force re-embed all (default incremental)",
+      "help": "强制重新嵌入全部（默认增量）",
       "metavar": null
      }
     ],
@@ -1418,7 +1546,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw diff",
-    "description": "Diff two symbol content versions by hash",
+    "description": "按哈希比较两个符号内容版本",
     "usage": "usage: cw diff [-h] hash1 hash2",
     "arguments": [
      {
@@ -1443,7 +1571,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "First content hash",
+      "help": "第一个内容哈希",
       "metavar": null
      },
      {
@@ -1454,7 +1582,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Second content hash",
+      "help": "第二个内容哈希",
       "metavar": null
      }
     ],
@@ -1468,7 +1596,7 @@
    "category": "query_search",
    "top_parser": {
     "prog": "cw changes",
-    "description": "Recently changed files and functions",
+    "description": "最近变更的文件与函数",
     "usage": "usage: cw changes [-h] [--detail] [since]",
     "arguments": [
      {
@@ -1493,7 +1621,7 @@
       "default": "1h",
       "type": "",
       "choices": null,
-      "help": "Time window (e.g. 30m/1h/1d; default 1h)",
+      "help": "时间窗口（如 30m/1h/1d；默认 1h）",
       "metavar": null
      },
      {
@@ -1506,7 +1634,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Show prev/curr hash detail",
+      "help": "显示前后哈希详情",
       "metavar": null
      }
     ],
@@ -1520,7 +1648,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw callers",
-    "description": "Show callers of a symbol",
+    "description": "显示符号的调用方",
     "usage": "usage: cw callers [-h] [--qualified QUALIFIED] name",
     "arguments": [
      {
@@ -1545,7 +1673,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Symbol name",
+      "help": "符号名",
       "metavar": null
      },
      {
@@ -1572,7 +1700,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw callees",
-    "description": "Show callees of a symbol",
+    "description": "显示符号的被调用方",
     "usage": "usage: cw callees [-h] [--qualified QUALIFIED] name",
     "arguments": [
      {
@@ -1597,7 +1725,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Symbol name",
+      "help": "符号名",
       "metavar": null
      },
      {
@@ -1624,7 +1752,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw call-chain",
-    "description": "Show call chain down",
+    "description": "显示向下调用链",
     "usage": "usage: cw call-chain [-h] [--depth DEPTH] name",
     "arguments": [
      {
@@ -1649,7 +1777,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Symbol name",
+      "help": "符号名",
       "metavar": null
      },
      {
@@ -1662,7 +1790,7 @@
       "default": 10,
       "type": "int",
       "choices": null,
-      "help": "Max depth (default 10)",
+      "help": "最大深度（默认 10）",
       "metavar": null
      }
     ],
@@ -1676,7 +1804,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw topo",
-    "description": "Topological order",
+    "description": "拓扑顺序",
     "usage": "usage: cw topo [-h] [--limit LIMIT]",
     "arguments": [
      {
@@ -1703,7 +1831,7 @@
       "default": 50,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 50)",
+      "help": "最大结果数（默认 50）",
       "metavar": null
      }
     ],
@@ -1769,7 +1897,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw deepest",
-    "description": "Functions with the deepest call chains",
+    "description": "调用链最深的函数",
     "usage": "usage: cw deepest [-h] [--module MODULE] [limit]",
     "arguments": [
      {
@@ -1794,7 +1922,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 20)",
+      "help": "最大结果数（默认 20）",
       "metavar": null
      },
      {
@@ -1807,7 +1935,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Module filter (prefix)",
+      "help": "模块过滤（前缀）",
       "metavar": null
      }
     ],
@@ -1821,7 +1949,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw module-calls",
-    "description": "Inter-module call statistics",
+    "description": "模块间调用统计",
     "usage": "usage: cw module-calls [-h] [limit]",
     "arguments": [
      {
@@ -1846,7 +1974,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 20)",
+      "help": "最大结果数（默认 20）",
       "metavar": null
      }
     ],
@@ -1860,7 +1988,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw detect-cycles",
-    "description": "Detect cyclic calls in the function call graph",
+    "description": "检测函数调用图中的循环调用",
     "usage": "usage: cw detect-cycles [-h] [--depth DEPTH]",
     "arguments": [
      {
@@ -1887,7 +2015,7 @@
       "default": 10,
       "type": "int",
       "choices": null,
-      "help": "Max cycle detection depth (default 10)",
+      "help": "循环检测最大深度（默认 10）",
       "metavar": null
      }
     ],
@@ -1901,7 +2029,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw export-module-graph",
-    "description": "Export module dependency graph (mermaid or dot)",
+    "description": "导出模块依赖图（mermaid 或 dot）",
     "usage": "usage: cw export-module-graph [-h] [--format {mermaid,dot}] [--output OUTPUT]",
     "arguments": [
      {
@@ -1931,7 +2059,7 @@
        "mermaid",
        "dot"
       ],
-      "help": "Output format (default mermaid)",
+      "help": "输出格式（默认 mermaid）",
       "metavar": null
      },
      {
@@ -1944,7 +2072,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Output file (default stdout)",
+      "help": "输出文件（默认标准输出）",
       "metavar": null
      }
     ],
@@ -1958,7 +2086,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw call-heatmap",
-    "description": "Call frequency heatmap by module or file",
+    "description": "按模块或文件的调用频率热力图",
     "usage": "usage: cw call-heatmap [-h] [--by {module,file}] [--limit LIMIT]",
     "arguments": [
      {
@@ -1988,7 +2116,7 @@
        "module",
        "file"
       ],
-      "help": "Group by module or file (default module)",
+      "help": "按模块或文件分组（默认 module）",
       "metavar": null
      },
      {
@@ -2001,7 +2129,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Top N results (default 20)",
+      "help": "前 N 条结果（默认 20）",
       "metavar": null
      }
     ],
@@ -2015,7 +2143,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw top-callers",
-    "description": "Functions ranked by number of callers",
+    "description": "按调用方数量排序的函数",
     "usage": "usage: cw top-callers [-h] [--module MODULE] [limit]",
     "arguments": [
      {
@@ -2040,7 +2168,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 20)",
+      "help": "最大结果数（默认 20）",
       "metavar": null
      },
      {
@@ -2053,7 +2181,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Module filter (prefix)",
+      "help": "模块过滤（前缀）",
       "metavar": null
      }
     ],
@@ -2067,7 +2195,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw orphan-symbols",
-    "description": "Symbols with no call relationships",
+    "description": "无调用关系的符号",
     "usage": "usage: cw orphan-symbols [-h] [--module MODULE] [--limit LIMIT] [kind]",
     "arguments": [
      {
@@ -2092,7 +2220,7 @@
       "default": "fn",
       "type": "",
       "choices": null,
-      "help": "Symbol kind (default fn)",
+      "help": "符号类型（默认 fn）",
       "metavar": null
      },
      {
@@ -2105,7 +2233,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Module filter (prefix)",
+      "help": "模块过滤（前缀）",
       "metavar": null
      },
      {
@@ -2118,7 +2246,7 @@
       "default": 50,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 50)",
+      "help": "最大结果数（默认 50）",
       "metavar": null
      }
     ],
@@ -2132,7 +2260,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw metrics",
-    "description": "Show code metrics summary",
+    "description": "显示代码度量摘要",
     "usage": "usage: cw metrics [-h]",
     "arguments": [
      {
@@ -2160,7 +2288,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw complexity",
-    "description": "Show complexity hotspots",
+    "description": "显示复杂度热点",
     "usage": "usage: cw complexity [-h] [--module MODULE] [limit]",
     "arguments": [
      {
@@ -2185,7 +2313,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 20)",
+      "help": "最大结果数（默认 20）",
       "metavar": null
      },
      {
@@ -2198,7 +2326,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Filter by module",
+      "help": "按模块过滤",
       "metavar": null
      }
     ],
@@ -2212,7 +2340,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw coupling",
-    "description": "Show module coupling analysis",
+    "description": "显示模块耦合分析",
     "usage": "usage: cw coupling [-h]",
     "arguments": [
      {
@@ -2240,7 +2368,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw largest-fns",
-    "description": "Show largest functions",
+    "description": "显示最大的函数",
     "usage": "usage: cw largest-fns [-h] [limit]",
     "arguments": [
      {
@@ -2265,7 +2393,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 20)",
+      "help": "最大结果数（默认 20）",
       "metavar": null
      }
     ],
@@ -2279,7 +2407,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw coupled-fns",
-    "description": "Show most coupled functions",
+    "description": "显示耦合度最高的函数",
     "usage": "usage: cw coupled-fns [-h] [limit]",
     "arguments": [
      {
@@ -2304,7 +2432,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 20)",
+      "help": "最大结果数（默认 20）",
       "metavar": null
      }
     ],
@@ -2318,7 +2446,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw fn-metrics",
-    "description": "Show function metrics",
+    "description": "显示函数度量",
     "usage": "usage: cw fn-metrics [-h] name",
     "arguments": [
      {
@@ -2343,7 +2471,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Function name",
+      "help": "函数名",
       "metavar": null
      }
     ],
@@ -2970,7 +3098,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "JSON array of role contract objects (keys: role, skill_id, skill_version, prompt_template_id, prompt_hash, allowed_paths, forbidden_paths, commands, acceptance_checks, required_evidence, handoff_to, independence). If omitted, the A' standard three-role (executor/reviewer/adjudicator) legacy contract template is used. Tasks are never created without contracts.",
+        "help": "角色契约对象的 JSON 数组（字段: role、skill_id、skill_version、prompt_template_id、prompt_hash、allowed_paths、forbidden_paths、commands、acceptance_checks、required_evidence、handoff_to、independence）。省略时使用 A' 标准三角色（executor/reviewer/adjudicator）旧版契约模板。任务绝不会在无契约的情况下创建。",
         "metavar": null
        },
        {
@@ -3097,7 +3225,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Explicit daemon-issued fix_defect step ID to claim",
+        "help": "显式指定要领取的 daemon 下发的 fix_defect 步骤 ID",
         "metavar": null
        },
        {
@@ -3162,7 +3290,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        }
       ],
@@ -3211,7 +3339,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Workspace authority capture instance id (daemon binding key)",
+        "help": "工作区权威捕获实例 ID（daemon 绑定键）",
         "metavar": null
        },
        {
@@ -3224,7 +3352,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Output raw daemon JSON (machine-readable)",
+        "help": "输出 daemon 原始 JSON（机器可读）",
         "metavar": null
        }
       ],
@@ -3719,7 +3847,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -3732,7 +3860,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token (P4 protected mutation)",
+        "help": "租约原始令牌（P4）",
         "metavar": "TOKEN"
        },
        {
@@ -3745,7 +3873,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Current fencing counter (P4 protected mutation)",
+        "help": "Fencing 计数器（P4）",
         "metavar": "N"
        }
       ],
@@ -3989,7 +4117,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -4002,7 +4130,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token (P4 protected mutation)",
+        "help": "租约原始令牌（P4）",
         "metavar": "TOKEN"
        },
        {
@@ -4015,7 +4143,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Current fencing counter (P4 protected mutation)",
+        "help": "Fencing 计数器（P4）",
         "metavar": "N"
        }
       ],
@@ -4188,7 +4316,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -4201,7 +4329,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token (P4 protected mutation)",
+        "help": "租约原始令牌（P4）",
         "metavar": "TOKEN"
        },
        {
@@ -4214,7 +4342,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Current fencing counter (P4 protected mutation)",
+        "help": "Fencing 计数器（P4）",
         "metavar": "N"
        }
       ],
@@ -4375,7 +4503,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -4388,7 +4516,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token (P4 protected mutation)",
+        "help": "租约原始令牌（P4）",
         "metavar": "TOKEN"
        },
        {
@@ -4401,7 +4529,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Current fencing counter (P4 protected mutation)",
+        "help": "Fencing 计数器（P4）",
         "metavar": "N"
        }
       ],
@@ -4515,7 +4643,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -4528,7 +4656,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token (P4 protected mutation)",
+        "help": "租约原始令牌（P4）",
         "metavar": "TOKEN"
        },
        {
@@ -4541,7 +4669,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Current fencing counter (P4 protected mutation)",
+        "help": "Fencing 计数器（P4）",
         "metavar": "N"
        }
       ],
@@ -4642,7 +4770,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        }
       ],
@@ -4769,7 +4897,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -4782,7 +4910,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token (P4 protected mutation)",
+        "help": "租约原始令牌（P4）",
         "metavar": "TOKEN"
        },
        {
@@ -4795,7 +4923,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Current fencing counter (P4 protected mutation)",
+        "help": "Fencing 计数器（P4）",
         "metavar": "N"
        }
       ],
@@ -4922,7 +5050,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -4935,7 +5063,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token (P4 protected mutation)",
+        "help": "租约原始令牌（P4）",
         "metavar": "TOKEN"
        },
        {
@@ -4948,7 +5076,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Current fencing counter (P4 protected mutation)",
+        "help": "Fencing 计数器（P4）",
         "metavar": "N"
        }
       ],
@@ -5049,7 +5177,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Skip run_task_completion_review (Semgrep + 5 extension checkers). Auto mode always skips; manual mode defaults to False.",
+        "help": "跳过 run_task_completion_review（Semgrep + 5 个扩展检查器）。自动模式始终跳过；手动模式默认 False。",
         "metavar": null
        },
        {
@@ -5062,7 +5190,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Source commit hash for task↔commit triangulation",
+        "help": "用于任务↔提交三角定位的来源提交哈希",
         "metavar": null
        }
       ],
@@ -5423,7 +5551,7 @@
         "default": "legacy_identity_v1",
         "type": "",
         "choices": null,
-        "help": "Subtask identity policy (default legacy_identity_v1)",
+        "help": "子任务身份策略（默认 legacy_identity_v1）",
         "metavar": null
        }
       ],
@@ -5495,7 +5623,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID being superseded (old)",
+        "help": "被替代的任务 ID（旧任务）",
         "metavar": null
        },
        {
@@ -5506,7 +5634,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID superseding (new)",
+        "help": "替代的任务 ID（新任务）",
         "metavar": null
        },
        {
@@ -5519,7 +5647,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Reason for superseding (recorded append-only)",
+        "help": "替代原因（仅追加记录）",
         "metavar": null
        },
        {
@@ -5532,7 +5660,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Stable request id for idempotent replay (auto-generated if empty)",
+        "help": "用于幂等重放的稳定请求 ID（为空时自动生成）",
         "metavar": "ID"
        },
        {
@@ -5545,7 +5673,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Evidence manifest path (required for governance supersede)",
+        "help": "证据清单路径（治理替代时必填）",
         "metavar": "PATH"
        },
        {
@@ -5558,7 +5686,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Evidence manifest sha256 (required for governance supersede)",
+        "help": "证据清单 sha256（治理替代时必填）",
         "metavar": "HASH"
        },
        {
@@ -5571,7 +5699,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Reviewer lease token for the source (superseded) task",
+        "help": "源任务（被替代任务）的 reviewer 租约令牌",
         "metavar": "TOKEN"
        },
        {
@@ -5584,7 +5712,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Reviewer lease fencing counter (must equal current value)",
+        "help": "reviewer 租约 fencing 计数器（必须等于当前值）",
         "metavar": "N"
        },
        {
@@ -5651,7 +5779,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity, optional; must match registration if non-empty)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        }
       ],
@@ -7711,7 +7839,7 @@
    "category": "git",
    "top_parser": {
     "prog": "cw git",
-    "description": "Git integration (import/log/show/stats)",
+    "description": "Git 集成（import/log/show/stats）",
     "usage": "usage: cw git [-h]\n              {import,log,show,stats,check-task,check-push,check-ref-transaction,destructive-log} ...",
     "arguments": [
      {
@@ -7825,7 +7953,7 @@
         "default": 100,
         "type": "int",
         "choices": null,
-        "help": "Max commits (default 100)",
+        "help": "最大提交数（默认 100）",
         "metavar": null
        }
       ],
@@ -7861,7 +7989,7 @@
         "default": 20,
         "type": "int",
         "choices": null,
-        "help": "Max commits (default 20)",
+        "help": "最大提交数（默认 20）",
         "metavar": null
        }
       ],
@@ -7897,7 +8025,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Commit hash",
+        "help": "提交哈希",
         "metavar": null
        }
       ],
@@ -8085,7 +8213,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "ref-transaction flags (e.g. 'forced')",
+        "help": "ref 事务标志（如 'forced'）",
         "metavar": null
        }
       ],
@@ -8121,7 +8249,7 @@
         "default": 20,
         "type": "int",
         "choices": null,
-        "help": "Max results (default 20)",
+        "help": "最大提交数（默认 100）",
         "metavar": null
        },
        {
@@ -8134,7 +8262,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Filter by operation type (force_push/reset_hard/checkout_clean)",
+        "help": "按操作类型过滤（force_push/reset_hard/checkout_clean）",
         "metavar": null
        }
       ],
@@ -8201,7 +8329,7 @@
    "category": "semgrep_defects",
    "top_parser": {
     "prog": "cw semgrep",
-    "description": "Semgrep static analysis (scan/list/stats)",
+    "description": "Semgrep 静态分析（scan/list/stats）",
     "usage": "usage: cw semgrep [-h] {scan,list,stats} ...",
     "arguments": [
      {
@@ -8285,7 +8413,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Target paths (empty for workspace root)",
+        "help": "目标路径（留空则扫描工作区根）",
         "metavar": null
        },
        {
@@ -8298,7 +8426,7 @@
         "default": "p/default",
         "type": "",
         "choices": null,
-        "help": "Semgrep config (default p/default)",
+        "help": "Semgrep 配置（默认 p/default）",
         "metavar": null
        },
        {
@@ -8311,7 +8439,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Limit to languages",
+        "help": "限定语言",
         "metavar": null
        },
        {
@@ -8324,7 +8452,7 @@
         "default": 180,
         "type": "int",
         "choices": null,
-        "help": "Timeout seconds (default 180)",
+        "help": "超时秒数（默认 180）",
         "metavar": null
        },
        {
@@ -8337,7 +8465,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Save findings to database",
+        "help": "将发现保存到数据库",
         "metavar": null
        },
        {
@@ -8350,7 +8478,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Quick summary scan",
+        "help": "快速摘要扫描",
         "metavar": null
        },
        {
@@ -8363,7 +8491,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Incremental scan: only scan git diff changed files and clean stale findings",
+        "help": "增量扫描: 仅扫描 git diff 变更文件并清理过期发现",
         "metavar": null
        },
        {
@@ -8376,7 +8504,7 @@
         "default": "main",
         "type": "",
         "choices": null,
-        "help": "Base branch for incremental scan (default main)",
+        "help": "增量扫描的基准分支（默认 main）",
         "metavar": null
        },
        {
@@ -8389,7 +8517,7 @@
         "default": "HEAD",
         "type": "",
         "choices": null,
-        "help": "Head ref for incremental scan (default HEAD)",
+        "help": "增量扫描的 head ref（默认 HEAD）",
         "metavar": null
        }
       ],
@@ -8425,7 +8553,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Rule id filter",
+        "help": "规则 ID 过滤",
         "metavar": null
        },
        {
@@ -8438,7 +8566,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Filter by severity",
+        "help": "按严重程度过滤",
         "metavar": null
        },
        {
@@ -8451,7 +8579,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Filter by language",
+        "help": "按语言过滤",
         "metavar": null
        },
        {
@@ -8464,7 +8592,7 @@
         "default": 50,
         "type": "int",
         "choices": null,
-        "help": "Max results (default 50)",
+        "help": "最大结果数（默认 50）",
         "metavar": null
        }
       ],
@@ -8936,7 +9064,7 @@
    "category": "semgrep_defects",
    "top_parser": {
     "prog": "cw function-issues",
-    "description": "Show function issues",
+    "description": "显示函数问题",
     "usage": "usage: cw function-issues [-h] [--type TYPE] [--module MODULE] [--limit LIMIT]\n                          [--summary]\n                          [fn]",
     "arguments": [
      {
@@ -8961,7 +9089,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Function name (empty for list mode)",
+      "help": "函数名（留空为列表模式）",
       "metavar": null
      },
      {
@@ -8974,7 +9102,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Filter by issue type",
+      "help": "按问题类型过滤",
       "metavar": null
      },
      {
@@ -8987,7 +9115,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Filter by module",
+      "help": "按模块过滤",
       "metavar": null
      },
      {
@@ -9000,7 +9128,7 @@
       "default": 30,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 30)",
+      "help": "最大结果数（默认 30）",
       "metavar": null
      },
      {
@@ -9013,7 +9141,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Project-wide issue summary by severity",
+      "help": "按严重程度汇总全项目问题",
       "metavar": null
      }
     ],
@@ -9027,7 +9155,7 @@
    "category": "coverage_ownership",
    "top_parser": {
     "prog": "cw coverage",
-    "description": "Coverage import and query (import/fn/uncovered)",
+    "description": "覆盖率导入与查询（import/fn/uncovered）",
     "usage": "usage: cw coverage [-h] {import,fn,uncovered,test} ...",
     "arguments": [
      {
@@ -9117,7 +9245,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Coverage report file",
+        "help": "覆盖率报告文件",
         "metavar": null
        },
        {
@@ -9133,7 +9261,7 @@
          "lcov",
          "cobertura"
         ],
-        "help": "Report format (default lcov)",
+        "help": "报告格式（默认 lcov）",
         "metavar": null
        }
       ],
@@ -9169,7 +9297,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Function name",
+        "help": "函数名",
         "metavar": null
        }
       ],
@@ -9416,7 +9544,7 @@
    "category": "coverage_ownership",
    "top_parser": {
     "prog": "cw comment-coverage",
-    "description": "Show comment coverage",
+    "description": "显示注释覆盖率",
     "usage": "usage: cw comment-coverage [-h] [--by GROUP_BY]",
     "arguments": [
      {
@@ -9443,7 +9571,7 @@
       "default": "module",
       "type": "",
       "choices": null,
-      "help": "Group by (default module)",
+      "help": "分组方式（默认 module）",
       "metavar": null
      }
     ],
@@ -9457,7 +9585,7 @@
    "category": "coverage_ownership",
    "top_parser": {
     "prog": "cw uncommented",
-    "description": "Show uncommented symbols",
+    "description": "显示未注释的符号",
     "usage": "usage: cw uncommented [-h] [--module MODULE] [--limit LIMIT] [kind]",
     "arguments": [
      {
@@ -9482,7 +9610,7 @@
       "default": "fn",
       "type": "",
       "choices": null,
-      "help": "Symbol kind (default fn)",
+      "help": "符号类型（默认 fn）",
       "metavar": null
      },
      {
@@ -9495,7 +9623,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Filter by module",
+      "help": "按模块过滤",
       "metavar": null
      },
      {
@@ -9508,7 +9636,7 @@
       "default": 50,
       "type": "int",
       "choices": null,
-      "help": "Max results (default 50)",
+      "help": "最大结果数（默认 50）",
       "metavar": null
      }
     ],
@@ -9522,7 +9650,7 @@
    "category": "coverage_ownership",
    "top_parser": {
     "prog": "cw restore-comment",
-    "description": "Restore a symbol's comment from a historical version",
+    "description": "从历史版本恢复符号注释",
     "usage": "usage: cw restore-comment [-h] [--preview] spec",
     "arguments": [
      {
@@ -9547,7 +9675,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Spec: file:symbol@version or file:line",
+      "help": "规格: file:symbol@version 或 file:line",
       "metavar": null
      },
      {
@@ -9560,7 +9688,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Preview only, do not write",
+      "help": "仅预览，不写入",
       "metavar": null
      }
     ],
@@ -9574,7 +9702,7 @@
    "category": "coverage_ownership",
    "top_parser": {
     "prog": "cw restore-all-comments",
-    "description": "Restore comments for all symbols from history",
+    "description": "从历史恢复所有符号的注释",
     "usage": "usage: cw restore-all-comments [-h] [--preview] [--file-filter FILE_FILTER]",
     "arguments": [
      {
@@ -9601,7 +9729,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Preview only, do not write",
+      "help": "仅预览，不写入",
       "metavar": null
      },
      {
@@ -9614,7 +9742,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Restore only files matching this prefix",
+      "help": "仅恢复匹配此前缀的文件",
       "metavar": null
      }
     ],
@@ -9628,7 +9756,7 @@
    "category": "coverage_ownership",
    "top_parser": {
     "prog": "cw who",
-    "description": "Show file owner (who to ask)",
+    "description": "显示文件负责人（该问谁）",
     "usage": "usage: cw who [-h] file",
     "arguments": [
      {
@@ -9653,7 +9781,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "File path",
+      "help": "文件路径",
       "metavar": null
      }
     ],
@@ -9667,7 +9795,7 @@
    "category": "coverage_ownership",
    "top_parser": {
     "prog": "cw ownership-map",
-    "description": "Show ownership map",
+    "description": "显示归属映射",
     "usage": "usage: cw ownership-map [-h]",
     "arguments": [
      {
@@ -10456,7 +10584,7 @@
         "default": true,
         "type": "",
         "choices": null,
-        "help": "Preview only (default); do not delete",
+        "help": "仅预览（默认）；不删除",
         "metavar": null
        },
        {
@@ -10469,7 +10597,7 @@
         "default": true,
         "type": "",
         "choices": null,
-        "help": "Actually delete orphan databases; default is dry run",
+        "help": "实际删除孤儿数据库；默认仅演练",
         "metavar": null
        },
        {
@@ -10482,7 +10610,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Mark all databases except current workspace as orphan",
+        "help": "将除当前工作区外的所有数据库标记为孤儿",
         "metavar": null
        }
       ],
@@ -12212,7 +12340,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (P3 Identity)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -12241,7 +12369,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token (P4)",
+        "help": "租约原始令牌（P4）",
         "metavar": "TOKEN"
        },
        {
@@ -12254,7 +12382,7 @@
         "default": -1,
         "type": "int",
         "choices": null,
-        "help": "Fencing counter (P4)",
+        "help": "Fencing 计数器（P4）",
         "metavar": "N"
        }
       ],
@@ -12834,7 +12962,7 @@
    "category": "assignment_lease",
    "top_parser": {
     "prog": "cw lease",
-    "description": "P4 Lease: acquire/renew/release/status (Req 11.2-11.7)",
+    "description": "P4 租约: acquire/renew/release/status（Req 11.2-11.7）",
     "usage": "usage: cw lease [-h] {acquire,renew,release,status,list} ...",
     "arguments": [
      {
@@ -12995,7 +13123,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (optional)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -13008,7 +13136,7 @@
         "default": 3600.0,
         "type": "float",
         "choices": null,
-        "help": "TTL seconds (default 3600)",
+        "help": "TTL 秒数（默认 3600）",
         "metavar": null
        },
        {
@@ -13083,7 +13211,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token",
+        "help": "租约原始令牌",
         "metavar": null
        },
        {
@@ -13135,7 +13263,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (optional)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -13148,7 +13276,7 @@
         "default": 3600.0,
         "type": "float",
         "choices": null,
-        "help": "TTL seconds",
+        "help": "TTL 秒数（默认 3600）",
         "metavar": null
        },
        {
@@ -13223,7 +13351,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Lease raw token",
+        "help": "租约原始令牌",
         "metavar": null
        },
        {
@@ -13275,7 +13403,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent instance ID (optional)",
+        "help": "Agent 实例 ID（P3 身份，可选；非空时必须与注册信息一致）",
         "metavar": "ID"
        },
        {
@@ -13337,7 +13465,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (empty = latest)",
+        "help": "Lease 作用域角色（省略时取 daemon 投影的 authorization.lease_role；adjudicator→reviewer）",
         "metavar": null
        },
        {
@@ -13401,7 +13529,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (optional)",
+        "help": "Lease 作用域角色（省略时取 daemon 投影的 authorization.lease_role；adjudicator→reviewer）",
         "metavar": null
        },
        {
@@ -13429,7 +13557,7 @@
    "category": "assignment_lease",
    "top_parser": {
     "prog": "cw assignment",
-    "description": "P4 Assignment: bind task+role+holder Identity (Req 11.1)",
+    "description": "P4 分配: 绑定任务+角色+持有者身份（Req 11.1）",
     "usage": "usage: cw assignment [-h] {create,show,revoke} ...",
     "arguments": [
      {
@@ -13526,7 +13654,7 @@
         "default": "implementer",
         "type": "",
         "choices": null,
-        "help": "Role",
+        "help": "Lease 作用域角色（省略时取 daemon 投影的 authorization.lease_role；adjudicator→reviewer）",
         "metavar": null
        },
        {
@@ -13627,7 +13755,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (empty = latest)",
+        "help": "Lease 作用域角色（省略时取 daemon 投影的 authorization.lease_role；adjudicator→reviewer）",
         "metavar": null
        },
        {
@@ -13676,7 +13804,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Assignment ID (ASG-xxx)",
+        "help": "分配 ID（ASG-xxx）",
         "metavar": null
        },
        {
@@ -13699,6 +13827,17 @@
     }
    },
    "error": null
+  },
+  "pki": {
+   "category": "identity",
+   "top_parser": {
+    "entry": "pki",
+    "rc": 0,
+    "help_text": "PKI 生命周期管理（init / token issue / enroll / renew / revoke / rotate-server）\n\nUsage: cw-daemon.exe pki <COMMAND>\n\nCommands:\n  init           确保 CA + 服务端叶证书存在（幂等）\n  token          单次引导 token 管理\n  enroll         用引导 token 换取客户端证书（仅服务端认证 TLS）\n  renew          持有效客户端证书换发新证书（mTLS）\n  revoke         吊销证书 serial（幂等）\n  rotate-server  同一 CA 下重签服务端证书（daemon 重启生效）\n  help           Print this message or the help of the given subcommand(s)\n\nOptions:\n  -h, --help  Print help\n"
+   },
+   "nested": {},
+   "error": null,
+   "dispatch": "Rust passthrough（cw-daemon pki），help 由 Rust 侧打印，无 argparse parser；参数契约由 Rust 侧自带校验"
   },
   "identity": {
    "category": "identity",
@@ -13900,7 +14039,7 @@
    "category": "rollback",
    "top_parser": {
     "prog": "cw rollback",
-    "description": "Migration rollback config management",
+    "description": "迁移回滚配置管理",
     "usage": "usage: cw rollback [-h] {register,show,config,set,is-rolled-back} ...",
     "arguments": [
      {
@@ -14383,7 +14522,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Auto-detect installed agents and install for all detected",
+      "help": "自动检测已安装的 AI 工具并为所有检测到的工具安装",
       "metavar": null
      },
      {
@@ -14396,7 +14535,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Path to custom agent registry JSON (extends built-in agents)",
+      "help": "自定义 AI 工具注册表 JSON 路径（扩展内置工具列表）",
       "metavar": null
      }
     ],
@@ -15800,7 +15939,7 @@
    "top_parser": {
     "entry": "daemon",
     "rc": 0,
-    "help_text": "usage: cw daemon [-h] [--socket SOCKET]\n                 {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain} ...\n\ndaemon 管理与查询（Rust 原生 daemon 客户端；serve 子命令已下线，daemon 启动见 cw-daemon.exe）\n\npositional arguments:\n  {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain}\n    ping                检查 daemon 与 peer credential\n    start               启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client\n                        退出后仍存活\n    register            注册当前 UID 的 workspace\n    list                列出当前 UID 的 workspace\n    status              查询 workspace 和 snapshot 状态\n    publish             发布已刷新 DB 为共享 snapshot\n    query               查询共享 snapshot\n    mode                查看 daemon 模式\n    health              检查 daemon 健康状态（HTTP /health，Rust 权威）\n    manifest            显示 daemon HTTP manifest（authority/endpoint/registry\n                        revision）\n    capability          查询 daemon capability registry（MCP/RPC 工具矩阵）\n    schema-version      查询 registry DB schema 版本\n    bridge              检查 Windows bridge 配置与连通性\n    backup              备份 registry DB\n    restore             从备份恢复 registry DB\n    gc-cas              GC CAS 存储（清理未引用 content）\n    gc-snapshots        GC 快照（保留最近 N 个）\n    snapshot-stats      查询 daemon 内 SnapshotCache 统计（不带参数聚合所有\n                        workspace；--workspace-instance-id 查单个）\n    snapshot-list       列出 daemon 已知的所有 workspace snapshot\n    snapshot-evict      驱逐指定 workspace 的 snapshot 缓存\n    metrics             查询 daemon 运行时指标（counters/gauges/histograms）\n    mount               容器挂载映射管理\n    toolchain           工具链与 build context 管理\n\noptions:\n  -h, --help            show this help message and exit\n  --socket SOCKET       UDS 路径（默认 CW_DAEMON_SOCKET）\n"
+    "help_text": "usage: cw daemon [-h] [--endpoint SOCKET]\n                 {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain} ...\n\ndaemon 管理与查询（Rust 原生 daemon 客户端；serve 子命令已下线，daemon 启动见 cw-daemon.exe）\n\npositional arguments:\n  {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain}\n    ping                检查 daemon 与 peer credential\n    start               启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client\n                        退出后仍存活\n    register            注册当前 UID 的 workspace\n    list                列出当前 UID 的 workspace\n    status              查询 workspace 和 snapshot 状态\n    publish             发布已刷新 DB 为共享 snapshot\n    query               查询共享 snapshot\n    mode                查看 daemon 模式\n    health              检查 daemon 健康状态（HTTP /health，Rust 权威）\n    manifest            显示 daemon HTTP manifest（authority/endpoint/registry\n                        revision）\n    capability          查询 daemon capability registry（MCP/RPC 工具矩阵）\n    schema-version      查询 registry DB schema 版本\n    bridge              检查 Windows bridge 配置与连通性\n    backup              备份 registry DB\n    restore             从备份恢复 registry DB\n    gc-cas              GC CAS 存储（清理未引用 content）\n    gc-snapshots        GC 快照（保留最近 N 个）\n    snapshot-stats      查询 daemon 内 SnapshotCache 统计（不带参数聚合所有\n                        workspace；--workspace-instance-id 查单个）\n    snapshot-list       列出 daemon 已知的所有 workspace snapshot\n    snapshot-evict      驱逐指定 workspace 的 snapshot 缓存\n    metrics             查询 daemon 运行时指标（counters/gauges/histograms）\n    mount               容器挂载映射管理\n    toolchain           工具链与 build context 管理\n\noptions:\n  -h, --help            show this help message and exit\n  --endpoint, --socket SOCKET\n                        HTTPS endpoint（默认经 authority manifest 解析）\n"
    },
    "nested": {},
    "error": null,
@@ -15811,7 +15950,7 @@
    "top_parser": {
     "entry": "install",
     "rc": 0,
-    "help_text": "usage: cw [-h] [--all] [--lang LANG [LANG ...]] [--check] [--hooks]\n          [--force-hooks] [--no-post-commit] [--no-optional] [--verbose]\n          [--agent] [--detect-agents] [--force-agent] [--agent-project]\n\nCall Warden 一键安装脚本\n\noptions:\n  -h, --help            show this help message and exit\n  --all                 安装全部依赖（含可选依赖）\n  --lang LANG [LANG ...]\n                        仅安装指定语言的 grammar（如 csharp ruby）\n  --check               仅检查依赖状态，不安装\n  --hooks               安装 Call Warden Git hooks 到 .git/hooks（pre-commit +\n                        pre-push + post-commit）\n  --force-hooks         强制覆盖已存在的非 Call Warden hooks\n  --no-post-commit      跳过安装 post-commit hook（仅装 pre-commit + pre-push）\n  --no-optional         跳过可选依赖（默认行为，显式声明）\n  --verbose             显示详细安装日志\n  --agent               Auto-detect and install Call Warden MCP integration\n                        for installed AI agents\n  --detect-agents       Only detect installed AI agents, do not install\n  --force-agent         Force overwrite existing agent MCP configs\n  --agent-project       Install agent integration at project level instead of\n                        global\n\n示例:\n  cw install              # 安装核心 + 全部已支持语言\n  cw install --all        # 安装核心 + 全部语言 + 全部可选依赖\n  cw install --lang csharp ruby  # 仅安装指定语言的 grammar\n  cw install --check      # 仅检查依赖状态，不安装\n        \n"
+    "help_text": "usage: cw [-h] [--all] [--lang LANG [LANG ...]] [--check] [--hooks]\n          [--force-hooks] [--no-post-commit] [--no-optional] [--verbose]\n          [--agent] [--detect-agents] [--force-agent] [--agent-project]\n\nCall Warden 一键安装脚本\n\noptions:\n  -h, --help            show this help message and exit\n  --all                 安装全部依赖（含可选依赖）\n  --lang LANG [LANG ...]\n                        仅安装指定语言的 grammar（如 csharp ruby）\n  --check               仅检查依赖状态，不安装\n  --hooks               安装 Call Warden Git hooks 到 .git/hooks（pre-commit +\n                        pre-push + post-commit）\n  --force-hooks         强制覆盖已存在的非 Call Warden hooks\n  --no-post-commit      跳过安装 post-commit hook（仅装 pre-commit + pre-push）\n  --no-optional         跳过可选依赖（默认行为，显式声明）\n  --verbose             显示详细安装日志\n  --agent               自动检测已安装的 AI 工具并安装 Call Warden MCP 集成\n  --detect-agents       仅检测已安装的 AI 工具，不执行安装\n  --force-agent         强制覆盖已有的 AI 工具 MCP 配置\n  --agent-project       在项目级安装 AI 工具集成，而非全局安装\n\n示例:\n  cw install              # 安装核心 + 全部已支持语言\n  cw install --all        # 安装核心 + 全部语言 + 全部可选依赖\n  cw install --lang csharp ruby  # 仅安装指定语言的 grammar\n  cw install --check      # 仅检查依赖状态，不安装\n        \n"
    },
    "nested": {},
    "error": null,
@@ -15863,7 +16002,7 @@
   }
  ],
  "extraction_method": {
-  "top_level_source": "cli/categories.py::all_command_names()（唯一权威分类源，tests/test_category_source.py 锁定 84 入口不重不漏）",
+  "top_level_source": "cli/categories.py::all_command_names()（唯一权威分类源，tests/test_category_source.py 锁定 86 入口不重不漏）",
   "parser_capture": "进程内挂钩 argparse.ArgumentParser.format_help，经 CLI 自带 help 快路径 _dispatch_subcommand_help 捕获真实 parser",
   "cw_py_entries": "install/server/test/setup/daemon 经真实子进程 cw.py <entry> --help",
   "skips_db_init": "help 快路径不初始化 db；绕过 _run_subcommand_mode 的 lazy auto-setup"

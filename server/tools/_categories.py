@@ -1,6 +1,6 @@
 """MCP 工具分类真相源（cli-mcp-surface-audit Phase 1）。
 
-本模块是全部 243 个 MCP 工具归属的唯一权威数据（17 分类），清单迁自
+本模块是全部 244 个 MCP 工具归属的唯一权威数据（17 分类），清单迁自
 docs/mcp_tools.md「各分类工具清单」章节（2026-10-08 审计逐条核实）。
 
 - 调用链 1：scripts/gen_category_overview.py 读取 TOOL_CATEGORIES 生成

@@ -6,7 +6,7 @@ selector: tests/acceptance/mcp/test_mcp_wire_contract.py
 tools/list 翻页）上校验 MCP 表面的协议级合同：
 
   - initialize 成功，protocolVersion / serverInfo 稳定非空；
-  - tools/list 翻页穷尽后恰好 243 个唯一工具名，与冻结清单
+  - tools/list 翻页穷尽后恰好 244 个唯一工具名，与冻结清单
     （docs/testing/manifests/frozen/inventory_frozen.json，surface=="mcp"）
     完全一致——任何漂移（新增/丢失）都是验收失败；
   - 工具名无重复（duplicate == 0）；
@@ -64,7 +64,7 @@ def test_server_advertises_tools_capability(harness):
 # ---------------- tools/list ----------------
 
 def test_tools_list_paginates_to_expected_count(harness):
-    """翻页穷尽后的唯一工具名数量必须等于冻结清单的 243。"""
+    """翻页穷尽后的唯一工具名数量必须等于冻结清单的 244。"""
     names = sorted(set(harness.tool_names))
     assert len(names) == EXPECTED_TOOL_COUNT, (
         f"tool count drift: got {len(names)} unique names "
@@ -111,7 +111,7 @@ def test_every_tool_has_description(harness):
 def test_pagination_uses_next_cursor_correctly(harness):
     """翻页必须经 nextCursor 驱动且最终止于空游标（不能靠截断）。"""
     assert harness.list_pages >= 1
-    # 243 个工具在单页返回（冻结时观察）；多页也接受，但必须不重不漏
+    # 244 个工具在单页返回（冻结时观察）；多页也接受，但必须不重不漏
     assert len(harness.tool_names) == EXPECTED_TOOL_COUNT
 
 
