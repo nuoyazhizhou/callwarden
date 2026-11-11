@@ -13,6 +13,18 @@ docs/testing/STATIC_AUDIT.json eol=lf
 docs/testing/SKIP_SITES.json eol=lf
 docs/testing/TEST_CASES.md eol=lf
 
+# 生成器 gen_test_cases.py 的输入文件作用域：输入 sha256 按 LF 字节计算，
+# core.autocrlf=true 下 CRLF 工作树会使 872/945 个输入哈希整体漂移，
+# 导致 --check 在 Windows 上恒红（与 DEFECT_HANDOFF_20261109 DEF-02 同根因）。
+# 钉 eol=lf 保证任意平台检出均为 LF，--check 跨平台稳定 PASS。
+tests/** text eol=lf
+rust_ext/src/** text eol=lf
+server/tools/** text eol=lf
+cli/categories.py text eol=lf
+docs/testing/gen_test_cases.py text eol=lf
+docs/testing/manifests/mcp/mcp_tools.json text eol=lf
+deliverables/software-company/tool_migration_matrix.json text eol=lf
+
 # MCP 237 工具矩阵契约基线：matrix-sha256.txt 的哈希/大小按 CRLF 工作副本记录
 # （Windows 生成）。core.autocrlf=input 会把 CRLF 规范成 LF blob，Linux CI 检出
 # 即 LF 字节 → test_legacy_237_tools_baseline.py 的 SHA-256/大小校验必失败。
