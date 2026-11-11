@@ -34,9 +34,9 @@
 | T-5 | 写路径无 workspace 根约束（越权写） | P0 | Security | OPEN |
 | T-6 | bandit 门禁范围外 75 条 | P0 | Security | **DONE**（登记过期：bandit 范围已含 db/ scripts/ cw.py config.py，75 条逐条处置入注释） |
 | T-7 | Rust 集成测试只编译不执行 | P0 | Rust/CI | **DONE**（登记过期：rust-unit-test job 已有 cargo test --tests 执行步） |
-| T-8 | E2E 结果 advisory 不阻断 | P0 | CI/E2E | DONE 本地（a6b1458，2026-11-11：按触发形态阻断；tag run 验证待 CI） |
-| T-9 | windows-arm64 产物零 E2E | P0 | CI/E2E | DONE 本地（260d066：新增 e2e-verify-windows-arm64.yml + cryptography 46.0.3 约束；tag run 验证待 CI） |
-| T-10 | Windows Python 全量零执行 | P1 | CI/Python | DONE 本地（c4b1df1：test-windows job，windows-latest × py3.14 + junction；3 连绿验收待 CI） |
+| T-8 | E2E 结果 advisory 不阻断 | P0 | CI/E2E | DONE 本地（e616a90，2026-11-11：按触发形态阻断；tag run 验证待 CI） |
+| T-9 | windows-arm64 产物零 E2E | P0 | CI/E2E | DONE 本地（3e773af：新增 e2e-verify-windows-arm64.yml + cryptography 46.0.3 约束；tag run 验证待 CI） |
+| T-10 | Windows Python 全量零执行 | P1 | CI/Python | DONE 本地（33f9e32：test-windows job，windows-latest × py3.14 + junction；3 连绿验收待 CI） |
 | T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
 | T-12 | 门禁脚本零单测 | P1 | CI/Gate | OPEN |
 | GAP-16 | skip 站点 root_cause 0/498 复核 | 已知未知 | Audit | OPEN |
