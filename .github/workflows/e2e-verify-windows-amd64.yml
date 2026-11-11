@@ -118,6 +118,11 @@ jobs:
         env:
           SKIP_STEP5: ${{ inputs.skip_step5 }}
           SKIP_STEP7: ${{ inputs.skip_step7 }}
+          # T-8（2026-11-11）：非 workflow_dispatch 触发（tag push v* / PR）时
+          # E2E 非零退出必须阻断流水线——此前统一降级为 ::warning::，产物照传
+          # 照发；dispatch 形态保留 advisory 供人工复核，失败状态写 GITHUB_ENV
+          # 由 Job summary 置顶横幅呈现。
+          E2E_BLOCKING: ${{ github.event_name != 'workflow_dispatch' }}
         run: |
           $skip5 = $env:SKIP_STEP5
           $skip7 = $env:SKIP_STEP7
@@ -137,10 +142,14 @@ jobs:
 
           $exitCode = $LASTEXITCODE
           Write-Host "E2E exit code: $exitCode"
-          # 报告上传后由独立 Reviewer 决定是否阻塞；workflow 自身不强制 fail
-          # 但 exit code 2 表示门禁失败，需要在 step summary 显示
           if ($exitCode -ne 0) {
-            Write-Host "::warning::E2E 验证返回非零退出码 $exitCode，请检查 e2e-report-windows-amd64.json"
+            # 失败状态先落 GITHUB_ENV：Job summary（if: always()）据此置顶横幅
+            "E2E_LOCAL_FAILED=1" | Out-File -FilePath $env:GITHUB_ENV -Append
+            if ($env:E2E_BLOCKING -eq 'true') {
+              Write-Host "::error::E2E 验证失败（退出码 $exitCode），阻塞本次发布门禁（T-8）"
+              exit 1
+            }
+            Write-Host "::warning::E2E 验证返回非零退出码 $exitCode，请检查 e2e-report-windows-amd64.json（dispatch 形态，advisory）"
           }
 
       - name: Upload E2E report
@@ -157,8 +166,21 @@ jobs:
       - name: Job summary
         if: always()
         shell: pwsh
+        env:
+          # step 级 env 不跨步传递，此处重新声明以判定横幅形态
+          E2E_BLOCKING: ${{ github.event_name != 'workflow_dispatch' }}
         run: |
           $reportPath = "e2e-report-windows-amd64.json"
+          # T-8：失败横幅置顶——blocking 形态已在 E2E 步 exit 1 阻断流水线；
+          # dispatch 形态流水线绿，横幅是唯一可见失败信号，不得埋在报告详情下
+          if ($env:E2E_LOCAL_FAILED -eq '1') {
+            if ($env:E2E_BLOCKING -eq 'true') {
+              "> **E2E FAIL（阻断形态）**: E2E 非零退出，已阻断本次发布门禁（T-8）。" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            } else {
+              "> **E2E FAIL（advisory 形态）**: E2E 非零退出，报告已上传，等待人工复核裁决。" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            }
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
           if (Test-Path $reportPath) {
             $report = Get-Content $reportPath -Raw | ConvertFrom-Json
             "## P2-H Windows amd64 E2E 报告" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append

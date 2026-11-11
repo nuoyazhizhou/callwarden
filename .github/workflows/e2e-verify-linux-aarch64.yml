@@ -207,6 +207,11 @@ jobs:
           # REF_NAME/DRY_RUN 同一处置口径）
           SKIP_STEP5: ${{ inputs.skip_step5 }}
           SKIP_STEP7: ${{ inputs.skip_step7 }}
+          # T-8（2026-11-11）：非 workflow_dispatch 触发（tag push v* / PR）时
+          # E2E 非零退出必须阻断流水线——此前统一降级为 ::warning::，产物照传
+          # 照发；dispatch 形态保留 advisory 供人工复核，失败状态写 GITHUB_ENV
+          # 由 Job summary 置顶横幅呈现。
+          E2E_BLOCKING: ${{ github.event_name != 'workflow_dispatch' }}
         run: |
           EXTRA_ARGS=()
           if [ "$SKIP_STEP5" = "true" ]; then
@@ -226,10 +231,17 @@ jobs:
             --report e2e-report-linux-aarch64-local.json \
             "${EXTRA_ARGS[@]}"
 
+          # 注意：本步不开 set -e——非零退出码要走到下面的分支决策
           exit_code=$?
           echo "Local E2E exit code: $exit_code"
           if [ "$exit_code" -ne 0 ]; then
-            echo "::warning::Local E2E 验证返回非零退出码 $exit_code"
+            # 失败状态先落 GITHUB_ENV：Job summary（if: always()）据此置顶横幅
+            echo "E2E_LOCAL_FAILED=1" >> "$GITHUB_ENV"
+            if [ "$E2E_BLOCKING" = "true" ]; then
+              echo "::error::Local E2E 验证失败（退出码 $exit_code），阻断本次发布门禁（T-8）"
+              exit 1
+            fi
+            echo "::warning::Local E2E 验证返回非零退出码 $exit_code（dispatch 形态，advisory）"
           fi
 
       - name: Verify client/agent bundle parser exclusion (P1-G fail closed)
@@ -259,6 +271,33 @@ jobs:
             callwarden-client-linux-aarch64.tar.gz
             dist/callwarden/e2e-step2-linux-aarch64-bundle-report.json
           retention-days: 30
+
+      - name: Job summary
+        if: always()
+        continue-on-error: true
+        env:
+          # step 级 env 不跨步传递，此处重新声明以判定横幅形态
+          E2E_BLOCKING: ${{ github.event_name != 'workflow_dispatch' }}
+        run: |
+          REPORT_PATH="e2e-report-linux-aarch64-local.json"
+          {
+            # T-8：失败横幅置顶——blocking 形态已在 E2E 步 exit 1 阻断流水线；
+            # dispatch 形态流水线绿，横幅是唯一可见失败信号，不得埋在报告详情下
+            if [ "$E2E_LOCAL_FAILED" = "1" ]; then
+              if [ "$E2E_BLOCKING" = "true" ]; then
+                echo "> **E2E FAIL（阻断形态）**: local E2E 非零退出，已阻断本次发布门禁（T-8）。"
+              else
+                echo "> **E2E FAIL（advisory 形态）**: local E2E 非零退出，报告已上传，等待人工复核裁决。"
+              fi
+              echo ""
+            fi
+            echo "## P2-H Linux aarch64 E2E 报告"
+            if [ -f "$REPORT_PATH" ]; then
+              python -c 'import json, pathlib; r=json.loads(pathlib.Path("e2e-report-linux-aarch64-local.json").read_text(encoding="utf-8")); print("**Overall status**: " + str(r.get("overall_status", "unknown")))'
+            else
+              echo "P2-H Linux aarch64 E2E 报告未生成"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
 
   linux-musl-static-build:
     name: Linux musl static build (alpine)
