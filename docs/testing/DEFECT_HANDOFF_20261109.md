@@ -26,7 +26,7 @@
 |---|---|---|---|---|
 | DEF-01 | 提交树账本 CI false-fail（远端未同步） | P0 | CI/Infra | 本地已修，待 push |
 | DEF-02 | CRLF 根因（`.gitattributes` 缺 `eol=lf`） | P0 | CI/Infra | **DONE**（a8002cc：三账本 eol=lf + renormalize，2026-11-11） |
-| DEF-03 | GAP-15 治理语义冲突 | P0 | Governance/Rust | OPEN（需人签字） |
+| DEF-03 | GAP-15 治理语义冲突 | P0 | Governance/Rust | **DONE**（2026-11-11 用户签字：源码为准；Adjudicator v4 模板 §29/§32 已对齐，迁移版 role-protocol.md 原本已对齐，一致性测试 test_adjudicator_returned_handoff_reopens_executor_remediation_atomically 在位） |
 | T-1 | KR-C nightly 验收门零证据 | P0 | CI/Acceptance | **DONE**（登记过期：semgrep 已移 extras，KR-C closed，known_red.json 有 nightly 绿+Gate 证据） |
 | T-2 | Gate 1/2 汇总行污染（反篡改门恒红） | P0 | CI/Gate | OPEN |
 | T-3 | known-red 零隔离 | P0 | CI/Quarantine | **DONE**（登记过期：ci.yml 已有 deselect step + quarantine job，KR-A/B/C 全 closed） |
