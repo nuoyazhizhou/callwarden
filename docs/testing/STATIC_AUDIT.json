@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "6ebde03d9599400efe7c38f5ac203c86d3a7d8a1",
+  "supplied_source_revision": "376edb34ad981968249364f985dfcf9dbdd88918",
   "revision_note": "Externally verified HEAD; input hashes, not HEAD alone, bind working-tree content.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,7 +38,7 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7228,
+    "python_definitions": 7213,
     "python_source_files": 697,
     "convergence_definitions": 58,
     "skip_calls": {
@@ -1579,7 +1579,7 @@
     },
     {
       "path": "tests/test_b3_rust_daemon_wiring.py",
-      "sha256": "d5597450b40f2c498d864230a49702b156c7004579c525e5ecd14ffd34d0ace8"
+      "sha256": "9226beb7f8b1e81816897a2d6dd79371ddd77fa08a5754854d5b7938a872f1ee"
     },
     {
       "path": "tests/test_b4_rust_ext_wiring.py",
@@ -2131,7 +2131,7 @@
     },
     {
       "path": "tests/test_cli_task_c9_subcommands.py",
-      "sha256": "0d939a60ad4460c8a604c3ee2d715d442aa9edc7f0dcac4904896150255f4612"
+      "sha256": "89dbbde2a335b7026789e3ce57da041ef3501cd43778bba747f2c81146cb41a7"
     },
     {
       "path": "tests/test_cli_task_claim_recover.py",
@@ -2151,7 +2151,7 @@
     },
     {
       "path": "tests/test_cli_task_reopen.py",
-      "sha256": "791b0b8db26d5a4d5c555c35d3012b3297d0b8f57cf741cbf180dc46680938f8"
+      "sha256": "5c2e25eb28d9703ece004d97ba36d591a8de26681139273135db625f948da41e"
     },
     {
       "path": "tests/test_clone_detection.py",
@@ -2191,7 +2191,7 @@
     },
     {
       "path": "tests/test_cw_client_rpc_proxy.py",
-      "sha256": "e98792240eeb002cdceb3bbc21ee18ef423130c0e4625625174ecb3a40085ee6"
+      "sha256": "900eb7713bbc354805e2cd6ded836294d01002002dd26d0b444219bddc46120b"
     },
     {
       "path": "tests/test_d1_d7_audit_fix.py",
