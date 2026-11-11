@@ -7,21 +7,21 @@
 
 测试定义、Rust属性数、skip调用站点、collected nodeid、运行结果是不同单位。参数化/class/module skipif/importorskip/setup skip/collection error影响执行数量，不能从站点推算运行skip率或解锁用例数量。
 
-当前Python定义7464、convergence定义58；Rust src #[test]+#[tokio::test]属性2163、含#[cfg(test)]文件123。这不是当前通过数，也不含全部Rust integration/bin测试。扫描文件及hash/算法见机器报告。
+当前Python定义7211、convergence定义58；Rust src #[test]+#[tokio::test]属性2107、含#[cfg(test)]文件121（python 源文件 696）。这不是当前通过数，也不含全部Rust integration/bin测试。扫描文件及hash/算法见机器报告。
 
-AST调用pytest.skip230、pytest.mark.skipif243，合计473，分布144文件；另有pytest.importorskip25。三种合计498仅是机制站点，非运行skip数。别名/动态机制不在当前精确匹配统计内，runtime补齐。
+AST调用pytest.skip210、pytest.mark.skipif222，合计432，分布131文件；另有pytest.importorskip24。三种合计456仅是机制站点，非运行skip数。别名/动态机制不在当前精确匹配统计内，runtime补齐。
 
 精确reason字面量“callwarden_core 未安装”46，其中parser_contract18；“callwarden_core Rust 扩展未构建”4。两字面量全仓合计50；其他变体及importorskip另列。parser_contract前两机制总计44。v6的39/36/3不符合当前AST。
 
-**reason语法分布（不等于根因归因）**：498站点中含字面量reason292（292/498≈58.63%），含表达式reason183（纯表达式，与字面量互斥），无显式reason23；纯表达式+缺省合计206（206/498≈41.37%）。字面量只允许直接提取文本，动态表达式也可结合源码人工分析，不能按语法形态断言能否归因。以下“非字面量或缺省”合并两类，不能把缺省写成表达式：
+**reason语法分布（不等于根因归因）**：456站点中含字面量reason267（267/456≈58.55%），含表达式reason167（纯表达式，与字面量互斥），无显式reason22；纯表达式+缺省合计189（189/456≈41.45%）。字面量只允许直接提取文本，动态表达式也可结合源码人工分析，不能按语法形态断言能否归因。以下“非字面量或缺省”合并两类，不能把缺省写成表达式：
 
 | 机制 | 站点 | 非字面量或缺省 | 占比（近似） |
 |---|---|---|---|
-| pytest.skip | 230 | 114 | 49.57% |
-| pytest.mark.skipif | 243 | 69 | 28.40% |
-| pytest.importorskip | 25 | 23 | 92.00% |
+| pytest.skip | 210 | 98 | 46.67% |
+| pytest.mark.skipif | 222 | 69 | 31.08% |
+| pytest.importorskip | 24 | 22 | 91.67% |
 
-importorskip共25处，其中23处缺省（无显式reason）、2处为字面量reason，不是模块名非字面量；`"callwarden_core"` 本身是字符串字面量，其模块前置记录在condition_or_module。46/18/4是特定reason文本子集，不能声称它们覆盖60%站点。当前全部498处root_cause仍为UNREVIEWED，人工根因已复核数为0。
+importorskip共24处，其中22处缺省（无显式reason）、2处为字面量reason，不是模块名非字面量；`"callwarden_core"` 本身是字符串字面量，其模块前置记录在condition_or_module。46/18/4是特定reason文本子集，不能声称它们覆盖60%站点。当前全部456处root_cause仍为UNREVIEWED，人工根因已复核数为0。
 
 GAP-16要求逐站点复核源码条件、依赖、平台与适用profile，并绑定对应nodeid或collection位置。runtime补充实际触发的reason与状态；未触发的站点登记NOT_TRIGGERED和审查依据，不伪造运行reason，也不要求为凑全量故意触发所有skip。一处站点可影响多个nodeid，一次collection skip也不能虚构未收集用例数。必需适用suite/case被skip仍按交付门禁阻断。
 
@@ -52,7 +52,7 @@ CLI快照声明233叶子，commands232、skipped=[server]；分类84顶层/21类
 | GAP-13 | v6 BUILD_ENV | 历史wiimu/Zig路径与当前环境混用 | E按profile核构建来源 |
 | GAP-14 | audit_mcp_inventory.json + mcp_full_schema.json(旧fixture) vs mcp_tools.json(新) vs源码/矩阵 | 旧fixture两个环检测工具名已陈旧；总数相等掩盖集合漂移 | **已闭合（2026-10-14）：提取侧 TP-08M 真名源；收敛侧两 fixture 陈旧名 detect_cycle/detect_cycles 已定点改名为 detect_dependency_cycle/detect_call_cycles，与 mcp_tools.json 名字集合 diff=NONE，T2 按真名查表取参** |
 | GAP-15 | task_collab_lifecycle.rs:1516–1524（`adjudicator_returned` 同事务准备 fix_defect）vs 协议（原 `docs/design/role-protocol.md` 已迁至 `.agents/skills/cw-task-loop/references/role-protocol.md`；`docs/role-loop-templates/Callwarden 无人值守循环启动模板：Adjudicator v4.md:32` 明写"returned 不自动追加整改 step、不自动 reopen——自动 remediation 仅 reviewer_blocked 触发"） | returned 同事务整改的源码与协议"不自动追加"冲突，运行结果未知 | A解决权威语义冲突；D按冻结合同真实验证projection/steps/assignment、provenance、幂等与冲突 |
-| GAP-16 | SKIP_SITES.json 静态扫描 | reason字面量292、含表达式183、缺省23（互斥口径，合计498）；全部498处根因尚未复核，语法分布不等于归因率 | A0逐站点源码/适用性复核；运行阶段关联实际reason/nodeid/collection，未触发登记依据；不伪造全量runtime归因 |
+| GAP-16 | SKIP_SITES.json 静态扫描 | reason字面量267、含表达式167、缺省22（互斥口径，合计456）；全部456处根因尚未复核，语法分布不等于归因率 | A0逐站点源码/适用性复核；运行阶段关联实际reason/nodeid/collection，未触发登记依据；不伪造全量runtime归因 |
 
 不再将“CI执行量0/全ERROR”称本轮实测：配置可推断前置风险，但部分静态测试不依赖daemon，具体数量需CI/JUnit。历史T2 157/72/0/14、T3 70/114/18/31只是旧叙述，非当前revision证据。
 
@@ -126,7 +126,9 @@ CLI快照声明233叶子，commands232、skipped=[server]；分类84顶层/21类
 - **E 交付门禁与全平台 CI**：已由 TP-11E/G 实现并接线。`cicd/check_ci_gates.py`（JUnit 递归解析 + expected selector 完备性 1:1 + **revision 新鲜度 fail-closed 前置**，修旧 fail-open）、`check_skip_rate.py`、`artifact_e2e.py`（wheel/daemon exe 实算 sha256）、`check_selector_manifest.py`（防篡改）组成门禁本体；`.github/workflows/acceptance-gates.yml`（PR/Nightly/Release 三档，Windows daemon 验收）+ `ci.yml`（ubuntu daemon lib 单测 + windows 命名管道 SDDL/SID/peer identity/`daemon::client` 专项 + false-positive 反证）完成跨平台接线。新增 `docs/testing/expected_selectors/{domains_full,domains_pr}.txt` 冻结选择器真源；治理 harness 增加 `CW_TP11G_ALLOW_FRESH_BUILD` CI 逃逸开关（信任当次构建二进制，本地/生产仍强校验 KNOWN 前缀）。
 - `STATIC_AUDIT.json` 已按当前 HEAD `6bd1e9c`（2026-10-30 重生成）刷新，使 `supplied_source_revision` 与扫描树一致、可重现（skip 站点累计 468→479→481→482→487→488→493→498；python 定义 7309→7320@7d8eb15 后、`0fc6ba2` 再 +23（7320→7343）、`bd5cd60f` 再 +31（7343→7374）、本轮 `6bd1e9c` 再 +9（7374→7383）；`605c549` 轮 +5 skip 站点 482→487、rust 属性 2106→2112、cfg 121→122；`d5cfbeb4` 仅 rust 属性 2112→2113（+1）；`0fc6ba2` +1 skip（226→227）/+1 文件（142→143）/字面量 293→294；`bd5cd60f` python +31（7343→7374）、rust +6（2113→2119）、py 文件 699→702、cli 提取 233→232（-1，删 `gc db-migrate-single` 及 `server/migrate.py`）；本轮 `6bd1e9c` 仅 python 定义 +9（7374→7383）、rust 属性 +19（2119→2138），skip 站点（488）/原因分布/子集/root_cause 计数全部不变；`6bd1e9c`→`fc8b575`（2026-11-04）python 定义 7383→7481（+98）、rust 属性 2138→2148（+10）、py 文件 702→710（+8）、pytest.skip 227→232（+5）、classic 467→472（+5）、三机制 488→493（+5）、字面量 294→290（-4），skip 站点（493）/原因分布/子集/root_cause 计数其余不变；`fc8b575`→`7e178cb`（2026-11-05，s4 重构）python 定义 7481→7464（-17）、py 文件 710→709（-1）、rust 属性 2148→2163（+15）、cfg 文件 122→123（+1）、pytest.skip 232→230（-2）、pytest.mark.skipif 240→243（+3）、pytest.importorskip 21→25（+4）、三机制 493→498（+5）、classic 472→473（+1）、字面量 290→292（+2）、含表达式 184→183（-1）、缺省 19→23（+4）、nonliteral_or_absent 194→206（+12），schema 名称漂移 0（GAP-14 仍闭）、root_cause_reviewed 0 不变）；生成器 `--check` 全 PASS。SKIP_SITES/TEST_CASES 同步重生成。
 
+- **pull 合入 ef28ab9（2026-11-10，合并提交 17a8218）**：远端以 `fix(test+daemon): 收口 S4 残留并修复链 B/FIX-A/B/C 回归` 为主——大规模 daemon 重构（cw_daemon.rs −730、server.rs −1784、client.rs −831、memfd.rs 整文件删、snapshot_state.rs +808、snapshot_guard.rs +418 等）。已按合并 HEAD `17a8218` 重生成三份账本，`--check` 全 PASS、CRLF 0：python 定义 7464→**7211**（−253）、py 文件 709→**696**（−13）、rust 属性 2163→**2107**（−56）、cfg 文件 123→**121**（−2）；pytest.skip 230→**210**（−20）、pytest.mark.skipif 243→**222**（−21）、pytest.importorskip 25→**24**（−1），三机制合计 498→**456**（−42）、classic 472→**432**（−40）、classic 文件 144→**131**（−13）；字面量 292→**267**（−25）、含表达式 183→**167**（−16）、缺省 23→**22**（−1）、nonliteral_or_absent 206→**189**（−17）；MCP 243 工具 / CLI 84·21·233 / schema 名称漂移 0（GAP-14 仍闭）/ root_cause 0 全部不变。GAP-16 的 456 处 root_cause 仍全 UNREVIEWED（人工复核 0）。
+
 **仍遗留（未闭合）**：
 - （GAP-14 收敛侧已于 2026-10-14 闭合：两 fixture 陈旧名已定点改名为真名，名字集合与 mcp_tools.json diff=NONE；T2 按真名查表取参，不再空参调用改名工具。）
 - GAP-15 治理语义冲突（`task_collab_lifecycle.rs:1516-1524` 对 `adjudicator_returned` 同事务准备 fix_defect，与 Adjudicator v4 模板"returned 不自动追加整改 step"协议冲突）仍待权威语义对齐，方可进治理验收。
-- GAP-16 的 498 处 skip 站点 root_cause 仍 UNREVIEWED（累计 +25 处 skip 站点；d5cfbeb4 仅 rust 属性 2112→2113（+1）；0fc6ba2 再 +1 skip/文件、python 定义 +23（7320→7343）、字面量 293→294；bd5cd60f 仅 python 定义 7343→7374（+31）、rust 属性 2113→2119（+6）、cli 提取 233→232（-1，删 `gc db-migrate-single`）；6bd1e9c 仅 python 定义 7374→7383（+9）、rust 属性 2119→2138（+19），skip 站点仍 488、其余不变；fc8b575 python 定义 7383→7481（+98）、rust 属性 2138→2148（+10）、pytest.skip 227→232、classic 467→472、三机制 488→493、字面量 294→290，skip 站点仍 493、其余不变；7e178cb 重构 python 定义 7481→7464（-17）、rust 属性 2148→2163（+15）、三机制 493→498、字面量 290→292、缺省 19→23，skip 站点 498、其余不变；全部 498 处均为 UNREVIEWED，根因复核仍未启动，人工复核 0），静态账本未变。
+- GAP-16 的 456 处 skip 站点 root_cause 仍 UNREVIEWED（本轮净 −42 处；d5cfbeb4 仅 rust 属性 2112→2113（+1）；0fc6ba2 再 +1 skip/文件、python 定义 +23（7320→7343）、字面量 293→294；bd5cd60f 仅 python 定义 7343→7374（+31）、rust 属性 2113→2119（+6）、cli 提取 233→232（-1，删 `gc db-migrate-single`）；6bd1e9c 仅 python 定义 7374→7383（+9）、rust 属性 2119→2138（+19），skip 站点仍 488、其余不变；fc8b575 python 定义 7383→7481（+98）、rust 属性 2138→2148（+10）、pytest.skip 227→232、classic 467→472、三机制 488→493、字面量 294→290，skip 站点仍 493、其余不变；7e178cb 重构 python 定义 7481→7464（-17）、rust 属性 2148→2163（+15）、三机制 493→498、字面量 290→292、缺省 19→23，skip 站点 498、其余不变；全部 456 处均为 UNREVIEWED，根因复核仍未启动，人工复核 0），静态账本未变。

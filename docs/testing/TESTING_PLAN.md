@@ -126,9 +126,9 @@ LLM选择另设非确定性产品实验，记录模型/配置/样本/成本/阈�
 | 性能 | 冻结硬件/corpus/profile预算通过；未校准不宣称达到SLO |
 | 证据 | 完整/同版本/新鲜；缺报告/selector、空suite不放行 |
 
-运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态473/7464不能称执行skip率。498处站点的reason语法为字面量292、含表达式183、缺省23（互斥口径），全部根因尚未复核（GAP-16）；字面量文本不等于已归因。逐站点源码/适用性审查，runtime只补充实际触发的reason和nodeid/collection关联，未触发登记NOT_TRIGGERED及依据，不强行触发skip凑全量。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
+运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态432/7211不能称执行skip率。456处站点的reason语法为字面量267、含表达式167、缺省22（互斥口径），全部根因尚未复核（GAP-16）；字面量文本不等于已归因。逐站点源码/适用性审查，runtime只补充实际触发的reason和nodeid/collection关联，未触发登记NOT_TRIGGERED及依据，不强行触发skip凑全量。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
 
-Python coverage只说明Python层，Rust需独立模块/分支义务。2163为src属性数，非cargo执行数，也非全部integration/bin测试。不得把--lib daemon::称全量Rust。覆盖预算按关键handler/负分支冻结，不以无基线60%总行覆盖代替功能完备。
+Python coverage只说明Python层，Rust需独立模块/分支义务。2107为src属性数，非cargo执行数，也非全部integration/bin测试。不得把--lib daemon::称全量Rust。覆盖预算按关键handler/负分支冻结，不以无基线60%总行覆盖代替功能完备。
 
 ## 9. CI与命令（待实施）
 
@@ -201,5 +201,6 @@ v6原件与hash保留在`.backups/20261010-153813-before-v7/manifest.json`，更
 - **pull 合入 7e178cb（2026-11-05，s4 重构）**：`refactor(s4)` 删除 `cw_bridge.rs` 与 4 个 bridge/WSL 测试（-2546 行），新增 PKI/mTLS 主体授权体系（Rust daemon 侧 `cli/pki.rs` 等 + 3 个新测试 `test_mtls_control_plane.py`/`test_mtls_enrollment.py`/`test_principal_authorization.py`）。已按新 HEAD `7e178cb` 重生成三份账本，`--check` 全 PASS：python 定义 7481→7464（-17）、py 文件 710→709（-1）、rust 属性 2148→2163（+15）、cfg 文件 122→123（+1）、pytest.skip 232→230（-2）、pytest.mark.skipif 240→243（+3）、pytest.importorskip 21→25（+4）、三机制 493→498（+5）、classic 472→473（+1）、字面量 290→292（+2）、含表达式 184→183（-1）、缺省 19→23（+4）、nonliteral_or_absent 194→206（+12）；MCP 243 工具（真源 `mcp_tools.json` 核验一致，server/mcp_server.py +10 行未改计数）/ CLI 84·21·233 / schema 名称漂移 0（GAP-14 仍闭）/ root_cause 0 全部不变。GAP-16 的 498 处 root_cause 仍全 UNREVIEWED。
 
 - **pull 合入 fc8b575（2026-11-04）**：远端以 ADR §15 实施清单 + PKI 五表 schema 落地为主（docs(mtls)+db(pki)）。核心清单零漂移：MCP 243 工具、CLI 84 顶层/21 类/233 叶子、schema 名称漂移 0（GAP-14 仍闭合）。已按新 HEAD `fc8b575` 重生成三份账本，`--check` 全 PASS：python 定义 7383→7481（+98）、rust 属性 2138→2148（+10）、py 文件 702→710（+8）、pytest.skip 227→232（+5）、classic 467→472（+5）、三机制 488→493（+5）、字面量 294→290（-4）；MCP 243 / CLI / 子集 46·18·4 / parser 44 / cfg 122 / root_cause 0 全部不变。GAP-16 的 493 处 root_cause 仍全 UNREVIEWED。
+- **pull 合入 ef28ab9（2026-11-10，合并提交 17a8218）**：大规模 daemon 重构（cw_daemon.rs −730、server.rs −1784、client.rs −831、memfd.rs 整文件删、snapshot_state.rs +808 等）。已按合并 HEAD `17a8218` 重生成三份账本，`--check` 全 PASS：python 定义 7464→7211（−253）、py 文件 709→696（−13）、rust 属性 2163→2107（−56）、cfg 文件 123→121（−2）；pytest.skip 230→210、pytest.mark.skipif 243→222、pytest.importorskip 25→24，三机制 498→456、classic 472→432；字面量 292→267、含表达式 183→167、缺省 23→22；MCP 243 / CLI 84·21·233 / schema 漂移 0（GAP-14 仍闭）/ root_cause 0 不变。GAP-16 的 456 处 root_cause 仍全 UNREVIEWED。
 
 本方案 §10 阶段表中 A0/B0/A1 已完成，C 接口验收主线（wire/CLI）已由 TP-10 覆盖；D 专项矩阵仍待完成；**E 交付门禁已由 TP-11E/G 实现并接线（Linux daemon lib 单测 + Windows daemon 验收/命名管道·身份专项），并经 TP-11G CI 硬化与 CI-DEBT 持续硬化**。治理 GAP-15 仍阻塞治理验收进入。
