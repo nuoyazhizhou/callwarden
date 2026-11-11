@@ -10,7 +10,7 @@
       "reason_literal": "未找到 cargo，无法构建新鲜二进制",
       "reason_expression": "'未找到 cargo，无法构建新鲜二进制'",
       "condition_or_module": null,
-      "file_sha256": "50b29d9bfee59f3d6fc2d715c41abd4021a1fee211ed09b04c601a80ac8d8d68",
+      "file_sha256": "fd69c106b08f63583e25a4cdf926ec25b24d1f3633b17d5d8eae4e4741b120c3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -22,7 +22,7 @@
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "50b29d9bfee59f3d6fc2d715c41abd4021a1fee211ed09b04c601a80ac8d8d68",
+      "file_sha256": "fd69c106b08f63583e25a4cdf926ec25b24d1f3633b17d5d8eae4e4741b120c3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -34,7 +34,7 @@
       "reason_literal": null,
       "reason_expression": "f'{context}（daemon 提前退出 returncode={rc}）\\nstderr={tail}'",
       "condition_or_module": null,
-      "file_sha256": "50b29d9bfee59f3d6fc2d715c41abd4021a1fee211ed09b04c601a80ac8d8d68",
+      "file_sha256": "fd69c106b08f63583e25a4cdf926ec25b24d1f3633b17d5d8eae4e4741b120c3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -46,7 +46,7 @@
       "reason_literal": null,
       "reason_expression": "f'{context}（daemon 已退出 returncode={proc.poll()}，命中 {marker}）；停止生产 daemon（cw daemon stop）后重跑\\n{stderr_text[-1500:]}'",
       "condition_or_module": null,
-      "file_sha256": "50b29d9bfee59f3d6fc2d715c41abd4021a1fee211ed09b04c601a80ac8d8d68",
+      "file_sha256": "fd69c106b08f63583e25a4cdf926ec25b24d1f3633b17d5d8eae4e4741b120c3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -58,7 +58,7 @@
       "reason_literal": null,
       "reason_expression": "f'{reason}\\n{blob}'",
       "condition_or_module": null,
-      "file_sha256": "50b29d9bfee59f3d6fc2d715c41abd4021a1fee211ed09b04c601a80ac8d8d68",
+      "file_sha256": "fd69c106b08f63583e25a4cdf926ec25b24d1f3633b17d5d8eae4e4741b120c3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -70,7 +70,7 @@
       "reason_literal": null,
       "reason_expression": "f'TP-10C 需要 C:/Python314/python.exe（callwarden_core 为 cp314 PyO3 扩展），当前解释器为 {PYTHON}'",
       "condition_or_module": null,
-      "file_sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd",
+      "file_sha256": "3c616ba22956e536007d0a85b0e48e1b4368e29c7726df911834af72f6db02a0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -82,7 +82,7 @@
       "reason_literal": null,
       "reason_expression": "f'TP-10C 前置缺失：daemon 候选缺失 {src}'",
       "condition_or_module": null,
-      "file_sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd",
+      "file_sha256": "3c616ba22956e536007d0a85b0e48e1b4368e29c7726df911834af72f6db02a0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -94,7 +94,7 @@
       "reason_literal": null,
       "reason_expression": "f'TP-10C 前置缺失：daemon 候选 {src} 散列不匹配冻结基准 {KNOWN_DAEMON_SHA256_PREFIXES}，且无可信冻结副本可用；若确需换基准，设 CW_TP10C_ALLOW_OTHER_BINARY=1 并以 CW_TP10C_DAEMON_SHA256 钉新散列'",
       "condition_or_module": null,
-      "file_sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd",
+      "file_sha256": "3c616ba22956e536007d0a85b0e48e1b4368e29c7726df911834af72f6db02a0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -106,7 +106,7 @@
       "reason_literal": null,
       "reason_expression": "f'TP-10C 前置缺失：隔离 daemon 启动失败（{exc}）'",
       "condition_or_module": null,
-      "file_sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd",
+      "file_sha256": "3c616ba22956e536007d0a85b0e48e1b4368e29c7726df911834af72f6db02a0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -118,7 +118,7 @@
       "reason_literal": null,
       "reason_expression": "f'daemon 候选缺失且未显式指定 CW_TP11G_DAEMON_SRC（src={src}）：本机/Linux CI 无已验收候选，治理域用例仅在有候选时真跑；acceptance-gates 或本地经 CW_TP11G_DAEMON_SRC 注入候选后运行'",
       "condition_or_module": null,
-      "file_sha256": "b11e921e6a08dfe384a5d7f6d5c7a7ea3ad4421ccfe7b7fb2325a6f539fdff56",
+      "file_sha256": "7efd56f8f90585233aefea604c95311a31843d573d2493e32fbf87a0f92ee8e3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -130,7 +130,7 @@
       "reason_literal": null,
       "reason_expression": "f'daemon 候选缺失且未显式指定 CW_TP07_DAEMON_EXE（{DAEMON_EXE}）：本机/Linux CI 无已验收候选，TP-07 底座用例仅在有候选时真跑；acceptance-gates 或本地经 CW_TP07_DAEMON_EXE 注入候选后运行'",
       "condition_or_module": null,
-      "file_sha256": "6b5b142eeeb5e570350410d6a124a115224206b557ec42a201b19d7c2b0c60f9",
+      "file_sha256": "db49f003dc64629e941e7f0e206ec88b8dbed632e2f430b105a16c1c5800ed34",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -142,7 +142,7 @@
       "reason_literal": "production .callwarden does not exist on this machine",
       "reason_expression": "'production .callwarden does not exist on this machine'",
       "condition_or_module": null,
-      "file_sha256": "6b5b142eeeb5e570350410d6a124a115224206b557ec42a201b19d7c2b0c60f9",
+      "file_sha256": "db49f003dc64629e941e7f0e206ec88b8dbed632e2f430b105a16c1c5800ed34",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -154,7 +154,7 @@
       "reason_literal": null,
       "reason_expression": "f'daemon 候选缺失且未显式指定 CW_TP09_DAEMON_EXE（{self.daemon_exe}）：本机/Linux CI 无已验收候选，TP-09 用例仅在有候选时真跑；acceptance-gates 或本地经 CW_TP09_DAEMON_EXE 注入候选后运行'",
       "condition_or_module": null,
-      "file_sha256": "3dce4147e3aa1510448713e5d6723c43d02d118d1992e677ee17e4fc1ae58d62",
+      "file_sha256": "09f68a76580eb2d86d2db792874e7ed206d5fb9b3d45e67b972beef7a9c925ae",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -166,7 +166,7 @@
       "reason_literal": null,
       "reason_expression": "f'manifest not generated: {MANIFEST}'",
       "condition_or_module": null,
-      "file_sha256": "51ea50f6e3ddc55dafeafecbb9d6ada693d50d6771ce123cd7fb760f7849d183",
+      "file_sha256": "4728eb946c4dacedbb186c333debaa39c7419093dad7a7eacd52b52f38e200ae",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -178,7 +178,7 @@
       "reason_literal": null,
       "reason_expression": "f'manifest not generated: {MANIFEST}'",
       "condition_or_module": null,
-      "file_sha256": "cba194c482907dec476b87ddfecf99407a759169a5ccc7cbe08c40329f7b9e7f",
+      "file_sha256": "4ee811c49d99980b1d89058c42ab68654804ba81cc7929d07da4e9ffd226a0b3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -190,7 +190,7 @@
       "reason_literal": "production .callwarden absent",
       "reason_expression": "'production .callwarden absent'",
       "condition_or_module": null,
-      "file_sha256": "cba194c482907dec476b87ddfecf99407a759169a5ccc7cbe08c40329f7b9e7f",
+      "file_sha256": "4ee811c49d99980b1d89058c42ab68654804ba81cc7929d07da4e9ffd226a0b3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -202,7 +202,7 @@
       "reason_literal": null,
       "reason_expression": "f'无已知散列 daemon 候选且未显式指定 CW_TP10M_SRC_DAEMON（candidates={[str(c) for c in _DAEMON_CANDIDATES]}）：TP-10M MCP wire 用例仅在有已验收候选时真跑；acceptance-gates 或本地经 CW_TP10M_SRC_DAEMON 注入候选后运行'",
       "condition_or_module": null,
-      "file_sha256": "29421121adf9e7873464622c3d4f4af37c5c18d980d5811ecb596b2850cde538",
+      "file_sha256": "e7814d61098e830fffad7264037d6bdf17f75c950f2dcf69a789d662713c9ef7",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -226,7 +226,7 @@
       "reason_literal": null,
       "reason_expression": "f'cw-daemon 二进制候选缺失且未显式指定 CW_CONVERGENCE_DAEMON_BIN（release={_RELEASE_BIN}, debug={_DEBUG_BIN}）：本机/Linux CI 全量 pytest job 不构建 Rust 二进制，convergence M3/M4 用例仅在有候选时真跑；acceptance-gates 或本地经 CW_CONVERGENCE_DAEMON_BIN 注入候选后运行'",
       "condition_or_module": null,
-      "file_sha256": "e197365077589cb773e43757e7ea7db7d51e00da15de0b85b36ab3ac0c0f03af",
+      "file_sha256": "259fcdad78b605ebca6d546db8d12ec0986393119666c8cee9f955e50344c1e1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -238,7 +238,7 @@
       "reason_literal": "隔离 daemon 无法启动:生产 daemon 正持有 SID 级 instance 锁。隔离收敛套件需在生产 daemon 停止时运行(cw daemon stop)。",
       "reason_expression": "'隔离 daemon 无法启动:生产 daemon 正持有 SID 级 instance 锁。隔离收敛套件需在生产 daemon 停止时运行(cw daemon stop)。'",
       "condition_or_module": null,
-      "file_sha256": "e197365077589cb773e43757e7ea7db7d51e00da15de0b85b36ab3ac0c0f03af",
+      "file_sha256": "259fcdad78b605ebca6d546db8d12ec0986393119666c8cee9f955e50344c1e1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -250,7 +250,7 @@
       "reason_literal": "snapshot publish/stats 未就绪(隔离 daemon 环境限制)",
       "reason_expression": "'snapshot publish/stats 未就绪(隔离 daemon 环境限制)'",
       "condition_or_module": null,
-      "file_sha256": "95750848901bb3dc186f7425f26dacfce2e930a4c7982a469d1c32c06e03d076",
+      "file_sha256": "75e6c10cebba6a7166f45e6670846afe60938c9ade3cf37d5da6f8b6192c926b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -262,7 +262,7 @@
       "reason_literal": "无可用 HTTP daemon(需生产或部署后的 daemon)",
       "reason_expression": "'无可用 HTTP daemon(需生产或部署后的 daemon)'",
       "condition_or_module": null,
-      "file_sha256": "f907fa37dffc8013cc6a028eedab3cbb53085f5bfef194267122503b092ba6f7",
+      "file_sha256": "4d7344015aa9394eb2ee3108069eab01d93b3e027ca79b63ac9097b1b2e4e147",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -274,7 +274,7 @@
       "reason_literal": null,
       "reason_expression": "f'task.list 需额外参数,隔离验证改由 task_id 不相交保证: {e.code}'",
       "condition_or_module": null,
-      "file_sha256": "c530785654e4074e7842abf347566a8242e3b8c242f83d8cdba37fd574b43251",
+      "file_sha256": "159d9735cf4ceacdb302f96e2a6f39ef72a4e59c5b13b4fc0573cab6c4ed1de3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -286,7 +286,7 @@
       "reason_literal": "未配置 OPENAI_API_KEY/OPENAI_BASE_URL(.env);T5 LLM 可理解性测试跳过",
       "reason_expression": "'未配置 OPENAI_API_KEY/OPENAI_BASE_URL(.env);T5 LLM 可理解性测试跳过'",
       "condition_or_module": "not llm_available()",
-      "file_sha256": "1c98af0cd6882ac691e34e958a1c241e004cbf77abe836810fbdd0570f08c7fb",
+      "file_sha256": "a765c8a924b7d91685d4ac9e9313e936f3df46a7f826f96710cbfe4bfe9e8662",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -298,7 +298,7 @@
       "reason_literal": "baseline.json 未生成，运行 `py -3.14 tests/parser_contract/generate_baseline.py`",
       "reason_expression": "'baseline.json 未生成，运行 `py -3.14 tests/parser_contract/generate_baseline.py`'",
       "condition_or_module": "not BASELINE_PATH.exists()",
-      "file_sha256": "9b684fbcaf86da56a322226f1aabfbd886cc039c180a837a8a041b432bf0aa7c",
+      "file_sha256": "f9b7656962a5883704307ab576a79b3275116ffb2026b3b645d32586f359a0b8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -310,7 +310,7 @@
       "reason_literal": "baseline.json 或 callwarden_core 不可用",
       "reason_expression": "'baseline.json 或 callwarden_core 不可用'",
       "condition_or_module": "not BASELINE_PATH.exists() or not _has_rust_ext()",
-      "file_sha256": "9b684fbcaf86da56a322226f1aabfbd886cc039c180a837a8a041b432bf0aa7c",
+      "file_sha256": "f9b7656962a5883704307ab576a79b3275116ffb2026b3b645d32586f359a0b8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -322,7 +322,7 @@
       "reason_literal": "baseline.json 未生成",
       "reason_expression": "'baseline.json 未生成'",
       "condition_or_module": "not BASELINE_PATH.exists()",
-      "file_sha256": "9b684fbcaf86da56a322226f1aabfbd886cc039c180a837a8a041b432bf0aa7c",
+      "file_sha256": "f9b7656962a5883704307ab576a79b3275116ffb2026b3b645d32586f359a0b8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -334,7 +334,7 @@
       "reason_literal": "baseline.json 未生成",
       "reason_expression": "'baseline.json 未生成'",
       "condition_or_module": "not BASELINE_PATH.exists()",
-      "file_sha256": "9b684fbcaf86da56a322226f1aabfbd886cc039c180a837a8a041b432bf0aa7c",
+      "file_sha256": "f9b7656962a5883704307ab576a79b3275116ffb2026b3b645d32586f359a0b8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -346,7 +346,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -358,7 +358,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -370,7 +370,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -382,7 +382,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -394,7 +394,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -406,7 +406,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -418,7 +418,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -430,7 +430,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -442,7 +442,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -454,7 +454,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -466,7 +466,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "8a7b4b675959251b78bf94e93d4df3496af071687a913ecb579a07a2c43a62d4",
+      "file_sha256": "9cbdcb28995e7a0a35b5f20865d36146bd1edd0d63754975305ca6f52d9c8033",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -478,7 +478,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -490,7 +490,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -502,7 +502,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -514,7 +514,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -526,7 +526,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -538,7 +538,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -550,7 +550,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -562,7 +562,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -574,7 +574,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -586,7 +586,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -598,7 +598,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -610,7 +610,7 @@
       "reason_literal": "hcl.json 不存在",
       "reason_expression": "'hcl.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -622,7 +622,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -634,7 +634,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -646,7 +646,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -658,7 +658,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -670,7 +670,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -682,7 +682,7 @@
       "reason_literal": null,
       "reason_expression": "f'fixture {lang}.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -694,7 +694,7 @@
       "reason_literal": "typescript.json 不存在",
       "reason_expression": "'typescript.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -706,7 +706,7 @@
       "reason_literal": "php.json 不存在",
       "reason_expression": "'php.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -718,7 +718,7 @@
       "reason_literal": "scala.json 不存在",
       "reason_expression": "'scala.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -730,7 +730,7 @@
       "reason_literal": "hcl.json 不存在",
       "reason_expression": "'hcl.json 不存在'",
       "condition_or_module": null,
-      "file_sha256": "378a811b7b8a2db57022be3042986ec31561c5bfc656f50cfedb57b7d8532426",
+      "file_sha256": "66af65a9f71c78fa44b75809c26f3288d780bf429b8b7ea5af2d10fd9a70922d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -742,7 +742,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "f588c8013cbe755919cec6487051c6a6acd62f7d18a0cbe4869cda72daeb2a6a",
+      "file_sha256": "96dcce0e0a45de4cf48f78eacf2df373ca08374a8fbaa1ece41f1e285c802075",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -754,7 +754,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "f588c8013cbe755919cec6487051c6a6acd62f7d18a0cbe4869cda72daeb2a6a",
+      "file_sha256": "96dcce0e0a45de4cf48f78eacf2df373ca08374a8fbaa1ece41f1e285c802075",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -766,7 +766,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "f588c8013cbe755919cec6487051c6a6acd62f7d18a0cbe4869cda72daeb2a6a",
+      "file_sha256": "96dcce0e0a45de4cf48f78eacf2df373ca08374a8fbaa1ece41f1e285c802075",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -778,7 +778,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "f588c8013cbe755919cec6487051c6a6acd62f7d18a0cbe4869cda72daeb2a6a",
+      "file_sha256": "96dcce0e0a45de4cf48f78eacf2df373ca08374a8fbaa1ece41f1e285c802075",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -790,7 +790,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "f588c8013cbe755919cec6487051c6a6acd62f7d18a0cbe4869cda72daeb2a6a",
+      "file_sha256": "96dcce0e0a45de4cf48f78eacf2df373ca08374a8fbaa1ece41f1e285c802075",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -802,7 +802,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "f588c8013cbe755919cec6487051c6a6acd62f7d18a0cbe4869cda72daeb2a6a",
+      "file_sha256": "96dcce0e0a45de4cf48f78eacf2df373ca08374a8fbaa1ece41f1e285c802075",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -814,7 +814,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "f588c8013cbe755919cec6487051c6a6acd62f7d18a0cbe4869cda72daeb2a6a",
+      "file_sha256": "96dcce0e0a45de4cf48f78eacf2df373ca08374a8fbaa1ece41f1e285c802075",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -826,7 +826,7 @@
       "reason_literal": "pathspec 未安装，跳过字符类测试",
       "reason_expression": "'pathspec 未安装，跳过字符类测试'",
       "condition_or_module": "not _has_pathspec()",
-      "file_sha256": "1ec01acffcb91cb96ee681ad9799f029dc240fbaad2059378eccda1efb6df503",
+      "file_sha256": "0398752213a4b44597644c86f4ae92cda1ade57ee6b165c3a3b96c4fabd6fde7",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -838,7 +838,7 @@
       "reason_literal": "pathspec 未安装，跳过尾随空格测试",
       "reason_expression": "'pathspec 未安装，跳过尾随空格测试'",
       "condition_or_module": "not _has_pathspec()",
-      "file_sha256": "1ec01acffcb91cb96ee681ad9799f029dc240fbaad2059378eccda1efb6df503",
+      "file_sha256": "0398752213a4b44597644c86f4ae92cda1ade57ee6b165c3a3b96c4fabd6fde7",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -850,7 +850,7 @@
       "reason_literal": "pathspec 未安装，跳过 negation 恢复测试",
       "reason_expression": "'pathspec 未安装，跳过 negation 恢复测试'",
       "condition_or_module": "not _has_pathspec()",
-      "file_sha256": "1ec01acffcb91cb96ee681ad9799f029dc240fbaad2059378eccda1efb6df503",
+      "file_sha256": "0398752213a4b44597644c86f4ae92cda1ade57ee6b165c3a3b96c4fabd6fde7",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -862,7 +862,7 @@
       "reason_literal": "pathspec 未安装，跳过集成测试",
       "reason_expression": "'pathspec 未安装，跳过集成测试'",
       "condition_or_module": "not _has_pathspec()",
-      "file_sha256": "1ec01acffcb91cb96ee681ad9799f029dc240fbaad2059378eccda1efb6df503",
+      "file_sha256": "0398752213a4b44597644c86f4ae92cda1ade57ee6b165c3a3b96c4fabd6fde7",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -874,7 +874,7 @@
       "reason_literal": "仅 Windows 下 ntpath.expanduser 会静默不展开",
       "reason_expression": "'仅 Windows 下 ntpath.expanduser 会静默不展开'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "bd38bc905a999f38ed203a7d352ccc7ec73b95e1dc7da779194eee9ca82d8093",
+      "file_sha256": "90a96038b7896321418804f90ee1d0e673c6b266325a49853a0aa7578aa5c84b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -886,7 +886,7 @@
       "reason_literal": "git 不可用",
       "reason_expression": "'git 不可用'",
       "condition_or_module": "not GIT_AVAILABLE",
-      "file_sha256": "9a49af87574046ddd47912bef42b2630e40e9f55d50dade45397b929db0a3050",
+      "file_sha256": "4fa32ab0dce914946242347a3b7ceb5d8339b9b77a1dbba41a517b4eaef1bb43",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -898,7 +898,7 @@
       "reason_literal": "git 不可用",
       "reason_expression": "'git 不可用'",
       "condition_or_module": "not GIT_AVAILABLE",
-      "file_sha256": "9a49af87574046ddd47912bef42b2630e40e9f55d50dade45397b929db0a3050",
+      "file_sha256": "4fa32ab0dce914946242347a3b7ceb5d8339b9b77a1dbba41a517b4eaef1bb43",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -910,7 +910,7 @@
       "reason_literal": "git 不可用",
       "reason_expression": "'git 不可用'",
       "condition_or_module": "not GIT_AVAILABLE",
-      "file_sha256": "9a49af87574046ddd47912bef42b2630e40e9f55d50dade45397b929db0a3050",
+      "file_sha256": "4fa32ab0dce914946242347a3b7ceb5d8339b9b77a1dbba41a517b4eaef1bb43",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -922,7 +922,7 @@
       "reason_literal": "git 不可用",
       "reason_expression": "'git 不可用'",
       "condition_or_module": "not GIT_AVAILABLE",
-      "file_sha256": "9a49af87574046ddd47912bef42b2630e40e9f55d50dade45397b929db0a3050",
+      "file_sha256": "4fa32ab0dce914946242347a3b7ceb5d8339b9b77a1dbba41a517b4eaef1bb43",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -934,7 +934,7 @@
       "reason_literal": "文档未找到 'N 个 Mixin 列表' 标题，跳过内部一致性检查",
       "reason_expression": "\"文档未找到 'N 个 Mixin 列表' 标题，跳过内部一致性检查\"",
       "condition_or_module": null,
-      "file_sha256": "74d44438ffd7029eae448b1100166c5c2b39cfa35c4d97e9b89395f3c5310bc9",
+      "file_sha256": "d80fd4c4ada976416908389fe6d5584060335850cd6be13e2807a91b4b7d6a8e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -946,7 +946,7 @@
       "reason_literal": "callwarden_USER_GUIDE.md 不存在，跳过",
       "reason_expression": "'callwarden_USER_GUIDE.md 不存在，跳过'",
       "condition_or_module": null,
-      "file_sha256": "eb9165b0469181b04b0ab953e4650ee0c3eff75fd640811a150cc327886d272d",
+      "file_sha256": "b0dc5a500080a6ecbac7d72c1df7f5fac33db099cc4664c9c85343f690224d29",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -958,7 +958,7 @@
       "reason_literal": null,
       "reason_expression": "f'{rel_path} 不存在，跳过'",
       "condition_or_module": null,
-      "file_sha256": "eb9165b0469181b04b0ab953e4650ee0c3eff75fd640811a150cc327886d272d",
+      "file_sha256": "b0dc5a500080a6ecbac7d72c1df7f5fac33db099cc4664c9c85343f690224d29",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -970,7 +970,7 @@
       "reason_literal": null,
       "reason_expression": "f'{rel_path} 不存在，跳过'",
       "condition_or_module": null,
-      "file_sha256": "eb9165b0469181b04b0ab953e4650ee0c3eff75fd640811a150cc327886d272d",
+      "file_sha256": "b0dc5a500080a6ecbac7d72c1df7f5fac33db099cc4664c9c85343f690224d29",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -982,7 +982,7 @@
       "reason_literal": "隔离 daemon harness 依赖 Windows 进程/HTTP 传输",
       "reason_expression": "'隔离 daemon harness 依赖 Windows 进程/HTTP 传输'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "5250dfd1b63f1c878923cf7a98056ff93d6b780d9bf2905099c090a005654b9b",
+      "file_sha256": "d3d1ac2d646293510f98368e4bfeff108f520bab41fa39263e184e9755ecf15f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -994,7 +994,7 @@
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "5250dfd1b63f1c878923cf7a98056ff93d6b780d9bf2905099c090a005654b9b",
+      "file_sha256": "d3d1ac2d646293510f98368e4bfeff108f520bab41fa39263e184e9755ecf15f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1006,7 +1006,7 @@
       "reason_literal": "隔离 daemon harness 依赖 Windows 进程/HTTP 传输",
       "reason_expression": "'隔离 daemon harness 依赖 Windows 进程/HTTP 传输'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "68b054fa798cabef1a89d19690f116a5bf3816e52719505655f8bec48893b249",
+      "file_sha256": "4215759a67273c61582730d6238e347986948dac397a40aa49572cb11a77aa89",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1018,7 +1018,7 @@
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "68b054fa798cabef1a89d19690f116a5bf3816e52719505655f8bec48893b249",
+      "file_sha256": "4215759a67273c61582730d6238e347986948dac397a40aa49572cb11a77aa89",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1030,7 +1030,7 @@
       "reason_literal": "隔离 daemon harness 依赖 Windows 进程/HTTP 传输",
       "reason_expression": "'隔离 daemon harness 依赖 Windows 进程/HTTP 传输'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "95867d1de001e4daefaf59e8783971b741ed9dc591d2d0757ea59ec8a53f667e",
+      "file_sha256": "352c61e7b940c0d7be5cacf0e466156ef8904ea5680cea0b7f1f53aced2e583d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1042,7 +1042,7 @@
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "95867d1de001e4daefaf59e8783971b741ed9dc591d2d0757ea59ec8a53f667e",
+      "file_sha256": "352c61e7b940c0d7be5cacf0e466156ef8904ea5680cea0b7f1f53aced2e583d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1054,7 +1054,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "a3c06458c0f8250703e8bfd01ee478653e3588e3674424b3a4f1aa8b36fab47d",
+      "file_sha256": "883c6de34cc714b6e4d73cb22ca6cd24567d09c8d64ef12f84065edce52781d4",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1066,7 +1066,7 @@
       "reason_literal": "Rust file_generations facade 不可用（旧 pyd）",
       "reason_expression": "'Rust file_generations facade 不可用（旧 pyd）'",
       "condition_or_module": "not _RUST_FILE_GEN_AVAILABLE",
-      "file_sha256": "a3c06458c0f8250703e8bfd01ee478653e3588e3674424b3a4f1aa8b36fab47d",
+      "file_sha256": "883c6de34cc714b6e4d73cb22ca6cd24567d09c8d64ef12f84065edce52781d4",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1078,7 +1078,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "25bb4ff81db1c23ed65c6c2c85d9e85471aa3161623d8465a659731a0ae5ad7a",
+      "file_sha256": "b94cf522318d42bf0d0e359e7440cee5de07e045d9e51917c48b3d0df859b1dd",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1090,7 +1090,7 @@
       "reason_literal": "git 不可用，跳过 revision 新鲜度用例",
       "reason_expression": "'git 不可用，跳过 revision 新鲜度用例'",
       "condition_or_module": null,
-      "file_sha256": "fc883781a0c0dcbd43262d1c83e5fb1965fa0aa87cfaf2be86e7923b1b6a1fe0",
+      "file_sha256": "cc7ca0f4e84c844c32d5572ba3483ed43c5a3ad05146da6633f04685c4b9d258",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1102,7 +1102,7 @@
       "reason_literal": "daemon 未运行（无 authority manifest），跳过 live 成功用例",
       "reason_expression": "'daemon 未运行（无 authority manifest），跳过 live 成功用例'",
       "condition_or_module": null,
-      "file_sha256": "aa63dd64de4855d7d2f3a5e3c12989965f013fb5e941dcdd32de8432dce69cfd",
+      "file_sha256": "83ac48f6f8332346fba1ad91ff2ee8bc9e72c4fe82abc6c1788127ead2bf86b3",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1114,7 +1114,7 @@
       "reason_literal": "daemon 未运行（无 HTTP endpoint），跳过 live 用例",
       "reason_expression": "'daemon 未运行（无 HTTP endpoint），跳过 live 用例'",
       "condition_or_module": null,
-      "file_sha256": "da1c3d9c8a76106e66620cce2d5e8635250c13e0d283bbb880627c89908c459f",
+      "file_sha256": "e5bdabc3c6db4b01023be5864c735f6eb720777745246a12080997d327fe6a87",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1126,7 +1126,7 @@
       "reason_literal": "daemon 未运行，跳过 HTTP RPC round-trip 用例",
       "reason_expression": "'daemon 未运行，跳过 HTTP RPC round-trip 用例'",
       "condition_or_module": null,
-      "file_sha256": "e0afeb7ca2a0e47a58e08085569801633bfd59e219e8a93a83a74ab14bfdee91",
+      "file_sha256": "5d5b2ebfbd9b75df6aa44519ed078e678c2571f3b6a0ff1e3e6b82cec613e193",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1138,7 +1138,7 @@
       "reason_literal": "claim-recover CLI↔daemon E2E 需要 Windows 隔离 daemon",
       "reason_expression": "'claim-recover CLI↔daemon E2E 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "a1b086b5abce49c1b5ec548bf4299ecd727c30b78c736faa2bea9f6f4e15804a",
+      "file_sha256": "815e83043924b84de63a1aa04fa1d89d7c1bdd9187fa188d6383d198790a8a37",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1150,7 +1150,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "a1b086b5abce49c1b5ec548bf4299ecd727c30b78c736faa2bea9f6f4e15804a",
+      "file_sha256": "815e83043924b84de63a1aa04fa1d89d7c1bdd9187fa188d6383d198790a8a37",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1162,7 +1162,7 @@
       "reason_literal": "CLI↔daemon 生命周期 parity 需要 Windows 隔离 daemon",
       "reason_expression": "'CLI↔daemon 生命周期 parity 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "b8181c22794a0918aa77515ea6a85b4bc66247b3f57d7709300fc02a2cc555de",
+      "file_sha256": "a7444c6f0291e26d284ba3a5a0efcf72577ab40b9516e9f23f18eb3a342f9fa4",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1174,7 +1174,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "b8181c22794a0918aa77515ea6a85b4bc66247b3f57d7709300fc02a2cc555de",
+      "file_sha256": "a7444c6f0291e26d284ba3a5a0efcf72577ab40b9516e9f23f18eb3a342f9fa4",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1186,7 +1186,7 @@
       "reason_literal": "watchdog 未安装",
       "reason_expression": "'watchdog 未安装'",
       "condition_or_module": "not HAS_WATCHDOG",
-      "file_sha256": "e0f0472901e1b954d94c96b490c7458f709b20a373c47cde16ba49ba0d4ad418",
+      "file_sha256": "44fd75cb2f6f9cb14c570306eb0fba527a04a4506f9b43d284eea1bee06e438d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1198,7 +1198,7 @@
       "reason_literal": "watchdog 未安装",
       "reason_expression": "'watchdog 未安装'",
       "condition_or_module": "not HAS_WATCHDOG",
-      "file_sha256": "e0f0472901e1b954d94c96b490c7458f709b20a373c47cde16ba49ba0d4ad418",
+      "file_sha256": "44fd75cb2f6f9cb14c570306eb0fba527a04a4506f9b43d284eea1bee06e438d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1210,7 +1210,7 @@
       "reason_literal": "daemon_autostart Windows 分支注入链仅在 Windows 验证",
       "reason_expression": "'daemon_autostart Windows 分支注入链仅在 Windows 验证'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "72e134d12cceeee143feaeedc408aa03c879dc508aa3d7a50a2266148755b9bd",
+      "file_sha256": "a18afeb7ea25bed1978f3fa9e6bcd8911584705709f95468d0ec09a3ccd03211",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1222,7 +1222,7 @@
       "reason_literal": "Unix file lock specific",
       "reason_expression": "'Unix file lock specific'",
       "condition_or_module": "sys.platform == 'win32'",
-      "file_sha256": "8df5a11ebfd8417a79c3ddf3ff16928b6151c6ae44dd99126fb29d4d9c75f307",
+      "file_sha256": "cccfd0d0851c8d882007041299f79cb9a81b7fd84afbe68c31532c5a8305ed88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1234,7 +1234,7 @@
       "reason_literal": "Windows mutex specific",
       "reason_expression": "'Windows mutex specific'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "8df5a11ebfd8417a79c3ddf3ff16928b6151c6ae44dd99126fb29d4d9c75f307",
+      "file_sha256": "cccfd0d0851c8d882007041299f79cb9a81b7fd84afbe68c31532c5a8305ed88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1246,7 +1246,7 @@
       "reason_literal": "baseline.json 未生成",
       "reason_expression": "'baseline.json 未生成'",
       "condition_or_module": "not _BASELINE_JSON.exists()",
-      "file_sha256": "6f06e0bd5d4c9fee8dd771f759453e8c2151bac0a3a722e886e7ac6582f2b50d",
+      "file_sha256": "8fc8d3e5e70d006aa2b745349aa5cc30685f0dbf7e6517982301ba7385e22bb8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1258,7 +1258,7 @@
       "reason_literal": "baseline.json 未生成",
       "reason_expression": "'baseline.json 未生成'",
       "condition_or_module": "not _BASELINE_JSON.exists()",
-      "file_sha256": "6f06e0bd5d4c9fee8dd771f759453e8c2151bac0a3a722e886e7ac6582f2b50d",
+      "file_sha256": "8fc8d3e5e70d006aa2b745349aa5cc30685f0dbf7e6517982301ba7385e22bb8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1270,7 +1270,7 @@
       "reason_literal": "callwarden_USER_GUIDE.md 不存在，跳过",
       "reason_expression": "'callwarden_USER_GUIDE.md 不存在，跳过'",
       "condition_or_module": null,
-      "file_sha256": "5a379a25e73e83c61b9ceac4aab364ad0b02d6c87f917b89bbc7411de9f5ab3c",
+      "file_sha256": "bc35239533771e54a8fa8cd7461b63a9333fbe21ebaa675eef76344a9c8374e5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1282,7 +1282,7 @@
       "reason_literal": "callwarden_USER_GUIDE.md 不存在，跳过",
       "reason_expression": "'callwarden_USER_GUIDE.md 不存在，跳过'",
       "condition_or_module": null,
-      "file_sha256": "5a379a25e73e83c61b9ceac4aab364ad0b02d6c87f917b89bbc7411de9f5ab3c",
+      "file_sha256": "bc35239533771e54a8fa8cd7461b63a9333fbe21ebaa675eef76344a9c8374e5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1294,7 +1294,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "a4218f74483bc5b84902e6226adfc51cc17f3374c591ab9cd93e3cd453d13a8a",
+      "file_sha256": "5ab6c339af6483545254cc3730a9567cc6a108e39221384994c3aff0f3e3df97",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1306,7 +1306,7 @@
       "reason_literal": null,
       "reason_expression": "f'runtime/current/cw-daemon.exe 不存在: {_CURRENT_DAEMON}'",
       "condition_or_module": null,
-      "file_sha256": "2355a5062bd1cad47332f96d742d4aaaf4cc9b85377ee58bfd73d5ec020d3384",
+      "file_sha256": "bb4dad1f3e413b024a8d8cc3b9085f04e6e4ffa4e02f3550c21ae0e2d91c29b9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1318,7 +1318,7 @@
       "reason_literal": "runtime/current cw-daemon.exe 不含 H6 默认态 HTTP 改动（默认态未发布 HTTP manifest）；需先执行步骤 #6 refresh_shared_runtime.ps1 部署 fresh runtime后重跑本测试验证默认态 HTTP",
       "reason_expression": "'runtime/current cw-daemon.exe 不含 H6 默认态 HTTP 改动（默认态未发布 HTTP manifest）；需先执行步骤 #6 refresh_shared_runtime.ps1 部署 fresh runtime后重跑本测试验证默认态 HTTP'",
       "condition_or_module": null,
-      "file_sha256": "2355a5062bd1cad47332f96d742d4aaaf4cc9b85377ee58bfd73d5ec020d3384",
+      "file_sha256": "bb4dad1f3e413b024a8d8cc3b9085f04e6e4ffa4e02f3550c21ae0e2d91c29b9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1330,7 +1330,7 @@
       "reason_literal": null,
       "reason_expression": "f'runtime/current/cw-daemon.exe 不存在: {_CURRENT_DAEMON}'",
       "condition_or_module": null,
-      "file_sha256": "2355a5062bd1cad47332f96d742d4aaaf4cc9b85377ee58bfd73d5ec020d3384",
+      "file_sha256": "bb4dad1f3e413b024a8d8cc3b9085f04e6e4ffa4e02f3550c21ae0e2d91c29b9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1342,7 +1342,7 @@
       "reason_literal": "runtime/current cw-daemon.exe 不含 H6 默认态 HTTP 改动（默认态未发布 HTTP manifest）",
       "reason_expression": "'runtime/current cw-daemon.exe 不含 H6 默认态 HTTP 改动（默认态未发布 HTTP manifest）'",
       "condition_or_module": null,
-      "file_sha256": "2355a5062bd1cad47332f96d742d4aaaf4cc9b85377ee58bfd73d5ec020d3384",
+      "file_sha256": "bb4dad1f3e413b024a8d8cc3b9085f04e6e4ffa4e02f3550c21ae0e2d91c29b9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1354,7 +1354,7 @@
       "reason_literal": null,
       "reason_expression": "f'runtime/current/cw-daemon.exe 不存在: {_CURRENT_DAEMON}'",
       "condition_or_module": null,
-      "file_sha256": "2355a5062bd1cad47332f96d742d4aaaf4cc9b85377ee58bfd73d5ec020d3384",
+      "file_sha256": "bb4dad1f3e413b024a8d8cc3b9085f04e6e4ffa4e02f3550c21ae0e2d91c29b9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1366,7 +1366,7 @@
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "4c8d887750c2bfb06a9276c229c5800bc244ad32c2cf9212a2f1abd77f35e915",
+      "file_sha256": "531ddf4108115a2c6caffccde9413a2d1590bc0af649a449b6c02b3fe93aabe9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1378,7 +1378,7 @@
       "reason_literal": "cw-daemon 二进制不可用（pki init 需要）",
       "reason_expression": "'cw-daemon 二进制不可用（pki init 需要）'",
       "condition_or_module": null,
-      "file_sha256": "4c8d887750c2bfb06a9276c229c5800bc244ad32c2cf9212a2f1abd77f35e915",
+      "file_sha256": "531ddf4108115a2c6caffccde9413a2d1590bc0af649a449b6c02b3fe93aabe9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1390,7 +1390,7 @@
       "reason_literal": "cw-daemon 二进制不可用",
       "reason_expression": "'cw-daemon 二进制不可用'",
       "condition_or_module": null,
-      "file_sha256": "4c8d887750c2bfb06a9276c229c5800bc244ad32c2cf9212a2f1abd77f35e915",
+      "file_sha256": "531ddf4108115a2c6caffccde9413a2d1590bc0af649a449b6c02b3fe93aabe9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1402,7 +1402,7 @@
       "reason_literal": "cw-daemon 二进制不可用",
       "reason_expression": "'cw-daemon 二进制不可用'",
       "condition_or_module": null,
-      "file_sha256": "4c8d887750c2bfb06a9276c229c5800bc244ad32c2cf9212a2f1abd77f35e915",
+      "file_sha256": "531ddf4108115a2c6caffccde9413a2d1590bc0af649a449b6c02b3fe93aabe9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1414,7 +1414,7 @@
       "reason_literal": "cw-daemon 二进制不可用（pki init 需要）",
       "reason_expression": "'cw-daemon 二进制不可用（pki init 需要）'",
       "condition_or_module": null,
-      "file_sha256": "4c8d887750c2bfb06a9276c229c5800bc244ad32c2cf9212a2f1abd77f35e915",
+      "file_sha256": "531ddf4108115a2c6caffccde9413a2d1590bc0af649a449b6c02b3fe93aabe9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1426,7 +1426,7 @@
       "reason_literal": null,
       "reason_expression": "f'无法读取 git HEAD: {r.stderr}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1438,7 +1438,7 @@
       "reason_literal": null,
       "reason_expression": "f'未找到 runtime refresh evidence: {_EVIDENCE_DIR}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1450,7 +1450,7 @@
       "reason_literal": null,
       "reason_expression": "f'未找到 refresh evidence（需 schema=cw.runtime_refresh.v1 且 status/daemon_runtime/binaries 齐全）: {_EVIDENCE_DIR}；最近文件: {recent}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1462,7 +1462,7 @@
       "reason_literal": null,
       "reason_expression": "f'runtime refresh evidence git_head {ev_head[:12]} != 当前 HEAD {head[:12]}：runtime 未按当前 HEAD 刷新（部署环境前置，非代码回归）；执行 scripts/refresh_shared_runtime.ps1 后重跑'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1474,7 +1474,7 @@
       "reason_literal": "运行路径核对仅 Windows 适用",
       "reason_expression": "'运行路径核对仅 Windows 适用'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1486,7 +1486,7 @@
       "reason_literal": null,
       "reason_expression": "f'无法枚举运行 daemon: {e}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1498,7 +1498,7 @@
       "reason_literal": "无来自 runtime/current 的运行 daemon（生产 daemon 未启动，环境前置条件）",
       "reason_expression": "'无来自 runtime/current 的运行 daemon（生产 daemon 未启动，环境前置条件）'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1510,7 +1510,7 @@
       "reason_literal": null,
       "reason_expression": "f'cw daemon health 执行异常: {e}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1522,7 +1522,7 @@
       "reason_literal": null,
       "reason_expression": "f'生产 daemon 不可达（exit={r.returncode}）: {r.stdout.strip() or r.stderr.strip()}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1534,7 +1534,7 @@
       "reason_literal": null,
       "reason_expression": "f'runtime/current/cw-daemon.exe 不存在: {_CURRENT_DAEMON}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "863ea484d81c7480cf5a4f9c8b8b0fa23c8a895b8708bfc1a6d7fe0421a17e20",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1546,7 +1546,7 @@
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "178df4a1033757988c1006f66314b71a23637b8a27c3d8a56630af0d2d22b6d3",
+      "file_sha256": "1661c586bc93977920664b7a7d917a2a238c2bf08194b94b5bff469f1fe1e0ec",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1558,7 +1558,7 @@
       "reason_literal": "cw-daemon 二进制不可用",
       "reason_expression": "'cw-daemon 二进制不可用'",
       "condition_or_module": null,
-      "file_sha256": "178df4a1033757988c1006f66314b71a23637b8a27c3d8a56630af0d2d22b6d3",
+      "file_sha256": "1661c586bc93977920664b7a7d917a2a238c2bf08194b94b5bff469f1fe1e0ec",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1570,7 +1570,7 @@
       "reason_literal": "cw-daemon 二进制不可用",
       "reason_expression": "'cw-daemon 二进制不可用'",
       "condition_or_module": null,
-      "file_sha256": "178df4a1033757988c1006f66314b71a23637b8a27c3d8a56630af0d2d22b6d3",
+      "file_sha256": "1661c586bc93977920664b7a7d917a2a238c2bf08194b94b5bff469f1fe1e0ec",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1582,7 +1582,7 @@
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "2f1f58400143a88d0513854fa9a1f44b01f2b948b132f484924c82d6fcc6e4ac",
+      "file_sha256": "33fd0da395c2a0b1becb5e002323c99f2877743d8e6b2e64575a78fb5e21be4b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1594,7 +1594,7 @@
       "reason_literal": null,
       "reason_expression": "f'无最小参数集，跳过：{subcmd}'",
       "condition_or_module": null,
-      "file_sha256": "a810de0c511426083718d0a7d91e22a19a516be181a1448bc9facfa604c01b2e",
+      "file_sha256": "f5c085fe463fec00b98f26678a990b1929fe9102fa7c2e64ac7717170b5adba2",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1606,7 +1606,7 @@
       "reason_literal": "Rust 扩展不可用，跳过真实 parser 集成",
       "reason_expression": "'Rust 扩展不可用，跳过真实 parser 集成'",
       "condition_or_module": null,
-      "file_sha256": "1c838855ed88ea72a24d0e62912c62c1226c5d57904168b8deeb5ae8afdc61e0",
+      "file_sha256": "91212171bf5c096f2ed61c26066623e8a42ae27e0c61726a2ac4a270ed56ef53",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1618,7 +1618,7 @@
       "reason_literal": "callwarden_core 不可导入，需先 cargo build --release + 复制 .pyd",
       "reason_expression": "'callwarden_core 不可导入，需先 cargo build --release + 复制 .pyd'",
       "condition_or_module": "not _rust_available()",
-      "file_sha256": "2683ed525dd9ef5662866ececf73e843115fd355964e44cf65925f490bbdefe7",
+      "file_sha256": "0e649ac61e172bf4a0d234718c7b7a85e4d7ef78cdf7c866040d98be1c42152d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1630,7 +1630,7 @@
       "reason_literal": "可选 grammar 包 tree_sitter_elixir 未安装（Python parser 回退用例），诚实 skip",
       "reason_expression": "'可选 grammar 包 tree_sitter_elixir 未安装（Python parser 回退用例），诚实 skip'",
       "condition_or_module": "'tree_sitter_elixir'",
-      "file_sha256": "2683ed525dd9ef5662866ececf73e843115fd355964e44cf65925f490bbdefe7",
+      "file_sha256": "0e649ac61e172bf4a0d234718c7b7a85e4d7ef78cdf7c866040d98be1c42152d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1642,7 +1642,7 @@
       "reason_literal": "可选 grammar 包 tree_sitter_hcl 未安装（Python parser 回退用例），诚实 skip",
       "reason_expression": "'可选 grammar 包 tree_sitter_hcl 未安装（Python parser 回退用例），诚实 skip'",
       "condition_or_module": "'tree_sitter_hcl'",
-      "file_sha256": "2683ed525dd9ef5662866ececf73e843115fd355964e44cf65925f490bbdefe7",
+      "file_sha256": "0e649ac61e172bf4a0d234718c7b7a85e4d7ef78cdf7c866040d98be1c42152d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1654,7 +1654,7 @@
       "reason_literal": "进程级 Lease 门禁 round-trip 需要 Windows 隔离 daemon",
       "reason_expression": "'进程级 Lease 门禁 round-trip 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "3e97cf60e5777ff8f6ef75b4810a1f727f613d01f0814b4a0cd26ac18f2b31cc",
+      "file_sha256": "8558b8d63ece23e3318db437b8196410447aafb87662812d83e16c0ff447c8ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1666,7 +1666,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "3e97cf60e5777ff8f6ef75b4810a1f727f613d01f0814b4a0cd26ac18f2b31cc",
+      "file_sha256": "8558b8d63ece23e3318db437b8196410447aafb87662812d83e16c0ff447c8ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1678,7 +1678,7 @@
       "reason_literal": "进程级 Lease RPC round-trip 需要 Windows 隔离 daemon",
       "reason_expression": "'进程级 Lease RPC round-trip 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "a1fafd1de68d8b5c85bcedb7a680c134e09088833ee59d28f9adf4bd5d909c4f",
+      "file_sha256": "be94327b462e36e801c4d22d36cbbc33ed6d93c01205e048a18c5802dcf870df",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1690,7 +1690,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "a1fafd1de68d8b5c85bcedb7a680c134e09088833ee59d28f9adf4bd5d909c4f",
+      "file_sha256": "be94327b462e36e801c4d22d36cbbc33ed6d93c01205e048a18c5802dcf870df",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1702,7 +1702,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden.server.tools.tools_security'",
-      "file_sha256": "587e7d4f3cde3122ca3df0c76c2f88f287d03aef141a4933a36662b3dac2cce0",
+      "file_sha256": "aee1a38e8ffd1b7ec0d29846a28332999f9193730c3d5118f267348e52ac662e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1714,7 +1714,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden.server.compat_registry'",
-      "file_sha256": "587e7d4f3cde3122ca3df0c76c2f88f287d03aef141a4933a36662b3dac2cce0",
+      "file_sha256": "aee1a38e8ffd1b7ec0d29846a28332999f9193730c3d5118f267348e52ac662e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1726,7 +1726,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden.server.tools.tools_summary'",
-      "file_sha256": "617436432bd14748cb72198824b1bae549abbf9be4c3d53c20d74eed8389eb88",
+      "file_sha256": "f823dad0c23741261160e447c2a8d1449a3ec5d735bdac6a738e2a6322b5128c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1738,7 +1738,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden.server.compat_registry'",
-      "file_sha256": "617436432bd14748cb72198824b1bae549abbf9be4c3d53c20d74eed8389eb88",
+      "file_sha256": "f823dad0c23741261160e447c2a8d1449a3ec5d735bdac6a738e2a6322b5128c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1846,7 +1846,7 @@
       "reason_literal": "fastmcp 未安装，跳过 MCP Server 测试",
       "reason_expression": "'fastmcp 未安装，跳过 MCP Server 测试'",
       "condition_or_module": "not HAS_FASTMCP",
-      "file_sha256": "2d1e84344e99c67c8f4366779f514da660c86c4379c6457ae34ac9f20aac15ab",
+      "file_sha256": "560efe6e9a040be680202d225a2b5e0bdd6937743083424018c8bc28c72ac85b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1858,7 +1858,7 @@
       "reason_literal": null,
       "reason_expression": "f'审计报告不存在，跳过: {_MCP_AUDIT_PATH}'",
       "condition_or_module": null,
-      "file_sha256": "82ce8faa170c4f7547f8f85fbf7519722745e55455fcbb1df0e87959e46429e7",
+      "file_sha256": "fa1855239d373dba36dfed172486f1c1e1166b55cbdce204634fb048286bc926",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1870,7 +1870,7 @@
       "reason_literal": "callwarden_core 未安装或 migration_manifest 未暴露",
       "reason_expression": "'callwarden_core 未安装或 migration_manifest 未暴露'",
       "condition_or_module": null,
-      "file_sha256": "7b7814aaacc64d31545c7a3eb5f2f67306d198e6a02060994878ca9056f39229",
+      "file_sha256": "c80d406809ae7c2a4135ca6a92967755b9eaded2c09c7106e455218e9daf7c87",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1882,7 +1882,7 @@
       "reason_literal": "daemon TLS 控制面需要 Windows + loopback HTTPS daemon",
       "reason_expression": "'daemon TLS 控制面需要 Windows + loopback HTTPS daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb",
+      "file_sha256": "3a58edd9ffcd3accabcc1063eac4ac19ae75a46f96a2cd6b625fb0eb18bbdf3f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1894,7 +1894,7 @@
       "reason_literal": "未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "_DAEMON_BIN is None",
-      "file_sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb",
+      "file_sha256": "3a58edd9ffcd3accabcc1063eac4ac19ae75a46f96a2cd6b625fb0eb18bbdf3f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1906,7 +1906,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'cryptography'",
-      "file_sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb",
+      "file_sha256": "3a58edd9ffcd3accabcc1063eac4ac19ae75a46f96a2cd6b625fb0eb18bbdf3f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1918,7 +1918,7 @@
       "reason_literal": "cw-daemon 未构建",
       "reason_expression": "'cw-daemon 未构建'",
       "condition_or_module": null,
-      "file_sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb",
+      "file_sha256": "3a58edd9ffcd3accabcc1063eac4ac19ae75a46f96a2cd6b625fb0eb18bbdf3f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1930,7 +1930,7 @@
       "reason_literal": "mTLS 引导链需要 Windows + loopback HTTPS daemon",
       "reason_expression": "'mTLS 引导链需要 Windows + loopback HTTPS daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "51e4a4a58ee3146b0404f65e7982c93f15f9853a78c7dcd6e93427eb1b43a3a9",
+      "file_sha256": "f834f1d3b0e062ee5f4842aea2794eb1b6d1668abcd4a7290870025af97e14e1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1942,7 +1942,7 @@
       "reason_literal": "未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "cp._DAEMON_BIN is None",
-      "file_sha256": "51e4a4a58ee3146b0404f65e7982c93f15f9853a78c7dcd6e93427eb1b43a3a9",
+      "file_sha256": "f834f1d3b0e062ee5f4842aea2794eb1b6d1668abcd4a7290870025af97e14e1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1954,7 +1954,7 @@
       "reason_literal": "cw-daemon 未构建",
       "reason_expression": "'cw-daemon 未构建'",
       "condition_or_module": null,
-      "file_sha256": "51e4a4a58ee3146b0404f65e7982c93f15f9853a78c7dcd6e93427eb1b43a3a9",
+      "file_sha256": "f834f1d3b0e062ee5f4842aea2794eb1b6d1668abcd4a7290870025af97e14e1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1966,7 +1966,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'cryptography'",
-      "file_sha256": "51e4a4a58ee3146b0404f65e7982c93f15f9853a78c7dcd6e93427eb1b43a3a9",
+      "file_sha256": "f834f1d3b0e062ee5f4842aea2794eb1b6d1668abcd4a7290870025af97e14e1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1978,7 +1978,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'cryptography'",
-      "file_sha256": "51e4a4a58ee3146b0404f65e7982c93f15f9853a78c7dcd6e93427eb1b43a3a9",
+      "file_sha256": "f834f1d3b0e062ee5f4842aea2794eb1b6d1668abcd4a7290870025af97e14e1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1990,7 +1990,7 @@
       "reason_literal": "callwarden_core 未构建，跳过真实签名验证",
       "reason_expression": "'callwarden_core 未构建，跳过真实签名验证'",
       "condition_or_module": null,
-      "file_sha256": "2567d9adab8219559e729c82fd40ffae63db9fa2835b2e3ae89ad2e18d4fa00c",
+      "file_sha256": "ffb2c86d2fd542f7ffbada5e708feb05500d35012487aff387491706fcc99842",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2002,7 +2002,7 @@
       "reason_literal": "callwarden_core 未构建",
       "reason_expression": "'callwarden_core 未构建'",
       "condition_or_module": null,
-      "file_sha256": "2567d9adab8219559e729c82fd40ffae63db9fa2835b2e3ae89ad2e18d4fa00c",
+      "file_sha256": "ffb2c86d2fd542f7ffbada5e708feb05500d35012487aff387491706fcc99842",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2014,7 +2014,7 @@
       "reason_literal": null,
       "reason_expression": "f'{binary_name} 未构建，跳过端到端 wheel 验证'",
       "condition_or_module": null,
-      "file_sha256": "2567d9adab8219559e729c82fd40ffae63db9fa2835b2e3ae89ad2e18d4fa00c",
+      "file_sha256": "ffb2c86d2fd542f7ffbada5e708feb05500d35012487aff387491706fcc99842",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2026,7 +2026,7 @@
       "reason_literal": null,
       "reason_expression": "f'build wheel 失败：{result.stderr[:500]}'",
       "condition_or_module": null,
-      "file_sha256": "2567d9adab8219559e729c82fd40ffae63db9fa2835b2e3ae89ad2e18d4fa00c",
+      "file_sha256": "ffb2c86d2fd542f7ffbada5e708feb05500d35012487aff387491706fcc99842",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2038,7 +2038,7 @@
       "reason_literal": "项目内无 .md 文件",
       "reason_expression": "'项目内无 .md 文件'",
       "condition_or_module": null,
-      "file_sha256": "ed58172019c48dbc31953010a2ab9d75065aaf5c234c218ef5cfc94b957a3bfd",
+      "file_sha256": "1a368b0f99e95fb0011818add770c484656bff5abb08e93ce092671f206da57a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2050,7 +2050,7 @@
       "reason_literal": "callwarden.db.rust_parser_facade 不可用",
       "reason_expression": "'callwarden.db.rust_parser_facade 不可用'",
       "condition_or_module": "not _FACADE_AVAILABLE",
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2062,7 +2062,7 @@
       "reason_literal": "callwarden.db.rust_parser_facade 不可用",
       "reason_expression": "'callwarden.db.rust_parser_facade 不可用'",
       "condition_or_module": "not _FACADE_AVAILABLE",
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2074,7 +2074,7 @@
       "reason_literal": "callwarden.db.rust_parser_facade 不可用",
       "reason_expression": "'callwarden.db.rust_parser_facade 不可用'",
       "condition_or_module": "not _FACADE_AVAILABLE",
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2086,7 +2086,7 @@
       "reason_literal": "当前在 frozen build 中运行",
       "reason_expression": "'当前在 frozen build 中运行'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2098,7 +2098,7 @@
       "reason_literal": "当前在 frozen build 中运行",
       "reason_expression": "'当前在 frozen build 中运行'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2110,7 +2110,7 @@
       "reason_literal": "当前在 frozen build 中运行",
       "reason_expression": "'当前在 frozen build 中运行'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2122,7 +2122,7 @@
       "reason_literal": "当前在 frozen build 中运行",
       "reason_expression": "'当前在 frozen build 中运行'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2134,7 +2134,7 @@
       "reason_literal": "callwarden.cw 不可用",
       "reason_expression": "'callwarden.cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2146,7 +2146,7 @@
       "reason_literal": "callwarden.cw 不可用",
       "reason_expression": "'callwarden.cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2158,7 +2158,7 @@
       "reason_literal": "callwarden.cw 不可用",
       "reason_expression": "'callwarden.cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2170,7 +2170,7 @@
       "reason_literal": "callwarden.cw 不可用",
       "reason_expression": "'callwarden.cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2182,7 +2182,7 @@
       "reason_literal": "callwarden.cw 不可用",
       "reason_expression": "'callwarden.cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2194,7 +2194,7 @@
       "reason_literal": "spec 文件不存在",
       "reason_expression": "'spec 文件不存在'",
       "condition_or_module": "not SPEC_PATH.exists()",
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2206,7 +2206,7 @@
       "reason_literal": "spec 文件不存在",
       "reason_expression": "'spec 文件不存在'",
       "condition_or_module": "not SPEC_PATH.exists()",
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2218,7 +2218,7 @@
       "reason_literal": "spec 文件不存在",
       "reason_expression": "'spec 文件不存在'",
       "condition_or_module": "not SPEC_PATH.exists()",
-      "file_sha256": "ad138352fc3583bc30f47a4372ec80e44b31391ba40d4c98c8946becb664d329",
+      "file_sha256": "f7d7ea1f2f7e7d91ff267c4d2bd23cff582798af315b5db096fe1ddca0a9b54b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2230,7 +2230,7 @@
       "reason_literal": "server.replicator 不可用（需 Rust 扩展）",
       "reason_expression": "'server.replicator 不可用（需 Rust 扩展）'",
       "condition_or_module": "not _REPLICATOR_AVAILABLE",
-      "file_sha256": "a1e63e14e290d240c6f0ba00f5f536047f1749f7b2bff2711cdeaf878edfce22",
+      "file_sha256": "532d71954ed19dc723fccf28acf3f8628d4cee0a79e18eb24380b84552ea5f05",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2242,7 +2242,7 @@
       "reason_literal": "callwarden.db.rust_parser_facade 不可用",
       "reason_expression": "'callwarden.db.rust_parser_facade 不可用'",
       "condition_or_module": "not _FACADE_AVAILABLE",
-      "file_sha256": "a1e63e14e290d240c6f0ba00f5f536047f1749f7b2bff2711cdeaf878edfce22",
+      "file_sha256": "532d71954ed19dc723fccf28acf3f8628d4cee0a79e18eb24380b84552ea5f05",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2254,7 +2254,7 @@
       "reason_literal": "callwarden.db.rust_parser_facade 不可用",
       "reason_expression": "'callwarden.db.rust_parser_facade 不可用'",
       "condition_or_module": "not _FACADE_AVAILABLE",
-      "file_sha256": "a1e63e14e290d240c6f0ba00f5f536047f1749f7b2bff2711cdeaf878edfce22",
+      "file_sha256": "532d71954ed19dc723fccf28acf3f8628d4cee0a79e18eb24380b84552ea5f05",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2266,7 +2266,7 @@
       "reason_literal": "callwarden.db.rust_parser_facade 不可用",
       "reason_expression": "'callwarden.db.rust_parser_facade 不可用'",
       "condition_or_module": "not _FACADE_AVAILABLE",
-      "file_sha256": "a1e63e14e290d240c6f0ba00f5f536047f1749f7b2bff2711cdeaf878edfce22",
+      "file_sha256": "532d71954ed19dc723fccf28acf3f8628d4cee0a79e18eb24380b84552ea5f05",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2278,7 +2278,7 @@
       "reason_literal": "cw 可执行文件不可用（无 frozen 产物也无 cw.py）",
       "reason_expression": "'cw 可执行文件不可用（无 frozen 产物也无 cw.py）'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2290,7 +2290,7 @@
       "reason_literal": null,
       "reason_expression": "f'Docker 不可用，跳过 Ubuntu {ubuntu_version} 容器测试'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2302,7 +2302,7 @@
       "reason_literal": null,
       "reason_expression": "f'Docker 命令不可用，跳过 Ubuntu {ubuntu_version} 容器测试'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2314,7 +2314,7 @@
       "reason_literal": null,
       "reason_expression": "f'容器矩阵 fixture 不存在: {fixture_project}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2326,7 +2326,7 @@
       "reason_literal": null,
       "reason_expression": "f'Ubuntu {ubuntu_version} 容器启动超时'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2338,7 +2338,7 @@
       "reason_literal": null,
       "reason_expression": "f'Ubuntu {ubuntu_version} 镜像不可用: {result.stderr[:200]}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2350,7 +2350,7 @@
       "reason_literal": null,
       "reason_expression": "f'Ubuntu {ubuntu_version} 容器运行失败: {result.stderr[:200]}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2362,7 +2362,7 @@
       "reason_literal": null,
       "reason_expression": "f'容器矩阵结果目录不存在: {results_dir}（CI 运行后生成）'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2374,7 +2374,7 @@
       "reason_literal": "无容器矩阵结果文件（CI 未运行）",
       "reason_expression": "'无容器矩阵结果文件（CI 未运行）'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2386,7 +2386,7 @@
       "reason_literal": null,
       "reason_expression": "f'SMB fixture 脚本不存在: {smb_script}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2398,7 +2398,7 @@
       "reason_literal": null,
       "reason_expression": "err",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2410,7 +2410,7 @@
       "reason_literal": null,
       "reason_expression": "f'VS Code Remote fixture 脚本不存在: {vscode_script}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2422,7 +2422,7 @@
       "reason_literal": null,
       "reason_expression": "err",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2434,7 +2434,7 @@
       "reason_literal": "cw 不可用",
       "reason_expression": "'cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2446,7 +2446,7 @@
       "reason_literal": null,
       "reason_expression": "f'cw 在隔离 HOME 下不可用（可能缺少 Rust 扩展或依赖）: {probe_err[:200]}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2458,7 +2458,7 @@
       "reason_literal": "cw 不可用",
       "reason_expression": "'cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2470,7 +2470,7 @@
       "reason_literal": null,
       "reason_expression": "f'第一次 refresh --all 失败（cw 可能不可用）: {stderr1[:200]}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2482,7 +2482,7 @@
       "reason_literal": "cw 不可用",
       "reason_expression": "'cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2494,7 +2494,7 @@
       "reason_literal": null,
       "reason_expression": "f'cw 处理含 Unicode/空格路径失败（环境问题）: {stderr[:200]}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2506,7 +2506,7 @@
       "reason_literal": "cw 不可用",
       "reason_expression": "'cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2518,7 +2518,7 @@
       "reason_literal": "cw 不可用",
       "reason_expression": "'cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2530,7 +2530,7 @@
       "reason_literal": "cw 不可用",
       "reason_expression": "'cw 不可用'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2542,7 +2542,7 @@
       "reason_literal": null,
       "reason_expression": "f'cw 处理混合编码文件返回非零（可能因版本差异）: {stderr[:200]}'",
       "condition_or_module": null,
-      "file_sha256": "67af40e20fd16e3c74569d0d82812c1f3ddc9135c1a21f7469c2bfdb1bc1d3d5",
+      "file_sha256": "956fe52fa1b242738dfa203dbcca3c26357a312f2e646ab8cf9ffead5fb1dd0b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2554,7 +2554,7 @@
       "reason_literal": "重度性能测试仅在 RUN_PERF_10M=1 时运行",
       "reason_expression": "'重度性能测试仅在 RUN_PERF_10M=1 时运行'",
       "condition_or_module": "os.environ.get('RUN_PERF_10M') != '1'",
-      "file_sha256": "15f1e35bb61ecfd1f123bbaee4d881f3ebd8ca66e03f59f439480efeda131151",
+      "file_sha256": "777d6118e43494c024e74b6a809affc3de84c1a7c06b93af0af0e3566da7a577",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2566,7 +2566,7 @@
       "reason_literal": "千万级性能测试需要 RUN_PERF_10M=1 环境变量触发",
       "reason_expression": "'千万级性能测试需要 RUN_PERF_10M=1 环境变量触发'",
       "condition_or_module": "os.environ.get('RUN_PERF_10M') != '1'",
-      "file_sha256": "15f1e35bb61ecfd1f123bbaee4d881f3ebd8ca66e03f59f439480efeda131151",
+      "file_sha256": "777d6118e43494c024e74b6a809affc3de84c1a7c06b93af0af0e3566da7a577",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2578,7 +2578,7 @@
       "reason_literal": "千万级性能测试需要 RUN_PERF_10M=1 环境变量触发",
       "reason_expression": "'千万级性能测试需要 RUN_PERF_10M=1 环境变量触发'",
       "condition_or_module": "os.environ.get('RUN_PERF_10M') != '1'",
-      "file_sha256": "15f1e35bb61ecfd1f123bbaee4d881f3ebd8ca66e03f59f439480efeda131151",
+      "file_sha256": "777d6118e43494c024e74b6a809affc3de84c1a7c06b93af0af0e3566da7a577",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2590,7 +2590,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2602,7 +2602,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2614,7 +2614,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2626,7 +2626,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2638,7 +2638,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2650,7 +2650,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2662,7 +2662,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2674,7 +2674,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2686,7 +2686,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2698,7 +2698,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2710,7 +2710,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2722,7 +2722,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2734,7 +2734,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2746,7 +2746,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2758,7 +2758,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2770,7 +2770,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2782,7 +2782,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2794,7 +2794,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2cac2677fcda5adea1c614b31c836180687a6f7d2288a9cd3200b13e389dcf66",
+      "file_sha256": "f89ba5d53f7a5c7f41dde21fb3351002b0931efd54a6864455d662930d302737",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2806,7 +2806,7 @@
       "reason_literal": "Rust 扩展不可用，跳过 Rust parse benchmark",
       "reason_expression": "'Rust 扩展不可用，跳过 Rust parse benchmark'",
       "condition_or_module": null,
-      "file_sha256": "6c4feefdf2db55882cbce523a3813d39bf3969a99f8e1f0bf21be3247e4f2afb",
+      "file_sha256": "23b01ac29d767f0c544243fefc040c45cc4ff72e4f8d56040dbc2292d5d180fa",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2818,7 +2818,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2830,7 +2830,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2842,7 +2842,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2854,7 +2854,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2866,7 +2866,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2878,7 +2878,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2890,7 +2890,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2902,7 +2902,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2914,7 +2914,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2926,7 +2926,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2938,7 +2938,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2950,7 +2950,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "3222ac032ca5057dfad2ef8976b1579405b45f2adfeb19674efaa9614dd356e5",
+      "file_sha256": "386fe4a4dd4f30fe70b3dd17204054252f77068b12f8d39d0d025c3637108dc0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2962,7 +2962,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2974,7 +2974,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2986,7 +2986,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -2998,7 +2998,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3010,7 +3010,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3022,7 +3022,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3034,7 +3034,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3046,7 +3046,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3058,7 +3058,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3070,7 +3070,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3082,7 +3082,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3094,7 +3094,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3106,7 +3106,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "6912a9f5903bad8c098ac16e5b9b16d49cd326bb413c6dd603f399aa9c5b1d6f",
+      "file_sha256": "ebcf1bd6090cf356aacd12bd9a7df55d77aa7aabc0eb6eac08f5a1b2218edccb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3118,7 +3118,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "972a4cf765206045af1d5635f5362111476b6e544fb8caf680e0aded597eb58f",
+      "file_sha256": "40a3595d772ae91ccb7fa4b6a86e1ec211b6394f1a02f8e38ab570efd8ef6e40",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3130,7 +3130,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e1148222f05255693e0c4407cba899259c1c77efb9217048148d51a4df4b594e",
+      "file_sha256": "47478720553cfc014fbb3239ffd2ce4bdaf3f60971e6ee48702fe0109b3682c8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3142,7 +3142,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "799c0ac939ecd2c526e6ed58b73a8bc3311c86e33b3b77c0b93a6751fd1f6cc8",
+      "file_sha256": "0accf1416c52cacefa36a7e4ada410a7d06af358328cbfe3cdd063890c87e7c8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3154,7 +3154,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e3da11e1c3224b21801e1d6d3f24599a7ac63efd59bbbd7662376160c47326ee",
+      "file_sha256": "e0222b707caa814722c81915a676a135e5dea5d2de2308c5fb8239d3625d65e5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3166,7 +3166,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e5afb369ade56a4dc5db2769bacff3a385c09c521400b932ef024976705ad972",
+      "file_sha256": "8f00a1bab0639adf07ae5a48a29382b8b21c23792900ba09cc58c331de16cf63",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3178,7 +3178,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e5afb369ade56a4dc5db2769bacff3a385c09c521400b932ef024976705ad972",
+      "file_sha256": "8f00a1bab0639adf07ae5a48a29382b8b21c23792900ba09cc58c331de16cf63",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3190,7 +3190,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "df0cee5013d518eeae9e62b97dd3dcb84085674be906d5085e2e76569932577d",
+      "file_sha256": "7cef6f873c13d878f8757d52248edd6669ecea5d918d4b0a79ddf148891c7020",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3202,7 +3202,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "eaa9193acd3f59b033c852fcdf719043c15b6c55bcfa969160daf8af7ecc886b",
+      "file_sha256": "e32e382a4403fb9a98d5ca7df1b084b773a3639406c514e3f0d51a8f47eac46f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3214,7 +3214,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "eaa9193acd3f59b033c852fcdf719043c15b6c55bcfa969160daf8af7ecc886b",
+      "file_sha256": "e32e382a4403fb9a98d5ca7df1b084b773a3639406c514e3f0d51a8f47eac46f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3226,7 +3226,7 @@
       "reason_literal": "callwarden_core 不可用（需 cp314 wheel）",
       "reason_expression": "'callwarden_core 不可用（需 cp314 wheel）'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "96e30e3db2ef084f7b475395176a159b8c7b847c611b23b3efd199e702a01c6b",
+      "file_sha256": "47f4c323283f9ecdbfce193a76d7475b0b6189a1ed4916a909dea94d487eabf4",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3238,7 +3238,7 @@
       "reason_literal": "callwarden_core 不可用（需 cp314 wheel）",
       "reason_expression": "'callwarden_core 不可用（需 cp314 wheel）'",
       "condition_or_module": "not _HAS_RUST",
-      "file_sha256": "96e30e3db2ef084f7b475395176a159b8c7b847c611b23b3efd199e702a01c6b",
+      "file_sha256": "47f4c323283f9ecdbfce193a76d7475b0b6189a1ed4916a909dea94d487eabf4",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3250,7 +3250,7 @@
       "reason_literal": null,
       "reason_expression": "f'callwarden_core 未安装: {_RUST_IMPORT_ERROR}'",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "067f0ac2252b1444c6c249d98011bdb7f1189c1dd979a6b916a002981d2d8cd2",
+      "file_sha256": "6148862a50f3cd5ae95c368ab60355759dac6566496b28da46e6a38c99112948",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3262,7 +3262,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "7f8c2a24468ece16f763be36e7f4ec73459a6f1c84690ef7825b013452321d60",
+      "file_sha256": "b4a7050d988057f6303378c4ea6bc111454538509f430f439e60870de0742eaa",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3274,7 +3274,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "3a66c90f920936fc28b935215f6acd43bca8073a084ffa9234376f8624aa356b",
+      "file_sha256": "a8557bc47d91582d98580fa211d6b37e3feb358dcc02d9c60e83c6cee138e032",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3286,7 +3286,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "bfb6c71077cd2b10f087761df97b821157912adfb6de40dab93e4b10afb4722b",
+      "file_sha256": "443cc8f17c053284068d26a4b88a7d6c22a73bc4a2284c74cc79fcf34155988a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3298,7 +3298,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "49c92238ed40934d697ce0410efc5e3b107d83a916e18519a2f2d171d99bf451",
+      "file_sha256": "61c1ca304931456fb1ad69d5ce398b5792fd25bbfc11959507e60f05140fd468",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3310,7 +3310,7 @@
       "reason_literal": "callwarden_core not available",
       "reason_expression": "'callwarden_core not available'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "49c92238ed40934d697ce0410efc5e3b107d83a916e18519a2f2d171d99bf451",
+      "file_sha256": "61c1ca304931456fb1ad69d5ce398b5792fd25bbfc11959507e60f05140fd468",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3322,7 +3322,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "ee907a6ac7fab9a9236e64eb344965c75d3fc303035fb505df00b87c3bc03214",
+      "file_sha256": "3be5b1d4b304e706e953bf708edebf77e6a7dde5649c566a215e5f3c1b43079a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3334,7 +3334,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "0c8ea404326497e40d03b8425965ed56ea3df17ab357707104e4133ee5c108a3",
+      "file_sha256": "03cd7626fbe06677415a092ab34290696ad51dc1cb14ea608f77e37f2ca34ee9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3346,7 +3346,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "4c55b261c6a7f3f0a88b59853039ba984486d0c0e5d7d9ec3ed61a3731c6fb3f",
+      "file_sha256": "f61efbc25c5702e9cf8fa2522003cb9f99d1085c18c9b85105251da594f166dc",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3358,7 +3358,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "babc0bea94dcaf10314a6936cb9f6d6a2ff52ef19dc744e7d8e0d970e79b122c",
+      "file_sha256": "165f5fc19e93667235129a81a565b76caeb496bf2845fe90860e0f60f0d9cf1d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3370,7 +3370,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "0d55c4e550e744a52932170e0aa94e546426960e86788fd17e829c0fc798be3e",
+      "file_sha256": "2c4b679ef5d5145b39c5272119e0636609ee1ba520e1c804f878eb7397d0285b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3382,7 +3382,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "91938e242ee51172291836726681d97c00f437536cb14278e287c61d65f91a51",
+      "file_sha256": "f32927751bd7df79c9291111a6abe9f54753813555f8db354271644de47a43cb",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3394,7 +3394,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "3eb2572a441be3b994436195b8275ab0ee2f321be56894d9832ce39dc07a9d49",
+      "file_sha256": "c312b6e0e8c78b82f312b4de4f4c9877695acf0a24f9d8809878cd29f5b48765",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3406,7 +3406,7 @@
       "reason_literal": "callwarden_core 未导出 canonicalize_source_py",
       "reason_expression": "'callwarden_core 未导出 canonicalize_source_py'",
       "condition_or_module": "not HAS_CANONICALIZE",
-      "file_sha256": "b1afde426ccc0e162d0fd970dec8f51f9553fcd10cb7777057d2930e63df29cd",
+      "file_sha256": "8b79bd3d113382cde37ff76901cbad7bd4b58162129f4f40a80e5e847008102c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3418,7 +3418,7 @@
       "reason_literal": "callwarden_core 未导出 canonicalize_source_py",
       "reason_expression": "'callwarden_core 未导出 canonicalize_source_py'",
       "condition_or_module": "not HAS_CANONICALIZE",
-      "file_sha256": "b1afde426ccc0e162d0fd970dec8f51f9553fcd10cb7777057d2930e63df29cd",
+      "file_sha256": "8b79bd3d113382cde37ff76901cbad7bd4b58162129f4f40a80e5e847008102c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3430,7 +3430,7 @@
       "reason_literal": "PyDeltaComputer 不可用",
       "reason_expression": "'PyDeltaComputer 不可用'",
       "condition_or_module": null,
-      "file_sha256": "b1afde426ccc0e162d0fd970dec8f51f9553fcd10cb7777057d2930e63df29cd",
+      "file_sha256": "8b79bd3d113382cde37ff76901cbad7bd4b58162129f4f40a80e5e847008102c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3442,7 +3442,7 @@
       "reason_literal": "PyDeltaComputer 不可用",
       "reason_expression": "'PyDeltaComputer 不可用'",
       "condition_or_module": null,
-      "file_sha256": "b1afde426ccc0e162d0fd970dec8f51f9553fcd10cb7777057d2930e63df29cd",
+      "file_sha256": "8b79bd3d113382cde37ff76901cbad7bd4b58162129f4f40a80e5e847008102c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3454,7 +3454,7 @@
       "reason_literal": "callwarden_core Rust 扩展未构建",
       "reason_expression": "'callwarden_core Rust 扩展未构建'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "d3ad6f0717b4e2e199156634bd9489489683b1017114720a7ef84a7743cf164c",
+      "file_sha256": "ffc9c2d26a8bcdd17950e68ef37e663b949a65268e1d8c8c45ca3fb1fa795aa2",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3466,7 +3466,7 @@
       "reason_literal": "callwarden_core Rust 扩展未构建",
       "reason_expression": "'callwarden_core Rust 扩展未构建'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "8b9170bce24217c861e6ba1735c4ba4b93fc7356596505e499c596d14daddc7a",
+      "file_sha256": "50fe0cc170372c9be31accca60c762619eb1b546528ce51d4e3c6cd53b84ed16",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3478,7 +3478,7 @@
       "reason_literal": "callwarden_core Rust 扩展未构建",
       "reason_expression": "'callwarden_core Rust 扩展未构建'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "64baa29f7613b4372eeacaf650787d525bc4559001a9f3daf2af00fb3bf84409",
+      "file_sha256": "3340d512673ac55556e1dd932019af637cd40e2b159be448160e2781ad82bf29",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3490,7 +3490,7 @@
       "reason_literal": "callwarden_core Rust 扩展未构建",
       "reason_expression": "'callwarden_core Rust 扩展未构建'",
       "condition_or_module": "not HAS_RUST",
-      "file_sha256": "8bb62d85ac36a0316d720443f6724e48a92d59d41d047a8abfd14d7b23239974",
+      "file_sha256": "4d0e180b9d30bd01ccaa7f527c6f0379099f071c265acadd42daaec1724a05cd",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3502,7 +3502,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'callwarden_core'",
-      "file_sha256": "1cf4a3123f46710b8a773f11a314ccb52dfe6dc46bcbd2eb400641ec857e27a6",
+      "file_sha256": "ac3471ba6245d4a24bb23e8df6bec8e86f336f1f902843124a462a5359c08a30",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3514,7 +3514,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "599d5174f5bbb513208f11ae8e6602130232d997b5c8180311c1f31c8685245b",
+      "file_sha256": "3ccad9388df5addf6a80f9fc842b8fbf22f900c803afb426e5abad3f9a5396ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3526,7 +3526,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "599d5174f5bbb513208f11ae8e6602130232d997b5c8180311c1f31c8685245b",
+      "file_sha256": "3ccad9388df5addf6a80f9fc842b8fbf22f900c803afb426e5abad3f9a5396ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3538,7 +3538,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "599d5174f5bbb513208f11ae8e6602130232d997b5c8180311c1f31c8685245b",
+      "file_sha256": "3ccad9388df5addf6a80f9fc842b8fbf22f900c803afb426e5abad3f9a5396ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3550,7 +3550,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "599d5174f5bbb513208f11ae8e6602130232d997b5c8180311c1f31c8685245b",
+      "file_sha256": "3ccad9388df5addf6a80f9fc842b8fbf22f900c803afb426e5abad3f9a5396ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3562,7 +3562,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "599d5174f5bbb513208f11ae8e6602130232d997b5c8180311c1f31c8685245b",
+      "file_sha256": "3ccad9388df5addf6a80f9fc842b8fbf22f900c803afb426e5abad3f9a5396ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3574,7 +3574,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "599d5174f5bbb513208f11ae8e6602130232d997b5c8180311c1f31c8685245b",
+      "file_sha256": "3ccad9388df5addf6a80f9fc842b8fbf22f900c803afb426e5abad3f9a5396ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3586,7 +3586,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "599d5174f5bbb513208f11ae8e6602130232d997b5c8180311c1f31c8685245b",
+      "file_sha256": "3ccad9388df5addf6a80f9fc842b8fbf22f900c803afb426e5abad3f9a5396ed",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3598,7 +3598,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e7949f0a5a87b096a83b0429a3e0bc692e7e6fa84dbd7ede75cdbce85b43d86d",
+      "file_sha256": "225a52af4ec038ddacf56be91ae9595d031df11c5bf4c61d612f6d749f92aa88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3610,7 +3610,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e7949f0a5a87b096a83b0429a3e0bc692e7e6fa84dbd7ede75cdbce85b43d86d",
+      "file_sha256": "225a52af4ec038ddacf56be91ae9595d031df11c5bf4c61d612f6d749f92aa88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3622,7 +3622,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e7949f0a5a87b096a83b0429a3e0bc692e7e6fa84dbd7ede75cdbce85b43d86d",
+      "file_sha256": "225a52af4ec038ddacf56be91ae9595d031df11c5bf4c61d612f6d749f92aa88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3634,7 +3634,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e7949f0a5a87b096a83b0429a3e0bc692e7e6fa84dbd7ede75cdbce85b43d86d",
+      "file_sha256": "225a52af4ec038ddacf56be91ae9595d031df11c5bf4c61d612f6d749f92aa88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3646,7 +3646,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e7949f0a5a87b096a83b0429a3e0bc692e7e6fa84dbd7ede75cdbce85b43d86d",
+      "file_sha256": "225a52af4ec038ddacf56be91ae9595d031df11c5bf4c61d612f6d749f92aa88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3658,7 +3658,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e7949f0a5a87b096a83b0429a3e0bc692e7e6fa84dbd7ede75cdbce85b43d86d",
+      "file_sha256": "225a52af4ec038ddacf56be91ae9595d031df11c5bf4c61d612f6d749f92aa88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3670,7 +3670,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e7949f0a5a87b096a83b0429a3e0bc692e7e6fa84dbd7ede75cdbce85b43d86d",
+      "file_sha256": "225a52af4ec038ddacf56be91ae9595d031df11c5bf4c61d612f6d749f92aa88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3682,7 +3682,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "e7949f0a5a87b096a83b0429a3e0bc692e7e6fa84dbd7ede75cdbce85b43d86d",
+      "file_sha256": "225a52af4ec038ddacf56be91ae9595d031df11c5bf4c61d612f6d749f92aa88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3694,7 +3694,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "5bced49bac043f526bf773a390a0fdb5d81d32228ed597d96415276725ff80ed",
+      "file_sha256": "67d77a078e7e7fa807ff7b0c3fed635f0e5ceac58d5d02e16b05b45758bf3b88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3706,7 +3706,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "5bced49bac043f526bf773a390a0fdb5d81d32228ed597d96415276725ff80ed",
+      "file_sha256": "67d77a078e7e7fa807ff7b0c3fed635f0e5ceac58d5d02e16b05b45758bf3b88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3718,7 +3718,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "5bced49bac043f526bf773a390a0fdb5d81d32228ed597d96415276725ff80ed",
+      "file_sha256": "67d77a078e7e7fa807ff7b0c3fed635f0e5ceac58d5d02e16b05b45758bf3b88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3730,7 +3730,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "5bced49bac043f526bf773a390a0fdb5d81d32228ed597d96415276725ff80ed",
+      "file_sha256": "67d77a078e7e7fa807ff7b0c3fed635f0e5ceac58d5d02e16b05b45758bf3b88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3742,7 +3742,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "5bced49bac043f526bf773a390a0fdb5d81d32228ed597d96415276725ff80ed",
+      "file_sha256": "67d77a078e7e7fa807ff7b0c3fed635f0e5ceac58d5d02e16b05b45758bf3b88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3754,7 +3754,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "5bced49bac043f526bf773a390a0fdb5d81d32228ed597d96415276725ff80ed",
+      "file_sha256": "67d77a078e7e7fa807ff7b0c3fed635f0e5ceac58d5d02e16b05b45758bf3b88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3766,7 +3766,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "5bced49bac043f526bf773a390a0fdb5d81d32228ed597d96415276725ff80ed",
+      "file_sha256": "67d77a078e7e7fa807ff7b0c3fed635f0e5ceac58d5d02e16b05b45758bf3b88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3778,7 +3778,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "5bced49bac043f526bf773a390a0fdb5d81d32228ed597d96415276725ff80ed",
+      "file_sha256": "67d77a078e7e7fa807ff7b0c3fed635f0e5ceac58d5d02e16b05b45758bf3b88",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3790,7 +3790,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2b6db3b0c6f1f2b979f7fbea55cdc240123ba85b00bde19656434a796ea88299",
+      "file_sha256": "2d478a72e14d40f986ddb29d3e10e9ac62e97b9c28e6af178ab1b86829905337",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3802,7 +3802,7 @@
       "reason_literal": "numpy 不可用（Python baseline 依赖）",
       "reason_expression": "'numpy 不可用（Python baseline 依赖）'",
       "condition_or_module": "not _NUMPY_AVAILABLE",
-      "file_sha256": "2b6db3b0c6f1f2b979f7fbea55cdc240123ba85b00bde19656434a796ea88299",
+      "file_sha256": "2d478a72e14d40f986ddb29d3e10e9ac62e97b9c28e6af178ab1b86829905337",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3814,7 +3814,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2b6db3b0c6f1f2b979f7fbea55cdc240123ba85b00bde19656434a796ea88299",
+      "file_sha256": "2d478a72e14d40f986ddb29d3e10e9ac62e97b9c28e6af178ab1b86829905337",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3826,7 +3826,7 @@
       "reason_literal": "numpy 不可用（Python baseline 依赖）",
       "reason_expression": "'numpy 不可用（Python baseline 依赖）'",
       "condition_or_module": "not _NUMPY_AVAILABLE",
-      "file_sha256": "2b6db3b0c6f1f2b979f7fbea55cdc240123ba85b00bde19656434a796ea88299",
+      "file_sha256": "2d478a72e14d40f986ddb29d3e10e9ac62e97b9c28e6af178ab1b86829905337",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3838,7 +3838,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "2b6db3b0c6f1f2b979f7fbea55cdc240123ba85b00bde19656434a796ea88299",
+      "file_sha256": "2d478a72e14d40f986ddb29d3e10e9ac62e97b9c28e6af178ab1b86829905337",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3850,7 +3850,7 @@
       "reason_literal": "numpy 不可用（Python baseline 依赖）",
       "reason_expression": "'numpy 不可用（Python baseline 依赖）'",
       "condition_or_module": "not _NUMPY_AVAILABLE",
-      "file_sha256": "2b6db3b0c6f1f2b979f7fbea55cdc240123ba85b00bde19656434a796ea88299",
+      "file_sha256": "2d478a72e14d40f986ddb29d3e10e9ac62e97b9c28e6af178ab1b86829905337",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3862,7 +3862,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "a7eee40b0728dcda16177bb78562b6d89a5993d04231a797f31857d4667748ca",
+      "file_sha256": "7f05c495e374f28f88be0fad6bd4041c7b89786e617ae22b613e8fcbd21f0453",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3874,7 +3874,7 @@
       "reason_literal": "numpy 不可用（Python baseline 依赖）",
       "reason_expression": "'numpy 不可用（Python baseline 依赖）'",
       "condition_or_module": "not _NUMPY_AVAILABLE",
-      "file_sha256": "a7eee40b0728dcda16177bb78562b6d89a5993d04231a797f31857d4667748ca",
+      "file_sha256": "7f05c495e374f28f88be0fad6bd4041c7b89786e617ae22b613e8fcbd21f0453",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3886,7 +3886,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "a7eee40b0728dcda16177bb78562b6d89a5993d04231a797f31857d4667748ca",
+      "file_sha256": "7f05c495e374f28f88be0fad6bd4041c7b89786e617ae22b613e8fcbd21f0453",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3898,7 +3898,7 @@
       "reason_literal": "numpy 不可用（Python baseline 依赖）",
       "reason_expression": "'numpy 不可用（Python baseline 依赖）'",
       "condition_or_module": "not _NUMPY_AVAILABLE",
-      "file_sha256": "a7eee40b0728dcda16177bb78562b6d89a5993d04231a797f31857d4667748ca",
+      "file_sha256": "7f05c495e374f28f88be0fad6bd4041c7b89786e617ae22b613e8fcbd21f0453",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3910,7 +3910,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "a7eee40b0728dcda16177bb78562b6d89a5993d04231a797f31857d4667748ca",
+      "file_sha256": "7f05c495e374f28f88be0fad6bd4041c7b89786e617ae22b613e8fcbd21f0453",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3922,7 +3922,7 @@
       "reason_literal": "numpy 不可用（Python baseline 依赖）",
       "reason_expression": "'numpy 不可用（Python baseline 依赖）'",
       "condition_or_module": "not _NUMPY_AVAILABLE",
-      "file_sha256": "a7eee40b0728dcda16177bb78562b6d89a5993d04231a797f31857d4667748ca",
+      "file_sha256": "7f05c495e374f28f88be0fad6bd4041c7b89786e617ae22b613e8fcbd21f0453",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3934,7 +3934,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "a7eee40b0728dcda16177bb78562b6d89a5993d04231a797f31857d4667748ca",
+      "file_sha256": "7f05c495e374f28f88be0fad6bd4041c7b89786e617ae22b613e8fcbd21f0453",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3946,7 +3946,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "b3cbc3c5b45f0efb072577407cce8adbab9383ce596f2944ede452c2010fa7bd",
+      "file_sha256": "e65d3eca3c34ca7ed272e680d21a5b35bf661de11623061351133088ed60a00a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3958,7 +3958,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "b3cbc3c5b45f0efb072577407cce8adbab9383ce596f2944ede452c2010fa7bd",
+      "file_sha256": "e65d3eca3c34ca7ed272e680d21a5b35bf661de11623061351133088ed60a00a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3970,7 +3970,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "b3cbc3c5b45f0efb072577407cce8adbab9383ce596f2944ede452c2010fa7bd",
+      "file_sha256": "e65d3eca3c34ca7ed272e680d21a5b35bf661de11623061351133088ed60a00a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3982,7 +3982,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "b3cbc3c5b45f0efb072577407cce8adbab9383ce596f2944ede452c2010fa7bd",
+      "file_sha256": "e65d3eca3c34ca7ed272e680d21a5b35bf661de11623061351133088ed60a00a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -3994,7 +3994,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "b3cbc3c5b45f0efb072577407cce8adbab9383ce596f2944ede452c2010fa7bd",
+      "file_sha256": "e65d3eca3c34ca7ed272e680d21a5b35bf661de11623061351133088ed60a00a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4006,7 +4006,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "b3cbc3c5b45f0efb072577407cce8adbab9383ce596f2944ede452c2010fa7bd",
+      "file_sha256": "e65d3eca3c34ca7ed272e680d21a5b35bf661de11623061351133088ed60a00a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4018,7 +4018,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "b3cbc3c5b45f0efb072577407cce8adbab9383ce596f2944ede452c2010fa7bd",
+      "file_sha256": "e65d3eca3c34ca7ed272e680d21a5b35bf661de11623061351133088ed60a00a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4030,7 +4030,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "b3cbc3c5b45f0efb072577407cce8adbab9383ce596f2944ede452c2010fa7bd",
+      "file_sha256": "e65d3eca3c34ca7ed272e680d21a5b35bf661de11623061351133088ed60a00a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4042,7 +4042,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": null,
-      "file_sha256": "43e12316e4c9920b670b6f5d683b2d51e0090aee80deb2b34717408c2b58d080",
+      "file_sha256": "1e36aac971bb5553eaaaa4f20897f07f2e242215f2ade903a979aaf61d0ed90e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4054,7 +4054,7 @@
       "reason_literal": "callwarden_core Rust 扩展未构建或不在 PYTHONPATH",
       "reason_expression": "'callwarden_core Rust 扩展未构建或不在 PYTHONPATH'",
       "condition_or_module": "not RUST_AVAILABLE",
-      "file_sha256": "f173b3ea0146d3a072841c1640245a744a8ed8840c0e3253d7dd7b28d436699e",
+      "file_sha256": "72617876a8928a00a6c82dac0cbc8f3b2c7633a6b586214e2226dbabe5a84f5a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4066,7 +4066,7 @@
       "reason_literal": "Only test on non-Linux",
       "reason_expression": "'Only test on non-Linux'",
       "condition_or_module": null,
-      "file_sha256": "49153de8f195fcf64daa38666319d1d0f4ac5c7dd290e80bc842b1fec51e7535",
+      "file_sha256": "bbc6005174692deb8ff4aea328f87a953f3a0202c25986cfe2a615a4662c109c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4078,7 +4078,7 @@
       "reason_literal": "Only test on non-Linux",
       "reason_expression": "'Only test on non-Linux'",
       "condition_or_module": null,
-      "file_sha256": "49153de8f195fcf64daa38666319d1d0f4ac5c7dd290e80bc842b1fec51e7535",
+      "file_sha256": "bbc6005174692deb8ff4aea328f87a953f3a0202c25986cfe2a615a4662c109c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4090,7 +4090,7 @@
       "reason_literal": "Windows only",
       "reason_expression": "'Windows only'",
       "condition_or_module": null,
-      "file_sha256": "49153de8f195fcf64daa38666319d1d0f4ac5c7dd290e80bc842b1fec51e7535",
+      "file_sha256": "bbc6005174692deb8ff4aea328f87a953f3a0202c25986cfe2a615a4662c109c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4102,7 +4102,7 @@
       "reason_literal": "Linux only",
       "reason_expression": "'Linux only'",
       "condition_or_module": null,
-      "file_sha256": "49153de8f195fcf64daa38666319d1d0f4ac5c7dd290e80bc842b1fec51e7535",
+      "file_sha256": "bbc6005174692deb8ff4aea328f87a953f3a0202c25986cfe2a615a4662c109c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4114,7 +4114,7 @@
       "reason_literal": "Only test on non-Linux",
       "reason_expression": "'Only test on non-Linux'",
       "condition_or_module": null,
-      "file_sha256": "49153de8f195fcf64daa38666319d1d0f4ac5c7dd290e80bc842b1fec51e7535",
+      "file_sha256": "bbc6005174692deb8ff4aea328f87a953f3a0202c25986cfe2a615a4662c109c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4126,7 +4126,7 @@
       "reason_literal": "symlink not supported on this platform",
       "reason_expression": "'symlink not supported on this platform'",
       "condition_or_module": null,
-      "file_sha256": "a3e5021c7855dc50d286c74a8d631c22a5a1b01d069051d1dd26057262da7a6a",
+      "file_sha256": "a706e2f65845c52400e80543d5f6203aa41846d75dfb1f17f9ec2d2f7d58872f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4138,7 +4138,7 @@
       "reason_literal": "symlink not supported on this platform",
       "reason_expression": "'symlink not supported on this platform'",
       "condition_or_module": null,
-      "file_sha256": "a3e5021c7855dc50d286c74a8d631c22a5a1b01d069051d1dd26057262da7a6a",
+      "file_sha256": "a706e2f65845c52400e80543d5f6203aa41846d75dfb1f17f9ec2d2f7d58872f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4150,7 +4150,7 @@
       "reason_literal": "mTLS principal 授权需要 Windows + loopback HTTPS daemon",
       "reason_expression": "'mTLS principal 授权需要 Windows + loopback HTTPS daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9",
+      "file_sha256": "109cf595fc7893e46f68cdc613ea9a617f51cd8a8602fe28927d968a810d2465",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4162,7 +4162,7 @@
       "reason_literal": "未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "cp._DAEMON_BIN is None",
-      "file_sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9",
+      "file_sha256": "109cf595fc7893e46f68cdc613ea9a617f51cd8a8602fe28927d968a810d2465",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4174,7 +4174,7 @@
       "reason_literal": "cw-daemon 未构建",
       "reason_expression": "'cw-daemon 未构建'",
       "condition_or_module": null,
-      "file_sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9",
+      "file_sha256": "109cf595fc7893e46f68cdc613ea9a617f51cd8a8602fe28927d968a810d2465",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4186,7 +4186,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'cryptography'",
-      "file_sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9",
+      "file_sha256": "109cf595fc7893e46f68cdc613ea9a617f51cd8a8602fe28927d968a810d2465",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4198,7 +4198,7 @@
       "reason_literal": "cw-daemon 二进制缺失（环境前置）",
       "reason_expression": "'cw-daemon 二进制缺失（环境前置）'",
       "condition_or_module": null,
-      "file_sha256": "5ed2fd8142eef0db4816a793b22837b6447d96d6e867592f0437c10d02511e0a",
+      "file_sha256": "3973b7cbb61799f0c4847f0da2c5b5d0a1b8e890768a4ff0e55d387bcf4f4460",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4210,7 +4210,7 @@
       "reason_literal": "callwarden-core 未编译安装",
       "reason_expression": "'callwarden-core 未编译安装'",
       "condition_or_module": "not HAS_RUST_CORE",
-      "file_sha256": "5ed2fd8142eef0db4816a793b22837b6447d96d6e867592f0437c10d02511e0a",
+      "file_sha256": "3973b7cbb61799f0c4847f0da2c5b5d0a1b8e890768a4ff0e55d387bcf4f4460",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4222,7 +4222,7 @@
       "reason_literal": "进程级 query.file round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.file round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9",
+      "file_sha256": "134b85fd0b8b4b33c4a847bc3bba07378ba64160586a65121e2e3216eb3d8d99",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4234,7 +4234,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9",
+      "file_sha256": "134b85fd0b8b4b33c4a847bc3bba07378ba64160586a65121e2e3216eb3d8d99",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4246,7 +4246,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9",
+      "file_sha256": "134b85fd0b8b4b33c4a847bc3bba07378ba64160586a65121e2e3216eb3d8d99",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4258,7 +4258,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9",
+      "file_sha256": "134b85fd0b8b4b33c4a847bc3bba07378ba64160586a65121e2e3216eb3d8d99",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4270,7 +4270,7 @@
       "reason_literal": "进程级 query.grep round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.grep round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34",
+      "file_sha256": "fd562b6d8b371e8b9a68ea72e89582d0d251770a9fbc763584de478f20260d03",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4282,7 +4282,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34",
+      "file_sha256": "fd562b6d8b371e8b9a68ea72e89582d0d251770a9fbc763584de478f20260d03",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4294,7 +4294,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34",
+      "file_sha256": "fd562b6d8b371e8b9a68ea72e89582d0d251770a9fbc763584de478f20260d03",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4306,7 +4306,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34",
+      "file_sha256": "fd562b6d8b371e8b9a68ea72e89582d0d251770a9fbc763584de478f20260d03",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4318,7 +4318,7 @@
       "reason_literal": "进程级 query.issues round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.issues round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206",
+      "file_sha256": "93b54401e79daea353f967b167c5cb1035554685f8479db068cdde6d2d47a2ac",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4330,7 +4330,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206",
+      "file_sha256": "93b54401e79daea353f967b167c5cb1035554685f8479db068cdde6d2d47a2ac",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4342,7 +4342,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206",
+      "file_sha256": "93b54401e79daea353f967b167c5cb1035554685f8479db068cdde6d2d47a2ac",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4354,7 +4354,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206",
+      "file_sha256": "93b54401e79daea353f967b167c5cb1035554685f8479db068cdde6d2d47a2ac",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4366,7 +4366,7 @@
       "reason_literal": "进程级 query.symbol round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.symbol round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459",
+      "file_sha256": "b4616a411448611f9ee7a600c2c8090d55def2efa68229c755412d059537d323",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4378,7 +4378,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459",
+      "file_sha256": "b4616a411448611f9ee7a600c2c8090d55def2efa68229c755412d059537d323",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4390,7 +4390,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459",
+      "file_sha256": "b4616a411448611f9ee7a600c2c8090d55def2efa68229c755412d059537d323",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4402,7 +4402,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459",
+      "file_sha256": "b4616a411448611f9ee7a600c2c8090d55def2efa68229c755412d059537d323",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4414,7 +4414,7 @@
       "reason_literal": "进程级 query.tests round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.tests round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573",
+      "file_sha256": "d9a66a4b14eb0adb2df082a237802e24b3cb0ec976b2dd0c67cd1d6cff6d53e6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4426,7 +4426,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573",
+      "file_sha256": "d9a66a4b14eb0adb2df082a237802e24b3cb0ec976b2dd0c67cd1d6cff6d53e6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4438,7 +4438,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573",
+      "file_sha256": "d9a66a4b14eb0adb2df082a237802e24b3cb0ec976b2dd0c67cd1d6cff6d53e6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4450,7 +4450,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573",
+      "file_sha256": "d9a66a4b14eb0adb2df082a237802e24b3cb0ec976b2dd0c67cd1d6cff6d53e6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4462,7 +4462,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "55afeb116a35025420f6c13560c97deffbb018d23b8fcd14da5f31c447e84573",
+      "file_sha256": "594fa5a665b8dc6bae8f068e8ecc21d3f24bf81364aae3332aea2944ae4a22bd",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4474,7 +4474,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "55afeb116a35025420f6c13560c97deffbb018d23b8fcd14da5f31c447e84573",
+      "file_sha256": "594fa5a665b8dc6bae8f068e8ecc21d3f24bf81364aae3332aea2944ae4a22bd",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4486,7 +4486,7 @@
       "reason_literal": "跨 OS 只读矩阵需 CW_S2_REMOTE_ENDPOINT（对侧 OS daemon；本机为 Windows 单端，另一方向由 CI 矩阵承载）",
       "reason_expression": "'跨 OS 只读矩阵需 CW_S2_REMOTE_ENDPOINT（对侧 OS daemon；本机为 Windows 单端，另一方向由 CI 矩阵承载）'",
       "condition_or_module": "not _REMOTE_ENDPOINT",
-      "file_sha256": "6c2bc6c222d4c80ab16bcdb932b424c909a2db55cfc720c5d0c64201f1f9c905",
+      "file_sha256": "2fdd367cd24e943348e94578eef3749f3c78af3171d95bcb0d30b407b8689f74",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4498,7 +4498,7 @@
       "reason_literal": null,
       "reason_expression": "reason",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4510,7 +4510,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4522,7 +4522,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4534,7 +4534,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4546,7 +4546,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4558,7 +4558,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4570,7 +4570,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4582,7 +4582,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4594,7 +4594,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4606,7 +4606,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4618,7 +4618,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4630,7 +4630,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4642,7 +4642,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4654,7 +4654,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4666,7 +4666,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4678,7 +4678,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4690,7 +4690,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4702,7 +4702,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4714,7 +4714,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4726,7 +4726,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4738,7 +4738,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4750,7 +4750,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4762,7 +4762,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4774,7 +4774,7 @@
       "reason_literal": null,
       "reason_expression": "f'Rust cw binary not built: {binary}'",
       "condition_or_module": null,
-      "file_sha256": "ef78c86f1a473840f8ec4010de31fa7546c7b926beb8ae2b713a5150f2905cf7",
+      "file_sha256": "fe47cd0e7253ac150a1261c17cfa5d44c2ca57db44ccc6e20848bcfb9042a18c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4786,7 +4786,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "0c47958f1a9b9ad81acf2035f48aa5df4c7947880fb19035d87f73275d6d79a6",
+      "file_sha256": "13aecf1d372478023263f2157bfd2e6b83dac613a3413ae26fde3802d37abed6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4798,7 +4798,7 @@
       "reason_literal": null,
       "reason_expression": "f'golden fixture {lang}.json 不存在，无法对齐 signature 契约'",
       "condition_or_module": null,
-      "file_sha256": "0c47958f1a9b9ad81acf2035f48aa5df4c7947880fb19035d87f73275d6d79a6",
+      "file_sha256": "13aecf1d372478023263f2157bfd2e6b83dac613a3413ae26fde3802d37abed6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4810,7 +4810,7 @@
       "reason_literal": null,
       "reason_expression": "f'golden fixture {lang}.json expected.symbols 为空'",
       "condition_or_module": null,
-      "file_sha256": "0c47958f1a9b9ad81acf2035f48aa5df4c7947880fb19035d87f73275d6d79a6",
+      "file_sha256": "13aecf1d372478023263f2157bfd2e6b83dac613a3413ae26fde3802d37abed6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4822,7 +4822,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "0c47958f1a9b9ad81acf2035f48aa5df4c7947880fb19035d87f73275d6d79a6",
+      "file_sha256": "13aecf1d372478023263f2157bfd2e6b83dac613a3413ae26fde3802d37abed6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4834,7 +4834,7 @@
       "reason_literal": "callwarden_core 未安装",
       "reason_expression": "'callwarden_core 未安装'",
       "condition_or_module": "not _has_rust_ext()",
-      "file_sha256": "0c47958f1a9b9ad81acf2035f48aa5df4c7947880fb19035d87f73275d6d79a6",
+      "file_sha256": "13aecf1d372478023263f2157bfd2e6b83dac613a3413ae26fde3802d37abed6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4846,7 +4846,7 @@
       "reason_literal": "callwarden_core.storage 未编译安装",
       "reason_expression": "'callwarden_core.storage 未编译安装'",
       "condition_or_module": "not HAS_RUST_STORAGE",
-      "file_sha256": "b67bda5d8b58224282aad354b9fc85ab63f5a69b55358ed24a643d12f35d6634",
+      "file_sha256": "49a61b8ce86c069cb2a828ca9a92e6b2763f3152e973de132e1ca415f6a95266",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4858,7 +4858,7 @@
       "reason_literal": null,
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
-      "file_sha256": "7d58e9c47ff8f25b237baea508d93038beb2e89d47f2f28295ec835f67286043",
+      "file_sha256": "7eb1d779ff5ec49fdd52b05b5676adca28eadfbbbe2f7459335c13b845ae2fe8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4906,7 +4906,7 @@
       "reason_literal": "daemon 不可用：runtime 负矩阵段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 负矩阵段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "a4732a69d0e301922fefa4ed221c66507d83213cc8cd25f9baf6491a48c74a63",
+      "file_sha256": "59f81cd17b6653df8bc7e6b14592d0a46e8af2872b1d86bcf3b4f5a57efb0141",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4918,7 +4918,7 @@
       "reason_literal": "重度 10w 符号数据库压测仅在 RUN_STRESS_TESTS=1 时运行",
       "reason_expression": "'重度 10w 符号数据库压测仅在 RUN_STRESS_TESTS=1 时运行'",
       "condition_or_module": "os.environ.get('RUN_STRESS_TESTS') != '1'",
-      "file_sha256": "ad4dec4952502c6a4d2fc3090c5593e8709e88bc7646b2b2d88b40cb4fdfe2c5",
+      "file_sha256": "9b633dd10c7379570823becd79c6708e490717cb4245bcfadc6743a1c8dfbe33",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4930,7 +4930,7 @@
       "reason_literal": "daemon 不可用：runtime 段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "e9a5a64af0c01888ced85f22b375a6f7a820b929a6b2f5f77929852b97e4a964",
+      "file_sha256": "08294983b6c6ff57d95713aa439ce4f074e0b765fe9710503146d636ec75be6e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4942,7 +4942,7 @@
       "reason_literal": "真实 cw daemon/CLI E2E 需要 Windows + Named Pipe",
       "reason_expression": "'真实 cw daemon/CLI E2E 需要 Windows + Named Pipe'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "d670ba7f46d459b9fa222acd6b1ea7fb5fa07421efa9a2c5e753f03d61eefd3b",
+      "file_sha256": "07570677e4f989b5aa3ac60e3349200934d421070d142c9918b551d59a831d72",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4954,7 +4954,7 @@
       "reason_literal": "cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）",
       "reason_expression": "'cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）'",
       "condition_or_module": "not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN))",
-      "file_sha256": "d670ba7f46d459b9fa222acd6b1ea7fb5fa07421efa9a2c5e753f03d61eefd3b",
+      "file_sha256": "07570677e4f989b5aa3ac60e3349200934d421070d142c9918b551d59a831d72",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4966,7 +4966,7 @@
       "reason_literal": null,
       "reason_expression": "f'默认管道 {pipe} 已被其他 daemon 占用，跳过进程级 E2E'",
       "condition_or_module": null,
-      "file_sha256": "d670ba7f46d459b9fa222acd6b1ea7fb5fa07421efa9a2c5e753f03d61eefd3b",
+      "file_sha256": "07570677e4f989b5aa3ac60e3349200934d421070d142c9918b551d59a831d72",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4978,7 +4978,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "5cd892dd4a32394bd64d58e5baf1d83c0f9e06f5f55a0e09bb42dfcd3ded5497",
+      "file_sha256": "8a577557b723626b614c79201670b6bb9f49fcfdfe223f5baf9ca66d1883f8f9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4990,7 +4990,7 @@
       "reason_literal": "fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立",
       "reason_expression": "'fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "47eaabd6273a53c0c25bbc9f654ce59dc73d724aaeb4f1061971bf04d2f57e40",
+      "file_sha256": "466f07d414b2de0eaa92c6e52e1e3a6837df799cb2f7ce69d19b8091e81a76d8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5002,7 +5002,7 @@
       "reason_literal": "fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立",
       "reason_expression": "'fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "47eaabd6273a53c0c25bbc9f654ce59dc73d724aaeb4f1061971bf04d2f57e40",
+      "file_sha256": "466f07d414b2de0eaa92c6e52e1e3a6837df799cb2f7ce69d19b8091e81a76d8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5014,7 +5014,7 @@
       "reason_literal": "fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立",
       "reason_expression": "'fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "47eaabd6273a53c0c25bbc9f654ce59dc73d724aaeb4f1061971bf04d2f57e40",
+      "file_sha256": "466f07d414b2de0eaa92c6e52e1e3a6837df799cb2f7ce69d19b8091e81a76d8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5026,7 +5026,7 @@
       "reason_literal": "fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立",
       "reason_expression": "'fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "47eaabd6273a53c0c25bbc9f654ce59dc73d724aaeb4f1061971bf04d2f57e40",
+      "file_sha256": "466f07d414b2de0eaa92c6e52e1e3a6837df799cb2f7ce69d19b8091e81a76d8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5038,7 +5038,7 @@
       "reason_literal": "task.next_action 进程级 E2E 需要 Windows 隔离 daemon",
       "reason_expression": "'task.next_action 进程级 E2E 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "cf7f0d97fc702ad1d37bd5dfb784fabb776b5df014d7dc03dce8ac2ae53af35d",
+      "file_sha256": "295e34f167db531f90ffbc6145ef3105a3dd0da9f2a34b1727661465a915fc8a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5050,7 +5050,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "cf7f0d97fc702ad1d37bd5dfb784fabb776b5df014d7dc03dce8ac2ae53af35d",
+      "file_sha256": "295e34f167db531f90ffbc6145ef3105a3dd0da9f2a34b1727661465a915fc8a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5062,7 +5062,7 @@
       "reason_literal": "real daemon round-trip is enabled explicitly by the runtime gate acceptance",
       "reason_expression": "'real daemon round-trip is enabled explicitly by the runtime gate acceptance'",
       "condition_or_module": "not os.environ.get('CW_TASK_OWNED_EVIDENCE_E2E')",
-      "file_sha256": "27fef163bd2c68274707444b7fde5881737256d53a22fb6ab3f380c92b499a19",
+      "file_sha256": "80839a1472e9b61cd0a8f1933413fc35375a0403a8c4a4413c04f72a17c1ad1e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5074,7 +5074,7 @@
       "reason_literal": "daemon 不可用：runtime 段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "2eaf293546ad2df85f15a12d9852785854031ee20f7e10cb754bbe8c0ad0ddd9",
+      "file_sha256": "107f592d3529dfabcca2a4fc0629bd9e0a51979afb7b994b8a19b90ce8f122e5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5086,7 +5086,7 @@
       "reason_literal": "daemon 不可用：runtime 段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "fbdb5dd56e88c1f656040803847475f1aceeafb26bdbec24e03026e91ae9038b",
+      "file_sha256": "fb1169069e4f26f7db4128d5e0af23359c8a37aab762b1c84e03e857809a115c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5098,7 +5098,7 @@
       "reason_literal": "真实 cw daemon/CLI E2E 需要 Windows + Named Pipe",
       "reason_expression": "'真实 cw daemon/CLI E2E 需要 Windows + Named Pipe'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "12706ef13f378b30e4ec39b8d77f2f07e5f3a0880aa2067a2dd91832aedc17a2",
+      "file_sha256": "e182207f7854d14850d7d7573eef0622813bad088ca29c7d0abe1c4c4f99b63a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5110,7 +5110,7 @@
       "reason_literal": "cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）",
       "reason_expression": "'cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）'",
       "condition_or_module": "not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN))",
-      "file_sha256": "12706ef13f378b30e4ec39b8d77f2f07e5f3a0880aa2067a2dd91832aedc17a2",
+      "file_sha256": "e182207f7854d14850d7d7573eef0622813bad088ca29c7d0abe1c4c4f99b63a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5122,7 +5122,7 @@
       "reason_literal": null,
       "reason_expression": "f'默认管道 {pipe} 已被其他 daemon 占用，跳过进程级 E2E'",
       "condition_or_module": null,
-      "file_sha256": "12706ef13f378b30e4ec39b8d77f2f07e5f3a0880aa2067a2dd91832aedc17a2",
+      "file_sha256": "e182207f7854d14850d7d7573eef0622813bad088ca29c7d0abe1c4c4f99b63a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5134,7 +5134,7 @@
       "reason_literal": "task.step.resolve 进程级 E2E 需要 Windows 隔离 daemon",
       "reason_expression": "'task.step.resolve 进程级 E2E 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "c54a3ddddc7347ba84efda89f773bc93c3db9e40ee2ce442414b1a5915b7e321",
+      "file_sha256": "771e01b4fce006181a15795f87bc73758814b430362c7b1edbb49e2488bcac23",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5146,7 +5146,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "c54a3ddddc7347ba84efda89f773bc93c3db9e40ee2ce442414b1a5915b7e321",
+      "file_sha256": "771e01b4fce006181a15795f87bc73758814b430362c7b1edbb49e2488bcac23",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5158,7 +5158,7 @@
       "reason_literal": "task.supersede 集成需要 Windows 隔离 daemon",
       "reason_expression": "'task.supersede 集成需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "b367d87dcbe2d2c84f1c3daa7749266286dfb63ba1dc3a58eec7f659b593d089",
+      "file_sha256": "e9b76c8d64ed8c250feee6dbc69992c8dc0dfa6e762ecacb475d6a90ee8d51b7",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5170,7 +5170,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "b367d87dcbe2d2c84f1c3daa7749266286dfb63ba1dc3a58eec7f659b593d089",
+      "file_sha256": "e9b76c8d64ed8c250feee6dbc69992c8dc0dfa6e762ecacb475d6a90ee8d51b7",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5182,7 +5182,7 @@
       "reason_literal": "CLI/daemon 路由用例需 Windows",
       "reason_expression": "'CLI/daemon 路由用例需 Windows'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "a6e169231e97a64fe1ab092f839b01f40a1a5747a74935846e47126e0b8113f0",
+      "file_sha256": "180100d1ced36c5baf87fc558a0538077df4e72d0e27a5193fa0b19a2009823d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5194,7 +5194,7 @@
       "reason_literal": "Windows",
       "reason_expression": "'Windows'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "a6e169231e97a64fe1ab092f839b01f40a1a5747a74935846e47126e0b8113f0",
+      "file_sha256": "180100d1ced36c5baf87fc558a0538077df4e72d0e27a5193fa0b19a2009823d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5206,7 +5206,7 @@
       "reason_literal": "Windows",
       "reason_expression": "'Windows'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "a6e169231e97a64fe1ab092f839b01f40a1a5747a74935846e47126e0b8113f0",
+      "file_sha256": "180100d1ced36c5baf87fc558a0538077df4e72d0e27a5193fa0b19a2009823d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5218,7 +5218,7 @@
       "reason_literal": "Windows",
       "reason_expression": "'Windows'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "a6e169231e97a64fe1ab092f839b01f40a1a5747a74935846e47126e0b8113f0",
+      "file_sha256": "180100d1ced36c5baf87fc558a0538077df4e72d0e27a5193fa0b19a2009823d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5230,7 +5230,7 @@
       "reason_literal": "task.supersede daemon 测试需要 Windows 隔离 daemon",
       "reason_expression": "'task.supersede daemon 测试需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "bd50febd5b90fcc08c2b0e1de87d08f21f8f32920df845cd2a00741f250710bb",
+      "file_sha256": "f2816f1e4763a64936dec9996105c9130852967456f2db4e293b523f01461654",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5242,7 +5242,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "bd50febd5b90fcc08c2b0e1de87d08f21f8f32920df845cd2a00741f250710bb",
+      "file_sha256": "f2816f1e4763a64936dec9996105c9130852967456f2db4e293b523f01461654",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5254,7 +5254,7 @@
       "reason_literal": "cw-daemon 二进制不可用（重启前置缺失）",
       "reason_expression": "'cw-daemon 二进制不可用（重启前置缺失）'",
       "condition_or_module": null,
-      "file_sha256": "bd50febd5b90fcc08c2b0e1de87d08f21f8f32920df845cd2a00741f250710bb",
+      "file_sha256": "f2816f1e4763a64936dec9996105c9130852967456f2db4e293b523f01461654",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5266,7 +5266,7 @@
       "reason_literal": "Windows 命名管道取证，仅 win32",
       "reason_expression": "'Windows 命名管道取证，仅 win32'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "bf82d49e8f18e5c297a320a561705529697edbbc13d227c66ce90cf9a2678085",
+      "file_sha256": "f213e288e8aa6c91a42cb3555d164c7a3870f3a3fa51283e2fb9b877f83483b1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5278,7 +5278,7 @@
       "reason_literal": "进程级 Windows daemon E2E 需要 Windows + Named Pipe",
       "reason_expression": "'进程级 Windows daemon E2E 需要 Windows + Named Pipe'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "eb9a43de5a76103f07a3083e49c78bb18f50fcd64b99487a2a063d9fe82e21e7",
+      "file_sha256": "eb267c68770ce32caea321a0f20b90cadec95f96f5bc2d042b16c9208aa511d9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5290,7 +5290,7 @@
       "reason_literal": "cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）",
       "reason_expression": "'cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）'",
       "condition_or_module": "not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN))",
-      "file_sha256": "eb9a43de5a76103f07a3083e49c78bb18f50fcd64b99487a2a063d9fe82e21e7",
+      "file_sha256": "eb267c68770ce32caea321a0f20b90cadec95f96f5bc2d042b16c9208aa511d9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5302,7 +5302,7 @@
       "reason_literal": null,
       "reason_expression": "f'默认管道 {pipe} 已被其他 daemon 占用，跳过进程级 E2E'",
       "condition_or_module": null,
-      "file_sha256": "eb9a43de5a76103f07a3083e49c78bb18f50fcd64b99487a2a063d9fe82e21e7",
+      "file_sha256": "eb267c68770ce32caea321a0f20b90cadec95f96f5bc2d042b16c9208aa511d9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5314,7 +5314,7 @@
       "reason_literal": null,
       "reason_expression": "f'默认管道 {pipe} 已被其他 daemon 占用，跳过 v46 迁移 E2E'",
       "condition_or_module": null,
-      "file_sha256": "eb9a43de5a76103f07a3083e49c78bb18f50fcd64b99487a2a063d9fe82e21e7",
+      "file_sha256": "eb267c68770ce32caea321a0f20b90cadec95f96f5bc2d042b16c9208aa511d9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5326,7 +5326,7 @@
       "reason_literal": null,
       "reason_expression": "f'默认管道 {pipe} 已被其他 daemon 占用，跳过 identity E2E'",
       "condition_or_module": null,
-      "file_sha256": "eb9a43de5a76103f07a3083e49c78bb18f50fcd64b99487a2a063d9fe82e21e7",
+      "file_sha256": "eb267c68770ce32caea321a0f20b90cadec95f96f5bc2d042b16c9208aa511d9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5338,7 +5338,7 @@
       "reason_literal": null,
       "reason_expression": "f'默认管道 {pipe} 已被其他 daemon 占用，跳过 CLI 共享库 E2E'",
       "condition_or_module": null,
-      "file_sha256": "eb9a43de5a76103f07a3083e49c78bb18f50fcd64b99487a2a063d9fe82e21e7",
+      "file_sha256": "eb267c68770ce32caea321a0f20b90cadec95f96f5bc2d042b16c9208aa511d9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5350,7 +5350,7 @@
       "reason_literal": "未配置 CW_E2E_OTHER_USER / CW_E2E_OTHER_PASSWORD，跳过真实双身份 ACL 验证",
       "reason_expression": "'未配置 CW_E2E_OTHER_USER / CW_E2E_OTHER_PASSWORD，跳过真实双身份 ACL 验证'",
       "condition_or_module": null,
-      "file_sha256": "eb9a43de5a76103f07a3083e49c78bb18f50fcd64b99487a2a063d9fe82e21e7",
+      "file_sha256": "eb267c68770ce32caea321a0f20b90cadec95f96f5bc2d042b16c9208aa511d9",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5362,7 +5362,7 @@
       "reason_literal": "进程级 workspace round-trip 需要 Windows + loopback HTTP daemon",
       "reason_expression": "'进程级 workspace round-trip 需要 Windows + loopback HTTP daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "8c9ad1d9c2ead769afdf9097d44bd2337e5b8a6a0dd61a16b582f8a097b80bbd",
+      "file_sha256": "8fb1d963a9625d61284dee85bb2944f3fa9c8246a8d3d3f252fd17fe17d4d985",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5374,7 +5374,7 @@
       "reason_literal": "未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "_DAEMON_BIN is None",
-      "file_sha256": "8c9ad1d9c2ead769afdf9097d44bd2337e5b8a6a0dd61a16b582f8a097b80bbd",
+      "file_sha256": "8fb1d963a9625d61284dee85bb2944f3fa9c8246a8d3d3f252fd17fe17d4d985",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5386,7 +5386,7 @@
       "reason_literal": "cw-daemon 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "8c9ad1d9c2ead769afdf9097d44bd2337e5b8a6a0dd61a16b582f8a097b80bbd",
+      "file_sha256": "8fb1d963a9625d61284dee85bb2944f3fa9c8246a8d3d3f252fd17fe17d4d985",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5398,7 +5398,7 @@
       "reason_literal": "进程级 snapshot round-trip 需要 Windows + loopback HTTP daemon",
       "reason_expression": "'进程级 snapshot round-trip 需要 Windows + loopback HTTP daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "fcef295943b5beffaea8b6ed361fa9865b65cd4d758ddfa7fc1c5543c4098711",
+      "file_sha256": "5e77714dbc25f211a54de0d7a3875faa10be42b4c8111ed7f7f7b375bd1f0a72",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5410,7 +5410,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "fcef295943b5beffaea8b6ed361fa9865b65cd4d758ddfa7fc1c5543c4098711",
+      "file_sha256": "5e77714dbc25f211a54de0d7a3875faa10be42b4c8111ed7f7f7b375bd1f0a72",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5422,7 +5422,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "fcef295943b5beffaea8b6ed361fa9865b65cd4d758ddfa7fc1c5543c4098711",
+      "file_sha256": "5e77714dbc25f211a54de0d7a3875faa10be42b4c8111ed7f7f7b375bd1f0a72",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5434,7 +5434,7 @@
       "reason_literal": "进程级 workspace round-trip 需要 Windows + loopback HTTP daemon",
       "reason_expression": "'进程级 workspace round-trip 需要 Windows + loopback HTTP daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "39c00680d82145c55c859d24ea16bd180ea5fba68e3ede50bf18fe986e7f8834",
+      "file_sha256": "af042a8a27af2b0407d5aec10e98265a98f788193d57ecd6a1ccee5bb2860a70",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5446,7 +5446,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not _DAEMON_BIN or not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "39c00680d82145c55c859d24ea16bd180ea5fba68e3ede50bf18fe986e7f8834",
+      "file_sha256": "af042a8a27af2b0407d5aec10e98265a98f788193d57ecd6a1ccee5bb2860a70",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5458,7 +5458,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "39c00680d82145c55c859d24ea16bd180ea5fba68e3ede50bf18fe986e7f8834",
+      "file_sha256": "af042a8a27af2b0407d5aec10e98265a98f788193d57ecd6a1ccee5bb2860a70",
       "root_cause": "UNREVIEWED"
     }
   ]
