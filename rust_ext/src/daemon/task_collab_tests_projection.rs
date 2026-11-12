@@ -169,7 +169,8 @@ use super::support::*;
         seed_workspace(&store);
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
 
-        // 历史任务：只有 tasks 行，无 workspace binding。
+        // 历史任务：只有 tasks 行，无 workspace binding → READ-1 修复后读入口
+        // fail-closed（E_TASK_BINDING_MISSING），不再默认放行跨 workspace 读取。
         let conn = store.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
@@ -178,15 +179,13 @@ use super::support::*;
         )
         .unwrap();
         drop(conn);
-        let hist = store
+        let hist_err = store
             .handle_task_status(
                 peer.clone(),
                 &serde_json::json!({"task_id": "T-HIST-BLOCKED"}),
             )
-            .unwrap();
-        assert_eq!(hist["lifecycle_status"], "in_progress");
-        assert_eq!(hist["workflow_status"], "governance_blocked");
-        assert!(hist["blocking_reasons"].as_array().unwrap().len() > 0);
+            .unwrap_err();
+        assert_eq!(hist_err.code, "E_TASK_BINDING_MISSING");
 
         // 新任务：写入不可变 binding，但缺 contract 时同样不伪造投影。
         // §36.4 后 task.create 不再允许 task_id-only 无合同空建，故以 SQL seed
@@ -206,25 +205,24 @@ use super::support::*;
 
     #[test]
     fn test_task_status_closed_historical_is_completed_not_blocked() {
-        // GOV-FIX-04：终态短路。历史 closed 卡（无 binding/合同）必须显示 completed，
-        // 不能再被标为 governance_blocked——否则已终结任务会看起来像"待处置的坏卡"。
-        // 同时确认 `reverted` 保留自身终态语义。
+        // GOV-FIX-04：终态短路。closed/reverted 卡必须显示自身终态，不能被标为
+        // governance_blocked。READ-1 后读入口要求不可变 binding，故这里先 seed
+        // binding，再验证终态投影语义。
         let (_dir, db_path) = temp_db();
         let store = TaskCollabStore::new(&db_path).unwrap();
         seed_workspace(&store);
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
-
+        seed_task_binding(&store, "T-HIST-CLOSED");
+        seed_task_binding(&store, "T-HIST-REVERTED");
         {
             let conn = store.conn.lock().unwrap();
             conn.execute(
-                "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
-                 VALUES ('T-HIST-CLOSED', 'historic closed', '', 'test', 'closed', 1.0, 1.0, '')",
+                "UPDATE tasks SET status='closed' WHERE id='T-HIST-CLOSED'",
                 [],
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
-                 VALUES ('T-HIST-REVERTED', 'historic reverted', '', 'test', 'reverted', 1.0, 1.0, '')",
+                "UPDATE tasks SET status='reverted' WHERE id='T-HIST-REVERTED'",
                 [],
             )
             .unwrap();

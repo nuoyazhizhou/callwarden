@@ -8,13 +8,21 @@ use super::*;
 impl TaskCollabStore {
     pub fn handle_task_status(
         &self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let task_id = params
             .get("task_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
+
+        // READ-1：authority 必须来自服务端 binding 反查；客户端 workspace 仅做
+        // 一致性校验。owner ACL 与 task.list 同款（verify 内部加锁，须在持锁前完成）。
+        let workspace_id = {
+            let conn = self.conn.lock().unwrap();
+            read_task_bound_workspace(&conn, task_id, params)?
+        };
+        self.verify_registry_owner_for_workspace_id(peer.uid, workspace_id)?;
 
         let conn = self.conn.lock().unwrap();
         let row = conn
@@ -745,11 +753,16 @@ impl TaskCollabStore {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = peer;
         let task_id = params.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
         if task_id.is_empty() {
             return Err(DaemonRpcError::invalid_params("缺少 task_id"));
         }
+        // READ-1：与 task.status 使用同一 workspace 权威与 owner ACL。
+        let workspace_id = {
+            let conn = self.conn.lock().unwrap();
+            read_task_bound_workspace(&conn, task_id, params)?
+        };
+        self.verify_registry_owner_for_workspace_id(peer.uid, workspace_id)?;
         let conn = self.conn.lock().unwrap();
         let node = build_task_tree_node(&conn, task_id);
         if node.is_null() {

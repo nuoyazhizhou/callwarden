@@ -531,6 +531,54 @@ pub(crate) fn task_bound_workspace_id(
     Ok(workspace_id)
 }
 
+/// 任务**读入口**（task.status / task.status_tree / task.governance_projection）的
+/// workspace 权威解析（READ-1 修复）。
+///
+/// - authority 只能来自服务端不可变 `task_workspace_bindings` 反查，绝不采信客户端
+///   自报 workspace；
+/// - 客户端显式传入的 `workspace_id` 仅做一致性校验，不一致 fail-closed；
+/// - 无绑定（含未 attest 的 legacy 卡）→ `E_TASK_BINDING_MISSING`，不默认放行。
+///
+/// 调用方仍需在持锁前调用 `verify_registry_owner_for_workspace_id(peer.uid, ws)`
+/// （该 helper 内部会加锁，不能与本函数的 conn 锁嵌套）。
+pub(crate) fn read_task_bound_workspace(
+    conn: &Connection,
+    task_id: &str,
+    params: &Value,
+) -> Result<i64, DaemonRpcError> {
+    let bound: Option<i64> = conn
+        .query_row(
+            "SELECT workspace_id FROM task_workspace_bindings WHERE task_id = ?1",
+            params![task_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("查询 task workspace binding 失败: {}", e))
+        })?;
+    let workspace_id = bound.ok_or_else(|| {
+        DaemonRpcError::new(
+            "E_TASK_BINDING_MISSING",
+            format!(
+                "task={} 缺少 task_workspace_bindings 绑定，拒绝读取；legacy 卡请先执行 cw task attest-legacy-workspace-binding",
+                task_id
+            ),
+        )
+    })?;
+    if let Some(requested) = optional_workspace_id_param(params) {
+        if requested != workspace_id {
+            return Err(DaemonRpcError::new(
+                "E_TASK_WORKSPACE_SCOPE_MISMATCH",
+                format!(
+                    "task={} 绑定 workspace={} 与请求 workspace={} 不一致，拒绝跨 workspace 读取",
+                    task_id, workspace_id, requested
+                ),
+            ));
+        }
+    }
+    Ok(workspace_id)
+}
+
 /// provenance/审计记录的 workspace 归属：优先不可变 binding（多 workspace 下不会把
 /// 任务的动作记到其他项目的 workspace）；无 binding 的 legacy 任务回退到 active
 /// workspace（fail-closed：无 active workspace 时拒绝，绝不回退到“任意 workspace”）。

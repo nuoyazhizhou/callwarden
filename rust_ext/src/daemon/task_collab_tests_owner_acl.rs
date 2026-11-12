@@ -51,6 +51,104 @@ fn test_task_owner_acl_denies_cross_uid_on_bound_task() {
 }
 
 #[test]
+fn test_task_read_entries_reject_cross_workspace_scope() {
+    // READ-1：客户端自报 workspace 只做一致性校验；与 binding 不一致必须 fail-closed，
+    // 不能在 TokenSlim 目录下用其他 workspace 参数读出 callwarden 任务卡。
+    let (_dir, db_path) = temp_db();
+    let store = TaskCollabStore::new(&db_path).unwrap();
+    seed_workspace(&store);
+    seed_task_binding(&store, "T-READ-SCOPE");
+    let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+    let params = serde_json::json!({"task_id": "T-READ-SCOPE", "workspace_id": 2});
+    let err = store.handle_task_status(peer.clone(), &params).unwrap_err();
+    assert_eq!(err.code, "E_TASK_WORKSPACE_SCOPE_MISMATCH");
+    let err = store
+        .handle_task_status_tree(peer.clone(), &params)
+        .unwrap_err();
+    assert_eq!(err.code, "E_TASK_WORKSPACE_SCOPE_MISMATCH");
+    let err = store
+        .handle_task_governance_projection_get(peer.clone(), &params)
+        .unwrap_err();
+    assert_eq!(err.code, "E_TASK_WORKSPACE_SCOPE_MISMATCH");
+
+    // 显式同名 binding workspace 时正常放行。
+    let ok = store
+        .handle_task_status(
+            peer,
+            &serde_json::json!({"task_id": "T-READ-SCOPE", "workspace_id": 1}),
+        )
+        .unwrap();
+    assert_eq!(ok["task_id"], "T-READ-SCOPE");
+}
+
+#[test]
+fn test_task_read_entries_reject_missing_binding() {
+    // READ-1：无 task_workspace_bindings 的历史/legacy 卡不得默认放行；
+    // 必须先走 cw task attest-legacy-workspace-binding 显式补绑。
+    let (_dir, db_path) = temp_db();
+    let store = TaskCollabStore::new(&db_path).unwrap();
+    seed_workspace(&store);
+    {
+        let conn = store.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+             VALUES ('T-READ-NOBIND', 'unbound', '', 'test', 'open', 1.0, 1.0, '')",
+            [],
+        )
+        .unwrap();
+    }
+    let peer = PeerCredential::new_unix(1000, 1000, 1234);
+    let params = serde_json::json!({"task_id": "T-READ-NOBIND"});
+
+    let err = store.handle_task_status(peer.clone(), &params).unwrap_err();
+    assert_eq!(err.code, "E_TASK_BINDING_MISSING");
+    let err = store
+        .handle_task_status_tree(peer.clone(), &params)
+        .unwrap_err();
+    assert_eq!(err.code, "E_TASK_BINDING_MISSING");
+    let err = store
+        .handle_task_governance_projection_get(peer, &params)
+        .unwrap_err();
+    assert_eq!(err.code, "E_TASK_BINDING_MISSING");
+}
+
+#[test]
+fn test_task_read_entries_enforce_workspace_owner_acl() {
+    // READ-1：读入口复用 task.list 的 owner ACL，跨 UID 不得读取绑定任务卡。
+    let (dir, db_path) = temp_db();
+    let registry_path = seed_registry(&dir, "ws-inst-test", 1000);
+    let store = TaskCollabStore::new(&db_path)
+        .unwrap()
+        .with_registry_db_path_for_tests(&registry_path);
+    seed_workspace(&store);
+    seed_task_binding(&store, "T-READ-ACL");
+    let owner = PeerCredential::new_unix(1000, 1000, 1234);
+    let intruder = PeerCredential::new_unix(1001, 1001, 1234);
+    let params = serde_json::json!({"task_id": "T-READ-ACL"});
+
+    assert!(store
+        .handle_task_status(owner.clone(), &params)
+        .is_ok());
+    for code in [
+        store
+            .handle_task_status(intruder.clone(), &params)
+            .unwrap_err()
+            .code,
+        store
+            .handle_task_status_tree(intruder.clone(), &params)
+            .unwrap_err()
+            .code,
+        store
+            .handle_task_governance_projection_get(intruder, &params)
+            .unwrap_err()
+            .code,
+    ] {
+        assert_eq!(code, "workspace_forbidden", "跨 UID 必须 fail-closed");
+    }
+}
+
+#[test]
 fn test_task_owner_acl_allows_legacy_and_missing_registry_row() {
     let (dir, db_path) = temp_db();
     // registry 存在但无 ws-inst-test 行：未注册 / legacy 项目保持可读写。

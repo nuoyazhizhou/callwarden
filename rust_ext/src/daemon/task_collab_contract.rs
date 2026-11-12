@@ -1394,13 +1394,20 @@ impl TaskCollabStore {
     /// 诊断；**绝不返回 lease raw token**。只读方法，无 mutation 门禁。
     pub fn handle_task_governance_projection_get(
         &self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let task_id = params
             .get("task_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
+        // READ-1：governance projection 同样泄露任务卡全文，必须走 binding 反查
+        // + owner ACL，与 task.status/task.list 同一权威面。
+        let workspace_id = {
+            let conn = self.conn.lock().unwrap();
+            read_task_bound_workspace(&conn, task_id, params)?
+        };
+        self.verify_registry_owner_for_workspace_id(peer.uid, workspace_id)?;
         let conn = self.conn.lock().unwrap();
 
         let status: String = conn
