@@ -70,12 +70,16 @@
 | bootstrap token 被窃取后反复使用 | 单次性 token、10 分钟 TTL、绑定 principal/workspace、原子消费、审计 |
 | 重放旧写请求 | `write.grant` 绑定 `base_hash + task_id/step_id + 过期时间`；nonce/request_id 去重 |
 | 远端路径穿越 | 远端 principal 的路径参数一律拒绝；路径解析只在客户端发生 |
+| 任务台账零鉴权直读（跨 workspace 治理元数据泄漏，READ-1） | 台账（tasks/steps/events/verdicts）读面唯一合法入口 = mTLS RPC；按 principal→workspace grant 过滤行，跨 workspace 查询 fail-closed 并落审计；权威库路径不向客户端下发（2026-11-12 增补，缺陷卡 `T-1794478868969-15dc69f4`） |
 
 ### 3.2 明确不阻止（必须写进用户文档，禁止过度承诺）
 
 1. **本机 shell 旁路**：agent 若被授予本机 shell，可直接改 SQLite/文件。MCP/daemon 的
    权限模型**无法阻止**同机同用户（或更高权限）进程绕过 RPC。唯一防线是 OS 文件 ACL、
    磁盘加密与最小权限运行；这属于部署责任，不是协议能力。
+   > READ-1 修正（2026-11-12）：本豁免只覆盖**写**旁路与非治理数据；任务台账的**读面**
+   > 已升格为 §3.1 必须阻止项并受 I7 约束（实证：零凭据只读直连 `callwarden.db` 可枚举
+   > 全部 workspace 的卡/verdict/证据哈希，见缺陷卡 `T-1794478868969-15dc69f4`）。
 2. **daemon owner 被攻陷**：owner 可读 CA 私钥与全部数据。
 3. **拒绝服务**：TLS 握手与请求洪泛只做限流，不承诺可用性。
 4. **本机 root/管理员**：可读取任何 0600 文件（Unix root / Windows Administrators）。
@@ -89,6 +93,11 @@
 - **I4 daemon 不碰远端路径**：远端请求中出现绝对路径/`db_path`/`host_real_root` 即拒绝。
 - **I5 写绑定基线**：任何写提交必须携带 grant 与 `base_hash`，不匹配即拒绝且不更新索引。
 - **I6 可审计**：签发、吊销、授权变更、grant 发放/提交/拒绝全部落审计事件。
+- **I7 台账读面治理（2026-11-12 READ-1 增补）**：任务台账的读取唯一合法入口是 mTLS RPC；
+  daemon 按 `principal_id → workspace grant` 过滤行，跨 workspace 查询 fail-closed 并落
+  审计事件；权威任务库路径不向客户端下发（`mcp.common.get_db_path_for_daemon` 等路径
+  下发面收敛），库文件 ACL 收敛 owner-only。修复分期由 READ-1 卡
+  `T-1794478868969-15dc69f4` 步骤 3 冻结。
 
 ---
 
@@ -956,3 +965,42 @@ A/B 前，S4-06 写面不得计 PASS。修复卡：`T-1794454711064-62856418`
   否则客户端无法解析任何源文件（`Unsupported skipped`），会在 upload 前就无基线，
   与 daemon 修复无关。方向 B 使用 7645 端口以避开本机已安装的 7644 daemon；
   PKI/registry/task db/cg 模板均为独立临时目录。
+
+---
+
+## 18. READ-1 修复分期（2026-11-12，冻结）
+
+> 承接：§3.1 新增威胁行「任务台账零鉴权直读」与 §3.3 不变量 I7。
+> 缺陷卡：`T-1794478868969-15dc69f4`（步骤1 取证 → 步骤2 本 ADR §3.2 增补 → 本节为
+> 步骤3 冻结的修复分期）。
+> 穿透取证单源：`.trae-cn/evidence/T-1794478868969-15dc69f4-step0-evidence.json`
+> （sha256 `e2fd11db8a38539ecc51eba1a325948d4b92d173efacce156ef36b580a1fdfe8`）：
+> 零凭据只读直连 `callwarden.db` 枚举 1681 tasks / 3 workspaces / 808 verdicts /
+> 12651 events；ACL 含继承项 `CodexSandboxUsers:(RX)`；路径下发锚点
+> `server/_mcp_common.py` `_get_db_path_for_daemon`；门禁直读依赖
+> `scripts/check_e2e_matrix_closure.py` DEFAULT_DB。
+
+### 18.1 分期
+
+| 期 | 内容 | 优先级 | 满足不变量 |
+| --- | --- | --- | --- |
+| R-A | 台账读面收进 mTLS RPC：daemon 侧 task 查询/列表按 `principal_id → workspace grant` 过滤行；跨 workspace 查询 fail-closed 并落审计事件；非授权 principal 不得获得任何台账元数据（含卡标题、verdict、证据哈希） | P0 | I7、I3、I6 |
+| R-B | 文件面收紧：`callwarden.db`（及同目录 registry/快照库）ACL 收敛 owner-only（移除继承的沙箱组 RX）；`mcp.common.get_db_path_for_daemon` remote 分支收敛不下发权威库路径，客户端统一经 RPC 读取 | P0 | I7 |
+| R-C | 合法直读者治理化：`check_e2e_matrix_closure.py` 等只读门禁/取证脚本改为 owner 本地显式豁免（部署文档明示口径）或改经 RPC 读取 | P1 | 部署责任口径收敛 |
+| R-D | （可选）按 workspace 物理拆库，消除单库全局泄漏面（纵深防御，非 P1 前置） | P2 | 租户隔离纵深 |
+
+### 18.2 P1（R-A + R-B）验收口径
+
+1. 非 owner principal 经 RPC 读任务元数据：仅返回被授权 workspace 的行；跨 workspace
+   查询一律 fail-closed 且产生审计事件（I7 的鉴权 + 可审计双约束）；
+2. 客户端任何分支拿不到权威库路径：`get_db_path_for_daemon` 收敛后对 remote 会话
+   拒绝下发（fail-closed），local/owner 模式如保留须写明豁免依据；
+3. `callwarden.db` icacls 输出仅含 owner 与 SYSTEM/Administrators，无沙箱组继承项；
+4. 部署文档保留 §3.2.1 口径：同机同用户进程直读文件仍属部署责任；但治理元数据的
+   **协议面**读通道已收进 I7 约束。
+
+### 18.3 与 S1–S4 收口的关系
+
+本节为独立修复线，不改动 S1–S4 已冻结的验收矩阵行与已 closed 卡的 verdict；修复实施
+由 Planner 另立卡分解（R-A/R-B 各一张 P0 卡为宜），本节仅冻结分期边界与验收口径，
+不含实现。
