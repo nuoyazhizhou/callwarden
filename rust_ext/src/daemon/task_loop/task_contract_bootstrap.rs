@@ -56,6 +56,16 @@ pub const BOOTSTRAP_ROLE_ALLOWLIST: &[&str] = &[
     //   验收 ①② 已达成（purity 0 违例 + 243 工具 daemon 路由一致），
     //   验收 ③ db/ retirement 由 phase-3 生产侧断开 + 收壳推进。
     "T-1787203926824-9f873bfc",
+    // 2026-11-12 收编：code-review-cw 第 3 轮对 TokenSlim 提出的 3 张缺陷卡
+    //   误注册进 callwarden 任务库（绑定 workspace 10 / TokenSlim，instance
+    //   d079f60cac8d6186），三层治理数据全缺失且无 legacy role_contracts
+    //   可派生 → governance_blocked（用途一）。缺陷修复已在 TokenSlim 落地
+    //   （a49dc1c7 / d9e8e503）并经独立盲审 PASS（cargo test compression
+    //   --lib 56/56，证据 .trae-cn/evidence/T-1794384007*|-review.json）。
+    //   收编卡 T-1794501446111-bc6421f8。
+    "T-1794384007791-7f12a250",
+    "T-1794384007938-87d44484",
+    "T-1794417162248-deb5f064",
 ];
 
 #[derive(Debug)]
