@@ -2,6 +2,9 @@
 
 > 状态：**已裁决（2026-11-04）**。本文档冻结架构决策与不变量；实现按 §10 的 S1–S4 分期，
 > 每期一张独立任务卡（父卡 `[REMOTE] HTTPS+mTLS 远端控制面`）。
+> 实施对账（2026-11-11）：S1–S4 四张子卡均已 `closed / completed`；deferred 范围由承接卡
+> `T-1793807024448-17d4cd60`（[REMOTE-S4-FU]）补齐，该卡当前 `review`。逐卡状态、依赖、
+> allowed/excluded 口径与回滚见 §17。
 > 取代：`docs/design/http-security-profile-v2-design.md`（其 v2 `loopback_token_authenticated`
 > 与 v3 `cross_host_mutual_tls` 方向均被本 ADR 收敛为单轨 mTLS）。
 > 验收矩阵：`docs/design/cli-mcp-matrix-backlog.md` §38。
@@ -366,6 +369,20 @@ HTTPS 客户端。
 **执行方式：严格串行（S1→S2→S3→S4），禁止并行 checkout；共享文件
 `server/daemon_client.py`、`server/tools/`、`cli/main.py` 由当前阶段独占，**
 前一阶段 adjudicate 闭环后才派发下一张卡（`task_dependencies` 为空，顺序由生命周期与派工保证）。
+
+#### 分期依赖与 allowed / excluded 口径（2026-11-11 冻结）
+
+| 期 | 任务卡 | 前置 | allowed paths（该期白名单上限） | excluded paths |
+|---|---|---|---|---|
+| S1 | `T-1793774130685-6acab9d4` | — | `rust_ext/src/daemon/{http_server,pki*,auth_principal,peercred}.rs`、`rust_ext/src/bin/cw_daemon.rs`、`cli/`（`pki` 子命令）、`server/{daemon_client,mcp_server}.py`、`db/schema.py`、`tests/test_*mtls*` | `docs/design/mtls-remote-plane.md` 决策正文、`archive/`、明文 HTTP 回退 |
+| S2 | `T-1793774130739-6e096a14` | S1 | `server/daemon_client.py`、`server/tools/`、`tests/test_remote_read_plane.py` | 本地 SQLite 直写、`rust_ext/src/daemon/` 传输层 |
+| S3 | `T-1793774130800-71aa5b74` | S1、S2 | `rust_ext/src/daemon/{fs_handlers,dispatch,snapshot_guard}.rs`、`db/`（写索引/审计 schema）、`server/daemon_client.py`、`tests/test_remote_write_governance.py` | 本地直写旁路、未签名审计链 |
+| S4 | `T-1793774130880-766de4a0` | S1–S3 | `rust_ext/src/daemon/{transport*,mod}.rs`、`rust_ext/src/bin/cw_daemon.rs`、`server/daemon_*.py`、`scripts/check_e2e_matrix_closure.py`、测试夹具 | 新增运行时依赖、双轨兼容开关、`docs/design/mtls-remote-plane.md` 决策正文 |
+| S4-FU | `T-1793807024448-17d4cd60` | S4 | 同 S4（承接 deferred：去 pipe/UDS、去 Python local 回退、夹具迁移） | 同 S4 |
+
+excluded 的共同底线：任何一期都不得恢复 pipe/UDS/bridge 作为生产传输、不得引入明文 HTTP
+回退、不得绕过 `write.grant`/`write.commit` 的审计与索引写入。跨期改动共享文件必须在前一卡
+adjudicate 闭环后重新 claim，禁止在同一 checkout 并行修改。
 
 ---
 
@@ -770,3 +787,82 @@ workspace 根（`CALLWARDEN_WORKSPACE` → MCP `_project_root`，同 F-5 修复�
 | S2-07 | §16.2 大小上限表 |
 | S2-08 | §16.1 矩阵口径（Windows↔WSL、Windows↔Linux，对端 `--allow-remote`） |
 | S2-09 | §16.4 `E_HTTP_DAEMON_UNAVAILABLE` 无本地降级 |
+
+---
+
+## 17. 实施收口对账（2026-11-11）
+
+### 17.1 逐卡状态
+
+| 期 | 任务卡 | lifecycle | 合同 | Verdict 数 | 合入提交 |
+| --- | --- | --- | --- | --- | --- |
+| 父卡 | `T-1793774104011-34e361b4` | open（本步 `govern`） | r1 | — | — |
+| S1 | `T-1793774130685-6acab9d4` | closed / completed | r1 | 1 | 见 §15 盘点基线 |
+| S2 | `T-1793774130739-6e096a14` | closed / completed | r1 | 1 | 见 §16 协议冻结 |
+| S3 | `T-1793774130800-71aa5b74` | closed / completed | r1 | 2 | `4b3c456` |
+| S4 | `T-1793774130880-766de4a0` | closed / completed | r1 | 0（门禁前遗留） | `7e178cb` |
+| S4-FU | `T-1793807024448-17d4cd60` | review | r1 | 0（待复核） | `ef28ab9` |
+
+四张子卡均持有 `Task Contract`（revision ≥ r1），满足父卡 `govern` 步的「计划树冻结 + 子卡
+具备完整验收合同」口径。**已知治理观测**：S4 卡在 Verdict Ledger 强制门禁生效前闭环，因此
+`verdict_count = 0`；本步只做只读对账，不在本卡内补建历史 Verdict（补建需回放当时快照，
+超出本步 allowed paths）。
+
+### 17.2 依赖声明
+
+- S1 是 S2/S3/S4 的共同前置；S3 另依赖 S2 的客户端执行框架，S4 依赖 S1–S3 全部合入；
+  S4-FU 依赖 S4。
+- 依赖通过生命周期串行保证，`task_dependencies` 保持为空；共享文件
+  `server/daemon_client.py`、`server/tools/`、`cli/main.py` 由当期卡独占，前一卡 adjudicate
+  闭环后才派发下一张卡。
+- allowed / excluded 的逐期上限见 §10「分期依赖与 allowed / excluded 口径」。
+
+### 17.3 依赖与回滚陈述（本步 required_evidence）
+
+- 正向依赖：远端只读面（S2）复用 S1 的身份/绑定层；远端写面（S3）复用 S2 的客户端执行
+  框架；S4 只删除 S1–S3 已不再使用的 pipe/UDS/bridge 路径，不新增行为。
+- 回滚：S2/S3 为新增路由，回滚 = 客户端不发新方法；S4 为删除类变更，回滚 = revert 提交
+  （`7e178cb`、`ef28ab9`），无数据迁移，PKI 表与审计记录只追加，不回滚数据。详见 §13。
+- 残余风险维持 §12 第 8 行：agent 直接用 shell 改 DB/文件无法在协议层阻止，S3 审计只覆盖
+  RPC 路径；本 ADR 不扩大承诺。
+
+### 17.4 收口后未关闭项
+
+- S4-FU（`T-1793807024448-17d4cd60`）尚处 `review`，未进入 adjudication；父卡的 `verify`
+  步应在其闭环后执行。
+- 矩阵 S4-06（跨 OS 实机回归）：**双向只读已取证 PASS**（§17.5）；**写治理链路的跨 OS
+  实机面仍缺入口（D4），该半保持未关闭，不得计 PASS**。
+- §38 的逐行对账更新由 `T-1794410782335-6e36db64` 的 `verify` 步落盘，本步只改本 ADR。
+
+### 17.5 S4-06 跨 OS 实机回归取证（2026-11-11）
+
+证据单源：`.trae-cn/evidence/s4-06/s4-06-cross-os-matrix.json`
+（sha256 `9ff83242aaa28ca6cc394fcfd7d83f72d8f0578910da339336a0e7d15c426ec8`），
+另附 5 份原始日志（A/B/C/D/E，逐份哈希见该 JSON）。
+
+| 方向 | 客户端 | daemon（对端 OS） | 命令 / env | 结果 |
+| --- | --- | --- | --- | --- |
+| A | Windows 11（Python 3.14.3） | WSL2 Ubuntu 22.04.5（`https://172.30.23.221:7633`） | `pytest tests/test_remote_read_plane.py::TestS208CrossOsReadOnlyMatrix -v`，`CW_S2_REMOTE_ENDPOINT/CERT/KEY/CA/ROOT` | `1 passed` |
+| B | WSL2 Ubuntu 22.04.5（Python 3.10.12） | Windows 11 daemon（`https://172.30.16.1:7644`） | 同上命令行，env 指向 Windows 侧 PKI | `1 passed` |
+
+- 两端为**各自独立 PKI** 的真实 mTLS（独立 CA + owner 身份 `pr_owner`，客户端
+  `CERT_REQUIRED`），`bind_scope=remote`、`security_profile=https_mtls_v1`。
+- 覆盖：`file.read` 客户端本机执行 + `exec_origin=client`、`file.list` 裸数组排序、
+  `build_graph → snapshot.upload` 真实 mTLS 上传、`query.stats` READ_ONLY 路由可查。
+- 旁证（daemon 侧自证，非客户端自报）：两端 `http_dedup` 台账均有 `snapshot.upload` —
+  WSL daemon `workspace 7046c9ea2a2a389f` generation 1..4；Windows daemon
+  `workspace f47918fe7f076161` generation 1..2。
+- 同套件双 OS 回归：`tests/test_remote_read_plane.py` + `tests/test_remote_write_governance.py`
+  在 Windows 与 WSL 均为 `50 passed / 1 skipped`（后者在写面用进程内桩，**不构成**写链路
+  实机证据）。
+
+**取证中暴露并修复的缺陷**
+
+| 编号 | 类别 | 位置 | 结论 |
+| --- | --- | --- | --- |
+| D1 | 测试夹具 | `tests/test_remote_read_plane.py` | `HttpDaemonRpcClient.__new__` 绕过 `__init__`，缺 `_project_root`/`_remote_workspace_id`/`_resolved_endpoint`，该 env-gated 用例从未真实执行；改为真实构造 + `configure_workspace` + 注入 manifest/endpoint |
+| D2 | 测试夹具 | 同上 | `route_rpc` 走 `HttpDaemonRpcClient.get_instance()` 单例，仅钉 `_get_rpc_client_for_route` 会 `E_HTTP_MANIFEST_MISSING`；改为钉 `get_instance` |
+| D3 | 产品缺陷 | `server/daemon_client.py` | `route_rpc` 对所有 profile 无条件注入绝对 `workspace_root`，remote profile 被本机路径守卫 fail-closed（`E_REMOTE_PATH_FORBIDDEN`）；改为仅非 remote profile 注入 |
+| D4 | 范围缺口（未修） | `tests/test_remote_write_governance.py` | 写治理链路仅有进程内 `_FakeWriteDaemon` 桩，daemon 半仅 Rust 单测；**无跨 OS 实机入口**，需单独立项（新增 remote 写面 env-gated 实机用例）后方可计 PASS |
+
+D1–D3 在 `T-1794410782335-6e36db64` 内修复并回归；D4 明确列为未关闭项。

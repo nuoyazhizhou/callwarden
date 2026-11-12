@@ -421,22 +421,17 @@ function Ensure-DaemonSingleInstance {
     # 不依赖环境变量继承；并保留 daemon stderr 以便排障。
     $daemonLog = Join-Path $EvidenceRoot "cw-daemon.stderr.log"
     $proc = Start-Process -FilePath $DaemonPath `
-        -ArgumentList @("--socket", $EndpointValue, "--http-bind", "127.0.0.1:6374") `
+        -ArgumentList @("--http-bind", "127.0.0.1:6374") `
         -WorkingDirectory $RepoRoot -WindowStyle Hidden -PassThru `
         -RedirectStandardError $daemonLog
     return [pscustomobject]@{ action = "start"; pid = $proc.Id }
 }
 
 function Endpoint {
-    $old = $env:PYTHONIOENCODING; $env:PYTHONIOENCODING = "utf-8"
-    try {
-        $value = (& $PythonExe -c "import config; print(config.get_default_daemon_endpoint())" 2>$null).Trim()
-        if ([string]::IsNullOrWhiteSpace($value)) { throw "无法解析 daemon endpoint" }
-        return $value
-    } finally {
-        if ($null -eq $old) { Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue }
-        else { $env:PYTHONIOENCODING = $old }
-    }
+    # ADR-002 单轨：daemon 传输只保留 HTTPS+mTLS，v1 UDS/pipe 默认端点已删除。
+    $override = [Environment]::GetEnvironmentVariable("CW_DAEMON_ENDPOINT")
+    if (-not [string]::IsNullOrWhiteSpace($override)) { return $override.Trim() }
+    return "https://127.0.0.1:6374"
 }
 
 function Ping([string]$EndpointValue, [string]$DaemonPath) {
@@ -620,14 +615,14 @@ catch {
         Move-Item -LiteralPath $oldCurrent -Destination $CurrentRoot
         $oldDaemon = Join-Path $CurrentRoot "cw-daemon.exe"
         [Environment]::SetEnvironmentVariable("CW_DAEMON_BIN", $oldDaemon, "User")
-        Start-Process -FilePath $oldDaemon -ArgumentList @("--socket", (Endpoint)) -WorkingDirectory $RepoRoot -WindowStyle Hidden | Out-Null
+        Start-Process -FilePath $oldDaemon -ArgumentList @("--http-bind", "127.0.0.1:6374") -WorkingDirectory $RepoRoot -WindowStyle Hidden | Out-Null
     } elseif ($oldDaemonPath -and (Test-Path -LiteralPath $oldDaemonPath -PathType Leaf)) {
         $result.rollback = $true
         $existingDaemon = @(Get-AllDaemons)
         if ($existingDaemon.Count -eq 0) {
             Info "安装失败，重新启动停止前的 daemon: $oldDaemonPath"
             [Environment]::SetEnvironmentVariable("CW_DAEMON_BIN", $oldDaemonPath, "User")
-            Start-Process -FilePath $oldDaemonPath -ArgumentList @("--socket", (Endpoint)) -WorkingDirectory $RepoRoot -WindowStyle Hidden | Out-Null
+            Start-Process -FilePath $oldDaemonPath -ArgumentList @("--http-bind", "127.0.0.1:6374") -WorkingDirectory $RepoRoot -WindowStyle Hidden | Out-Null
         } else {
             Info "安装失败，保留已有 daemon，避免回滚重复启动；PID=$($existingDaemon.pid -join ',')"
         }

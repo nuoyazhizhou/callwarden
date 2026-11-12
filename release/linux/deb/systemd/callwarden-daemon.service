@@ -20,7 +20,7 @@ Type=notify
 User=callwarden
 Group=callwarden
 
-# 运行时目录由 tmpfiles.d / RuntimeDirectory 创建，属主 callwarden:callwarden-clients
+# 运行时目录与状态/日志目录由 systemd 管理类指令创建
 RuntimeDirectory=callwarden
 RuntimeDirectoryMode=0755
 StateDirectory=callwarden
@@ -67,7 +67,8 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-# UMask=0007 使 UDS socket 可为 callwarden-clients 组读写（0660，设计 §8.2）
+# UMask=0007 使 daemon 产出的状态/日志文件可为 callwarden-clients 组读写
+# （ADR-002 后无 UDS socket 监听）
 UMask=0007
 
 [Install]

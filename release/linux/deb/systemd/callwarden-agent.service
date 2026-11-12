@@ -10,7 +10,8 @@
 #   3. systemctl --user enable --now callwarden-agent.service
 #
 # 二进制：cw-agent（Python entrypoint，调用 callwarden.cli.main:run_agent_mode）
-# 依赖：callwarden-daemon.service（system unit）应已启动并监听 UDS socket
+# 依赖：callwarden-daemon.service（system unit）应已启动并发布 manifest v2；
+#       agent 通过 HTTPS + mTLS 连接（ADR-002 单轨，见 daemon-deploy-runbook §9.3.2）
 #
 # 日志：systemd 自动重定向到 journal（journalctl --user -u callwarden-agent）
 # PID 文件：~/.callwarden/agent.pid（用于 cw-agent stop/status 命令）
@@ -19,11 +20,11 @@
 [Unit]
 Description=Call Warden Per-UID File Watcher Agent
 Documentation=https://docs.callwarden.dev/agent
-# 依赖 system daemon（system unit），通过 UDS socket 通信
-# After=network.target 确保网络栈就绪（daemon socket 在 /run/callwarden/）
+# 依赖 system daemon（system unit），通过 HTTPS + mTLS 通信（ADR-002 单轨）
+# After=network.target 确保网络栈就绪
 After=network.target
-# Requires=callwarden-daemon.service 是 system unit，user service 无法直接 Requires
-# 改用 ExecStartPre 检查 socket 存在性，不存在则启动失败
+# Requires=callwarden-daemon.service 是 system unit，user service 无法直接 Requires；
+# daemon 未就绪时 agent 按 fail-closed 报错，并由 Restart=on-failure 重试
 
 [Service]
 Type=simple
@@ -45,7 +46,9 @@ RestartSec=5
 
 # 环境变量（可由 systemctl --user edit 覆盖）
 Environment=CW_AGENT_WATCH_DIR=%h/work
-Environment=CW_DAEMON_SOCKET=/run/callwarden/callwarden.sock
+# ADR-002：不存在 UDS/pipe 路径。端点与证书按 manifest v2 / CW_DAEMON_HTTP_ENDPOINT
+# 解析（runbook §9.3.2）；如需显式固定端点，在 systemctl --user edit 中补充
+# Environment=CW_DAEMON_HTTP_ENDPOINT=https://127.0.0.1:<port>
 
 # 资源限制（agent 比 daemon 轻量）
 MemoryHigh=256M

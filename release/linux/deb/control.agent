@@ -11,7 +11,7 @@ Architecture: __ARCH__
 Maintainer: Call Warden Team <team@callwarden.dev>
 Description: Call Warden - Per-UID Agent (cw-agent + systemd user unit)
  Per-UID agent running as the logged-in user. Reads the user's own
- workspaces and reports to the system daemon via UDS/FD.
+ workspaces and reports to the system daemon over HTTPS + mTLS.
  .
  Includes:
   - cw-agent CLI

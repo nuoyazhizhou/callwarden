@@ -146,8 +146,10 @@ Windows/macOS 默认 `local`；Linux 桌面默认 `local`，共享开发机选�
 优先级：CLI 参数 > 环境变量 > 用户配置 > 系统配置 > 默认值。`cw config explain` 应输出每个
 有效值的来源，但隐藏 secret。安装器只创建模板，不覆盖用户已经修改的配置。
 
-Linux daemon runtime 固定为 `/run/callwarden`。容器通过挂载整个目录并设置
-`CW_DAEMON_SOCKET` 访问；不得挂载单个 socket inode，不得挂载 `/var/lib/callwarden`。
+Linux daemon runtime 固定为 `/run/callwarden`（仅运行时目录，ADR-002 后不再包含 UDS
+socket）。容器内客户端通过 HTTPS + mTLS 直连 daemon：端点由 `CW_DAEMON_HTTP_ENDPOINT`
+或 daemon manifest v2 解析，客户端证书/私钥/CA 只读挂载并用 `CW_CLIENT_CERT` /
+`CW_CLIENT_KEY` / `CW_CA_CERT` 指定。不得挂载 `/var/lib/callwarden`。
 
 ## 6. Windows 安装包
 
@@ -202,26 +204,37 @@ daemon 包负责：
 - 创建 `callwarden` 服务账户和 `callwarden-clients` 连接组；
 - 安装 `/usr/bin/cw-daemon`、systemd unit、tmpfiles/sysusers 配置；
 - 创建 `/etc/callwarden`、`/var/lib/callwarden`、`/var/log/callwarden`；
-- 由 systemd 创建 `/run/callwarden`，socket 为 `0660`；
+- 由 systemd 创建 `/run/callwarden` 运行时目录（ADR-002 后无 UDS socket）；
 - pre-start 执行 schema compatibility check，迁移失败不得启动；
 - 卸载默认保留数据，purge 才删除配置，数据删除需要二次显式选项。
 
 agent 包负责安装 systemd user unit，但不得自动为所有用户启用 linger。管理员可选择：登录时
-启动，或对指定用户启用 linger。用户进程只读取自己有权限的 workspace，并通过 UDS/FD
-向 daemon 报告。
+启动，或对指定用户启用 linger。用户进程只读取自己有权限的 workspace，并通过
+HTTPS + mTLS 向 daemon 报告。
 
-容器 `client` 示例：
+容器 `client` 示例（ADR-002 单轨，HTTPS + mTLS）：
 
 ```bash
+# 端点：<port> 取 daemon manifest v2（~/.callwarden/http-daemon.<authority>.manifest.json）
+# 或 `cw daemon health` 输出的 HTTPS 端口；daemon 默认只绑定 loopback，
+# 因此 Linux 下容器用 --network host 共享宿主网络。
+# 证书目录只读挂载；容器用户与宿主同 UID，避免私钥权限拒绝。
 docker run \
+  --rm \
   --user "$(id -u):$(id -g)" \
-  --group-add "$(getent group callwarden-clients | cut -d: -f3)" \
-  --mount type=bind,src=/run/callwarden,dst=/cw-runtime,readonly \
-  -e CW_DAEMON_SOCKET=/cw-runtime/callwarden.sock \
+  --network host \
+  --mount type=bind,src="$HOME/.callwarden/pki",dst=/cw-pki,readonly \
+  --mount type=bind,src=/path/to/your/project,dst=/workspace,readonly \
+  -w /workspace \
+  -e CW_AUTHORITY=<authority_id> \
+  -e CW_DAEMON_HTTP_ENDPOINT=https://127.0.0.1:<port> \
+  -e CW_CLIENT_CERT=/cw-pki/identities/<principal_id>/client.crt \
+  -e CW_CLIENT_KEY=/cw-pki/identities/<principal_id>/client.key \
+  -e CW_CA_CERT=/cw-pki/ca/ca.crt \
   <image> cw-client ping
 ```
 
-enterprise 模式 socket 不存在时必须失败，不能静默创建容器本地数据库。
+enterprise 模式无法连接 daemon 端点时必须失败，不能静默创建容器本地数据库。
 
 ### 8.3 Maintainer script
 
@@ -286,7 +299,7 @@ flowchart TD
 - 每个平台从干净 runner 安装，不依赖源码、系统 Python、Cargo 或互联网；
 - 安装后的 Rust parse/query/storage 路径真实启用，不允许 Python fallback 冒充通过；
 - Windows/macOS 对 enterprise daemon 角色明确 fail-closed；
-- Linux 角色化安装、容器 UDS、双 UID 和真实 enterprise 门禁通过；
+- Linux 角色化安装、容器 HTTPS + mTLS、双 UID 和真实 enterprise 门禁通过；
 - fresh install、N-1 upgrade、失败回滚、repair、uninstall/purge 数据语义通过；
 - 所有正式产物完成签名、校验、SBOM、许可证和 provenance；
 - 安装手册中的每条命令都由 CI 在已安装包上执行过。

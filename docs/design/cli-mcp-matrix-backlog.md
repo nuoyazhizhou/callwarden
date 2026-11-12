@@ -2867,10 +2867,15 @@ review / apply，只能手工 `supersede` 收编。
 ## 38. HTTPS + mTLS 远端控制面验收矩阵（规划，2026-11-04）
 
 > 设计单源：`docs/design/mtls-remote-plane.md`（ADR-002）。
-> 状态：**规划冻结，未实现**。本节只登记验收口径、负例、命令与证据，供 S1–S4 逐卡引用。
+> 状态：**已实现，收口对账（2026-11-11）**。S1–S4 四张子卡均已 `closed / completed`；
+> deferred 范围由承接卡 `T-1793807024448-17d4cd60`（[REMOTE-S4-FU]）补齐，该卡当前 `review`。
+> 本节登记验收口径、负例、命令与证据；逐行结论以 `python scripts/check_e2e_matrix_closure.py`
+> 实跑为准，不以本文档文字代替实跑。
 > 父卡：`[REMOTE] HTTPS+mTLS 远端控制面：删除 pipe/UDS/bridge（S1–S4）`；子卡 S1/S2/S3/S4。
-> 子卡 ID 登记：S1 `T-1793774130685-6acab9d4`、S2 `T-1793774130739-6e096a14`、
-> S3 `T-1793774130800-71aa5b74`、S4 `T-1793774130880-766de4a0`；父卡 `T-1793774104011-34e361b4`。
+> 子卡 ID 与标题（与 §38.1–§38.4 一一对应）：S1 `T-1793774130685-6acab9d4`（[REMOTE-S1] mTLS
+> 控制面）、S2 `T-1793774130739-6e096a14`（[REMOTE-S2] 远端只读面）、S3
+> `T-1793774130800-71aa5b74`（[REMOTE-S3] 远端写治理）、S4 `T-1793774130880-766de4a0`
+> （[REMOTE-S4] 单轨清理与跨 OS 矩阵）；父卡 `T-1793774104011-34e361b4`。
 
 ### 38.1 S1 · mTLS 控制面
 
@@ -2910,9 +2915,9 @@ review / apply，只能手工 `supersede` 收编。
 | S2-03 | snapshot.upload | 客户端构建 codegraph DB 后上传 | daemon 校验 sha256/大小；导入成功；索引可查 |
 | S2-04 | 远端 db_path 拒绝 | `snapshot.publish` 带本机 `db_path` | `E_REMOTE_DB_PATH_FORBIDDEN`；无文件打开 |
 | S2-05 | 绝对路径拒绝 | `file.read` 带 `C:\...` / `/home/...` | `E_REMOTE_PATH_FORBIDDEN` |
-| S2-06 | 上传篡改 | 修改内容但保留旧 hash | 校验失败；不导入 |
+| S2-06 | 上传篡改 | 修改内容但保留旧 hash | `E_SNAPSHOT_UPLOAD_HASH_MISMATCH`；不导入、不残留 |
 | S2-07 | 大文件 | 接近 64 MiB body 上限 | 正常或 `E_PAYLOAD_TOO_LARGE`；无截断入库 |
-| S2-08 | 双向矩阵 | Windows↔WSL、Windows↔Linux | 两个方向各 1 次只读链路 PASS |
+| S2-08 | 双向矩阵 | `set CW_S2_REMOTE_ENDPOINT=https://<对端>:4014` 后 `pytest tests/test_remote_read_plane.py`（仅跨 OS 用例，未配 env 时 skip） | 两个方向各 1 次只读链路 PASS |
 | S2-09 | 无本地降级 | 客户端无 daemon 时调只读工具 | 结构化错误；不回退本地 SQLite |
 
 ### 38.3 S3 · 远端写治理
@@ -2927,8 +2932,8 @@ review / apply，只能手工 `supersede` 收编。
 | S3-06 | 跨 principal | A 的 grant 由 B 提交 | `E_WRITE_GRANT_PRINCIPAL_MISMATCH` |
 | S3-07 | 并发写 | 两客户端同路径同 base_hash | 仅一个成功；另一个 `E_WRITE_STALE_BASE` / `E_WRITE_LOCKED` |
 | S3-08 | 任务关闭后写 | task closed 后请求 grant | `E_WRITE_TASK_FORBIDDEN` |
-| S3-09 | 审计回放 | 读取审计链 | grant/commit/拒绝均可回放；无缺口 |
-| S3-10 | daemon 唯一写者 | 静态扫描 + 运行检查 | 客户端不直写 daemon DB；仅 daemon 写 |
+| S3-09 | 审计回放 | `python cw.py audit verify` | grant/commit/拒绝均可回放；链连续、签名匹配 |
+| S3-10 | daemon 唯一写者 | `pytest tests/test_remote_write_governance.py` + `git grep -n "sqlite3.connect" server/` | 客户端不直写 daemon DB；仅 daemon 写 |
 
 ### 38.4 S4 · 清理与矩阵
 
@@ -2938,8 +2943,74 @@ review / apply，只能手工 `supersede` 收编。
 > - **S4-03 已收口**：承载测试 `tests/test_single_track_kernel.py::test_s4_03_mcp_server_has_no_local_daemon_mode_branch`——AST 断言 `server/mcp_server.py` 无 `daemon_mode` 活引用，docstring 退役说明不误判。
 > - **S4-04 已收口**：`rust_ext/target/{release,debug}` 产物仅 `cw`、`cw-daemon`、`cw-client`（+ `cw-agent`/`cw_agent`），无 bridge 产物。
 > - **S4-05 已收口**：`scripts/check_e2e_matrix_closure.py` 已接入 S4-01/S4-03 行，实跑 PASS exit 0。
-> - **S4-06 pending**：Windows↔WSL/Linux 跨 OS 实机回归依赖 S2/S3 归属卡（仍 open），随其闭环后执行。
-> - **S4-07 已收口**：`docs/design/daemon-deploy-runbook.md` 现行部署节（§9/§10）pipe/UDS/bridge 说明已改 mTLS，§1–§8 标注为 v1 历史回滚参考。
+> - **S4-06 双向只读 PASS（写链路未取证）**：2026-11-11 在真实异 OS 对端上实测——
+>   方向 A Windows 11（Python 3.14.3）→ WSL2 Ubuntu 22.04.5 daemon
+>   `https://172.30.23.221:7633`，`pytest tests/test_remote_read_plane.py::TestS208CrossOsReadOnlyMatrix`
+>   得 `1 passed`；方向 B WSL2（Python 3.10.12）→ Windows daemon `https://172.30.16.1:7644`，
+>   同命令 `1 passed`。两端为各自独立 PKI 的真实 mTLS，旁证为两端 daemon `http_dedup`
+>   台账的 `snapshot.upload`（非客户端自报）。证据单源
+>   `.trae-cn/evidence/s4-06/s4-06-cross-os-matrix.json`
+>   （sha256 `9ff83242aaa28ca6cc394fcfd7d83f72d8f0578910da339336a0e7d15c426ec8`）+ 5 份原始日志。
+>   **写治理链路仍无跨 OS 实机入口（D4，仅进程内桩 + Rust 单测），该半未取证，本行不得计 PASS**；
+>   取证结论与 D1–D4 登记见 ADR-002 §17.5。
+> - **S4-07 复核（2026-11-12）**：原「已收口」结论不成立——§9.3.2 仍以 `CW_DAEMON_SOCKET`
+>   作为 cw-agent 连接路径、§9.5 仍写 `call_with_fd`（FD 传递），与 ADR-002 单轨冲突。
+>   已由 `T-1794413849157-7b176de0` 修正：§9.3.2 改为 `CW_DAEMON_HTTP_ENDPOINT` /
+>   manifest v2 + 客户端证书环境变量，§9.5 改为 ≤1MB hex / 1MB–32MB multipart 裸 payload /
+>   >32MB multipart gzip（FD 已退休）。残留扫描仅剩 §0 的 v1 历史提示；§1–§8 仍为 v1 回滚参考。
+>   `config.py` 的 legacy socket 默认值属代码残留，另登记，不计入本文档一致性结论。
+> - **S4-07 代码残留收口（2026-11-12，T-1794414587897-7b694118）**：`config.py` 删除无
+>   生产调用方的 v1 endpoint/bridge 解析——`get_default_daemon_endpoint`、`DAEMON_SOCKET_PATH`、
+>   `is_bridge_transport`、`resolve_daemon_endpoint_for_authority`、`get_bridge_endpoint` 及
+>   随之孤立的 `_read_bridge_manifest_endpoint`；保留 `_get_windows_user_sid` /
+>   `get_daemon_authority` / `get_daemon_transport`（均有活调用方）。部署生成器
+>   `cicd/systemd_unit.py` 与 `scripts/refresh_shared_runtime.ps1` 不再输出/传递
+>   `--socket`、`CW_DAEMON_SOCKET`，统一 `--http-bind 127.0.0.1:6374`。
+>   `tests/test_phase5_1b_router_diff.py` 删除失去 Python 真相源的 D5 parity（Rust
+>   `daemon_socket_path_py` 仍为 CLI 路由键，非传输）。验证：py_compile / `import config` /
+>   目标 pytest（systemd、router_diff、workspace_rpc_http、remote_read_plane、
+>   remote_write_governance）/ `check_e2e_matrix_closure.py` exit 0 / `git diff --check` 全绿。
+>   非目标：Rust、`server/daemon_client.py` 兼容字段、`server/daemon_config.py` 导出面、
+>   `release/linux/deb/systemd/callwarden-agent.service`（另登记）。
+> - **S4-07 打包 unit 收口（2026-11-12，T-1794429656781-fadf491c）**：
+>   `release/linux/deb/systemd/callwarden-agent.service` 删除
+>   `Environment=CW_DAEMON_SOCKET`，注释改为 HTTPS+mTLS / manifest v2 发现
+>   （runbook §9.3.2），不再声明 ExecStartPre socket 检查；
+>   `callwarden-daemon.service` 修正 UMask 注释中的 UDS socket 表述。
+>   非目标：maintainer scripts（preinst/postinst/prerm 中未使用的 SOCKET 变量）与
+>   `release/config_loader.py` 的 `daemon_socket` 默认值另登记。
+> - **S4-07 打包残余收口（2026-11-12，T-1794440035255-681da7fc）**：
+>   `release/linux/deb/daemon.preinst/postinst/prerm` 删除未使用的 `SOCKET` 变量；
+>   `release/config_loader.py` 的 `daemon_socket` 经核实是 D2.1 Python↔Rust 配置
+>   parity 真相源（Rust `cli::config.rs` 仍默认该键），按决策保留并加注释标明
+>   「v1 CLI 配置键、非 daemon transport」，待 Rust 同步后另卡移除。
+>   验证：三脚本 `SOCKET` grep 0 命中；`load_config()` 正常；`test_phase5_1_cli_diff`
+>   6 passed；`git diff --check` exit 0。
+> - **S4-07 systemd 打包资产收口（2026-11-12，T-1794440363268-c739d728）**：
+>   `release/linux/deb/tmpfiles.d/callwarden.conf`、`sysusers.d/callwarden.conf`、
+>   `release/linux/deb/systemd/callwarden-daemon.service` 与 `cicd/callwarden-daemon.service`
+>   修正把 UDS socket / `callwarden-clients` 组描述为授权面的注释；`build_packages.sh`
+>   与 `daemon.postinst` 同步注释。仅注释，`d/g/m` 行、UMask、RuntimeDirectory 等
+>   指令语义不变。非目标：`control.*` 包描述与 `enterprise.postinst` 用户可见文案
+>   （非 systemd 资产）。
+>   验证：`release/linux` 残留 grep 仅剩预期行；`test_phase8_systemd` 37 passed；
+>   `bash -n` 两脚本 exit 0；`git diff --check` exit 0。
+> - **S4-07 Debian 包描述收口（2026-11-12，T-1794440752338-5d97f8a8）**：
+>   `control.daemon` / `control.agent` / `control.client` 的 UDS / SO_PEERCRED /
+>   UDS-FD 描述改为 HTTPS + mTLS 与证书 principal 授权；`enterprise.postinst`
+>   提示由「socket 不存在」改为「无法连接 daemon 端点」。仅文案，依赖与脚本逻辑不变。
+>   未纳入：`docs/design/cross-platform-packaging-release-plan.md` §8.2 的
+>   `CW_DAEMON_SOCKET` 容器示例（属文档重写，另议）。
+>   验证：三 control 模板描述块结构校验通过；`bash -n enterprise.postinst` exit 0；
+>   `git diff --check` exit 0。
+> - **S4-07 容器 client 示例收口（2026-11-12，T-1794441441949-eda545e0）**：
+>   `docs/design/cross-platform-packaging-release-plan.md` §5/§8.2/§9：容器访问由
+>   挂载 `/run/callwarden` + `CW_DAEMON_SOCKET` 改为 HTTPS + mTLS（端点来自
+>   `CW_DAEMON_HTTP_ENDPOINT` 或 manifest v2，证书经 `CW_CLIENT_CERT`/`CW_CLIENT_KEY`/
+>   `CW_CA_CERT`），docker 示例改为 `--network host` + 只读挂载 `~/.callwarden/pki`。
+>   未纳入：§3 能力矩阵 `Enterprise UDS client`、§6 Windows `cw-client` UDS 现状
+>   （与当前代码一致，待 cw-client 迁移 HTTPS 后另卡）。
+>   验证：该文档 `CW_DAEMON_SOCKET`/`cw-runtime`/socket 挂载 0 命中；`git diff --check` exit 0。
 
 | 编号 | 验收项 | 命令 / 操作 | 期望 |
 | --- | --- | --- | --- |
@@ -2948,15 +3019,15 @@ review / apply，只能手工 `supersede` 收编。
 | S4-03 | Python local 分支删除 | `server/mcp_server.py` 扫描 | 无 `daemon_mode=local` 分支 |
 | S4-04 | 发布产物 | 检查 release 目录 | 仅 `cw`、`cw-daemon`、`cw-client`（+ wheel），无 bridge |
 | S4-05 | 矩阵接入 | `python scripts/check_e2e_matrix_closure.py` | PASS，exit 0；含 S1–S4 行 |
-| S4-06 | 跨 OS 回归 | Windows↔WSL、Windows↔Linux | 双向只读 + 写治理链路 PASS |
-| S4-07 | 文档一致 | `docs/design/daemon-deploy-runbook.md` | 删除 pipe/UDS/bridge 部署说明，改为 mTLS |
+| S4-06 | 跨 OS 回归 | `set CW_S2_REMOTE_ENDPOINT=https://<对端>:7633` + `pytest tests/test_remote_read_plane.py::TestS208CrossOsReadOnlyMatrix`（双向各跑一次） | 双向只读 PASS（已取证，见 §38.4 说明与 `.trae-cn/evidence/s4-06/`）；写治理链路未取证，**不得计 PASS** |
+| S4-07 | 文档一致 | `docs/design/daemon-deploy-runbook.md` §9/§10 残留扫描 | 现行节无 pipe/UDS/socket/FD 有效传输口径；§1–§8 明确标注 v1 历史（2026-11-12 复核并修正，见 §38.4 说明） |
 
 ### 38.5 门禁与边界
 
 | 项 | 口径 |
 | --- | --- |
 | 总门禁 | `python scripts/check_e2e_matrix_closure.py`（exit 0） |
-| 安全负例 | S1-02/03/05/06/07/08/10/11/12/13 全部必须 fail-closed，禁止“跳过”计入 PASS |
+| 安全负例 | S1-02/03/05/06/07/08/10/11/12/13、S2-04/05/06、S3-02/03/04/05/06/07/08 全部必须 fail-closed，禁止“跳过”计入 PASS |
 | 证据 | 每条记录命令、退出码、关键响应字段、证书 serial/fingerprint（不得记录私钥） |
 | 非目标 | 不改任务治理语义、不改 codegraph 查询语义、不重写 MCP 工具 |
 | 执行顺序 | **S1 → S2 → S3 → S4 严格串行**，禁止并行 checkout/并行执行。共享文件 `server/daemon_client.py`（S1–S4）、`server/tools/`（S2/S3）、`cli/main.py`（S1/S3）必须由当前阶段独占，前一阶段 adjudicate 闭环后才派发下一张卡；`task_dependencies` 当前库为空，顺序由生命周期与人工派工保证 |

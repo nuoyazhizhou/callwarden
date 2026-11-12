@@ -11,7 +11,7 @@ Architecture: __ARCH__
 Maintainer: Call Warden Team <team@callwarden.dev>
 Description: Call Warden - Client (cw-client + MCP proxy)
  Lightweight client connecting to a remote Call Warden daemon
- via UDS. No local parser, CAS, or SQLite database.
+ over HTTPS with mutual TLS (mTLS). No local parser, CAS, or SQLite database.
  .
  Includes:
   - cw-client CLI

@@ -22,9 +22,11 @@ from callwarden.cicd.systemd_unit import (
 
 
 class TestGenerateEnterpriseDaemonUnit:
-    def test_uses_uds_daemon_entrypoint(self):
+    def test_uses_https_daemon_entrypoint(self):
         content = generate_enterprise_daemon_unit()
-        assert "cw.py daemon --socket /run/callwarden/callwarden.sock serve" in content
+        assert "cw.py daemon serve" in content
+        assert "--http-bind 127.0.0.1:6374" in content
+        assert "--socket" not in content
         assert "CW_DAEMON_MODE=enterprise" in content
 
     def test_uses_systemd_managed_directories(self):
@@ -41,12 +43,13 @@ class TestGenerateEnterpriseDaemonUnit:
 
     def test_supports_deployment_overrides(self):
         content = generate_enterprise_daemon_unit(
-            socket_path="/run/cw/test.sock",
+            http_bind="127.0.0.1:7777",
             data_root="/srv/cw",
             memory_max="16G",
         )
-        assert "CW_DAEMON_SOCKET=/run/cw/test.sock" in content
+        assert "--http-bind 127.0.0.1:7777" in content
         assert "--registry /srv/cw/registry.db" in content
+        assert "CW_DAEMON_SOCKET" not in content
         assert "MemoryMax=16G" in content
 
 

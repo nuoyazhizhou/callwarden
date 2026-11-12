@@ -7,7 +7,6 @@
 set -euo pipefail
 
 SERVICE="callwarden-daemon.service"
-SOCKET="/run/callwarden/callwarden.sock"
 
 case "$1" in
     remove)

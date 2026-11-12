@@ -11,11 +11,11 @@ Priority: optional
 Architecture: __ARCH__
 Maintainer: Call Warden Team <team@callwarden.dev>
 Description: Call Warden Enterprise Daemon
- Enterprise-grade code knowledge graph daemon with UDS,
- SO_PEERCRED ACL, CAS, Replicator, and SnapshotManager.
+ Enterprise-grade code knowledge graph daemon with HTTPS + mTLS,
+ certificate-based authorization, CAS, Replicator, and SnapshotManager.
  .
  Features:
-  - UDS server with SO_PEERCRED authentication
+  - HTTPS server with mutual TLS (mTLS) client authentication
   - Content-Addressable Storage (CAS) with GC
   - SnapshotManager with ArcSwap atomic publish
   - Durable staging WAL with crash recovery

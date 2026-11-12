@@ -11,7 +11,6 @@ DAEMON_USER="callwarden"
 STATE_DIR="/var/lib/callwarden"
 LOG_DIR="/var/log/callwarden"
 BACKUP_DIR="/var/lib/callwarden/backup"
-SOCKET="/run/callwarden/callwarden.sock"
 SERVICE="callwarden-daemon.service"
 # 在线备份保留份数
 BACKUP_KEEP=3

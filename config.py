@@ -1438,22 +1438,6 @@ def _get_windows_user_sid() -> str:
         return "unknown"
 
 
-def get_default_daemon_endpoint() -> str:
-    """获取当前平台的默认 Daemon_Endpoint。
-
-    Unix: CW_DAEMON_SOCKET 环境变量或 /run/callwarden/callwarden.sock
-    Windows: \\\\.\\pipe\\callwarden-<当前用户 SID>
-    """
-    if sys.platform == "win32":
-        sid = _get_windows_user_sid()
-        return f"\\\\.\\pipe\\callwarden-{sid}"
-    else:
-        return os.environ.get("CW_DAEMON_SOCKET", "/run/callwarden/callwarden.sock")
-
-
-# daemon socket / endpoint 路径
-DAEMON_SOCKET_PATH = get_default_daemon_endpoint()
-
 # daemon 数据根目录
 if "CW_DAEMON_DATA_ROOT" in os.environ:
     DAEMON_DATA_ROOT = os.environ["CW_DAEMON_DATA_ROOT"]
@@ -1549,30 +1533,6 @@ def get_daemon_transport() -> str:
     return "auto"
 
 
-def get_bridge_endpoint() -> str:
-    """获取 Windows bridge 端点（WSL 客户端访问 Windows daemon）。
-
-    优先级：
-    1. CW_BRIDGE_ENDPOINT（显式配置）
-    2. bridge manifest（~/.callwarden/bridge.manifest.json 或 CW_BRIDGE_MANIFEST）
-    3. CW_BRIDGE_ADDR / CW_DAEMON_ENDPOINT（若指向 tcp）
-    4. 无可用端点时返回空串；调用方必须以 E_AUTHORITY_UNRESOLVED fail-closed。
-
-    返回形如 `tcp://127.0.0.1:<port>` 或 `127.0.0.1:<port>`。
-    """
-    env = os.environ.get("CW_BRIDGE_ENDPOINT", "").strip()
-    if env:
-        return env
-    manifest_endpoint = _read_bridge_manifest_endpoint()
-    if manifest_endpoint:
-        return manifest_endpoint
-    for var in ("CW_BRIDGE_ADDR", "CW_DAEMON_ENDPOINT"):
-        value = os.environ.get(var, "").strip()
-        if value and ("tcp://" in value or ":" in value):
-            return value
-    return ""
-
-
 def _read_bridge_manifest() -> Dict[str, str]:
     """从 bridge manifest 读取实际端点（P1：随机端口的消费机制）。
 
@@ -1609,11 +1569,6 @@ def _read_bridge_manifest() -> Dict[str, str]:
         return {}
 
 
-def _read_bridge_manifest_endpoint() -> str:
-    """兼容入口：只返回已经过 authority/transport 校验的 manifest endpoint。"""
-    return _read_bridge_manifest().get("endpoint", "")
-
-
 def get_bridge_token() -> str:
     """读取 bridge token（WSL 客户端注入请求用）。
 
@@ -1637,48 +1592,6 @@ def get_bridge_token() -> str:
             return f.read().strip()
     except OSError:
         return ""
-
-
-def is_bridge_transport() -> bool:
-    """当前配置是否使用 Windows bridge 作为 transport。"""
-    return get_daemon_transport() in ("windows-bridge", "cli-bridge")
-
-
-def resolve_daemon_endpoint_for_authority() -> str:
-    """按 authority + transport 解析最终 daemon endpoint。
-
-    规则（共存契约 §4.2 / §5.2，禁止回退 /mnt/c SQLite）：
-    - windows-host + windows-bridge → bridge endpoint
-    - windows-host + named-pipe → Windows Named Pipe（仅 Windows 进程可用）
-    - wsl-local / linux-system + uds → UDS
-    - 无法确定 authority → 抛 ValueError（E_AUTHORITY_UNRESOLVED 语义）
-    """
-    authority = get_daemon_authority()
-    transport = get_daemon_transport()
-
-    if authority == "windows-host":
-        if transport in ("windows-bridge", "cli-bridge"):
-            endpoint = get_bridge_endpoint()
-            if endpoint and endpoint not in ("127.0.0.1:0", "tcp://127.0.0.1:0"):
-                return endpoint
-            raise ValueError(
-                "E_AUTHORITY_UNRESOLVED: windows-host authority 缺少有效 bridge endpoint；"
-                "请设置 CW_BRIDGE_ENDPOINT 或提供 authority=windows-host、"
-                "transport=windows-bridge 的 CW_BRIDGE_MANIFEST"
-            )
-        if transport == "named-pipe" or sys.platform == "win32":
-            return get_default_daemon_endpoint()
-        # WSL 访问 Windows authority 但未指定 bridge → 明确不可用，禁止直连 /mnt/c
-        raise ValueError(
-            "E_AUTHORITY_UNRESOLVED: windows-host authority 在非 Windows 平台需要 "
-            "CW_DAEMON_TRANSPORT=windows-bridge 或 cli-bridge；禁止直连 /mnt/c SQLite"
-        )
-
-    if authority in ("wsl-local", "linux-system"):
-        return os.environ.get("CW_DAEMON_SOCKET", "/run/callwarden/callwarden.sock")
-
-    # auto：按平台默认 endpoint
-    return get_default_daemon_endpoint()
 
 
 def is_daemon_required() -> bool:

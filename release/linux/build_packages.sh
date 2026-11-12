@@ -271,7 +271,7 @@ EOF
         cp "$ROOT/cicd/callwarden-daemon.service" "$DAEMON_ROOT/usr/lib/systemd/system/"
     fi
 
-    # sysusers.d：创建 callwarden 用户和 callwarden-clients 组（设计 §8.2）
+    # sysusers.d：创建 callwarden 用户和 callwarden-clients 兼容组（设计 §8.2）
     if [ -f "$SCRIPT_DIR/deb/sysusers.d/callwarden.conf" ]; then
         cp "$SCRIPT_DIR/deb/sysusers.d/callwarden.conf" "$DAEMON_ROOT/usr/lib/sysusers.d/"
     else
@@ -282,7 +282,7 @@ m callwarden callwarden-clients
 EOF
     fi
 
-    # tmpfiles.d：创建 /run/callwarden（设计 §8.2: socket 0660）
+    # tmpfiles.d：创建 /run/callwarden 运行时目录（ADR-002 后无 UDS socket）
     if [ -f "$SCRIPT_DIR/deb/tmpfiles.d/callwarden.conf" ]; then
         cp "$SCRIPT_DIR/deb/tmpfiles.d/callwarden.conf" "$DAEMON_ROOT/usr/lib/tmpfiles.d/"
     else

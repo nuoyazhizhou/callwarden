@@ -3760,7 +3760,11 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
                 # compat 面（Python worker）需要 workspace_root 解析权威数字 id：
                 # worker 的 _bind_readonly_db 按 root_path 查 workspaces 表（2026-09-05，
                 # 修 get_impact 等 compat 方法 "没有 active workspace" fail-closed）。
-                if client._project_root:
+                # S2/S4-06（ADR-002 §16.1）：remote profile 禁止绝对路径参数——此时
+                # workspace 已由上方 workspace_instance_id 唯一确定，daemon 侧按
+                # client_view_root="." canonicalize，注入绝对 workspace_root 只会
+                # 在本机 fail-closed（E_REMOTE_PATH_FORBIDDEN，实机矩阵取证时暴露）。
+                if client._project_root and not client.is_remote_profile():
                     params.setdefault("workspace_root", client._project_root)
             # task-scoped methods already have the stronger authority source:
             # task_id -> immutable task_workspace_bindings.  Never replace it

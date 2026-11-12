@@ -101,7 +101,7 @@ def generate_enterprise_daemon_unit(
     user: str = "callwarden",
     group: str = "callwarden",
     working_dir: str = "/opt/callwarden",
-    socket_path: str = "/run/callwarden/callwarden.sock",
+    http_bind: str = "127.0.0.1:6374",
     data_root: str = "/var/lib/callwarden",
     memory_max: str = "8G",
     cpu_quota: str = "400%",
@@ -119,7 +119,7 @@ Type=simple
 User={user}
 Group={group}
 WorkingDirectory={working_dir}
-ExecStart={working_dir}/cw.py daemon --socket {socket_path} serve --registry {registry_db}
+ExecStart={working_dir}/cw.py daemon serve --registry {registry_db} --http-bind {http_bind}
 Restart=on-failure
 RestartSec={restart_sec}
 KillSignal=SIGTERM
@@ -133,7 +133,6 @@ StateDirectory=callwarden
 StateDirectoryMode=0700
 
 Environment=CW_DAEMON_MODE=enterprise
-Environment=CW_DAEMON_SOCKET={socket_path}
 Environment=CW_DAEMON_DATA_ROOT={data_root}
 
 MemoryMax={memory_max}

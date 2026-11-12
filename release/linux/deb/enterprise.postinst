@@ -14,7 +14,7 @@ case "$1" in
         echo "  - callwarden-agent: per-UID agent (enable per user)"
         echo "  - callwarden-client: cw-client + MCP proxy"
         echo ""
-        echo "  enterprise 模式 socket 不存在时必须失败，不会静默创建本地数据库（设计 §8.2）。"
+        echo "  enterprise 模式无法连接 daemon 端点时必须失败，不会静默创建本地数据库（设计 §8.2）。"
         ;;
     abort-upgrade|abort-remove|abort-deconfigure)
         ;;

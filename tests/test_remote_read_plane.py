@@ -651,13 +651,18 @@ class TestS208CrossOsReadOnlyMatrix:
         from callwarden.server import daemon_client
         from callwarden.server.daemon_client import HttpDaemonRpcClient
 
-        client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
+        # 必须走真实构造函数：用 __new__ 绕过 __init__ 会缺 _resolved_endpoint /
+        # _project_root / _remote_workspace_id 等状态，实机路径（workspace.register）
+        # 必然 AttributeError。构造后直接注入 discovery 结果，跳过 loopback 发现。
+        client = HttpDaemonRpcClient()
+        client.configure_workspace(root)
         client._manifest = {
             "bind_scope": "remote",
             "endpoint": _REMOTE_ENDPOINT,
             "protocol_version": 2,
         }
         client._explicit_endpoint = _REMOTE_ENDPOINT
+        client._resolved_endpoint = _REMOTE_ENDPOINT
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.load_cert_chain(
             os.environ["CW_S2_REMOTE_CERT"], os.environ["CW_S2_REMOTE_KEY"]
@@ -668,6 +673,12 @@ class TestS208CrossOsReadOnlyMatrix:
         client._ssl_ctx = ctx
         monkeypatch.setattr(
             daemon_client, "_get_rpc_client_for_route", lambda: client,
+        )
+        # route_rpc（query.stats 等）走 HttpDaemonRpcClient.get_instance() 单例，
+        # 不走 _get_rpc_client_for_route；不钉住单例会另建无 manifest 的 client
+        # 并在 discover 处 E_HTTP_MANIFEST_MISSING。
+        monkeypatch.setattr(
+            HttpDaemonRpcClient, "get_instance", lambda: client,
         )
         return client
 

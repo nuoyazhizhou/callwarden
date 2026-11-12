@@ -360,14 +360,25 @@ Environment=CW_AGENT_WATCH_DIR=/path/to/your/project
 
 或直接修改 unit 文件中的 `Environment=CW_AGENT_WATCH_DIR=%h/work` 行。
 
-#### 9.3.2 daemon socket 路径
+#### 9.3.2 daemon 端点与客户端证书
 
-默认 `/run/callwarden/callwarden.sock`。可通过 `CW_DAEMON_SOCKET` 环境变量覆盖：
+ADR-002 单轨后**不存在 daemon socket / pipe 路径**。cw-agent 通过 HTTPS + mTLS 连接
+daemon，端点与证书按以下顺序解析：
+
+1. 显式 `CW_DAEMON_HTTP_ENDPOINT=https://<host>:<port>`；
+2. daemon 发布的 manifest v2 中该 authority 的 `endpoint` 字段；
+3. 客户端证书/私钥/CA：`CW_CLIENT_CERT` / `CW_CLIENT_KEY` / `CW_CA_CERT`，
+   缺省 `~/.callwarden/pki/identities/<principal_id>/`（同 §10.3）。
 
 ```ini
 [Service]
-Environment=CW_DAEMON_SOCKET=/custom/path/callwarden.sock
+Environment=CW_DAEMON_HTTP_ENDPOINT=https://127.0.0.1:7633
+Environment=CW_CLIENT_CERT=%h/.callwarden/pki/identities/pr_xxx/client.crt
+Environment=CW_CLIENT_KEY=%h/.callwarden/pki/identities/pr_xxx/client.key
+Environment=CW_CA_CERT=%h/.callwarden/pki/ca/ca.crt
 ```
+
+`CW_DAEMON_SOCKET` 属 v1（UDS/pipe）遗留配置，ADR-002 下不构成连接路径。
 
 #### 9.3.3 日志查看
 
@@ -402,9 +413,12 @@ watchdog 检测到文件变更后，触发 `user_agent_handle_refresh()`：
    - 计算 sha256（canonical bytes）
 2. **计算 rel_path**：相对 watch_dir 的路径
 3. **分配 monotonic_seq**：AgentSession.next_seq()（单调递增）
-4. **发送 refresh RPC**：调用 `workspace.file.refresh`
-   - 小文件（≤16MB）：`canonical_bytes_hex`（JSON 内嵌）
-   - 大文件（>16MB）：写临时文件 → `call_with_fd`（FD 传递，Linux only）
+4. **发送 refresh RPC**：调用 `workspace.file.refresh`（HTTPS + mTLS）
+   - ≤1MB：`canonical_bytes_hex` JSON 内嵌
+   - 1MB–32MB：multipart 裸 payload（零编码税）
+   - >32MB：multipart gzip payload
+   - 旧 daemon 无 `/v1/rpc/multipart`（404）时降级 gzip+base64 内联
+   - FD（SCM_RIGHTS）传递已随 ADR-002 退休，不存在 UDS FD 路径
 5. **daemon 响应**：`{"status": "committed", "generation": "..."}` 或 `{"status": "stale_seq_dropped"}`
 
 ### 9.6 停止 / 状态 / 重启

@@ -15,7 +15,6 @@ STATE_DIR="/var/lib/callwarden"
 LOG_DIR="/var/log/callwarden"
 CONFIG_DIR="/etc/callwarden"
 RUN_DIR="/run/callwarden"
-SOCKET="$RUN_DIR/callwarden.sock"
 SERVICE="callwarden-daemon.service"
 BACKUP_DIR="/var/lib/callwarden/backup"
 # 由 build_packages.sh 注入实际版本号
@@ -36,7 +35,7 @@ ensure_dirs() {
                 --shell /usr/sbin/nologin \
                 "$DAEMON_USER" 2>/dev/null || true
     fi
-    # 确保 callwarden 在 callwarden-clients 组（UDS socket 访问）
+    # 确保 callwarden 在 callwarden-clients 组（ADR-002 后仅兼容保留，不构成 RPC 授权）
     usermod -aG "$CLIENTS_GROUP" "$DAEMON_USER" 2>/dev/null || true
 
     install -d -o "$DAEMON_USER" -g "$DAEMON_GROUP" -m 0750 "$CONFIG_DIR"

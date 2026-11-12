@@ -1,11 +1,10 @@
 """Phase 5-1 B 差分测试：Rust 路由决策 vs Python 真相源
 
-覆盖契约 D1-D5 测试矩阵：
+覆盖契约 D1-D4 测试矩阵：
 - D1: get_daemon_mode / DaemonMode::from_str
 - D2: is_daemon_required
 - D3: is_daemon_available
 - D4: route_command
-- D5: daemon_socket_path
 
 契约：docs/design/phase5-1b-router-contract.md §4
 """
@@ -24,12 +23,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 # Python 真相源（内联，对齐 config.py L1319-1383）
 # ============================================================
 
-# 对齐 config.py L1319-1321
-PY_DEFAULT_DAEMON_SOCKET = "/run/callwarden/callwarden.sock"
-
 # 对齐 config.py L1343
 PY_DAEMON_MODE_ENV = "CW_DAEMON_MODE"
-PY_DAEMON_SOCKET_ENV = "CW_DAEMON_SOCKET"
 
 
 def py_get_daemon_mode() -> str:
@@ -78,11 +73,6 @@ def py_is_daemon_available(socket_path: str, platform: str) -> bool:
     if not socket_path.startswith(("https://", "http://")):
         return False
     return _py_tcp_reachable(socket_path)
-
-
-def py_daemon_socket_path() -> str:
-    """Python 真相源：config.py:DAEMON_SOCKET_PATH (L1319-1321)"""
-    return os.environ.get(PY_DAEMON_SOCKET_ENV, PY_DEFAULT_DAEMON_SOCKET)
 
 
 def py_route_command(mode: str, socket_path: str, platform: str) -> str:
@@ -323,51 +313,6 @@ def test_d4_route_command():
 
 
 # ============================================================
-# D5: daemon_socket_path
-# ============================================================
-
-def test_d5_daemon_socket_path():
-    """D5: daemon_socket_path — 环境变量 + 默认值"""
-    print("=== D5: daemon_socket_path ===")
-
-    all_match = True
-
-    # D5.1: 环境变量覆盖
-    orig = os.environ.get(PY_DAEMON_SOCKET_ENV)
-    os.environ[PY_DAEMON_SOCKET_ENV] = "/tmp/x.sock"
-    py_result = py_daemon_socket_path()
-    rs_result = cc.daemon_socket_path_py()
-    match = py_result == rs_result == "/tmp/x.sock"
-    status = "PASS" if match else "FAIL"
-    if not match:
-        all_match = False
-    print(f"  {status} D5.1 env_override: expected=/tmp/x.sock "
-          f"py={py_result} rs={rs_result}")
-
-    # D5.2: 未设置环境变量 → 默认值
-    if orig is None:
-        os.environ.pop(PY_DAEMON_SOCKET_ENV, None)
-    else:
-        os.environ[PY_DAEMON_SOCKET_ENV] = orig
-    os.environ.pop(PY_DAEMON_SOCKET_ENV, None)
-    py_result = py_daemon_socket_path()
-    rs_result = cc.daemon_socket_path_py()
-    match = py_result == rs_result == PY_DEFAULT_DAEMON_SOCKET
-    status = "PASS" if match else "FAIL"
-    if not match:
-        all_match = False
-    print(f"  {status} D5.2 default: expected={PY_DEFAULT_DAEMON_SOCKET} "
-          f"py={py_result} rs={rs_result}")
-
-    # 恢复
-    if orig is not None:
-        os.environ[PY_DAEMON_SOCKET_ENV] = orig
-
-    assert all_match, "D5: daemon_socket_path mismatch"
-    print("  D5: ALL PASS\n")
-
-
-# ============================================================
 # 主入口
 # ============================================================
 
@@ -379,7 +324,6 @@ def main():
         test_d2_is_daemon_required,
         test_d3_is_daemon_available,
         test_d4_route_command,
-        test_d5_daemon_socket_path,
     ]
 
     passed = 0

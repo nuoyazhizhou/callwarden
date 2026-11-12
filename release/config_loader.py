@@ -125,6 +125,8 @@ def load_config(
 
     # 1. 默认值
     defaults = {
+        # v1 CLI 配置 parity 键（D2.1）：与 rust_ext/src/cli/config.rs 默认值保持一致，
+        # 非 daemon transport；ADR-002 后 daemon 连接不再使用该值。待 Rust 侧同步后另卡移除。
         "daemon_socket": "/run/callwarden/callwarden.sock" if sys.platform == "linux" else "",
         "log_level": "info",
         "max_workers": 16,
