@@ -31,6 +31,9 @@ import hashlib
 import json
 import os
 import re
+import ssl
+import uuid
+from pathlib import Path
 
 import pytest
 
@@ -38,6 +41,21 @@ from callwarden.server import daemon_client as dc
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 跨 OS 写治理矩阵（S4-06-D4）：复用 S2-08 的对端 daemon/mTLS 材料。env 缺省时
+# 整个新类 skip，既有 _FakeWriteDaemon 单测不受影响。
+_REMOTE_ENDPOINT = os.environ.get("CW_S2_REMOTE_ENDPOINT", "")
+_REMOTE_ROOT = os.environ.get("CW_S2_REMOTE_ROOT", "")
+requires_remote_write_daemon = pytest.mark.skipif(
+    not (
+        _REMOTE_ENDPOINT
+        and _REMOTE_ROOT
+        and os.environ.get("CW_S2_REMOTE_CERT")
+        and os.environ.get("CW_S2_REMOTE_KEY")
+        and os.environ.get("CW_S2_REMOTE_CA")
+    ),
+    reason="跨 OS 写治理矩阵需 CW_S2_REMOTE_ENDPOINT/ROOT/CERT/KEY/CA（对侧 OS daemon）",
+)
 
 
 def _sha(data: bytes) -> str:
@@ -591,3 +609,172 @@ class TestS3DaemonOnlyWriter:
         assert entry["rpc_method"] == "write.commit"
         assert entry["op_class"] == "PROTECTED_MUTATION"
         assert entry["status"] == "migrated"
+
+
+# ----------------------------------------------------------------------
+# S4-06-D4：跨 OS 实机写治理链路（真实 mTLS daemon，非 _FakeWriteDaemon）
+# ----------------------------------------------------------------------
+
+class _CaptureMCP:
+    """捕获 register(mcp) 注册的闭包工具，便于直接调用（绕过 FastMCP）。"""
+
+    def __init__(self):
+        self._tools = {}
+
+    def tool(self):
+        def decorator(fn):
+            self._tools[fn.__name__] = fn
+            return fn
+
+        return decorator
+
+
+@requires_remote_write_daemon
+class TestS3RemoteCrossOsWriteGovernance:
+    """S4-06-D4：对侧 OS daemon 上跑通 grant → base_hash → commit → 索引/审计。
+
+    启用方式（与 S2-08 相同 env，在客户端 OS 上设置）：
+      CW_S2_REMOTE_ENDPOINT=https://<对侧 IP>:<port>
+      CW_S2_REMOTE_CERT / _KEY / _CA = 对侧 daemon 签发的客户端 mTLS 材料
+      CW_S2_REMOTE_ROOT = 客户端本机 workspace 根
+
+    缺陷复现（S4-06-D4，2026-11-12）：当前 daemon 的 `write.grant` 只读自身
+    codegraph DB 的 `file_instances.current_content_hash`，而 remote 时代的
+    `snapshot.upload` 只把客户端快照发布进查询用 GraphStore、不落 codegraph DB，
+    因此对「客户端已索引的既有文件」必报 E_WRITE_STALE_BASE（expected=""）。
+    本用例是对该契约的期望断言：修复后应转绿；未修复前在实机 daemon 上会红。
+    """
+
+    def _make_remote_client(self, monkeypatch, root):
+        from callwarden.server import daemon_client
+        from callwarden.server.daemon_client import HttpDaemonRpcClient
+
+        # 真实构造函数：__new__ 会缺 _project_root/_resolved_endpoint 等状态。
+        client = HttpDaemonRpcClient()
+        client.configure_workspace(root)
+        client._manifest = {
+            "bind_scope": "remote",
+            "endpoint": _REMOTE_ENDPOINT,
+            "protocol_version": 2,
+        }
+        client._explicit_endpoint = _REMOTE_ENDPOINT
+        client._resolved_endpoint = _REMOTE_ENDPOINT
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.load_cert_chain(
+            os.environ["CW_S2_REMOTE_CERT"], os.environ["CW_S2_REMOTE_KEY"]
+        )
+        ctx.load_verify_locations(os.environ["CW_S2_REMOTE_CA"])
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        client._ssl_ctx = ctx
+        monkeypatch.setattr(
+            daemon_client, "_get_rpc_client_for_route", lambda: client
+        )
+        # route_rpc 走 HttpDaemonRpcClient.get_instance() 单例，必须一起钉住。
+        monkeypatch.setattr(
+            HttpDaemonRpcClient, "get_instance", lambda: client
+        )
+        return client
+
+    def test_s3_remote_write_grant_base_hash_commit_roundtrip(self, monkeypatch):
+        from callwarden.server.tools import tools_workspace
+
+        root = Path(_REMOTE_ROOT)
+        root.mkdir(parents=True, exist_ok=True)
+        probe = root / "d4_probe.py"
+        old_hash = _sha(b"old\n")
+        try:
+            probe.write_bytes(b"old\n")
+            client = self._make_remote_client(monkeypatch, str(root))
+            monkeypatch.setattr(tools_workspace, "_remote_client", lambda: client)
+            mcp = _CaptureMCP()
+            tools_workspace.register(mcp)
+            tools = mcp._tools
+
+            # 1) 注册 workspace + snapshot.upload：daemon 索引基线与本地字节同源
+            built = tools["build_graph"]()
+            assert built.get("ok") is True
+            assert built.get("scanned") >= 1
+            ws_inst = client._remote_workspace_id
+            assert ws_inst, "build_graph 后应已注册远端 workspace"
+
+            ws = client.call(
+                "workspace.status", {"workspace_instance_id": ws_inst}
+            )
+            ws_num = (
+                ws.get("workspace_id")
+                or ws.get("registry_workspace_id")
+                or ws.get("id")
+            )
+            assert isinstance(ws_num, int) and ws_num > 0, f"workspace.status: {ws}"
+
+            # 2) 远端任务 + step（write.grant 要求 task=open/in_progress）
+            create_request_id = uuid.uuid4().hex
+            created = client.call(
+                "task.create",
+                {
+                    "title": "S3 cross-os write probe",
+                    "workspace_id": ws_num,
+                    "workspace_instance_id": ws_inst,
+                    "steps": [
+                        {"action": "write", "target_file": "d4_probe.py"}
+                    ],
+                    "request_id": create_request_id,
+                },
+                request_id=create_request_id,
+            )
+            assert created.get("task_id"), f"task.create: {created}"
+            assert created.get("status") == "open", f"task.create: {created}"
+            task_id = created["task_id"]
+            detail = client.call("task.status", {"task_id": task_id})
+            step_id = detail["steps"][0]["step_id"]
+            assert step_id
+
+            # 3) 治理写：grant（base_hash=旧字节）→ 本机写 → commit
+            result = dc.governed_write_file(
+                "d4_probe.py",
+                b"new\n",
+                task_id,
+                step_id,
+                workspace_instance_id=ws_inst,
+            )
+            assert result["ok"] is True
+            assert result["base_hash"] == old_hash
+            assert result["new_hash"] == _sha(b"new\n")
+            assert probe.read_bytes() == b"new\n"
+            assert result["bytes_written"] == len(b"new\n")
+
+            # 4) 重放同一 grant → daemon 拒绝（grant 已消费）
+            replay_request_id = uuid.uuid4().hex
+            with pytest.raises(DaemonRemoteError) as replay:
+                client.call(
+                    "write.commit",
+                    {
+                        "workspace_instance_id": ws_inst,
+                        "grant_id": result["grant_id"],
+                        "path": "d4_probe.py",
+                        "new_hash": result["new_hash"],
+                        "content": "new\n",
+                        "request_id": replay_request_id,
+                    },
+                    request_id=replay_request_id,
+                )
+            assert replay.value.code == "E_WRITE_GRANT_CONSUMED"
+
+            # 5) 陈旧基线 → daemon 索引已被上一步 commit 推进
+            probe.write_bytes(b"old\n")
+            with pytest.raises(DaemonRemoteError) as stale:
+                dc.governed_write_file(
+                    "d4_probe.py",
+                    b"stale\n",
+                    task_id,
+                    step_id,
+                    workspace_instance_id=ws_inst,
+                )
+            assert stale.value.code == "E_WRITE_STALE_BASE"
+            assert probe.read_bytes() == b"old\n", "grant 拒绝不得改动本地文件"
+        finally:
+            try:
+                probe.unlink()
+            except OSError:
+                pass

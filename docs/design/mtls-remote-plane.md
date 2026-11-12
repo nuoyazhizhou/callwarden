@@ -830,8 +830,11 @@ workspace 根（`CALLWARDEN_WORKSPACE` → MCP `_project_root`，同 F-5 修复�
 
 - S4-FU（`T-1793807024448-17d4cd60`）尚处 `review`，未进入 adjudication；父卡的 `verify`
   步应在其闭环后执行。
-- 矩阵 S4-06（跨 OS 实机回归）：**双向只读已取证 PASS**（§17.5）；**写治理链路的跨 OS
-  实机面仍缺入口（D4），该半保持未关闭，不得计 PASS**。
+- 矩阵 S4-06（跨 OS 实机回归）：**双向只读已取证 PASS**（§17.5）；写治理链路的跨 OS
+  实机面已由 `[REMOTE-S4-06-D4]` 卡（`T-1794452006394-a7a161a0`）补入口并执行
+  （2026-11-12），A 方向实机暴露产品缺陷 S4-06-D4-1（`BLOCKED`，§17.6）；该缺陷已由
+  `[REMOTE-S4-06-D4-FIX]`（`T-1794454711064-62856418`）修复，A/B 双方向实机复跑均
+  `1 passed`，**D4 已于 2026-11-12 闭合**（§17.7）。
 - §38 的逐行对账更新由 `T-1794410782335-6e36db64` 的 `verify` 步落盘，本步只改本 ADR。
 
 ### 17.5 S4-06 跨 OS 实机回归取证（2026-11-11）
@@ -863,6 +866,93 @@ workspace 根（`CALLWARDEN_WORKSPACE` → MCP `_project_root`，同 F-5 修复�
 | D1 | 测试夹具 | `tests/test_remote_read_plane.py` | `HttpDaemonRpcClient.__new__` 绕过 `__init__`，缺 `_project_root`/`_remote_workspace_id`/`_resolved_endpoint`，该 env-gated 用例从未真实执行；改为真实构造 + `configure_workspace` + 注入 manifest/endpoint |
 | D2 | 测试夹具 | 同上 | `route_rpc` 走 `HttpDaemonRpcClient.get_instance()` 单例，仅钉 `_get_rpc_client_for_route` 会 `E_HTTP_MANIFEST_MISSING`；改为钉 `get_instance` |
 | D3 | 产品缺陷 | `server/daemon_client.py` | `route_rpc` 对所有 profile 无条件注入绝对 `workspace_root`，remote profile 被本机路径守卫 fail-closed（`E_REMOTE_PATH_FORBIDDEN`）；改为仅非 remote profile 注入 |
-| D4 | 范围缺口（未修） | `tests/test_remote_write_governance.py` | 写治理链路仅有进程内 `_FakeWriteDaemon` 桩，daemon 半仅 Rust 单测；**无跨 OS 实机入口**，需单独立项（新增 remote 写面 env-gated 实机用例）后方可计 PASS |
+| D4 | 范围缺口 → 产品缺陷（已修复） | `tests/test_remote_write_governance.py` / `rust_ext/src/daemon/snapshot_state.rs` | 写治理链路原仅有进程内 `_FakeWriteDaemon` 桩，daemon 半仅 Rust 单测；2026-11-12 由 `T-1794452006394-a7a161a0` 新增 remote 写面 env-gated 实机用例并执行 A 方向，暴露产品缺陷 **S4-06-D4-1**（写基线索引与 `snapshot.upload` 不同源），判 `BLOCKED`（§17.6）；同日由 `T-1794454711064-62856418` 修复，A/B 双方向实机 `1 passed`，D4 闭合（§17.7） |
 
-D1–D3 在 `T-1794410782335-6e36db64` 内修复并回归；D4 明确列为未关闭项。
+D1–D3 在 `T-1794410782335-6e36db64` 内修复并回归；D4 的缺陷 S4-06-D4-1 随后由
+`T-1794454711064-62856418` 修复并双端实机复验（§17.7）。
+
+### 17.6 S4-06 D4 写治理链路跨 OS 实机取证（2026-11-12）
+
+证据单源：`.trae-cn/evidence/s4-06/d4-write-governance-cross-os.json`
+（sha256 `e9d7abcb173db92401a572ce70eb2bb14ad0b151cad2881ff1fe2501e0ade2f1`；schema
+`cw.write_governance_cross_os_evidence.v1`，`verdict.write_governance_cross_os =
+"BLOCKED"`，`d4_closed = false`），另附 `d4-raw/` 原始日志与 daemon 侧旁证。
+
+| 方向 | 客户端 | daemon（对端 OS） | 命令 / env | 结果 |
+| --- | --- | --- | --- | --- |
+| A | Windows 11（Python 3.14.3） | WSL2 Ubuntu 22.04.5 daemon `https://172.30.23.221:7633` | `pytest tests/test_remote_write_governance.py::TestS3RemoteCrossOsWriteGovernance -v`，`CW_S2_REMOTE_ENDPOINT/ROOT/CERT/KEY/CA` | `FAIL`（`E_WRITE_STALE_BASE`） |
+| B | WSL2 Ubuntu 22.04.5 | Windows 11 daemon `https://172.30.16.1:7644` | 同命令行 | `NOT_EXECUTED`（A 已确认 daemon 侧缺陷，按 spec §7 停止） |
+
+- A 方向 `build_graph` + `task.create` 均成功；`write.grant` 对既有文件 `d4_probe.py`
+  以 `E_WRITE_STALE_BASE` 拒绝：`expected=""`（daemon codegraph DB 无该文件），
+  `got=sha256(b"old\n")`。
+- 对照探针（同一 daemon）：对未索引新路径 `d4_new_probe.py` 以 `base_hash=""`
+  完成 `write.grant` → `write.commit`，均成功（audit event 2/3），证明 grant/commit
+  状态机与审计链本身可用。
+- daemon 侧旁证：`write_audit_events` event 1–4 与 `audit_chain` 邻接校验通过
+  （`prev_signature` 严格等于上一条 `record_signature`，表 `remote_write_events`）。
+
+**缺陷 S4-06-D4-1（blocker；已于同日修复并闭合，见 §17.7）**：remote 模式 `write.grant` 通过
+`open_codegraph_db_write()` 打开 `CW_DAEMON_CODEGRAPH_DB_TEMPLATE` 指定库，读
+`file_instances.current_content_hash` 作为 expected base；但 remote 面 `snapshot.upload`
+（`ingest_uploaded_snapshot` → `build_and_publish_blocking`）只把快照发布到查询用
+GraphStore，不写入该 codegraph DB。结果是客户端已索引的既有文件在 daemon 侧
+`expected=""`，任何带真实 base_hash 的 `write.grant` 都被拒绝——远端写治理链路对既有
+文件不可用。修复方向：让写基线索引与 `snapshot.upload` 同源，并补双端回归；修复并重跑
+A/B 前，S4-06 写面不得计 PASS。修复卡：`T-1794454711064-62856418`
+（`[REMOTE-S4-06-D4-FIX]`，atomic_hotfix，依赖本卡证据）。
+
+### 17.7 S4-06 D4 修复与双端复验（2026-11-12）
+
+证据单源：`.trae-cn/evidence/s4-06/d4-write-governance-cross-os-fix.json`
+（schema `cw.write_governance_cross_os_fix_evidence.v1`），原始日志在
+`.trae-cn/evidence/s4-06/d4fix-raw/`（`A-win2wsl-after-fix.log` /
+`B-wsl2win-after-fix.log`，逐份 sha256 见该 JSON）。修复卡
+`T-1794454711064-62856418`。
+
+**根因**：`snapshot.upload` 的 ingest（`ingest_uploaded_snapshot`）只把上传快照发布为
+查询用 `GraphStore`，从未把上传库的 `file_instances` 基线落到 daemon 权威 codegraph DB
+（`CW_DAEMON_CODEGRAPH_DB_TEMPLATE`）；而 `write.grant` 用
+`ensure_workspace_row_by_root(host_real_root)` 解析目标 `workspaces` 行并读
+`file_instances.current_content_hash` 作为 expected base，两侧不同源 → 既有文件首写
+必被 `E_WRITE_STALE_BASE` 拒绝。
+
+**修复**（`rust_ext/src/daemon/snapshot_state.rs`）：
+
+- `ingest_uploaded_snapshot` 在 publish 成功后调用新增的
+  `sync_uploaded_baseline(source_db, target_db, daemon_root, fallback_id, source_ws_id)`；
+- 目标库路径由抽取出的 `resolve_codegraph_db_path(template, instance)` 解析，
+  与写路径同一模板；
+- 目标 `workspace_id` 与写治理读面 **完全同源**：
+  `fs_handlers::ensure_workspace_row_by_root(host_real_root)`（不复用上传库行号）；
+  仅当 registry 未给出 `host_real_root` 时才退回 `resolve_true_workspace_id` +
+  按目标 id 派生合成 root 键；
+- 主库首建（文件/表不存在）用与 daemon 写路径相同的幂等 canonical DDL
+  （`cas_merge::init_codegraph_schema`）引导，并补 `workspaces` / `file_contents`
+  外键行；
+- 单事务 upsert `(workspace_id, rel_path)` 命中行的写治理列，失败整体回滚并
+  fail-closed（`snapshot.upload` 不返回成功）；仅同步上传库归属 workspace 且
+  `status != 'archived'` 的行，不污染其它 workspace；
+- 同文件 4 个 Rust 单测：workspace 隔离覆盖、fresh 主库引导、目标库不可打开
+  fail-closed、上传库 schema 缺失 fail-closed。
+
+**复验结果**
+
+| 方向 | 客户端 | daemon（对端 OS） | 命令 / env | 结果 |
+| --- | --- | --- | --- | --- |
+| A | Windows 11（Python 3.14.3） | WSL2 Ubuntu daemon `https://172.30.23.221:7633`（修复后 release，2026-11-12 14:27） | `pytest tests/test_remote_write_governance.py::TestS3RemoteCrossOsWriteGovernance -v`，`CW_S2_REMOTE_ENDPOINT/ROOT/CERT/KEY/CA` | `1 passed` |
+| B | WSL2 Ubuntu 22.04.5（Python 3.10.12） | Windows 11 daemon（修复后 release，`--http-bind 0.0.0.0:7645`，独立 registry/task db/cg 模板） | 同命令行，env 指向 Windows 侧 PKI/ROOT | `1 passed` |
+
+- A/B 均覆盖完整状态机：`build_graph → snapshot.upload` → `task.create` →
+  `write.grant`（`base_hash = sha256(b"old\n")`，非空且与服务端同步值一致）→
+  客户端写新内容 → `write.commit`（audit event 2）→ grant 重放被拒（consumed）→
+  客户端回退旧内容 → 再次 grant 被 `E_WRITE_STALE_BASE` 拒绝（audit event 3/4）。
+- 本地门禁（修复后）：`cargo test --lib daemon::snapshot_state::` 62 passed、
+  `daemon::fs_handlers::` 26 passed；`pytest tests/test_remote_write_governance.py`
+  = 23 passed / 1 skipped，combined = 50 passed / 2 skipped；
+  `python scripts/check_e2e_matrix_closure.py` = PASS；`git diff --check` clean。
+- 环境备注：方向 B 的 WSL 客户端需在 `PYTHONPATH` 中加
+  `/usr/local/lib/python3.10/dist-packages`（tree-sitter + `callwarden_core` 扩展所在），
+  否则客户端无法解析任何源文件（`Unsupported skipped`），会在 upload 前就无基线，
+  与 daemon 修复无关。方向 B 使用 7645 端口以避开本机已安装的 7644 daemon；
+  PKI/registry/task db/cg 模板均为独立临时目录。

@@ -2943,7 +2943,7 @@ review / apply，只能手工 `supersede` 收编。
 > - **S4-03 已收口**：承载测试 `tests/test_single_track_kernel.py::test_s4_03_mcp_server_has_no_local_daemon_mode_branch`——AST 断言 `server/mcp_server.py` 无 `daemon_mode` 活引用，docstring 退役说明不误判。
 > - **S4-04 已收口**：`rust_ext/target/{release,debug}` 产物仅 `cw`、`cw-daemon`、`cw-client`（+ `cw-agent`/`cw_agent`），无 bridge 产物。
 > - **S4-05 已收口**：`scripts/check_e2e_matrix_closure.py` 已接入 S4-01/S4-03 行，实跑 PASS exit 0。
-> - **S4-06 双向只读 PASS（写链路未取证）**：2026-11-11 在真实异 OS 对端上实测——
+> - **S4-06 双向只读 PASS；写链路 D4 取证判 BLOCKED**：2026-11-11 在真实异 OS 对端上实测——
 >   方向 A Windows 11（Python 3.14.3）→ WSL2 Ubuntu 22.04.5 daemon
 >   `https://172.30.23.221:7633`，`pytest tests/test_remote_read_plane.py::TestS208CrossOsReadOnlyMatrix`
 >   得 `1 passed`；方向 B WSL2（Python 3.10.12）→ Windows daemon `https://172.30.16.1:7644`，
@@ -2951,8 +2951,23 @@ review / apply，只能手工 `supersede` 收编。
 >   台账的 `snapshot.upload`（非客户端自报）。证据单源
 >   `.trae-cn/evidence/s4-06/s4-06-cross-os-matrix.json`
 >   （sha256 `9ff83242aaa28ca6cc394fcfd7d83f72d8f0578910da339336a0e7d15c426ec8`）+ 5 份原始日志。
->   **写治理链路仍无跨 OS 实机入口（D4，仅进程内桩 + Rust 单测），该半未取证，本行不得计 PASS**；
->   取证结论与 D1–D4 登记见 ADR-002 §17.5。
+>   2026-11-12 由 `T-1794452006394-a7a161a0`（`[REMOTE-S4-06-D4]`）新增 remote 写面
+>   env-gated 实机用例并跑 A 方向：`build_graph`/`task.create` 成功，但 `write.grant`
+>   对既有文件报 `E_WRITE_STALE_BASE`（daemon 侧 `expected=""`），暴露产品缺陷
+>   **S4-06-D4-1**（写基线索引与 `snapshot.upload` 不同源）；对照新文件探针
+>   grant/commit 成功、审计链邻接成立。判定 **BLOCKED，D4 未闭合，写面不得计 PASS**；
+>   证据 `.trae-cn/evidence/s4-06/d4-write-governance-cross-os.json`
+>   （sha256 `e9d7abcb173db92401a572ce70eb2bb14ad0b151cad2881ff1fe2501e0ade2f1`）。B 方向按 spec §7
+>   未执行（同一 daemon 二进制，根因不变），登记 `NOT_EXECUTED`。详见 ADR-002 §17.6。
+>   **修复闭环（2026-11-12，`T-1794454711064-62856418` `[REMOTE-S4-06-D4-FIX]`）**：
+>   `snapshot.upload` ingest 在 publish 后新增 `sync_uploaded_baseline`，把上传库
+>   `file_instances` 基线按 `ensure_workspace_row_by_root(host_real_root)`（与
+>   `write.grant`/`write.commit` 同一解析口径）同步进 `CW_DAEMON_CODEGRAPH_DB_TEMPLATE`
+>   主库，首建库用同一 canonical DDL 引导，失败 fail-closed。修复后 A（Windows→WSL）
+>   与 B（WSL→Windows，7645 临时 daemon）均 `1 passed`；本地门禁 write 23 passed/1 skipped、
+>   combined 50 passed/2 skipped、`check_e2e_matrix_closure.py` PASS、`git diff --check` clean。
+>   **D4 闭合**，写面可计 PASS。证据 `.trae-cn/evidence/s4-06/d4-write-governance-cross-os-fix.json`
+>   + `d4fix-raw/{A-win2wsl-after-fix.log,B-wsl2win-after-fix.log}`。详见 ADR-002 §17.7。
 > - **S4-07 复核（2026-11-12）**：原「已收口」结论不成立——§9.3.2 仍以 `CW_DAEMON_SOCKET`
 >   作为 cw-agent 连接路径、§9.5 仍写 `call_with_fd`（FD 传递），与 ADR-002 单轨冲突。
 >   已由 `T-1794413849157-7b176de0` 修正：§9.3.2 改为 `CW_DAEMON_HTTP_ENDPOINT` /
@@ -3019,7 +3034,7 @@ review / apply，只能手工 `supersede` 收编。
 | S4-03 | Python local 分支删除 | `server/mcp_server.py` 扫描 | 无 `daemon_mode=local` 分支 |
 | S4-04 | 发布产物 | 检查 release 目录 | 仅 `cw`、`cw-daemon`、`cw-client`（+ wheel），无 bridge |
 | S4-05 | 矩阵接入 | `python scripts/check_e2e_matrix_closure.py` | PASS，exit 0；含 S1–S4 行 |
-| S4-06 | 跨 OS 回归 | `set CW_S2_REMOTE_ENDPOINT=https://<对端>:7633` + `pytest tests/test_remote_read_plane.py::TestS208CrossOsReadOnlyMatrix`（双向各跑一次） | 双向只读 PASS（已取证，见 §38.4 说明与 `.trae-cn/evidence/s4-06/`）；写治理链路未取证，**不得计 PASS** |
+| S4-06 | 跨 OS 回归 | 只读：`set CW_S2_REMOTE_ENDPOINT=https://<对端>:7633` + `pytest tests/test_remote_read_plane.py::TestS208CrossOsReadOnlyMatrix`（双向各跑一次）；写面：`pytest tests/test_remote_write_governance.py::TestS3RemoteCrossOsWriteGovernance` | 双向只读 PASS（已取证，见 §38.4 说明与 `.trae-cn/evidence/s4-06/`）；写面 2026-11-12 A 方向实机暴露缺陷 S4-06-D4-1（证据 `d4-write-governance-cross-os.json`，ADR-002 §17.6），同日修复并双端实机复验 **D4 闭合，写面可计 PASS**（证据 `d4-write-governance-cross-os-fix.json` + `d4fix-raw/`，ADR-002 §17.7） |
 | S4-07 | 文档一致 | `docs/design/daemon-deploy-runbook.md` §9/§10 残留扫描 | 现行节无 pipe/UDS/socket/FD 有效传输口径；§1–§8 明确标注 v1 历史（2026-11-12 复核并修正，见 §38.4 说明） |
 
 ### 38.5 门禁与边界

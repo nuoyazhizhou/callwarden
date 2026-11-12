@@ -328,21 +328,8 @@ impl SnapshotDaemonState {
             .get("client_view_root")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let resolved = if self.base.codegraph_db_path_template.is_empty() {
-            super::config::default_codegraph_db_path()
-        } else {
-            std::path::PathBuf::from(
-                self.base
-                    .codegraph_db_path_template
-                    .replace("{workspace_instance_id}", workspace_instance_id),
-            )
-        };
-        if resolved.as_os_str().is_empty() {
-            return Err(DaemonRpcError::new(
-                "codegraph_db_unconfigured",
-                "daemon 未配置 codegraph_db_path_template 且主目录未知（fail-closed）",
-            ));
-        }
+        let resolved =
+            resolve_codegraph_db_path(&self.base.codegraph_db_path_template, workspace_instance_id)?;
         let conn = Connection::open_with_flags(
             resolved.as_path(),
             OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -611,6 +598,13 @@ impl SnapshotDaemonState {
             .get("client_view_root")
             .and_then(Value::as_str)
             .unwrap_or("");
+        // 写治理面（write.grant/write.commit）以 host_real_root 为权威库
+        // workspaces.root_path 业务键（ensure_workspace_row_by_root），基线
+        // 同步必须与其同源，否则 grant 读不到刚上传的 base_hash。
+        let host_real_root = workspace
+            .get("host_real_root")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let workspace_id_num = resolve_true_workspace_id(&db_path, client_view_root, registry_rowid);
         let registered_snapshot_id = workspace
             .get("snapshot_id")
@@ -655,6 +649,23 @@ impl SnapshotDaemonState {
                 ));
             }
         };
+
+        // 8. S4-06-D4：把上传快照的 file_instances 基线同步到 daemon 权威
+        //    codegraph 主库。remote profile 下快照唯一入口是 snapshot.upload，
+        //    write.grant 的 base_hash 预期值来自主库 file_instances；只发布
+        //    查询面会让既有文件首写被 E_WRITE_STALE_BASE 拒绝（S4-06-D4-1）。
+        //    同步失败即 fail-closed：请求返回错误，客户端不得认为基线已就绪。
+        let target_db = resolve_codegraph_db_path(
+            &self.base.codegraph_db_path_template,
+            workspace_instance_id,
+        )?;
+        sync_uploaded_baseline(
+            &db_path,
+            target_db.to_string_lossy().as_ref(),
+            host_real_root,
+            registry_rowid,
+            workspace_id_num,
+        )?;
 
         let mut m = Map::new();
         m.insert("generation".into(), Value::Number(generation.into()));
@@ -5360,6 +5371,221 @@ fn resolve_true_workspace_id(db_path: &str, client_view_root: &str, fallback_row
         }
     }
     fallback_rowid
+}
+
+/// S4-06-D4：解析 codegraph 主库写路径（`snapshot.upload` 基线同步与
+/// `open_codegraph_db_write` 共用，避免两处口径漂移）。
+fn resolve_codegraph_db_path(
+    template: &str,
+    workspace_instance_id: &str,
+) -> Result<PathBuf, DaemonRpcError> {
+    let resolved = if template.is_empty() {
+        super::config::default_codegraph_db_path()
+    } else {
+        PathBuf::from(template.replace("{workspace_instance_id}", workspace_instance_id))
+    };
+    if resolved.as_os_str().is_empty() {
+        return Err(DaemonRpcError::new(
+            "codegraph_db_unconfigured",
+            "daemon 未配置 codegraph_db_path_template 且主目录未知（fail-closed）",
+        ));
+    }
+    Ok(resolved)
+}
+
+/// S4-06-D4：把上传快照中源 workspace 的 `file_instances` 基线同步到 daemon
+/// 权威 codegraph 主库。
+///
+/// 背景：`write.grant` / `write.commit`（`fs_handlers.rs`）用主库
+/// `file_instances.current_content_hash` 作为 `base_hash` 预期值。remote
+/// profile 下快照唯一入口是 `snapshot.upload`，此前该路径只把快照发布到查询
+/// 面 GraphStore，随后删除临时库，主库基线始终为空，导致已存在文件的首写被
+/// `E_WRITE_STALE_BASE` 拒绝（S4-06-D4-1）。
+///
+/// 语义：
+/// - 目标 `workspace_id` 与写治理面（`fs_handlers::write.grant` /
+///   `write.commit`）**完全同源**：用 `ensure_workspace_row_by_root(host_real_root)`
+///   解析/登记权威库 `workspaces` 行，**不复用**上传库行号；
+/// - 仅同步上传库中 `source_workspace_id` 且 `status != 'archived'` 的行，
+///   不触碰主库其它 workspace 的同名 rel_path；
+/// - 覆盖 `(workspace_id, rel_path)` 唯一键上写治理关心的全部列；
+/// - 主库可能是首个 upload 才出现的空文件：用 daemon 写路径同一套幂等
+///   canonical DDL（`init_codegraph_schema`）引导，并按解析出的 id 补
+///   `workspaces` / `file_contents` 外键行，保证 `write.grant` 用同一解析口径
+///   能读到基线；
+/// - `daemon_root` 缺失（registry 未给出 host_real_root）时退回
+///   `resolve_true_workspace_id` + 按 id 派生合成 root 键，仍不使用上传库行号；
+/// - 单事务提交；任一步失败回滚并返回 Err（fail-closed，不留部分基线）。
+fn sync_uploaded_baseline(
+    source_db_path: &str,
+    target_db_path: &str,
+    daemon_root: &str,
+    fallback_workspace_id: i64,
+    source_workspace_id: i64,
+) -> Result<usize, DaemonRpcError> {
+    let fail = |detail: String| {
+        DaemonRpcError::internal_error(format!(
+            "snapshot.upload 基线同步失败（fail-closed）: {detail}"
+        ))
+    };
+
+    // 1. 读取上传快照基线（只读；临时库随后由 Guard 删除）
+    let source = Connection::open_with_flags(
+        source_db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| fail(format!("打开上传快照失败: {e}")))?;
+    let rows: Vec<(String, String, String, f64, i64, f64, String, String)> = {
+        let mut stmt = source
+            .prepare(
+                "SELECT rel_path, abs_path, COALESCE(current_content_hash, ''), \
+                 COALESCE(mtime, 0), CAST(COALESCE(total_lines, 0) AS INTEGER), \
+                 COALESCE(last_parsed, 0), COALESCE(status, 'pending'), \
+                 COALESCE(module_path, '') \
+                 FROM file_instances WHERE workspace_id = ?1 AND status != 'archived'",
+            )
+            .map_err(|e| fail(format!("读取上传快照 file_instances 失败: {e}")))?;
+        let mapped = stmt
+            .query_map(rusqlite::params![source_workspace_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, f64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, f64>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            })
+            .map_err(|e| fail(format!("读取上传快照 file_instances 失败: {e}")))?;
+        mapped
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| fail(format!("读取上传快照 file_instances 行失败: {e}")))?
+    };
+    drop(source);
+
+    // 2. 打开/创建 daemon 权威主库并解析目标 workspace id（与写治理读面同源）
+    if let Some(parent) = std::path::Path::new(target_db_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| fail(format!("创建主库目录失败: {e}")))?;
+        }
+    }
+    let mut target = Connection::open(target_db_path).map_err(|e| fail(format!("打开主库失败: {e}")))?;
+    target
+        .execute_batch("PRAGMA busy_timeout = 5000;")
+        .map_err(|e| fail(format!("设置 busy_timeout 失败: {e}")))?;
+    // 首建空库：与 daemon 写路径（file.refresh / recovery）相同的幂等
+    // canonical DDL，否则 file_instances 不存在、write.grant 永远读不到基线。
+    super::cas_merge::init_codegraph_schema(&target)
+        .map_err(|e| fail(format!("初始化主库 schema 失败: {e}")))?;
+    // 2b. workspace 行解析必须与 write.grant / write.commit 同一个 helper：
+    //     它们以 host_real_root 为 root_path 业务键调用
+    //     ensure_workspace_row_by_root；此处若换一套解析口径（如按
+    //     client_view_root/registry id）会把基线挂到另一个 id 上，grant
+    //     仍然读到空 base_hash。
+    let target_workspace_id = if !daemon_root.trim().is_empty() {
+        super::fs_handlers::ensure_workspace_row_by_root(
+            &target,
+            std::path::Path::new(daemon_root),
+        )
+        .map_err(|e| fail(format!("映射 workspaces 行失败: {e}")))?
+    } else {
+        resolve_true_workspace_id(target_db_path, "", fallback_workspace_id)
+    };
+
+    // 3. 单事务 upsert（失败整体回滚）
+    let tx = target
+        .transaction()
+        .map_err(|e| fail(format!("开启主库事务失败: {e}")))?;
+
+    // 3a. 外键要求 workspaces 行存在。ensure_workspace_row_by_root 已保证
+    //     正常路径有行；仅 daemon_root 缺失的退路需要在事务内补合成行
+    //     （root 键按目标 id 派生，避免 registry id 轮转后的 UNIQUE 冲突）。
+    let row_exists: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM workspaces WHERE id = ?1",
+            rusqlite::params![target_workspace_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| fail(format!("查询 workspaces 失败: {e}")))?;
+    if row_exists.is_none() {
+        let root_key = format!("daemon-ws-{target_workspace_id}");
+        tx.execute(
+            "INSERT OR IGNORE INTO workspaces \
+             (id, name, root_path, created_at, is_active, description) \
+             VALUES (?1, ?2, ?3, ?4, 0, 'daemon-managed workspace (snapshot.upload baseline)')",
+            rusqlite::params![
+                target_workspace_id,
+                format!("daemon_ws_{target_workspace_id}"),
+                root_key,
+                super::fs_handlers::now_ts_secs()
+            ],
+        )
+        .map_err(|e| fail(format!("写入 workspaces 行失败: {e}")))?;
+        let ensured: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM workspaces WHERE id = ?1",
+                rusqlite::params![target_workspace_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| fail(format!("复检 workspaces 失败: {e}")))?;
+        if ensured.is_none() {
+            return Err(fail(format!(
+                "workspaces 行无法建立（id={target_workspace_id}）"
+            )));
+        }
+    }
+
+    {
+        let now = super::fs_handlers::now_ts_secs();
+        // 3b. file_contents 先于 file_instances（FK current_content_hash）；
+        //     已有行保留原 language，仅补缺失行。
+        let mut content_stmt = tx
+            .prepare(
+                "INSERT OR IGNORE INTO file_contents \
+                 (content_hash, language, total_lines, first_seen_at) VALUES (?1, '', ?2, ?3)",
+            )
+            .map_err(|e| fail(format!("准备 file_contents upsert 失败: {e}")))?;
+        let mut stmt = tx
+            .prepare(
+                "INSERT INTO file_instances (workspace_id, rel_path, abs_path, \
+                   current_content_hash, mtime, total_lines, last_parsed, status, module_path) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+                 ON CONFLICT(workspace_id, rel_path) DO UPDATE SET \
+                   abs_path = excluded.abs_path, \
+                   current_content_hash = excluded.current_content_hash, \
+                   mtime = excluded.mtime, \
+                   total_lines = excluded.total_lines, \
+                   last_parsed = excluded.last_parsed, \
+                   status = excluded.status, \
+                   module_path = excluded.module_path",
+            )
+            .map_err(|e| fail(format!("准备 file_instances upsert 失败: {e}")))?;
+        for (rel, abs, hash, mtime, total_lines, last_parsed, status, module_path) in &rows {
+            content_stmt
+                .execute(rusqlite::params![hash, total_lines, now])
+                .map_err(|e| fail(format!("写入 file_contents 失败: {e}")))?;
+            stmt.execute(rusqlite::params![
+                target_workspace_id,
+                rel,
+                abs,
+                hash,
+                mtime,
+                total_lines,
+                last_parsed,
+                status,
+                module_path
+            ])
+            .map_err(|e| fail(format!("写入 file_instances 基线失败: {e}")))?;
+        }
+    }
+    tx.commit()
+        .map_err(|e| fail(format!("提交主库事务失败: {e}")))?;
+    Ok(rows.len())
 }
 
 // ============================================
@@ -10326,5 +10552,232 @@ mod tests {
             &json!({"workspace_instance_id": "ws-x", "limit": -1}),
         );
         assert_ne!(response["ok"], true, "负 limit 必须 fail-closed");
+    }
+
+    // ---- S4-06-D4：snapshot.upload 基线同步到写治理主库 ----
+
+    /// 构造带 workspaces + 全列 file_instances 的临时库。
+    ///
+    /// `workspace` 为 `(id, root_path)`；`files` 为
+    /// `(workspace_id, rel_path, current_content_hash, status)`。
+    fn build_baseline_fixture(
+        db_name: &str,
+        workspace: Option<(i64, &str)>,
+        files: &[(i64, &str, &str, &str)],
+    ) -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join(db_name);
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                root_path TEXT UNIQUE NOT NULL,
+                created_at REAL NOT NULL,
+                is_active INTEGER DEFAULT 0,
+                description TEXT DEFAULT '',
+                active_task_id TEXT DEFAULT ''
+            );
+            CREATE TABLE file_instances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                rel_path TEXT NOT NULL,
+                abs_path TEXT NOT NULL,
+                current_content_hash TEXT DEFAULT '',
+                mtime REAL NOT NULL,
+                total_lines INTEGER DEFAULT 0,
+                last_parsed REAL DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                module_path TEXT DEFAULT '',
+                UNIQUE(workspace_id, rel_path)
+            );
+            ",
+        )
+        .unwrap();
+        if let Some((id, root)) = workspace {
+            conn.execute(
+                "INSERT INTO workspaces (id, name, root_path, created_at) \
+                 VALUES (?1, ?2, ?3, 0)",
+                rusqlite::params![id, format!("ws_{id}"), root],
+            )
+            .unwrap();
+        }
+        for (ws, rel, hash, status) in files {
+            conn.execute(
+                "INSERT INTO file_instances (workspace_id, rel_path, abs_path, \
+                   current_content_hash, mtime, total_lines, last_parsed, status, module_path) \
+                 VALUES (?1, ?2, ?3, ?4, 1.5, 10, 2.0, ?5, ?6)",
+                rusqlite::params![ws, rel, format!("/abs/{rel}"), hash, status, "src"],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        temp
+    }
+
+    #[test]
+    fn test_sync_uploaded_baseline_uses_daemon_workspace_id_and_isolates() {
+        let source = build_baseline_fixture(
+            "upload.db",
+            Some((7, "c:/repo")),
+            &[
+                (7, "src/a.py", "hash-a", "parsed"),
+                (7, "src/gone.py", "hash-gone", "archived"),
+                (8, "src/other.py", "hash-other", "parsed"),
+            ],
+        );
+        let target = build_baseline_fixture(
+            "main.db",
+            Some((42, "c:/repo")),
+            &[
+                (42, "src/a.py", "old-hash", "parsed"),
+                (99, "src/a.py", "foreign-hash", "parsed"),
+            ],
+        );
+        let src_db = source.path().join("upload.db");
+        let tgt_db = target.path().join("main.db");
+        let synced = sync_uploaded_baseline(
+            src_db.to_str().unwrap(),
+            tgt_db.to_str().unwrap(),
+            "C:\\repo",
+            1,
+            7,
+        )
+        .unwrap();
+        assert_eq!(synced, 1, "archived 与他人 workspace 行不得同步");
+
+        let conn = Connection::open(&tgt_db).unwrap();
+        let (hash, module_path): (String, String) = conn
+            .query_row(
+                "SELECT current_content_hash, module_path FROM file_instances \
+                 WHERE workspace_id = 42 AND rel_path = 'src/a.py'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(hash, "hash-a", "目标 workspace 基线必须更新为新快照 hash");
+        assert_eq!(module_path, "src");
+        let foreign: String = conn
+            .query_row(
+                "SELECT current_content_hash FROM file_instances \
+                 WHERE workspace_id = 99 AND rel_path = 'src/a.py'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(foreign, "foreign-hash", "其它 workspace 同名路径不得被覆盖");
+        let cross: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_instances WHERE rel_path = 'src/other.py'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cross, 0, "上传库其它 workspace 的行不得同步");
+        let leaked: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_instances WHERE workspace_id = 7",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(leaked, 0, "不得复用上传库 workspace 行号");
+    }
+
+    #[test]
+    fn test_sync_uploaded_baseline_bootstraps_fresh_daemon_db() {
+        // 远端首个 workspace 的主库文件可能尚不存在：同步必须用与 daemon
+        // 写路径相同的幂等 canonical DDL 引导，并用 write.grant 同源的
+        // ensure_workspace_row_by_root 建 workspaces 外键行，否则
+        // write.grant 永远读到空基线。
+        let source = build_baseline_fixture(
+            "upload.db",
+            Some((7, "/repo")),
+            &[(7, "a.py", "hash-a", "parsed")],
+        );
+        let target = tempfile::tempdir().unwrap();
+        let tgt_db = target.path().join("cg").join("main.db");
+        let synced = sync_uploaded_baseline(
+            source.path().join("upload.db").to_str().unwrap(),
+            tgt_db.to_str().unwrap(),
+            "/repo",
+            3,
+            7,
+        )
+        .unwrap();
+        assert_eq!(synced, 1);
+
+        let conn = Connection::open(&tgt_db).unwrap();
+        let (ws, hash): (i64, String) = conn
+            .query_row(
+                "SELECT workspace_id, current_content_hash FROM file_instances \
+                 WHERE rel_path = 'a.py'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(ws, 1, "fresh 库由 ensure_workspace_row_by_root 建行（首个自增 id）");
+        assert_eq!(hash, "hash-a");
+        let root: String = conn
+            .query_row(
+                "SELECT root_path FROM workspaces WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(root, "/repo");
+        assert!(tgt_db.parent().unwrap().is_dir(), "主库父目录应自动创建");
+    }
+
+    #[test]
+    fn test_sync_uploaded_baseline_fails_closed_when_target_unopenable() {
+        let source = build_baseline_fixture(
+            "upload.db",
+            Some((7, "/repo")),
+            &[(7, "a.py", "hash-a", "parsed")],
+        );
+        let target = tempfile::tempdir().unwrap();
+        let tgt_db = target.path().join("main.db");
+        std::fs::create_dir(&tgt_db).unwrap();
+        let err = sync_uploaded_baseline(
+            source.path().join("upload.db").to_str().unwrap(),
+            tgt_db.to_str().unwrap(),
+            "/repo",
+            1,
+            7,
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("基线同步失败"),
+            "主库不可打开必须 fail-closed，实际: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_sync_uploaded_baseline_fails_closed_when_source_schema_missing() {
+        let source = tempfile::tempdir().unwrap();
+        let src_db = source.path().join("upload.db");
+        {
+            let conn = Connection::open(&src_db).unwrap();
+            conn.execute_batch("CREATE TABLE unrelated (id INTEGER);")
+                .unwrap();
+        }
+        let target = build_baseline_fixture("main.db", Some((42, "/repo")), &[]);
+        let tgt_db = target.path().join("main.db");
+        let err = sync_uploaded_baseline(
+            src_db.to_str().unwrap(),
+            tgt_db.to_str().unwrap(),
+            "/repo",
+            1,
+            7,
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("基线同步失败"),
+            "源库缺 file_instances 必须 fail-closed，实际: {}",
+            err.message
+        );
     }
 }
