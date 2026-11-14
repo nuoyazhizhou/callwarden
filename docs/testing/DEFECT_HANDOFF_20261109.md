@@ -14,7 +14,7 @@
 | 静态清单自洽（`gen_test_cases.py --check`） | 🟢 | 三账本与源 HEAD 字节自洽 |
 | 提交树 CI 比对（远端） | 🔴 | 远端账本滞后，未 push |
 | CRLF 稳定性 | 🔴 | `.gitattributes` 缺 `eol=lf`，反复翻转 |
-| 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已销项 10 项，仍 OPEN 仅 T-5 / T-12（2026-11-14 复核） |
+| 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已销项 11 项，仍 OPEN 仅 T-12（2026-11-14 复核，T-5 同日销项） |
 
 **缺陷分级**：P0 ×10（DEF-01、DEF-02、DEF-03、T-1~T-9）、P1 ×3（T-10~T-12）、已知未知 ×4（不分级但不可瞒）。
 
@@ -31,7 +31,7 @@
 | T-2 | Gate 1/2 汇总行污染（反篡改门恒红） | P0 | CI/Gate | **DONE**（2026-11-14 复验销项：`_load` nodeid 过滤在位，PR 114/114 与 full 127/127 本机 exit 0，删 nodeid 条目 exit 2 拦截有效，test_cicd_gates.py 14 用例全绿） |
 | T-3 | known-red 零隔离 | P0 | CI/Quarantine | **DONE**（登记过期：ci.yml 已有 deselect step + quarantine job，KR-A/B/C 全 closed） |
 | T-4 | KR-A 83 条 residue | P0 | Security/Authority | **DONE**（登记过期：KR-A closed——audit passed=true/finding_count=0/transition=79/sunset 未过期，migrate.py 已退役，MASKING 守卫 tests/test_srv_019.py:144 在位） |
-| T-5 | 写路径无 workspace 根约束（越权写） | P0 | Security | OPEN |
+| T-5 | 写路径无 workspace 根约束（越权写） | P0 | Security | **DONE**（2026-11-14 复验销项：`_is_within_workspace` realpath+commonpath 校验在位，相对穿越与绝对越界均 `status=failed` 未落盘，test_fuzz.py 6/6 绿，详见 §3 T-5） |
 | T-6 | bandit 门禁范围外 75 条 | P0 | Security | **DONE**（登记过期：bandit 范围已含 db/ scripts/ cw.py config.py，75 条逐条处置入注释） |
 | T-7 | Rust 集成测试只编译不执行 | P0 | Rust/CI | **DONE**（登记过期：rust-unit-test job 已有 cargo test --tests 执行步） |
 | T-8 | E2E 结果 advisory 不阻断 | P0 | CI/E2E | DONE 本地（e616a90，2026-11-11：按触发形态阻断；tag run 验证待 CI） |
@@ -125,6 +125,7 @@
 - **根因**：`db/db_edit.py:113-126` 的 `_resolve_abs_path` 绝对路径原样采用、相对路径不拒 `..`（对照组 `db/db_lsp.py:82-106` 有校验；fuzz 缺口 `tests/test_fuzz.py:152-203`）。
 - **修复**：解析后 `commonpath`/`is_relative_to` 校验 + 显式拒 `..` + `realpath` 后再比一次；复用 `_validate_file_path`。
 - **验收**：fuzz 增 traversal-write 用例断言 `failed` 且 workspace 外无文件落盘。
+- **复验销项（2026-11-14，HEAD 550bbdd；修复实现见 `2e7b2d6` fix(sec) GAP-SEC-01）**：验收全部达成——① `db/db_edit.py` 新增 `_is_within_workspace`（realpath 后 `commonpath` 包含性比对，Windows 下 `normcase` 统一大小写/分隔符，跨盘符 ValueError 判越界），`propose_edit` 写前校验，越界返回 `status=failed` 并附拒绝原因（i18n key `edit_path_out_of_workspace` 中英在位）；② fuzz 回归锚点两条在位（`tests/test_fuzz.py` 测试 4 相对穿越 `../escape_rel.txt`、测试 5 workspace 外绝对路径，均断言 `failed` + `error` 非空 + 未落盘）；③ 本机实跑：相对穿越 `status=failed`（未落盘）、绝对越界 `status=failed`（未落盘）；`test_fuzz.py` 6/6 绿、`test_p2_features.py` 5/5 绿；`gen_test_cases.py --check` exit 0。
 
 ### T-6　bandit 门禁范围外 75 条（安全严重）　【P0】
 - **现象**：CI bandit 仅扫 `cli/server/cw.py/config.py`；`db/`、`scripts/` 在门外，实跑 75 条 medium+（B608×64、B314×7、B602 HIGH×1 `scripts/split_commit_069.py:15` shell=True、B324 HIGH×1 FP）。
@@ -203,7 +204,7 @@
 上表已按 HEAD `8e7ee65` 重生成核对（`--check` PASS、CRLF=0）。与本文件早先登记态的差异：
 
 1. **GAP-15 / DEF-03 已闭合**（2026-11-11 用户签字，commit `f4d4575`）：以源码为权威语义；Adjudicator v4 模板 §29/§32 已对齐，一致性测试在位。详见 `COVERAGE_AUDIT.md` GAP-15 行。
-2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**T-2 已于 2026-11-14（HEAD efad200）复验销项**（nodeid 过滤在位、双 profile exit 0、删条目 exit 2 拦截有效、test_cicd_gates.py 14 用例全绿）；**仍 OPEN 仅 T-5 / T-12**。T-12 描述修正：check_selector_manifest/check_ci_gates 已有直接单测，仅 gen_coverage_manifest.py 缺脚本行为单测。
+2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**T-2 已于 2026-11-14（HEAD efad200）复验销项**（nodeid 过滤在位、双 profile exit 0、删条目 exit 2 拦截有效、test_cicd_gates.py 14 用例全绿）；**T-5 已于 2026-11-14（HEAD 550bbdd）复验销项**（修复实现见 2e7b2d6：`_is_within_workspace` 校验在位，相对穿越/绝对越界均 failed 未落盘，test_fuzz.py 6/6 绿）；**仍 OPEN 仅 T-12**。T-12 描述修正：check_selector_manifest/check_ci_gates 已有直接单测，仅 gen_coverage_manifest.py 缺脚本行为单测。
 3. **「17 卡全 closed / 门禁 PASS」（commit `7163645`）只作用于 ADR-002 远端控制面**，不等于团队终审通过——`full_stack_review_20261024.md` 结论仍为"不通过"，两者不可混用。
 4. **GAP-16 仍 OPEN**：root_cause 复核 0/456。
 5. STASH-0：原 review-edits stash 已清；当前 stash@{0} = `e741-prod-wip`（内容未核，非本表范围）。
