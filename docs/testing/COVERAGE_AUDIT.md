@@ -7,7 +7,7 @@
 
 测试定义、Rust属性数、skip调用站点、collected nodeid、运行结果是不同单位。参数化/class/module skipif/importorskip/setup skip/collection error影响执行数量，不能从站点推算运行skip率或解锁用例数量。
 
-当前Python定义7211、convergence定义58；Rust src #[test]+#[tokio::test]属性2107、含#[cfg(test)]文件121（python 源文件 696）。这不是当前通过数，也不含全部Rust integration/bin测试。扫描文件及hash/算法见机器报告。
+当前Python定义7213、convergence定义58；Rust src #[test]+#[tokio::test]属性2122、含#[cfg(test)]文件121（python 源文件 697）。这不是当前通过数，也不含全部Rust integration/bin测试。扫描文件及hash/算法见机器报告。
 
 AST调用pytest.skip210、pytest.mark.skipif222，合计432，分布131文件；另有pytest.importorskip24。三种合计456仅是机制站点，非运行skip数。别名/动态机制不在当前精确匹配统计内，runtime补齐。
 
@@ -31,7 +31,7 @@ reason字面量分组不是人工根因归因。SKIP_SITES记录路径/行/机�
 
 源码注册名/矩阵/分类集合静态一致243；backend200 rust_native+43 task_rpc；op_class161 READ_ONLY+77 PROTECTED_MUTATION+5 GOVERNANCE_WRITE。MCP wire 已通过真实 tools/list 提取（docs/testing/manifests/mcp/mcp_tools.json，243 项，使用当前真名 detect_dependency_cycle/detect_call_cycles，无旧名 detect_cycle/detect_cycles），清单已冻结（docs/testing/manifests/frozen/inventory_frozen.json，508 入口），GAP-14 已闭合（提取侧 + 收敛侧）：收敛套件 T2/T5 引用的 `audit_mcp_inventory.json` 与 `mcp_full_schema.json` 两个 fixture 已将陈旧名 detect_cycle/detect_cycles 定点改名为真名 detect_dependency_cycle/detect_call_cycles，与 mcp_tools.json 名字集合完全一致（diff=NONE），T2 按真名查表取参，不再空参调用改名工具。当前源码签名/默认值与全部快照仍需逐字段核验和运行时提取。声明需handler副作用复核，不能视为运行成功。旧前缀猜测171READ/72WRITE把submit_verdict/append_evidence等治理写标错，v7改矩阵声明。
 
-CLI快照声明233叶子，commands232、skipped=[server]；分类84顶层/21类。TP-08C 已通过进程内挂钩 argparse 真实提取 cli_tree.json（84 顶层 + 144 嵌套，含 default/choices/nargs/required/互斥）；help/usage 文本中的 "-h, --help" 是 argparse 正常输出（无害）。runtime/argparse、legacy flags/alias/global options 完整性已由 cli_tree.json 部分提取；MCP runtime wire schema 已由 mcp_tools.json 验证（243 真名）。
+CLI快照声明233叶子，commands232、skipped=[server]；分类86顶层/21类。TP-08C 已通过进程内挂钩 argparse 真实提取 cli_tree.json（84 顶层 + 144 嵌套，含 default/choices/nargs/required/互斥）；help/usage 文本中的 "-h, --help" 是 argparse 正常输出（无害）。runtime/argparse、legacy flags/alias/global options 完整性已由 cli_tree.json 部分提取；MCP runtime wire schema 已由 mcp_tools.json 验证（244 真名）。
 
 ## 3. 静态风险与承接
 
@@ -51,7 +51,7 @@ CLI快照声明233叶子，commands232、skipped=[server]；分类84顶层/21类
 | GAP-12 | scripts | check_ci_gates/check_skip_rate不存在 | E完整报告/selector门禁待建 |
 | GAP-13 | v6 BUILD_ENV | 历史wiimu/Zig路径与当前环境混用 | E按profile核构建来源 |
 | GAP-14 | audit_mcp_inventory.json + mcp_full_schema.json(旧fixture) vs mcp_tools.json(新) vs源码/矩阵 | 旧fixture两个环检测工具名已陈旧；总数相等掩盖集合漂移 | **已闭合（2026-10-14）：提取侧 TP-08M 真名源；收敛侧两 fixture 陈旧名 detect_cycle/detect_cycles 已定点改名为 detect_dependency_cycle/detect_call_cycles，与 mcp_tools.json 名字集合 diff=NONE，T2 按真名查表取参** |
-| GAP-15 | task_collab_lifecycle.rs:1516–1524（`adjudicator_returned` 同事务准备 fix_defect）vs 协议（原 `docs/design/role-protocol.md` 已迁至 `.agents/skills/cw-task-loop/references/role-protocol.md`；`docs/role-loop-templates/Callwarden 无人值守循环启动模板：Adjudicator v4.md:32` 明写"returned 不自动追加整改 step、不自动 reopen——自动 remediation 仅 reviewer_blocked 触发"） | returned 同事务整改的源码与协议"不自动追加"冲突，运行结果未知 | A解决权威语义冲突；D按冻结合同真实验证projection/steps/assignment、provenance、幂等与冲突 |
+| GAP-15 | task_collab_lifecycle.rs:1516–1524（`adjudicator_returned` 同事务准备 fix_defect）vs 协议（原 `docs/design/role-protocol.md` 已迁至 `.agents/skills/cw-task-loop/references/role-protocol.md`；`docs/role-loop-templates/Callwarden 无人值守循环启动模板：Adjudicator v4.md:32` 明写"returned 不自动追加整改 step、不自动 reopen——自动 remediation 仅 reviewer_blocked 触发"） | returned 同事务整改的源码与协议"不自动追加"冲突，运行结果未知 | **已闭合（2026-11-11 用户签字裁决，commit f4d4575）：以源码为权威语义；Adjudicator v4 模板 §29/§32 已对齐，迁移版 role-protocol.md 原本已对齐，一致性测试 test_adjudicator_returned_handoff_reopens_executor_remediation_atomically 在位（DEF-03 DONE）。D 项 runtime 真实验证仍属后续治理验收义务** |
 | GAP-16 | SKIP_SITES.json 静态扫描 | reason字面量267、含表达式167、缺省22（互斥口径，合计456）；全部456处根因尚未复核，语法分布不等于归因率 | A0逐站点源码/适用性复核；运行阶段关联实际reason/nodeid/collection，未触发登记依据；不伪造全量runtime归因 |
 
 不再将“CI执行量0/全ERROR”称本轮实测：配置可推断前置风险，但部分静态测试不依赖daemon，具体数量需CI/JUnit。历史T2 157/72/0/14、T3 70/114/18/31只是旧叙述，非当前revision证据。
@@ -73,7 +73,7 @@ CLI快照声明233叶子，commands232、skipped=[server]；分类84顶层/21类
 自 v7 文档（2026-10-10）以来，代码层已完成 TP-07~TP-10 验收套件并实跑，文档须同步以下事实（避免审计方误判“测试尚未实施”）：
 
 - **TP-08C/M/F**：真实提取并冻结清单。CLI 经进程内挂钩 argparse 提取 `docs/testing/manifests/cli/cli_tree.json`（84 顶层 + 144 嵌套）；MCP 经真实 wire tools/list 提取 `docs/testing/manifests/mcp/mcp_tools.json`（243 工具，当前真名）；`docs/testing/manifests/frozen/inventory_frozen.json` 冻结 508 入口。**GAP-14 提取侧已闭合**（生成器静态账本已切换至 mcp_tools.json 真名源，`planning_inventory_gate` 不再 `BLOCKED_SCHEMA_DRIFT`）。
-- **TP-10M**：MCP 全工具真实 `ClientSession` wire 验收（**243 工具 DEFECT=0**），非进程内 `call_tool`——修复旧 GAP-05/07 的“路由通冒充业务对”。
+- **TP-10M**：MCP 全工具真实 `ClientSession` wire 验收（**244 工具 DEFECT=0**），非进程内 `call_tool`——修复旧 GAP-05/07 的“路由通冒充业务对”。
 - **TP-10C**：CLI 全入口语义验收（**265 冻结入口 DEFECT=0**），用真实 `subprocess` 拉 `cw-daemon`。
 - **a8b96b2**：T2/T3 陈旧证据重跑 + T3 门禁升级为零缺陷。
 - 新增门禁：覆盖率门禁（pyproject + CI 采集）、SAST/SCA/secret-scan、ruff 阻断。
@@ -130,5 +130,7 @@ CLI快照声明233叶子，commands232、skipped=[server]；分类84顶层/21类
 
 **仍遗留（未闭合）**：
 - （GAP-14 收敛侧已于 2026-10-14 闭合：两 fixture 陈旧名已定点改名为真名，名字集合与 mcp_tools.json diff=NONE；T2 按真名查表取参，不再空参调用改名工具。）
-- GAP-15 治理语义冲突（`task_collab_lifecycle.rs:1516-1524` 对 `adjudicator_returned` 同事务准备 fix_defect，与 Adjudicator v4 模板"returned 不自动追加整改 step"协议冲突）仍待权威语义对齐，方可进治理验收。
+- GAP-15 治理语义冲突——**已于 2026-11-11 闭合**（用户签字裁决以源码为权威语义，commit `f4d4575`；DEF-03 回填 DONE，模板对齐 + 一致性测试在位）。原表述"仍待权威语义对齐"已过期更正；其 D 项 runtime 真实验证仍属后续治理验收义务，非静态阻断。
 - GAP-16 的 456 处 skip 站点 root_cause 仍 UNREVIEWED（本轮净 −42 处；d5cfbeb4 仅 rust 属性 2112→2113（+1）；0fc6ba2 再 +1 skip/文件、python 定义 +23（7320→7343）、字面量 293→294；bd5cd60f 仅 python 定义 7343→7374（+31）、rust 属性 2113→2119（+6）、cli 提取 233→232（-1，删 `gc db-migrate-single`）；6bd1e9c 仅 python 定义 7374→7383（+9）、rust 属性 2119→2138（+19），skip 站点仍 488、其余不变；fc8b575 python 定义 7383→7481（+98）、rust 属性 2138→2148（+10）、pytest.skip 227→232、classic 467→472、三机制 488→493、字面量 294→290，skip 站点仍 493、其余不变；7e178cb 重构 python 定义 7481→7464（-17）、rust 属性 2148→2163（+15）、三机制 493→498、字面量 290→292、缺省 19→23，skip 站点 498、其余不变；全部 456 处均为 UNREVIEWED，根因复核仍未启动，人工复核 0），静态账本未变。
+
+- **重生账本至 HEAD `8e7ee65`（2026-11-14）**：`241d51e..8e7ee65` 区间 docs/testing 零改动但 12 个输入作用域文件真被改（REMOTE 写治理 / owner ACL / snapshot / route_matrix 等），账本过期（`supplied_source_revision` 376edb3）+ 72 处 CRLF 伪影叠加。已按 `8e7ee65` 重生三账本：python 定义 7211→**7213**（+2）、py 文件 696→**697**（+1）、rust 属性 2107→**2122**（+15）、cfg 文件 121 不变；skip 三机制 456 不变（pytest.skip 210 / skipif 222 / importorskip 24），classic 432/131 文件不变；reason 字面量 267 / 表达式 167 / 缺省 22 不变；MCP 243→**244**（read-1 修复新增读入口）、CLI 84→**86** 顶层（21 类 / 233 叶子 / extracted 232 不变）；schema 名称漂移 0（GAP-14 仍闭）；root_cause 0/456 不变。`--check` 全 PASS、CRLF 0。当前态口径（§1/§2/TP-10M）与 GAP-15 闭合状态（f4d4575）已同步；历史修订快照数字原样保留。

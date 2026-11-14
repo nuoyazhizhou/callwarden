@@ -4486,7 +4486,19 @@
       "reason_literal": "跨 OS 只读矩阵需 CW_S2_REMOTE_ENDPOINT（对侧 OS daemon；本机为 Windows 单端，另一方向由 CI 矩阵承载）",
       "reason_expression": "'跨 OS 只读矩阵需 CW_S2_REMOTE_ENDPOINT（对侧 OS daemon；本机为 Windows 单端，另一方向由 CI 矩阵承载）'",
       "condition_or_module": "not _REMOTE_ENDPOINT",
-      "file_sha256": "b5182360acf63a4eb60b63fca267ab971166e96ee492ee23eabf02f563e4c496",
+      "file_sha256": "49c2f9392d6e5f6ecd65c333924d2f89151749ba66b5eccb15edeeb61d5a3b65",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_remote_write_governance.py:49:31:pytest.mark.skipif",
+      "file": "tests/test_remote_write_governance.py",
+      "line": 49,
+      "column": 31,
+      "mechanism": "pytest.mark.skipif",
+      "reason_literal": "跨 OS 写治理矩阵需 CW_S2_REMOTE_ENDPOINT/ROOT/CERT/KEY/CA（对侧 OS daemon）",
+      "reason_expression": "'跨 OS 写治理矩阵需 CW_S2_REMOTE_ENDPOINT/ROOT/CERT/KEY/CA（对侧 OS daemon）'",
+      "condition_or_module": "not (_REMOTE_ENDPOINT and _REMOTE_ROOT and os.environ.get('CW_S2_REMOTE_CERT') and os.environ.get('CW_S2_REMOTE_KEY') and os.environ.get('CW_S2_REMOTE_CA'))",
+      "file_sha256": "6be6b7078af4982e89d0df9af2f4f4b945da7e9e046840aef4ae918bb8a0df56",
       "root_cause": "UNREVIEWED"
     },
     {

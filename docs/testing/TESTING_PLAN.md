@@ -1,6 +1,6 @@
 # CallWarden 测试方案（v7 · 真实仓库语义验收与交付门禁）
 
-> 日期：2026-10-10（2026-10-13 同步进展：TP-07~TP-10 已实跑验收零缺陷，见 §12；2026-10-15 同步：E 交付门禁已由 TP-11E/G 实现并接线 CI，见 §8/§10）。状态：**方案评审稿 + 部分验收已完成（CLI 265 入口 / MCP 243 工具 wire 验收 DEFECT=0）；E 交付门禁已由 TP-11E/G 实现并接线 CI（见 §8/§10）**。
+> 日期：2026-10-10（2026-10-13 同步进展：TP-07~TP-10 已实跑验收零缺陷，见 §12；2026-10-15 同步：E 交付门禁已由 TP-11E/G 实现并接线 CI，见 §8/§10）。状态：**方案评审稿 + 部分验收已完成（CLI 265 入口 / MCP 244 工具 wire 验收 DEFECT=0）；E 交付门禁已由 TP-11E/G 实现并接线 CI（见 §8/§10）**。
 > 本轮用户授权Planner修改文档/文档生成器并委派独立Agent评审；方案通过后再创建task。
 > 本轮不改生产代码、不跑测试、不联网、不调用daemon写面，不构成正式task Handoff。
 > 配套：TEST_CASES.md、COVERAGE_AUDIT.md、BUILD_ENV.md、STATIC_AUDIT.json、SKIP_SITES.json、REVIEW.md。

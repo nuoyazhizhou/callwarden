@@ -39,10 +39,10 @@
 | T-10 | Windows Python 全量零执行 | P1 | CI/Python | DONE 本地（33f9e32：test-windows job，windows-latest × py3.14 + junction；3 连绿验收待 CI） |
 | T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
 | T-12 | 门禁脚本零单测 | P1 | CI/Gate | OPEN |
-| GAP-16 | skip 站点 root_cause 0/498 复核 | 已知未知 | Audit | OPEN |
+| GAP-16 | skip 站点 root_cause 0/456 复核 | 已知未知 | Audit | OPEN |
 | D-MATRIX | D 专项矩阵未写 | 已知未知 | Test Design | OPEN |
 | DEBT-LEDGER | 技术债账本 4 项漏登 | 已知未知 | Audit | OPEN |
-| STASH-0 | `stash@{0}`(review-edits-2026-10-28) 冗余 | 已知未知 | Repo Hygiene | OPEN |
+| STASH-0 | 原 `stash@{0}`(review-edits-2026-10-28) 已清除；2026-11-14 核实存在新 `stash@{0}`(e741-prod-wip)，内容与本次审计无关 | 已知未知 | Repo Hygiene | OPEN（原条目销项，新 stash 待 owner 处置） |
 
 ---
 
@@ -171,10 +171,10 @@
 
 | ID | 内容 | 影响 | 建议路由 |
 |---|---|---|---|
-| GAP-16 | `docs/testing/SKIP_SITES.json` 498 个 skip 站点 `root_cause_reviewed=True = 0`；零人工根因复核 | 最大「已知未知」：skip 是否真必要无人证 | Audit agent |
+| GAP-16 | `docs/testing/SKIP_SITES.json` 456 个 skip 站点 `root_cause_reviewed=True = 0`；零人工根因复核 | 最大「已知未知」：skip 是否真必要无人证 | Audit agent |
 | D-MATRIX | `TESTING_PLAN.md` §7 的 D 专项矩阵（G/I/J/E/W/S/A/X 域 + 16 语言正/负/恢复/并发）未写 | 专项验收无基线 | Test Design agent |
 | DEBT-LEDGER | 技术债账本 4 项漏登（何序5.2，独立于机器账本） | 技术债不可见 | Audit agent |
-| STASH-0 | `git stash list` 仍有 `stash@{0}`（review-edits-2026-10-28，11 文件） | 冗余、未来 pop 会与已提交内容冲突 | Repo Hygiene |
+| STASH-0 | 原 `stash@{0}`（review-edits-2026-10-28，11 文件）已清除；当前存在新 `stash@{0}`(e741-prod-wip，内容未核) | 冗余、未来 pop 会与已提交内容冲突 | Repo Hygiene |
 
 ---
 
@@ -182,16 +182,26 @@
 
 | 指标 | 值 |
 |---|---|
-| 源 HEAD | `7e178cb`（重构 refactor(s4)） |
-| 本地提交（含账本） | `4133187`（未 push） |
-| MCP 工具 | 243（`docs/testing/manifests/mcp/mcp_tools.json` 真源） |
-| CLI | 84 顶层 / 21 类 / 233 叶子 |
-| Python 定义 / 文件 | 7464 / 709 |
-| Rust `#[test]` 属性 / cfg 文件 | 2163 / 123 |
-| skip 三机制 | pytest.skip 230 + skipif 243 + importorskip 25 = **498** |
-| reason 分布 | 字面量 292 / 表达式 183 / 缺省 23（互斥口径） |
+| 源 HEAD | `8e7ee65`（fix(read-1)，本地与 origin 同步） |
+| 本地提交（含账本） | 本轮账本/文档对齐改动**未 commit**（见文末基线真值复核） |
+| MCP 工具 | 244（`docs/testing/manifests/mcp/mcp_tools.json` 真源） |
+| CLI | 86 顶层 / 21 类 / 233 叶子 / extracted 232 |
+| Python 定义 / 文件 | 7213 / 697 |
+| Rust `#[test]` 属性 / cfg 文件 | 2122 / 121 |
+| skip 三机制 | pytest.skip 210 + skipif 222 + importorskip 24 = **456** |
+| reason 分布 | 字面量 267 / 表达式 167 / 缺省 22（互斥口径） |
 | schema 名称漂移 | 0（GAP-14 闭合） |
-| root_cause 复核 | **0 / 498** |
+| root_cause 复核 | **0 / 456** |
 | `--check` | PASS（工作树） |
 
 > 派发提示：其他 agent 修改源码后，只需重跑 `python docs/testing/gen_test_cases.py --revision <新HEAD>` 重生成三账本并 `--check`，数字会自动刷新；**改完务必先解决 DEF-02（`eol=lf`）再提交**，否则账本会在下次 git 触碰再次 CRLF 污染、CI 再红。
+
+### 基线真值复核（8e7ee65，2026-11-14）
+
+上表已按 HEAD `8e7ee65` 重生成核对（`--check` PASS、CRLF=0）。与本文件早先登记态的差异：
+
+1. **GAP-15 / DEF-03 已闭合**（2026-11-11 用户签字，commit `f4d4575`）：以源码为权威语义；Adjudicator v4 模板 §29/§32 已对齐，一致性测试在位。详见 `COVERAGE_AUDIT.md` GAP-15 行。
+2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**仍 OPEN 仅 T-2 / T-5 / T-12**。T-12 已核实确无门禁单测文件；T-2 的 `check_selector_manifest.py` 代码里已有 nodeid 过滤修复，待 owner 复验销项。
+3. **「17 卡全 closed / 门禁 PASS」（commit `7163645`）只作用于 ADR-002 远端控制面**，不等于团队终审通过——`full_stack_review_20261024.md` 结论仍为"不通过"，两者不可混用。
+4. **GAP-16 仍 OPEN**：root_cause 复核 0/456。
+5. STASH-0：原 review-edits stash 已清；当前 stash@{0} = `e741-prod-wip`（内容未核，非本表范围）。

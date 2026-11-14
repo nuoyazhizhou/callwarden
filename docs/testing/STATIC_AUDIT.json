@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "376edb34ad981968249364f985dfcf9dbdd88918",
+  "supplied_source_revision": "8e7ee65abe4e1b5ae4962c41a16916253793c21c",
   "revision_note": "Externally verified HEAD; input hashes, not HEAD alone, bind working-tree content.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -43,21 +43,21 @@
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 24,
-      "pytest.mark.skipif": 221,
+      "pytest.mark.skipif": 222,
       "pytest.skip": 210
     },
-    "classic_skip_sites": 431,
-    "classic_skip_files": 130,
+    "classic_skip_sites": 432,
+    "classic_skip_files": 131,
     "parser_contract_classic_sites": 44,
     "core_not_installed_exact_sites": 46,
     "core_not_built_exact_sites": 4,
     "parser_core_not_installed_exact_sites": 18,
-    "reason_literal_sites": 266,
+    "reason_literal_sites": 267,
     "reason_expression_sites": 167,
     "reason_absent_sites": 22,
     "reason_nonliteral_or_absent_sites": 189,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2115,
+    "rust_src_attributes": 2122,
     "rust_src_cfg_test_files": 121
   },
   "inputs": [
@@ -423,7 +423,7 @@
     },
     {
       "path": "rust_ext/src/daemon/route_matrix.rs",
-      "sha256": "4e1b7f08db7f50d8d194a74cb59e8cedaa6a398afdff2ed67cd5d803069d1675"
+      "sha256": "726e3a7d3196437822c8136e533ee569dd8303599c97a002cf0e925a64408f38"
     },
     {
       "path": "rust_ext/src/daemon/schema_migrator_handlers.rs",
@@ -455,7 +455,7 @@
     },
     {
       "path": "rust_ext/src/daemon/snapshot_state.rs",
-      "sha256": "0875f91c8a26547ec6221377f89e493ac63a03584554692aec4c37d82edcb6e0"
+      "sha256": "5f19b7c34bdf856ad18ca95864ebafea6f6fa38ac8afc268b6cef268557f1a77"
     },
     {
       "path": "rust_ext/src/daemon/stage_toggle.rs",
@@ -479,7 +479,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_collab_contract.rs",
-      "sha256": "962825b655e0820cb774b0fed438adf3ca6a156a4a207f53b153f25a50c0ab78"
+      "sha256": "636eca653fce3448022be7f585f128f8715f06de424b7da07f67173542927c70"
     },
     {
       "path": "rust_ext/src/daemon/task_collab_contract_repair.rs",
@@ -519,11 +519,11 @@
     },
     {
       "path": "rust_ext/src/daemon/task_collab_query.rs",
-      "sha256": "7ebb861874c6de19b19e93cdc7be1cb5c20104436e248ffb9e53d13677203950"
+      "sha256": "b30d0e0c0c131c45e181d0caf96c84c16becff31e6b3a9cd4c4c50c75ff4be01"
     },
     {
       "path": "rust_ext/src/daemon/task_collab_shared.rs",
-      "sha256": "e9cb7c6a6c94be9f71658039391e5764abbfed1c514849e9892a9d272ea5b8f8"
+      "sha256": "fdb4bf3a46a495130fd7e60d43603e6444da746eca9871efb23c1d5e50a8f5a0"
     },
     {
       "path": "rust_ext/src/daemon/task_collab_symbol.rs",
@@ -559,7 +559,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_collab_tests_owner_acl.rs",
-      "sha256": "6736391691a9ffa106351089cd9cd9801a89e788fa9f0ee6e107a89ea47ca319"
+      "sha256": "bd5c1827a11d91dd10c512dbf74b0531546c60041ce05e7a67d8681145c4f4ad"
     },
     {
       "path": "rust_ext/src/daemon/task_collab_tests_p0l_repair.rs",
@@ -571,7 +571,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_collab_tests_projection.rs",
-      "sha256": "97278bd729474a6ec55cb11b9b724376de18fa1645714f33cc086992e83c3c88"
+      "sha256": "9a5b8f91fc77f855d03c409bf5dd87b3b60eccf6a4d11c3b1c55aa253b2c04c8"
     },
     {
       "path": "rust_ext/src/daemon/task_collab_tests_verdict_compat.rs",
@@ -711,7 +711,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_loop/task_contract_bootstrap.rs",
-      "sha256": "6d0b2d362e3db8941adda001f7603eab0f9624d70b8075f5511eb6f56edb41fd"
+      "sha256": "9431bbfea48310ed559cb27df4e5bad9da60d917660fd38469ca6e04e26f7d13"
     },
     {
       "path": "rust_ext/src/daemon/task_loop/task_contract_bootstrap_test.rs",
@@ -3187,7 +3187,7 @@
     },
     {
       "path": "tests/test_phase5_1b_router_diff.py",
-      "sha256": "95fdcc08e744510309e5ced5b58ee73ea3e3ce9c702c4256a99b026f12e22193"
+      "sha256": "279058d9a9144281e8401ea6caae09048d72a28dc81bda9bd401b6d8e0db5082"
     },
     {
       "path": "tests/test_phase5_1c_stats_diff.py",
@@ -3411,7 +3411,7 @@
     },
     {
       "path": "tests/test_phase8_systemd.py",
-      "sha256": "3d720827cec9f8c123b51454768a7a03227aa0b2e873db9207c6ae66baa00288"
+      "sha256": "ad41dc0021a2f25d43572a15ebc69fef74ce15780d4885ce5742cc0d0442db1d"
     },
     {
       "path": "tests/test_pr_check_p1.py",
@@ -3475,7 +3475,7 @@
     },
     {
       "path": "tests/test_remote_read_plane.py",
-      "sha256": "b5182360acf63a4eb60b63fca267ab971166e96ee492ee23eabf02f563e4c496"
+      "sha256": "49c2f9392d6e5f6ecd65c333924d2f89151749ba66b5eccb15edeeb61d5a3b65"
     },
     {
       "path": "tests/test_remote_snapshot_upload.py",
@@ -3483,7 +3483,7 @@
     },
     {
       "path": "tests/test_remote_write_governance.py",
-      "sha256": "85ce9fea402bda6945d44709917a4cce32c07999a541487d72af258726d905bc"
+      "sha256": "6be6b7078af4982e89d0df9af2f4f4b945da7e9e046840aef4ae918bb8a0df56"
     },
     {
       "path": "tests/test_reopen_docs_structure.py",
