@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "554ac20d59181307d15f6a5ac94c104289e274ab",
+  "supplied_source_revision": "9b9a69822fa825ed454eec961713e0b9ac596f79",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,8 +38,8 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7213,
-    "python_source_files": 697,
+    "python_definitions": 7233,
+    "python_source_files": 698,
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 24,
@@ -2164,6 +2164,10 @@
     {
       "path": "tests/test_coverage_manifest.py",
       "sha256": "4141768ea97a123b5429b81de10b84b6c62f7ed78d0c447e2165fbb604cde296"
+    },
+    {
+      "path": "tests/test_coverage_manifest_script.py",
+      "sha256": "b35f772881b04b02925b74ae93e17ac6ebb0e2baf1c7ffece54cc3fdc1b8685f"
     },
     {
       "path": "tests/test_coverage_review_rpc_http.py",
