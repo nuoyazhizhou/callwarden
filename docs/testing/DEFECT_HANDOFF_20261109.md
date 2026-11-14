@@ -14,7 +14,7 @@
 | 静态清单自洽（`gen_test_cases.py --check`） | 🟢 | 三账本与源 HEAD 字节自洽 |
 | 提交树 CI 比对（远端） | 🔴 | 远端账本滞后，未 push |
 | CRLF 稳定性 | 🔴 | `.gitattributes` 缺 `eol=lf`，反复翻转 |
-| 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**，T-1~T-12 全开 |
+| 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已销项 10 项，仍 OPEN 仅 T-5 / T-12（2026-11-14 复核） |
 
 **缺陷分级**：P0 ×10（DEF-01、DEF-02、DEF-03、T-1~T-9）、P1 ×3（T-10~T-12）、已知未知 ×4（不分级但不可瞒）。
 
@@ -28,7 +28,7 @@
 | DEF-02 | CRLF 根因（`.gitattributes` 缺 `eol=lf`） | P0 | CI/Infra | **DONE**（a8002cc：三账本 eol=lf + renormalize，2026-11-11） |
 | DEF-03 | GAP-15 治理语义冲突 | P0 | Governance/Rust | **DONE**（2026-11-11 用户签字：源码为准；Adjudicator v4 模板 §29/§32 已对齐，迁移版 role-protocol.md 原本已对齐，一致性测试 test_adjudicator_returned_handoff_reopens_executor_remediation_atomically 在位） |
 | T-1 | KR-C nightly 验收门零证据 | P0 | CI/Acceptance | **DONE**（登记过期：semgrep 已移 extras，KR-C closed，known_red.json 有 nightly 绿+Gate 证据） |
-| T-2 | Gate 1/2 汇总行污染（反篡改门恒红） | P0 | CI/Gate | OPEN |
+| T-2 | Gate 1/2 汇总行污染（反篡改门恒红） | P0 | CI/Gate | **DONE**（2026-11-14 复验销项：`_load` nodeid 过滤在位，PR 114/114 与 full 127/127 本机 exit 0，删 nodeid 条目 exit 2 拦截有效，test_cicd_gates.py 14 用例全绿） |
 | T-3 | known-red 零隔离 | P0 | CI/Quarantine | **DONE**（登记过期：ci.yml 已有 deselect step + quarantine job，KR-A/B/C 全 closed） |
 | T-4 | KR-A 83 条 residue | P0 | Security/Authority | **DONE**（登记过期：KR-A closed——audit passed=true/finding_count=0/transition=79/sunset 未过期，migrate.py 已退役，MASKING 守卫 tests/test_srv_019.py:144 在位） |
 | T-5 | 写路径无 workspace 根约束（越权写） | P0 | Security | OPEN |
@@ -38,7 +38,7 @@
 | T-9 | windows-arm64 产物零 E2E | P0 | CI/E2E | DONE 本地（3e773af：新增 e2e-verify-windows-arm64.yml + cryptography 46.0.3 约束；tag run 验证待 CI） |
 | T-10 | Windows Python 全量零执行 | P1 | CI/Python | DONE 本地（33f9e32：test-windows job，windows-latest × py3.14 + junction；3 连绿验收待 CI） |
 | T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
-| T-12 | 门禁脚本零单测 | P1 | CI/Gate | OPEN |
+| T-12 | 门禁脚本零单测 | P1 | CI/Gate | OPEN（描述过期修正：check_selector_manifest/check_ci_gates 已有直接单测 tests/test_cicd_gates.py 14 用例；仅 gen_coverage_manifest.py 缺脚本行为单测——test_coverage_manifest.py 只断言 manifest 内容，非脚本行为） |
 | GAP-16 | skip 站点 root_cause 0/456 复核 | 已知未知 | Audit | OPEN |
 | D-MATRIX | D 专项矩阵未写 | 已知未知 | Test Design | OPEN |
 | DEBT-LEDGER | 技术债账本 4 项漏登 | 已知未知 | Audit | OPEN |
@@ -106,6 +106,7 @@
 - **根因**：`cicd/check_selector_manifest.py:63-67` 的 `_load` 把 pytest 汇总行（如 `"114 tests collected in 0.45s"`）当未登记 selector。
 - **修复**：`_load` 加 nodeid 形态过滤（含 `::`，剔除 `^\d+ tests? collected`）；两个门禁脚本补单测。
 - **验收**：修复后本机 collected 跑 `exit 0`、删一条 manifest 跑 `exit 2`；单测全绿。
+- **复验销项（2026-11-14，HEAD efad200）**：四条验收全部达成——① `check_selector_manifest.py:71-80` `_load` 仅保留含 `::` 的 nodeid 行（汇总行/计数行/注释/空行天然排除）；② 本机按 CI 同款命令实跑：PR profile 114/114 `exit 0`、full profile 127/127 `exit 0`（2026-10-24 恒红的 115 vs 114 不复现）；③ 反篡改实测：从 manifest 删一条 nodeid → `ok=false`、`unregistered_new=1`、`exit 2`；④ `tests/test_cicd_gates.py` 14 用例全绿（含汇总行污染回归锚 + 删条目/加条目/重复条目负向）。
 
 ### T-3　known-red 零隔离　【P0】
 - **现象**：KR-A/KR-B 共 9 红仅文档登记，CI 无隔离 ⇒ 每次 push 主 test job 恒红。
@@ -195,14 +196,14 @@
 | root_cause 复核 | **0 / 456** |
 | `--check` | PASS（工作树） |
 
-> 派发提示：其他 agent 修改源码后，只需重跑 `python docs/testing/gen_test_cases.py --revision <新HEAD>` 重生成三账本并 `--check`，数字会自动刷新；**改完务必先解决 DEF-02（`eol=lf`）再提交**，否则账本会在下次 git 触碰再次 CRLF 污染、CI 再红。
+> 派发提示：其他 agent 修改源码后，只需重跑 `python docs/testing/gen_test_cases.py --revision <新HEAD>` 重生成三账本并 `--check`，数字会自动刷新；DEF-02 已根治（`.gitattributes eol=lf` + `digest()` LF 归一化，commit `554ac20`），任何行尾状态的工作树重生账本哈希一致。
 
 ### 基线真值复核（8e7ee65，2026-11-14）
 
 上表已按 HEAD `8e7ee65` 重生成核对（`--check` PASS、CRLF=0）。与本文件早先登记态的差异：
 
 1. **GAP-15 / DEF-03 已闭合**（2026-11-11 用户签字，commit `f4d4575`）：以源码为权威语义；Adjudicator v4 模板 §29/§32 已对齐，一致性测试在位。详见 `COVERAGE_AUDIT.md` GAP-15 行。
-2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**仍 OPEN 仅 T-2 / T-5 / T-12**。T-12 已核实确无门禁单测文件；T-2 的 `check_selector_manifest.py` 代码里已有 nodeid 过滤修复，待 owner 复验销项。
+2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**T-2 已于 2026-11-14（HEAD efad200）复验销项**（nodeid 过滤在位、双 profile exit 0、删条目 exit 2 拦截有效、test_cicd_gates.py 14 用例全绿）；**仍 OPEN 仅 T-5 / T-12**。T-12 描述修正：check_selector_manifest/check_ci_gates 已有直接单测，仅 gen_coverage_manifest.py 缺脚本行为单测。
 3. **「17 卡全 closed / 门禁 PASS」（commit `7163645`）只作用于 ADR-002 远端控制面**，不等于团队终审通过——`full_stack_review_20261024.md` 结论仍为"不通过"，两者不可混用。
 4. **GAP-16 仍 OPEN**：root_cause 复核 0/456。
 5. STASH-0：原 review-edits stash 已清；当前 stash@{0} = `e741-prod-wip`（内容未核，非本表范围）。
