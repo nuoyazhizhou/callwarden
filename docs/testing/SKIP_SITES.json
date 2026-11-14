@@ -214,7 +214,7 @@
       "reason_literal": "未找到隔离 cw-daemon 二进制，跳过 live 用例",
       "reason_expression": "'未找到隔离 cw-daemon 二进制，跳过 live 用例'",
       "condition_or_module": null,
-      "file_sha256": "a913c2f8ebe99804389ba98fbdbfd3d3a64f97b03aa8f2c7319561aa8a735ade",
+      "file_sha256": "9e8f906794d7aeff9514d7a870add1d9f207ee48c11ad38efb5b138d5b151f9e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1750,7 +1750,7 @@
       "reason_literal": "符号不在库中，跳过（unknown 分支已由 unknown_symbol 用例覆盖）",
       "reason_expression": "'符号不在库中，跳过（unknown 分支已由 unknown_symbol 用例覆盖）'",
       "condition_or_module": null,
-      "file_sha256": "68d6be8d72eaa30cb9a880a294e029b312742f1130c11b19e43a73b711b41a22",
+      "file_sha256": "684516b7fa5e2f8d374212719ec9f461ca92df226cb790fec879cb37c5b0d727",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1762,7 +1762,7 @@
       "reason_literal": "不足两个 workspace，跳过",
       "reason_expression": "'不足两个 workspace，跳过'",
       "condition_or_module": null,
-      "file_sha256": "1f89c9fbf8e34d3fc9f725bfad3e356cdd902b2cfe21ee76250f4c74354cc90b",
+      "file_sha256": "9316103f0e8be32b1765bfdabb9290a85e8e464ddf1b1017a06375e7776c4913",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1774,7 +1774,7 @@
       "reason_literal": "符号不在当前 workspace，跳过",
       "reason_expression": "'符号不在当前 workspace，跳过'",
       "condition_or_module": null,
-      "file_sha256": "40881cdc715453aea3d4e029d295f8d08ce01f7c55aab210e9b2944897095747",
+      "file_sha256": "5eec9af996193cad1d3129a9ed767168329fd48f02777045b74fe5262b61208d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1786,7 +1786,7 @@
       "reason_literal": "无 group_id=1 数据，跳过类型检查",
       "reason_expression": "'无 group_id=1 数据，跳过类型检查'",
       "condition_or_module": null,
-      "file_sha256": "96398f2a35d4f08deb1964e286a965f4aa8475bfb7cc4f8e152ca6c7b9d601b1",
+      "file_sha256": "11365f665b6109670015b9ceb86c652739db5913f15e04ae0491a7eea1d0057e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1798,7 +1798,7 @@
       "reason_literal": "无 group_id=1 数据，跳过 limit 检查",
       "reason_expression": "'无 group_id=1 数据，跳过 limit 检查'",
       "condition_or_module": null,
-      "file_sha256": "96398f2a35d4f08deb1964e286a965f4aa8475bfb7cc4f8e152ca6c7b9d601b1",
+      "file_sha256": "11365f665b6109670015b9ceb86c652739db5913f15e04ae0491a7eea1d0057e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1810,7 +1810,7 @@
       "reason_literal": "无 semgrep findings，跳过",
       "reason_expression": "'无 semgrep findings，跳过'",
       "condition_or_module": null,
-      "file_sha256": "df971d1d027e97822b1ae1e4d4db58ac5d16c1ff688ff2f708a8148846a7d93d",
+      "file_sha256": "3b1761afede473c2b459f94afb1fc346494a294c6e2db8bb3c3b828a054c4b3e",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1822,7 +1822,7 @@
       "reason_literal": "不足两个 workspace，跳过",
       "reason_expression": "'不足两个 workspace，跳过'",
       "condition_or_module": null,
-      "file_sha256": "d3e5efc03cd5bb7849eba39e344f6acf0cc73229f3e50a74bde69f0c9cd8bfa2",
+      "file_sha256": "7e222e352472c1901d5472337c1c5dd555a466c5f69d884110073105aad7cdc1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1834,7 +1834,7 @@
       "reason_literal": null,
       "reason_expression": "out['error']",
       "condition_or_module": null,
-      "file_sha256": "d3e5efc03cd5bb7849eba39e344f6acf0cc73229f3e50a74bde69f0c9cd8bfa2",
+      "file_sha256": "7e222e352472c1901d5472337c1c5dd555a466c5f69d884110073105aad7cdc1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4882,7 +4882,7 @@
       "reason_literal": "daemon 不可用：runtime 负矩阵段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 负矩阵段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "0c8df4d02d35de06cdc37788be623a218b363251f2bb7e3b8158a726d29530b4",
+      "file_sha256": "34085f4330f8800cf6a3ce5caad82ebf153cac684547d30fd033f368baeebac8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4894,7 +4894,7 @@
       "reason_literal": "daemon 不可用：runtime 负矩阵段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 负矩阵段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "9ba8d1a9c9917a8b42bda86ca194e6711dd4726b7d3c5a888bf1c688f0a68ba4",
+      "file_sha256": "f22abb46a5f21a06f8791765f0e67cdcfe7eb328e26f5e86d19f5fbfb7498755",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4906,7 +4906,7 @@
       "reason_literal": "daemon 不可用：runtime 负矩阵段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 负矩阵段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "d3d92489a170bf0b76b0a57315617af09e9f5e383e036a4b3552ad7fcb2ba971",
+      "file_sha256": "7e7b7d041852bf8dae00a98bbd37964bd45484b46c2ad3fa5bacb12d30a2277d",
       "root_cause": "UNREVIEWED"
     },
     {
