@@ -14,7 +14,7 @@
 | 静态清单自洽（`gen_test_cases.py --check`） | 🟢 | 三账本与源 HEAD 字节自洽 |
 | 提交树 CI 比对（远端） | 🔴 | 远端账本滞后，未 push |
 | CRLF 稳定性 | 🔴 | `.gitattributes` 缺 `eol=lf`，反复翻转 |
-| 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已销项 11 项，仍 OPEN 仅 T-12（2026-11-14 复核，T-5 同日销项） |
+| 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已于 2026-11-14 全部销项（T-12 最后收口：gen_coverage_manifest.py 脚本行为单测 20 用例入库） |
 
 **缺陷分级**：P0 ×10（DEF-01、DEF-02、DEF-03、T-1~T-9）、P1 ×3（T-10~T-12）、已知未知 ×4（不分级但不可瞒）。
 
@@ -38,7 +38,7 @@
 | T-9 | windows-arm64 产物零 E2E | P0 | CI/E2E | DONE 本地（3e773af：新增 e2e-verify-windows-arm64.yml + cryptography 46.0.3 约束；tag run 验证待 CI） |
 | T-10 | Windows Python 全量零执行 | P1 | CI/Python | DONE 本地（33f9e32：test-windows job，windows-latest × py3.14 + junction；3 连绿验收待 CI） |
 | T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
-| T-12 | 门禁脚本零单测 | P1 | CI/Gate | OPEN（描述过期修正：check_selector_manifest/check_ci_gates 已有直接单测 tests/test_cicd_gates.py 14 用例；仅 gen_coverage_manifest.py 缺脚本行为单测——test_coverage_manifest.py 只断言 manifest 内容，非脚本行为） |
+| T-12 | 门禁脚本零单测 | P1 | CI/Gate | **DONE**（2026-11-14 销项：gen_coverage_manifest.py 脚本行为单测 20 用例入库全绿（9b9a698），回归 25 用例绿，真实脚本 --print-summary exit 0，详见 §3 T-12） |
 | GAP-16 | skip 站点 root_cause 0/456 复核 | 已知未知 | Audit | OPEN |
 | D-MATRIX | D 专项矩阵未写 | 已知未知 | Test Design | OPEN |
 | DEBT-LEDGER | 技术债账本 4 项漏登 | 已知未知 | Audit | OPEN |
@@ -167,6 +167,7 @@
 - **现象**：`cicd/check_ci_gates.py`/`check_selector_manifest.py`/`gen_coverage_manifest.py` 无直接单测——T-2 缺陷因此存活。
 - **修复**：三脚本建单测文件（真实 pytest 输出/JUnit/collected fixture 化，正负向各一组）。
 - **验收**：单测入库且绿；后续改门禁先跑单测。
+- **复验销项（2026-11-14，HEAD 9b9a698）**：描述过期修正——check_ci_gates.py/check_selector_manifest.py 已有直接单测（tests/test_cicd_gates.py 14 用例，T-2 复验确认全绿），残余缺口仅 gen_coverage_manifest.py 脚本行为零单测（test_coverage_manifest.py 只断言 manifest 内容，非脚本行为）。销项达成——① 新增 `tests/test_coverage_manifest_script.py` 20 用例（A-F 六组正负向）：collect_cli_tops 正/重复归类 SystemExit、extract_cli_leaves 解析逻辑（choices 提取/跨行 usage 拼接/中文 `用法:` 前缀/无 choices→[]/缺 usage 与含 -h→RuntimeError，monkeypatch subprocess）、build_cli_entries 单命令降级记 errors 与两次提取不一致 SystemExit、build_mcp_entries 双真相源不一致/重复分类/工具名重复/非法 op_class 四类 SystemExit、main() `--output` 写文件与 `--print-summary` 不落盘、真实 subprocess 冒烟一条顶层命令；② 实跑：新文件 20/20 绿，回归 test_coverage_manifest.py + test_cicd_gates.py 25 用例绿；③ 真实脚本全量 `--print-summary` exit 0（cli_top=86/cli_leaf=197/mcp=244，与事实锚点一致）；④ 账本按 9b9a698 重生（fef6429），`--check` exit 0。
 
 ---
 
@@ -204,7 +205,7 @@
 上表已按 HEAD `8e7ee65` 重生成核对（`--check` PASS、CRLF=0）。与本文件早先登记态的差异：
 
 1. **GAP-15 / DEF-03 已闭合**（2026-11-11 用户签字，commit `f4d4575`）：以源码为权威语义；Adjudicator v4 模板 §29/§32 已对齐，一致性测试在位。详见 `COVERAGE_AUDIT.md` GAP-15 行。
-2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**T-2 已于 2026-11-14（HEAD efad200）复验销项**（nodeid 过滤在位、双 profile exit 0、删条目 exit 2 拦截有效、test_cicd_gates.py 14 用例全绿）；**T-5 已于 2026-11-14（HEAD 550bbdd）复验销项**（修复实现见 2e7b2d6：`_is_within_workspace` 校验在位，相对穿越/绝对越界均 failed 未落盘，test_fuzz.py 6/6 绿）；**仍 OPEN 仅 T-12**。T-12 描述修正：check_selector_manifest/check_ci_gates 已有直接单测，仅 gen_coverage_manifest.py 缺脚本行为单测。
+2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**T-2 已于 2026-11-14（HEAD efad200）复验销项**（nodeid 过滤在位、双 profile exit 0、删条目 exit 2 拦截有效、test_cicd_gates.py 14 用例全绿）；**T-5 已于 2026-11-14（HEAD 550bbdd）复验销项**（修复实现见 2e7b2d6：`_is_within_workspace` 校验在位，相对穿越/绝对越界均 failed 未落盘，test_fuzz.py 6/6 绿）；**T-12 已于 2026-11-14（HEAD 9b9a698）销项**（gen_coverage_manifest.py 脚本行为单测 20 用例入库全绿，账本按 9b9a698 重生）。T-12 描述修正：check_selector_manifest/check_ci_gates 已有直接单测，仅 gen_coverage_manifest.py 缺脚本行为单测。
 3. **「17 卡全 closed / 门禁 PASS」（commit `7163645`）只作用于 ADR-002 远端控制面**，不等于团队终审通过——`full_stack_review_20261024.md` 结论仍为"不通过"，两者不可混用。
 4. **GAP-16 仍 OPEN**：root_cause 复核 0/456。
 5. STASH-0：原 review-edits stash 已清；当前 stash@{0} = `e741-prod-wip`（内容未核，非本表范围）。
