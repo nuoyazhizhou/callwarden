@@ -26,7 +26,12 @@ def read(path):
 
 
 def digest(path):
-    return hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+    # Hash LF-normalized bytes so input hashes are EOL-independent: a CRLF
+    # working tree (core.autocrlf=true leftovers not yet renormalized) must
+    # not drift every hash and red --check on regen. Matches read()'s
+    # universal-newline semantics (CRLF and lone CR both become LF).
+    raw = (ROOT / path).read_bytes()
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest()
 
 
 def strict_json_loads(text, label="JSON"):
@@ -182,7 +187,7 @@ def generate(revision):
     ]))
     audit = {
         "schema_version": "static-planning-audit/v1", "supplied_source_revision": revision,
-        "revision_note": "Externally verified HEAD; input hashes, not HEAD alone, bind working-tree content.",
+        "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
         "execution_status": "NOT_RUN", "runtime_inventory_status": "NOT_VERIFIED",
         "planning_inventory_gate": "BLOCKED_SCHEMA_DRIFT" if schema_names != names else "STATIC_SETS_MATCH",
         "scope": "rg-visible tests/*.py, rust_ext/src/*.rs, server/tools/*.py plus listed manifests; no archive/build/ignored corpus recursion",

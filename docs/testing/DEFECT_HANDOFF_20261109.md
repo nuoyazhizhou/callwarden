@@ -70,6 +70,7 @@
   2. `git add --renormalize docs/testing/` 重新归一，提交使索引与工作树一致；
   3. 验证：`git checkout` 三账本后 `open(f).read().count(b'\r\n') == 0`。
 - **验收标准**：从干净状态 `git checkout` 三账本后 CRLF=0；随后 `--check` 仍 PASS；警告不再出现。
+- **制度性加固（2026-11-14，根治残留路径）**：`.gitattributes eol=lf` 只在 checkout/add 生效，上游 CRLF 工作树的存量未 renormalize 文件重生账本时仍会使输入哈希整体漂移。`gen_test_cases.py` 的 `digest()` 已改为 **LF 归一化后哈希**（输入哈希 EOL 无关，与 `read()` 通用换行语义一致），`validate_skip.py` 磁盘对拍同步归一化；此后任何平台、任何行尾状态的工作树重生账本均得同一哈希。
 - **建议路由**：CI/Infra agent。
 
 ### DEF-03　GAP-15 治理语义冲突　【P0，需人类签字】

@@ -45,6 +45,12 @@ def sha256_bytes(b: bytes) -> str:
     return "sha256:" + hashlib.sha256(b).hexdigest()
 
 
+def lf_normalized(b: bytes) -> bytes:
+    """EOL-normalize bytes for hash comparison against gen_test_cases.digest(),
+    which hashes LF-normalized content (CRLF and lone CR both become LF)."""
+    return b.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 class Report:
     def __init__(self):
         self.failures = []
@@ -113,14 +119,15 @@ def self_check(rep: Report) -> None:
                           f"want={want_gen} disk={gen_disk}")
 
     # 4) 每站点 file_sha256 与磁盘一致（source 变更须重新审查）
-    #    账本存裸 hex（无 sha256: 前缀），磁盘计算需去前缀对拍
+    #    账本存裸 hex（无 sha256: 前缀），磁盘计算需去前缀对拍；
+    #    磁盘字节先 LF 归一化，与生成器 digest() 的 EOL 无关语义一致
     cache = {}
     mismatch = []
     for r in reviews:
         f = REPO / r["file"]
         key = str(f)
         if key not in cache:
-            cache[key] = sha256_bytes(f.read_bytes())[len("sha256:"):] if f.is_file() else None
+            cache[key] = sha256_bytes(lf_normalized(f.read_bytes()))[len("sha256:"):] if f.is_file() else None
         disk = cache[key]
         recorded = r.get("file_sha256")
         if disk != recorded and not mismatch:
