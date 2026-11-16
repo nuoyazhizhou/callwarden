@@ -103,7 +103,7 @@ MCP主验收：真实ClientSession→initialize/协商→tools/list（分页）�
 
 父子task按现行权威合同及测试实例核验；不沿用README自动级联关闭宣传。覆盖子任务closed等父门禁、父级条款未满足和越权apply/close。实现/现行协议冲突要阻断登记，不选宽松语义补绿。
 
-已发现治理语义冲突：`rust_ext/src/daemon/task_collab_lifecycle.rs:1516–1524` 对 `reviewer_blocked` 与 `adjudicator_returned` 都准备同事务 provenance-bound `fix_defect`；`task_collab_tests_core.rs:885–920` 的静态测试合同要求整改 step、Executor assignment、`in_progress` 和幂等重放，而 `.agents/skills/cw-task-loop/references/role-protocol.md:192–196` 仍描述 returned 不自动追加 step/reopen。此处只证明源码与协议不一致，未运行证明候选产物实际行为；登记 GAP-15，治理合同冻结前必须明确权威语义并解决冲突。
+**GAP-15 已闭合（2026-11-11 用户签字裁决，commit f4d4575）**：以源码 `rust_ext/src/daemon/task_collab_lifecycle.rs:1516–1524` 为权威语义——`reviewer_blocked` 与 `adjudicator_returned` 两条退回路由共享同一事务、同路径追加 `fix_defect`；Adjudicator v4 模板工作循环第 3/5 条及迁移版 `role-protocol.md` 已对齐，一致性测试 `test_adjudicator_returned_handoff_reopens_executor_remediation_atomically` 在位。原「源码与协议冲突、治理合同冻结前须对齐」表述已过期；D 项 runtime 真实验证仍属后续治理验收义务，非静态阻断。
 
 真实 handoff 后重新查询 projection、steps 与 assignments，核验源 PASS verdict、source step、returned finding 与整改绑定的 provenance；同 request 重放必须幂等，异 request 冲突按冻结合同拒绝。若仍为 READY/ADJUDICATE，记录运行能力缺口；若已有整改，按独立 oracle 验合法绑定、状态和可领取分派。任何一条路径都不能借协议/实现冲突放行。
 
@@ -126,9 +126,9 @@ LLM选择另设非确定性产品实验，记录模型/配置/样本/成本/阈�
 | 性能 | 冻结硬件/corpus/profile预算通过；未校准不宣称达到SLO |
 | 证据 | 完整/同版本/新鲜；缺报告/selector、空suite不放行 |
 
-运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态432/7211不能称执行skip率。456处站点的reason语法为字面量267、含表达式167、缺省22（互斥口径），全部根因尚未复核（GAP-16）；字面量文本不等于已归因。逐站点源码/适用性审查，runtime只补充实际触发的reason和nodeid/collection关联，未触发登记NOT_TRIGGERED及依据，不强行触发skip凑全量。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
+运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态432/7233不能称执行skip率。456处站点的reason语法为字面量267、含表达式167、缺省22（互斥口径），全部根因尚未复核（GAP-16）；字面量文本不等于已归因。逐站点源码/适用性审查，runtime只补充实际触发的reason和nodeid/collection关联，未触发登记NOT_TRIGGERED及依据，不强行触发skip凑全量。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
 
-Python coverage只说明Python层，Rust需独立模块/分支义务。2107为src属性数，非cargo执行数，也非全部integration/bin测试。不得把--lib daemon::称全量Rust。覆盖预算按关键handler/负分支冻结，不以无基线60%总行覆盖代替功能完备。
+Python coverage只说明Python层，Rust需独立模块/分支义务。2122为src属性数，非cargo执行数，也非全部integration/bin测试。不得把--lib daemon::称全量Rust。覆盖预算按关键handler/负分支冻结，不以无基线60%总行覆盖代替功能完备。
 
 ## 9. CI与命令（待实施）
 
@@ -158,7 +158,7 @@ check_ci_gates/check_skip_rate 已由 TP-11E 实现于 `cicd/`（搭配 `artifac
 
 各合同排除未冻结生产路径和用户权威库。产品前置缺口另冻最小daemon/client修复scope，产品修复后重验公开链路，不能扩充fixture补绿。task号/基线/schema/命令/rollback/角色合同方案通过后绑定，本文不虚构。
 
-B0的进程生命周期由基建owner统一负责，A1提取脚本只消费底座。A1冻结入口/schema清单，不表示治理语义合同已冻结；GAP-15须由Planner先安排独立协议/实现对齐责任和验收合同，再进入B1及相关D治理用例，不让Executor自行选择宽松语义。GAP-16的源码审查始于A0，实际运行关联随C/D完成，不要求在A1前取得不存在的全部运行reason。
+B0的进程生命周期由基建owner统一负责，A1提取脚本只消费底座。A1冻结入口/schema清单，不表示治理语义合同已冻结；~~GAP-15须由Planner先安排独立协议/实现对齐责任~~ → 该语义已于 2026-11-11 用户签字裁决（源码为准，f4d4575），责任已履行，B1及D治理用例可放行；仍须按冻结合同做运行时真实验证。GAP-16的源码审查始于A0，实际运行关联随C/D完成，不要求在A1前取得不存在的全部运行reason。
 
 回滚：文档生成失配停生成并保留旧证据；已标记schema漂移的规划草稿可留存，但阻断清单冻结；连接非隔离实例、清理越界、实体无provenance立即阻断；产物升级失败保留旧runtime/业务库，禁止删WAL/SHM。具体实施合同冻结并验证rollback。
 
@@ -202,5 +202,6 @@ v6原件与hash保留在`.backups/20261010-153813-before-v7/manifest.json`，更
 
 - **pull 合入 fc8b575（2026-11-04）**：远端以 ADR §15 实施清单 + PKI 五表 schema 落地为主（docs(mtls)+db(pki)）。核心清单零漂移：MCP 243 工具、CLI 84 顶层/21 类/233 叶子、schema 名称漂移 0（GAP-14 仍闭合）。已按新 HEAD `fc8b575` 重生成三份账本，`--check` 全 PASS：python 定义 7383→7481（+98）、rust 属性 2138→2148（+10）、py 文件 702→710（+8）、pytest.skip 227→232（+5）、classic 467→472（+5）、三机制 488→493（+5）、字面量 294→290（-4）；MCP 243 / CLI / 子集 46·18·4 / parser 44 / cfg 122 / root_cause 0 全部不变。GAP-16 的 493 处 root_cause 仍全 UNREVIEWED。
 - **pull 合入 ef28ab9（2026-11-10，合并提交 17a8218）**：大规模 daemon 重构（cw_daemon.rs −730、server.rs −1784、client.rs −831、memfd.rs 整文件删、snapshot_state.rs +808 等）。已按合并 HEAD `17a8218` 重生成三份账本，`--check` 全 PASS：python 定义 7464→7211（−253）、py 文件 709→696（−13）、rust 属性 2163→2107（−56）、cfg 文件 123→121（−2）；pytest.skip 230→210、pytest.mark.skipif 243→222、pytest.importorskip 25→24，三机制 498→456、classic 472→432；字面量 292→267、含表达式 183→167、缺省 23→22；MCP 243 / CLI 84·21·233 / schema 漂移 0（GAP-14 仍闭）/ root_cause 0 不变。GAP-16 的 456 处 root_cause 仍全 UNREVIEWED。
+- **pull 冲突解决 + 重生账本至 `da27ddf`（2026-11-15）**：上游 7 提交（`31493f3..da27ddf`）与本机 5 个未提交改动中的 3 个重叠，`git pull --ff-only` 拒绝覆盖；备份 + stash 后快进，按 `da27ddf` 重生三账本，`--check` PASS、revision==HEAD、CRLF 0。`554ac20` 以 `digest()` LF 归一化根治 CRLF 输入哈希漂移（DEF-02 残留路径真收口）；`9b9a698` 新增 T-12 脚本行为单测 20 用例使 python 定义 7213→**7233**、py 文件 697→**698**，其余真值不变（MCP 244 / CLI 86·21·233 / rust 2122·121 / skip 456 / root_cause 0）。缺陷台账 T-1~T-12 已全部销项，但团队终审门禁结论仍「不通过」，须 owner 复审改判；本机无 pytest，T-12 用例 NOT_RUN。`validate_skip.py --self-check` 23 pass / 4 fail 已登记为 GATE-VSKIP。
 
-本方案 §10 阶段表中 A0/B0/A1 已完成，C 接口验收主线（wire/CLI）已由 TP-10 覆盖；D 专项矩阵仍待完成；**E 交付门禁已由 TP-11E/G 实现并接线（Linux daemon lib 单测 + Windows daemon 验收/命名管道·身份专项），并经 TP-11G CI 硬化与 CI-DEBT 持续硬化**。治理 GAP-15 仍阻塞治理验收进入。
+本方案 §10 阶段表中 A0/B0/A1 已完成，C 接口验收主线（wire/CLI）已由 TP-10 覆盖；D 专项矩阵仍待完成；**E 交付门禁已由 TP-11E/G 实现并接线（Linux daemon lib 单测 + Windows daemon 验收/命名管道·身份专项），并经 TP-11G CI 硬化与 CI-DEBT 持续硬化**。~~治理 GAP-15 仍阻塞治理验收进入~~ → 已解除（2026-11-11 用户签字裁决，f4d4575，源码为准）；剩余长期未决为 GAP-16（456 处 root_cause 复核 0）、D 专项矩阵、技术债账本，以及团队终审 `full_stack_review_20261024.md` 门禁结论未改判（T-1~T-12 已于 11-14 全部销项，但结论仍「不通过」）。
