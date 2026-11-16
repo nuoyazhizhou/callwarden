@@ -14,7 +14,7 @@
 | 静态清单自洽（`gen_test_cases.py --check`） | 🟢 | 三账本与源 HEAD 字节自洽 |
 | 提交树 CI 比对（远端） | 🔴 | 远端账本滞后，未 push |
 | CRLF 稳定性 | 🔴 | `.gitattributes` 缺 `eol=lf`，反复翻转 |
-| 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已于 2026-11-14 全部销项（T-12 最后收口：gen_coverage_manifest.py 脚本行为单测 20 用例入库） |
+| 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已于 2026-11-14 全部销项（T-12 最后收口：gen_coverage_manifest.py 脚本行为单测 20 用例入库）；T-13（2026-11-16 新登记的同族越权写）已销项 |
 
 **缺陷分级**：P0 ×10（DEF-01、DEF-02、DEF-03、T-1~T-9）、P1 ×3（T-10~T-12）、已知未知 ×4（不分级但不可瞒）。
 
@@ -39,7 +39,7 @@
 | T-10 | Windows Python 全量零执行 | P1 | CI/Python | DONE 本地（33f9e32：test-windows job，windows-latest × py3.14 + junction；3 连绿验收待 CI） |
 | T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
 | T-12 | 门禁脚本零单测 | P1 | CI/Gate | **DONE**（2026-11-14 销项：gen_coverage_manifest.py 脚本行为单测 20 用例入库全绿（9b9a698），回归 25 用例绿，真实脚本 --print-summary exit 0，详见 §3 T-12） |
-| T-13 | 同族越权写：export/rule-sync/restore 4 入口无 workspace 根约束 | P0 | Security | OPEN（2026-11-16 登记：T-5/GAP-SEC-01 同族漏网，复现与修复指引见 §3 T-13） |
+| T-13 | 同族越权写：export/rule-sync/restore 4 入口无 workspace 根约束 | P0 | Security | **DONE**（2026-11-16 销项：4 入口统一 `_is_within_workspace` 前置校验（ebb1f8e），12 用例负向全部 failed 不落盘 + 正向不回归，Rust 侧无同漏，详见 §3 T-13） |
 | GAP-16 | skip 站点 root_cause 0/456 复核 | 已知未知 | Audit | OPEN |
 | D-MATRIX | D 专项矩阵未写 | 已知未知 | Test Design | OPEN |
 | DEBT-LEDGER | 技术债账本 4 项漏登 | 已知未知 | Audit | OPEN |
@@ -186,6 +186,12 @@
   3. Rust 侧复核：`handle_export_module_graph`（rust_ext/src/daemon/query_compat_handlers.rs:1910）只消费 `format`，不消费 `output_file`、不落盘——Rust native 路径无同漏，结论记录在案；
   4. op_class 语义处置：`export_module_graph` 保持 READ_ONLY 不改（改分类将连锁 MCP registry / route matrix 双真相源与账本），收敛写范围至 workspace 内即消除「READ_ONLY 越权写」的实际后果；残余语义张力（READ_ONLY 类在 workspace 内落盘）作为已知限制在销项行明示。
 - **建议路由**：Security agent。
+- **销项（2026-11-16，HEAD ebb1f8e）**：四条验收全部达成——
+  1. 修复实现：① `db_query.py export_module_graph`（L1266-1277）写前 `_resolve_abs_path` + `_is_within_workspace` 校验，越界 raise ValueError；② `db_agent_rules.py rule_sync_agents_md`（L923-939）与 `rule_insert_agents_md_block`（L1093-1105）resolve 后前置校验，越界返回 `success=False`（复用既有错误形态与 i18n key `edit_path_out_of_workspace`）；③ `db_comment.py restore_comment`（L80-84）越界 `success=False`、`restore_all_comments`（L216-219）越界记 errors 跳过；④ 三处均复用 `EditSafetyMixin._is_within_workspace`（realpath+commonpath+normcase），未新增共享抽象。
+  2. 单测：新增 `tests/test_t13_write_containment.py` 12 用例全绿（1.60s）——export 相对穿越/绝对越界（pytest.raises + 越界路径不落盘断言）+ workspace 内正向落盘；rule_sync/insert 各 2 负向（`success=False` + 原文件不触碰/不落盘）+ 1 正向（workspace 内 AGENTS.md 正常写入且人工内容不被破坏）；restore_comment 参数化投毒（相对穿越 + 绝对路径）`success=False` 不落盘；restore_all_comments 投毒行 skipped=1 + errors 记录。回归：test_fuzz.py + test_agent_rules.py + test_cicd_gates.py + test_coverage_manifest_script.py 全量 exit 0。
+  3. Rust 侧复核：`handle_export_module_graph`（rust_ext/src/daemon/query_compat_handlers.rs:1910-2014）只消费 `format` 参数，**不消费 `output_file`、不落盘**，返回字符串——Rust native 路径无同漏，Python 直连路径是唯一可达面。
+  4. op_class 语义处置：`export_module_graph` 保持 READ_ONLY 不改（改分类将连锁 MCP registry / route matrix 双真相源与账本）；写范围已收敛至 workspace 内，越权后果消除；残余语义张力（READ_ONLY 类在 workspace 内落盘，属显式 `output_file` 参数的导出行为）作为已知限制在此明示。
+  5. 账本：按 ebb1f8e 重生（c6b3839），`--check` exit 0；selector manifest 不受影响（冻结范围仅 `tests/acceptance/domains/`，新测试在 `tests/` 根目录）。
 
 ---
 
