@@ -3726,13 +3726,23 @@ pub fn run_defect(
     limit: usize,
     symbol_hash: &str,
     finding: i64,
-    commit_hash: &str,
+    _commit_hash: &str,
 ) -> CommandResult {
     // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
     if let Some(denied) = enterprise_query_denied(runtime, "defect") {
         return denied;
     }
-    let conn = match if matches!(action, "build" | "learn") {
+    // ADR-002 单轨：defect_learn 是写面，daemon `handle_defect_learn` 为唯一写者。
+    // Rust CLI 无 HTTPS RPC 客户端（`RuntimeOptions::daemon_call` fail-closed），
+    // 本地写入实现已退役，避免同一写语义两处漂移；请经 Python `cw` / MCP 调用。
+    if action == "learn" {
+        return CommandResult::failure(
+            2,
+            "defect learn 已在 Rust CLI 退役：请使用 Python `cw defect learn` 或 MCP `defect_learn`（daemon 唯一写者，ADR-002）".to_string(),
+            RouteUsed::None,
+        );
+    }
+    let conn = match if action == "build" {
         runtime.open_local_write_db()
     } else {
         runtime.open_local_db()
@@ -3904,190 +3914,6 @@ pub fn run_defect(
             }
             CommandResult::success_json(
                 &json!({"patterns_built":built,"fixes_learned":0,"categories":categories}),
-                RouteUsed::Local,
-            )
-        }
-        "learn" => {
-            if commit_hash.is_empty() {
-                return CommandResult::failure(
-                    2,
-                    "commit_hash is required".to_string(),
-                    RouteUsed::Local,
-                );
-            }
-            if let Err(error) = conn.execute_batch("BEGIN IMMEDIATE") {
-                return CommandResult::failure(
-                    1,
-                    format!("defect learn transaction failed: {error}"),
-                    RouteUsed::Local,
-                );
-            }
-            let mut change_stmt = match conn.prepare("SELECT gsc.symbol_hash, COALESCE(gsc.old_content,''), COALESCE(gsc.new_content,'') FROM git_symbol_changes gsc JOIN git_commits gc ON gc.commit_hash=gsc.commit_hash WHERE gsc.commit_hash=?1 AND gsc.change_type='modified' AND gc.workspace_id=?2") {
-                Ok(value) => value,
-                Err(error) => { let _ = conn.execute_batch("ROLLBACK"); return CommandResult::failure(1, format!("defect learn changes query failed: {error}"), RouteUsed::Local); }
-            };
-            let changes = match change_stmt.query_map(params![commit_hash, workspace_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            }) {
-                Ok(value) => value,
-                Err(error) => {
-                    let _ = conn.execute_batch("ROLLBACK");
-                    return CommandResult::failure(
-                        1,
-                        format!("defect learn changes failed: {error}"),
-                        RouteUsed::Local,
-                    );
-                }
-            };
-            let mut learned_patterns = 0_i64;
-            let mut learned_fixes = 0_i64;
-            let mut details = Vec::new();
-            for change in changes.flatten() {
-                if change.1 == change.2 {
-                    continue;
-                }
-                let mut before_hasher = Sha256::new();
-                before_hasher.update(change.1.as_bytes());
-                let before_hash = hex::encode(before_hasher.finalize());
-                let mut after_hasher = Sha256::new();
-                after_hasher.update(change.2.as_bytes());
-                let after_hash = hex::encode(after_hasher.finalize());
-                let fix_diff = simple_unified_diff(&change.1, &change.2);
-                let qname: String = conn
-                    .query_row(
-                        "SELECT s.qualified_name
-                           FROM symbols s
-                           JOIN file_instances fi ON fi.id=s.file_instance_id
-                          WHERE fi.workspace_id=?2 AND s.symbol_hash=?1 AND s.qualified_name!=''
-                          ORDER BY s.id LIMIT 1",
-                        params![change.0, workspace_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or_default();
-                let mut finding_stmt = match conn.prepare("SELECT sf.rule_id, COALESCE(sf.snippet,''), COALESCE(sf.fix,''), COALESCE(sf.message,''), COALESCE(sf.severity,'INFO') FROM semgrep_findings sf JOIN file_instances fi ON fi.id=sf.file_instance_id WHERE fi.workspace_id=?2 AND sf.symbol_qualified=?1 ORDER BY sf.scanned_at DESC LIMIT 1") {
-                    Ok(value) => value,
-                    Err(error) => { let _ = conn.execute_batch("ROLLBACK"); return CommandResult::failure(1, format!("defect learn findings query failed: {error}"), RouteUsed::Local); }
-                };
-                let findings = match finding_stmt.query_map(params![qname, workspace_id], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                    ))
-                }) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        let _ = conn.execute_batch("ROLLBACK");
-                        return CommandResult::failure(
-                            1,
-                            format!("defect learn findings failed: {error}"),
-                            RouteUsed::Local,
-                        );
-                    }
-                };
-                let mut related_finding = None;
-                for finding_row in findings.flatten() {
-                    let snippet = finding_row.1.trim();
-                    if !snippet.is_empty()
-                        && (!change.1.contains(snippet) || change.2.contains(snippet))
-                    {
-                        continue;
-                    }
-                    related_finding = Some(finding_row);
-                    break;
-                }
-                if related_finding.is_none() {
-                    related_finding = conn
-                        .query_row(
-                            "SELECT sf.rule_id, COALESCE(sf.snippet,''), COALESCE(sf.fix,''), COALESCE(sf.message,''), COALESCE(sf.severity,'INFO')
-                               FROM semgrep_findings sf
-                               JOIN file_instances fi ON fi.id=sf.file_instance_id
-                              WHERE fi.workspace_id=?2 AND sf.content_hash=?1
-                              ORDER BY sf.scanned_at DESC LIMIT 1",
-                            params![before_hash, workspace_id],
-                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-                        )
-                        .ok();
-                }
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs_f64();
-                let mut pattern_id = None;
-                let mut related_rule_id = String::new();
-                if let Some(finding_row) = related_finding {
-                    related_rule_id = finding_row.0.clone();
-                    let id = format!("DP-{}", finding_row.0);
-                    let category = defect_category_from_rule(&finding_row.0);
-                    let description = if finding_row.3.is_empty() {
-                        finding_row.0.clone()
-                    } else {
-                        finding_row.3.clone()
-                    };
-                    let existed: bool = conn
-                        .query_row(
-                            "SELECT EXISTS(SELECT 1 FROM defect_patterns WHERE pattern_id=?1)",
-                            [&id],
-                            |row| row.get(0),
-                        )
-                        .unwrap_or(false);
-                    if let Err(error) = conn.execute(
-                        "INSERT OR IGNORE INTO defect_patterns (pattern_id,category,description,detection_rule,fix_template,severity,learned_from,case_count,created_at) VALUES (?1,?2,?3,?4,?5,?6,'git_fix',0,?7)",
-                        params![id, category, description, finding_row.0, finding_row.2, finding_row.4.to_ascii_lowercase(), now],
-                    ) {
-                        let _ = conn.execute_batch("ROLLBACK");
-                        return CommandResult::failure(1, format!("defect learn pattern write failed: {error}"), RouteUsed::Local);
-                    }
-                    conn.execute(
-                        "UPDATE defect_patterns SET case_count=case_count+1 WHERE pattern_id=?1",
-                        [&id],
-                    )
-                    .map_err(|error| error.to_string())
-                    .unwrap_or(0);
-                    if !existed {
-                        learned_patterns += 1;
-                    }
-                    pattern_id = Some(id);
-                }
-                let duplicate = if let Some(ref id) = pattern_id {
-                    conn.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM defect_fixes WHERE pattern_id=?1 AND symbol_hash=?2 AND before_hash=?3 AND after_hash=?4)",
-                        params![id, change.0, before_hash, after_hash],
-                        |row| row.get(0),
-                    ).unwrap_or(false)
-                } else {
-                    false
-                };
-                if duplicate {
-                    details.push(json!({"symbol_hash":change.0,"pattern_id":pattern_id.unwrap_or_default(),"status":"duplicate"}));
-                    continue;
-                }
-                if let Err(error) = conn.execute(
-                    "INSERT INTO defect_fixes (pattern_id,symbol_hash,before_hash,after_hash,fix_diff,effectiveness,created_at) VALUES (?1,?2,?3,?4,?5,1.0,?6)",
-                    params![pattern_id, change.0, before_hash, after_hash, fix_diff, now],
-                ) {
-                    let _ = conn.execute_batch("ROLLBACK");
-                    return CommandResult::failure(1, format!("defect learn fix write failed: {error}"), RouteUsed::Local);
-                }
-                learned_fixes += 1;
-                details.push(json!({"symbol_hash":change.0,"pattern_id":pattern_id.unwrap_or_default(),"rule_id":related_rule_id,"before_hash":before_hash,"after_hash":after_hash,"status":"learned"}));
-            }
-            if let Err(error) = conn.execute_batch("COMMIT") {
-                let _ = conn.execute_batch("ROLLBACK");
-                return CommandResult::failure(
-                    1,
-                    format!("defect learn commit failed: {error}"),
-                    RouteUsed::Local,
-                );
-            }
-            CommandResult::success_json(
-                &json!({"commit_hash":commit_hash,"learned_patterns":learned_patterns,"learned_fixes":learned_fixes,"fixes_learned":learned_fixes,"details":details}),
                 RouteUsed::Local,
             )
         }
@@ -4946,47 +4772,16 @@ mod tests {
     }
 
     #[test]
-    fn defect_learn_writes_workspace_scoped_fix_and_returns_details() {
+    fn defect_learn_fails_closed_without_local_writes() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("callwarden.db");
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER, root_path TEXT);
-             CREATE TABLE file_instances (id INTEGER PRIMARY KEY, workspace_id INTEGER, rel_path TEXT);
-             CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_instance_id INTEGER, symbol_hash TEXT, qualified_name TEXT);
-             CREATE TABLE git_commits (commit_hash TEXT PRIMARY KEY, workspace_id INTEGER);
-             CREATE TABLE git_symbol_changes (commit_hash TEXT, symbol_hash TEXT, old_content TEXT, new_content TEXT, change_type TEXT);
-             CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY, qualified_name TEXT);
-             CREATE TABLE semgrep_findings (file_instance_id INTEGER, rule_id TEXT, snippet TEXT, fix TEXT, message TEXT, severity TEXT, symbol_qualified TEXT, content_hash TEXT, scanned_at REAL);
-             CREATE TABLE defect_patterns (pattern_id TEXT PRIMARY KEY, category TEXT, description TEXT, detection_rule TEXT, fix_template TEXT, severity TEXT, learned_from TEXT, case_count INTEGER, created_at REAL);
-             CREATE TABLE defect_fixes (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern_id TEXT, symbol_hash TEXT, before_hash TEXT, after_hash TEXT, fix_diff TEXT, effectiveness REAL, created_at REAL);
-             INSERT INTO workspaces VALUES (1,1,'.'),(2,0,'/other');
-             INSERT INTO file_instances VALUES (10,1,'src/run.rs'),(20,2,'src/run.rs');
-             INSERT INTO symbols VALUES (1,10,'sym-1','crate::run'),(2,20,'sym-1','crate::run');
-             INSERT INTO git_commits VALUES ('fix-1',1);
-             INSERT INTO git_symbol_changes VALUES ('fix-1','sym-1','before();','after();','modified');
-             INSERT INTO symbol_contents VALUES ('sym-1','crate::run');
-             INSERT INTO semgrep_findings VALUES (10,'python.lang.security.audit','before();','replace before','workspace 1 finding','ERROR','crate::run','',1.0);
-             INSERT INTO semgrep_findings VALUES (20,'other.workspace.rule','before();','wrong fix','workspace 2 finding','ERROR','crate::run','',2.0);",
-        )
-        .unwrap();
-        drop(conn);
-
         let runtime = test_runtime(db_path.clone());
         let result = run_defect(&runtime, "learn", "", "", 20, "", 0, "fix-1");
-        assert_eq!(result.exit_code, 0, "{}", result.stderr);
-        let value: Value = serde_json::from_str(&result.stdout).unwrap();
-        assert_eq!(value["learned_patterns"], 1);
-        assert_eq!(value["learned_fixes"], 1);
-        assert_eq!(value["details"][0]["status"], "learned");
-        let conn = rusqlite::Connection::open(db_path).unwrap();
-        let fix_diff: String = conn
-            .query_row("SELECT fix_diff FROM defect_fixes LIMIT 1", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert!(fix_diff.contains("-before();"));
-        assert!(fix_diff.contains("+after();"));
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.route, RouteUsed::None);
+        assert!(result.stderr.contains("退役"), "{}", result.stderr);
+        // 早退发生在 open_local_write_db 之前：本地库文件不应被创建
+        assert!(!db_path.exists());
     }
 
     #[test]

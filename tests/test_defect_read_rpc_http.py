@@ -347,9 +347,9 @@ class TestToolRouteContract:
 
         monkeypatch.setattr(tools_task, "_route", fake_route)
         q = _register_tools(tools_task)
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
-            result = q["get_defect_correlation"]("src.main:foo", window_commits=3)
-            mock_db.assert_not_called()
+        # 本地 db 入口不存在（tools_task 模块级无 get_db）→ 结构上不可能回落本地 SQLite
+        assert not hasattr(tools_task, "get_db")
+        result = q["get_defect_correlation"]("src.main:foo", window_commits=3)
         assert result["change_count"] == 3
         assert result["defect_rate"] == 0.333
         assert seen["method"] == "query.get_defect_correlation"
@@ -362,10 +362,9 @@ class TestToolRouteContract:
 
         monkeypatch.setattr(tools_task, "_route", fake_route)
         q = _register_tools(tools_task)
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
-            with pytest.raises(DaemonRemoteError):
-                q["get_defect_correlation"]("src.main:foo")
-            mock_db.assert_not_called()
+        assert not hasattr(tools_task, "get_db")
+        with pytest.raises(DaemonRemoteError):
+            q["get_defect_correlation"]("src.main:foo")
 
     def test_runtime_role_is_never_client_side_branched(self, monkeypatch):
         """工具层不做 HTTP/local 分支：无论 transport 如何都走同一 `_route` 契约。

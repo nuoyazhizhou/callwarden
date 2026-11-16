@@ -726,7 +726,7 @@ def _wait_manifest(data_root, proc, timeout=30.0):
 
 
 def _terminate(proc):
-    """终止 daemon 进程（terminate 优先，兜底 kill）。"""
+    """终止 daemon 进程（terminate 优先，兜底 kill），并还原 mTLS 证书 env。"""
     try:
         proc.terminate()
         proc.wait(timeout=5)
@@ -735,6 +735,38 @@ def _terminate(proc):
             proc.kill()
         except Exception:
             pass
+    finally:
+        _restore_isolated_mtls_env(getattr(proc, "_cw_mtls_env_saved", None))
+
+
+# ADR-002 单轨 mTLS：隔离 daemon 的 PKI 根在 data_root/userhome/.callwarden/pki，
+# 客户端必须使用同一 CA 签发的 owner 身份，否则握手期 certificate verify failed。
+_MTLS_ENV_KEYS = ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT", "CW_PKI_DIR")
+
+
+def _inject_isolated_mtls_env(data_root):
+    """`pki init` 幂等补齐 owner 身份后注入证书 env，返回原值快照供还原。"""
+    import test_mtls_control_plane as _mtls  # 懒加载：避免模块导入期依赖二进制
+
+    _mtls.pki_init(data_root)
+    cert, key = _mtls.identity_paths(data_root)
+    saved = {k: os.environ.get(k) for k in _MTLS_ENV_KEYS}
+    os.environ["CW_CLIENT_CERT"] = cert
+    os.environ["CW_CLIENT_KEY"] = key
+    os.environ["CW_CA_CERT"] = os.path.join(
+        _mtls.pki_dir_of(data_root), "ca", "ca.crt")
+    os.environ.pop("CW_PKI_DIR", None)
+    return saved
+
+
+def _restore_isolated_mtls_env(saved):
+    if not saved:
+        return
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 def _spawn_isolated_daemon(bin_path, data_root, http_bind):
@@ -802,6 +834,9 @@ class TestRealDaemonCombinedWorkerCutover:
         if manifest is None:
             _terminate(proc)
             pytest.fail("隔离 daemon 未发布 manifest")
+        # ADR-002 单轨：隔离 daemon 使用自建 PKI，客户端装配同源 owner 证书
+        # （env 在 `_terminate` 中随 daemon 退出还原）。
+        proc._cw_mtls_env_saved = _inject_isolated_mtls_env(data_root)
         client = HttpDaemonRpcClient(
             endpoint=manifest["endpoint"],
             verify_health=False,
@@ -871,9 +906,11 @@ class TestRealDaemonCombinedWorkerCutover:
                 {"workspace_id": 1, "workspace_instance_id": inst,
                  "deadline_ms": 10000},
             )
-            assert isinstance(result, str) and "Root task title" in result, (
-                f"任务组正向应返回计划模板字符串: {result!r}"
-            )
+            # 模板随 daemon 进程 locale 切换（CALLWARDEN_LANG/LC_ALL/LANG），
+            # 断言两种语言的标题均可，避免在 zh_CN 环境下误红。
+            assert isinstance(result, str) and (
+                "Root task title" in result or "根任务标题" in result
+            ), f"任务组正向应返回计划模板字符串: {result!r}"
         finally:
             _terminate(proc)
 

@@ -8,9 +8,9 @@
   "only_in_matrix": [],
   "by_module": {
     "tools_collab": 8,
-    "tools_p2_graph": 10,
-    "tools_p3_identity": 7,
-    "tools_p4_lease": 8,
+    "tools_dependency_graph": 10,
+    "tools_identity": 7,
+    "tools_lease": 8,
     "tools_query": 32,
     "tools_rules": 9,
     "tools_security": 36,
@@ -30,8 +30,8 @@
   },
   "by_op_class": {
     "GOVERNANCE_WRITE": 5,
-    "READ_ONLY": 161,
-    "PROTECTED_MUTATION": 78
+    "READ_ONLY": 160,
+    "PROTECTED_MUTATION": 79
   },
   "tools": [
     {
@@ -108,7 +108,7 @@
     },
     {
       "name": "build_hard_dependency_edges",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "task.job_submit",
       "target_backend": "task_rpc",
       "current_backend": "task_rpc",
@@ -117,7 +117,7 @@
     },
     {
       "name": "detect_dependency_cycle",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "detect_cycle",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -126,7 +126,7 @@
     },
     {
       "name": "get_artifact_freshness",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "get_artifact_freshness",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -135,7 +135,7 @@
     },
     {
       "name": "get_dependency_edges",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "get_dependency_edges",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -144,7 +144,7 @@
     },
     {
       "name": "get_interface_providers",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "get_interface_providers",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -153,7 +153,7 @@
     },
     {
       "name": "import_envelope_dependencies",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "task.job_submit",
       "target_backend": "task_rpc",
       "current_backend": "task_rpc",
@@ -162,7 +162,7 @@
     },
     {
       "name": "publish_interface",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "admin.publish_interface",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -171,7 +171,7 @@
     },
     {
       "name": "record_artifact_identity",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "admin.record_artifact_identity",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -180,7 +180,7 @@
     },
     {
       "name": "select_interface_provider",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "admin.select_interface_provider",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -189,7 +189,7 @@
     },
     {
       "name": "validate_revision_dependencies",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "rpc_method": "validate_revision_dependencies",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -198,7 +198,7 @@
     },
     {
       "name": "check_action_identity",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "rpc_method": "check_action_identity",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -207,7 +207,7 @@
     },
     {
       "name": "check_session_separation",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "rpc_method": "check_session_separation",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -216,7 +216,7 @@
     },
     {
       "name": "get_action_identity",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "rpc_method": "get_action_identity",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -225,7 +225,7 @@
     },
     {
       "name": "get_attestation_validity",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "rpc_method": "get_attestation_validity",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -234,7 +234,7 @@
     },
     {
       "name": "list_attestation_revocations",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "rpc_method": "list_attestation_revocations",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -243,7 +243,7 @@
     },
     {
       "name": "record_action_identity",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "rpc_method": "admin.record_action_identity",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -252,7 +252,7 @@
     },
     {
       "name": "register_attestation_revocation",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "rpc_method": "admin.register_attestation_revocation",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -261,7 +261,7 @@
     },
     {
       "name": "assignment_create",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "rpc_method": "admin.assignment_create",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -270,7 +270,7 @@
     },
     {
       "name": "assignment_revoke",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "rpc_method": "admin.assignment_revoke",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -279,7 +279,7 @@
     },
     {
       "name": "assignment_show",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "rpc_method": "assignment_show",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -288,7 +288,7 @@
     },
     {
       "name": "lease_acquire",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "rpc_method": "lease.acquire",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -297,7 +297,7 @@
     },
     {
       "name": "lease_list_events",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "rpc_method": "lease.list_events",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -306,7 +306,7 @@
     },
     {
       "name": "lease_release",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "rpc_method": "lease.release",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -315,7 +315,7 @@
     },
     {
       "name": "lease_renew",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "rpc_method": "lease.renew",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -324,7 +324,7 @@
     },
     {
       "name": "lease_status",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "rpc_method": "lease.status",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
@@ -1202,7 +1202,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "blast_radius",
@@ -1211,7 +1211,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "churn_analysis",
@@ -1229,7 +1229,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "defect_correlation",
@@ -1246,8 +1246,8 @@
       "rpc_method": "defect_learn",
       "target_backend": "rust_native",
       "current_backend": "rust_native",
-      "op_class": "READ_ONLY",
-      "status": "transition"
+      "op_class": "PROTECTED_MUTATION",
+      "status": "migrated"
     },
     {
       "name": "defect_search",
@@ -1292,7 +1292,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "find_uncovered_functions",
@@ -1319,7 +1319,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "get_coverage_for_symbol",
@@ -1337,7 +1337,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "get_summary",
@@ -1346,7 +1346,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "get_token_savings_report",
@@ -1355,7 +1355,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "get_vulnerability_blast_radius",
@@ -1364,7 +1364,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "guardrail_add_rule",
@@ -1382,7 +1382,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "guardrail_list_rules",
@@ -1391,7 +1391,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "guardrail_scan",
@@ -1400,7 +1400,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "hotspot_evolution",
@@ -1409,7 +1409,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "import_coverage",
@@ -1427,7 +1427,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "record_token_savings",
@@ -1445,7 +1445,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "review_readiness",
@@ -1454,7 +1454,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "test_impact_selection",
@@ -1463,7 +1463,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "who_to_ask",
@@ -1472,7 +1472,7 @@
       "target_backend": "rust_native",
       "current_backend": "rust_native",
       "op_class": "READ_ONLY",
-      "status": "transition"
+      "status": "migrated"
     },
     {
       "name": "audit_verify_chain",

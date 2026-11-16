@@ -2638,7 +2638,7 @@ protected_mutation；MCP 客户端路由（server/tools/tools_summary.py）同�
 串行点列表（与同写组 build_defect_knowledge/gc_purge 先例一致，加入会改变
 派发路径，超出本决策范围）；`rust_ext/src/cli/external.rs::run_defect
 ("learn")` 是带 workspace 过滤的 CLI 本地变体，与 daemon/Python 真相源
-（无过滤）并存，未统一——后续如收敛双实现另立任务。
+（无过滤）并存，未统一——**该双轨已于 2026-11-16 收口，见 §9.30**。
 
 **5. 验收**：`cargo test defect` 15 通过（含 2 个新增写路径单测）；
 `test_mcp_defect_learn_http_rpc.py` 5 通过（含新正向用例：HTTP 调
@@ -2650,7 +2650,67 @@ defect_learn 实证 defect_fixes/defect_patterns 真实落库 + 重跑 duplicate
 `test_task_get_defect_correlation_*` 2 项（tools_task 陈旧 patch 目标
 get_db）+ `test_http_combined_worker_cutover.py`
 TestRealDaemonCombinedWorkerCutover 4 项（自带 spawn 未注入 mTLS 证书
-env）——待另卡整改。
+env）——**已于 2026-11-16 全部修复，见 §9.30**。
+
+## 9.30 defect_learn 双轨退役 + 存量测试失败清零 + inventory 快照重生（2026-11-16）
+
+> 触发：S4-FU 卡（`T-1793807024448-17d4cd60`）review 闭环后的收尾批次。
+> 本批次不含行为面新功能，收敛 §9.29 登记的两项技术债并修复 6 项存量失败。
+
+**1. Rust CLI `defect learn` 双轨退役**（`rust_ext/src/cli/external.rs`）：
+删除 `run_defect("learn")` 的本地写实现（183 行，含 `BEGIN IMMEDIATE`
+事务、`git_symbol_changes` 扫描、`defect_patterns` upsert、`defect_fixes`
+去重写入）；改为在打开本地库**之前** fail-closed：
+
+```rust
+if action == "learn" {
+    return CommandResult::failure(
+        2,
+        "defect learn 已在 Rust CLI 退役：请使用 Python `cw defect learn` 或 MCP `defect_learn`（daemon 唯一写者，ADR-002）",
+        RouteUsed::None,
+    );
+}
+```
+
+理由：① ADR-002 单轨后 daemon `handle_defect_learn` 是唯一写者，Rust CLI
+`RuntimeOptions::daemon_call` 已 fail-closed（无 HTTPS RPC 客户端），本地
+写入无法与 daemon 串行点对齐；② 本地变体带 `workspace_id` 过滤，与
+Python 真相源 `learn_defect_from_fix`（无过滤）语义不一致，属漂移风险；
+③ `build`（知识库重建）仍保留本地写路径，不在本次范围。参数
+`commit_hash` 随实现移除改名为 `_commit_hash`；单测
+`defect_learn_writes_workspace_scoped_fix_and_returns_details` 改为
+`defect_learn_fails_closed_without_local_writes`（断言 exit=2、
+route=None、stderr 含「退役」、本地库文件未被创建）。
+
+**2. 存量测试失败 6 项清零**：
+
+- `tests/test_defect_read_rpc_http.py` 2 项：`tools_task` 已无模块级
+  `get_db`（HTTP 路由化后不再触达本地库），原 `patch(...get_db)` 目标
+  不存在。改为 `assert not hasattr(tools_task, "get_db")` 的结构性断言 —
+  — 比 mock 更强的「不可能回落本地 SQLite」保证。
+- `tests/test_http_combined_worker_cutover.py` 4 项：隔离 daemon 使用
+  `USERPROFILE` 下自建 PKI，client 未注入证书 → 握手期
+  `certificate verify failed`。新增 `_inject_isolated_mtls_env`
+  （`test_mtls_control_plane.pki_init` 幂等 enroll owner 身份 + 注入
+  `CW_CLIENT_CERT`/`CW_CLIENT_KEY`/`CW_CA_CERT`，清空 `CW_PKI_DIR`），
+  快照挂在 Popen 对象上由 `_terminate` 在 finally 还原，避免跨测试污染。
+- 同文件 1 项 locale 断言：`task_plan_template` 模板随 daemon 进程
+  locale 返回中/英两版，原断言只接受 `Root task title`，在 zh_CN 环境
+  误红。改为双前缀断言。
+
+**3. inventory 快照重生**（`tests/convergence/fixtures/audit_mcp_inventory.json`
++ `deliverables/software-company/doc-audit/audit_mcp_inventory.json`）：
+两份快照均停在 §9.26 之前（doc-audit 份仍是 243 工具旧版）。按
+`build_mcp_inventory.py`（真相源 = `server/tools/*.py` 注册 ×
+`tool_migration_matrix.json`）重生：244 工具、`consistent=true`、
+`by_target_backend` rust_native 201 / task_rpc 43、`by_op_class`
+READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
+`defect_learn` 条目修正为 `op_class=PROTECTED_MUTATION`、
+`status=migrated`，快照内 `transition` 清零。
+
+**4. 验收**：`cargo test --lib defect_learn` 3 通过（含新增 fail-closed
+单测）；`test_defect_read_rpc_http.py` + `test_http_combined_worker_cutover.py`
+56 通过；`gen_route_matrix.py --check` 通过；测试账本按新提交 hash 重生。
 
 ## 10. 相关真相源
 
