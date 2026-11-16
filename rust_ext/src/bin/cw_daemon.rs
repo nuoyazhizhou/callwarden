@@ -106,10 +106,10 @@ mod unix {
         #[arg(long, default_value_t = false)]
         no_sd_notify: bool,
 
-        /// HTTP transport 绑定地址（dev_loopback_unauthenticated，迁移期默认）。
+        /// HTTPS + mTLS 绑定地址（ADR-002，security_profile = https_mtls_v1）。
         /// 缺省（未设置 --http-bind / CW_DAEMON_TRANSPORT）时默认启用 loopback-only
-        /// HTTP 监听（127.0.0.1:0 动态端口 + manifest）；显式 CW_DAEMON_TRANSPORT=
-        /// named-pipe/uds 等回落旧通道（HTTP 不启用）。
+        /// TLS 监听（127.0.0.1:0 动态端口 + manifest）；非 loopback 需
+        /// CW_DAEMON_HTTP_ALLOW_REMOTE=1，否则 fail-closed。
         #[arg(long)]
         http_bind: Option<String>,
 
@@ -2147,10 +2147,10 @@ mod windows {
         #[arg(long, default_value_t = false)]
         no_sd_notify: bool,
 
-        /// HTTP transport 绑定地址（dev_loopback_unauthenticated，迁移期默认）。
+        /// HTTPS + mTLS 绑定地址（ADR-002，security_profile = https_mtls_v1）。
         /// 缺省（未设置 --http-bind / CW_DAEMON_TRANSPORT）时默认启用 loopback-only
-        /// HTTP 监听（127.0.0.1:0 动态端口 + manifest）；显式 CW_DAEMON_TRANSPORT=
-        /// named-pipe/uds 等回落旧通道（HTTP 不启用）。
+        /// TLS 监听（127.0.0.1:0 动态端口 + manifest）；非 loopback 需
+        /// CW_DAEMON_HTTP_ALLOW_REMOTE=1，否则 fail-closed。
         #[arg(long)]
         http_bind: Option<String>,
 

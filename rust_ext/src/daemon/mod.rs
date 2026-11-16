@@ -90,8 +90,9 @@ pub mod server;
 /// 详见模块内文档与 `cw_daemon.rs` 启动序列。
 pub mod single_instance;
 
-/// H1 HTTP MVP transport（Profile v1: dev_loopback_unauthenticated）
-/// 冻结栈：axum 0.8 + hyper 1 + tokio 1，仅 HTTP/1.1，loopback-only
+/// HTTPS + mTLS transport（ADR-002，security_profile = https_mtls_v1）
+/// 冻结栈：axum 0.8 + hyper 1 + tokio 1 + rustls 0.23（ring），仅 HTTP/1.1；
+/// 默认 loopback-only，非 loopback 需显式 allow_remote。
 pub mod http_server;
 
 /// H3 Python compatibility worker adapter

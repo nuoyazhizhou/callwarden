@@ -4,6 +4,15 @@
 > 任务：`T-1786590214634-9e740cdc`
 > 范围：统一本机 MCP/CLI 到 Rust daemon 的 HTTP/JSON-RPC 传输，并保持未迁移能力可用
 > 前置基线：`T-1786590722456-db00d074`（237 个工具统一入口可用性）
+>
+> **安全面已被 ADR-002 取代（2026-11-04）**：现行传输为单轨 HTTPS + mTLS，
+> `security_profile = https_mtls_v1`，明文 listener 与 `dev_loopback_unauthenticated`
+> profile 均已不存在（后者被视作非法配置，启动即 fail-closed）。本文档 §2.1/§2.2
+> 的 profile 定义，以及 §4–§6 中所有 `dev_loopback_unauthenticated` 示例值
+> （`/capabilities` 的 `server_mode`、`security_profile_required`、`/health` 的
+> `security_profile`）均为历史冻结语义，**以 `docs/design/mtls-remote-plane.md`
+> （ADR-002）为现行单源**；其余传输/registry/自举约束继续有效。§2.2 的迁移期
+> 临时例外已随本次替代终止。
 
 ## 1. 目标
 
@@ -59,9 +68,13 @@ Requirements 14.5/14.9 的 Peer_Credential 与跨用户授权语义，也不把 
 synthetic identity 当作 Attestation 或 Independent_Review 证明。未显式选择本 profile 时，
 Requirements 14.2/14.3/14.18–14.21 原样生效。
 
-### 2.2 迁移期临时例外（H6，2026-08-15）
+### 2.2 迁移期临时例外（H6，2026-08-15）——**已于 2026-11-04 终止**
 
-> 状态：迁移期临时覆盖，随 H6（`T-1786785215323-16b46c99`）生效；**非** release/enterprise 默认。
+> 状态：**已终止**。ADR-002（2026-11-04）裁决单轨 HTTPS + mTLS 后，本小节的
+> 「默认启用明文 HTTP」临时覆盖不再成立：daemon 只监听 TLS 端口，旧 profile
+> 为非法配置。历史内容保留如下，供 H6 期证据回溯。
+>
+> 原状态：迁移期临时覆盖，随 H6（`T-1786785215323-16b46c99`）生效；**非** release/enterprise 默认。
 > 本小节只放宽 §2.1 的「启用」默认值，不修改 loopback-only / fail-closed / manifest 校验等既有安全实现。
 
 **用户决策**：“我们在做迁移，并不是发布，安全性全部迁移完成后再考虑。”——迁移期
@@ -319,7 +332,7 @@ Protocol v1 的每个公开 capability row 至少包含：
 | `operation_class` | `read_only|index_write|governance_write`；mixed entry 必须拆分 component rows |
 | `workspace_scope` | `none|authority|workspace|snapshot` |
 | `supports_jobs` | boolean |
-| `security_profile_required` | MVP 可用项必须为 `dev_loopback_unauthenticated` 或更严格 profile |
+| `security_profile_required` | MVP 可用项必须为 `dev_loopback_unauthenticated` 或更严格 profile（**ADR-002 起现行值 = `https_mtls_v1`**） |
 | `http_route` | `/v1/rpc` 或 `/v1/jobs`；unsupported 仍给出其拒绝 route |
 | `success_fixture` | 可执行 fixture id；不适用时说明原因，不能写 unknown |
 | `structured_error_fixture` | 至少一个稳定错误 fixture id |
@@ -345,7 +358,7 @@ HTTP MVP 必须先让以下能力通过真实进程级 round-trip：
 9. daemon 重启后 manifest、workspace 和任务状态可恢复；
 10. MCP 和 CLI 使用 HTTP client 时不直接打开 SQLite。
 
-11. `/health` 明确返回 `security_profile=dev_loopback_unauthenticated`，并包含 endpoint、PID、Git commit、schema version、worker 状态和 capability registry revision。
+11. `/health` 明确返回 `security_profile=dev_loopback_unauthenticated`，并包含 endpoint、PID、Git commit、schema version、worker 状态和 capability registry revision。（**ADR-002 起实际值 = `https_mtls_v1`，且 `/health` 为无客户端证书可读的匿名探活面，仅含 profile/commit/PID**）
 
 ## 7. 迁移规则
 
