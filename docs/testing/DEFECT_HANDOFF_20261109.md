@@ -11,12 +11,13 @@
 
 | 门禁腿 | 状态 | 说明 |
 |---|---|---|
-| 静态清单自洽（`gen_test_cases.py --check`） | 🟢 | 三账本与源 HEAD 字节自洽 |
-| 提交树 CI 比对（远端） | 🔴 | 远端账本滞后，未 push |
-| CRLF 稳定性 | 🔴 | `.gitattributes` 缺 `eol=lf`，反复翻转 |
+| 静态清单自洽（`gen_test_cases.py --check`） | 🟢 | 三账本与源 HEAD 字节自洽（2026-11-15 已重生至 `da27ddf`，revision==HEAD） |
+| 提交树 CI 比对（远端） | 🔴 | 本机已与 origin/master 同步（0/0）、账本 `--check` PASS；🔴 仅指 **CI 侧实跑未复验**（DEF-01 待 owner 以 CI 结果销项） |
+| CRLF 稳定性 | 🟢 | DEF-02 已根治：三账本 + 输入作用域 `eol=lf`（a8002cc/5ecf7db）+ `digest()` LF 归一化（554ac20）；本机 6 文件 CRLF=0、`--check` PASS |
 | 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已于 2026-11-14 全部销项（T-12 最后收口：gen_coverage_manifest.py 脚本行为单测 20 用例入库） |
+| validate_skip 账本对拍（`--self-check`） | 🔴 | 23 pass / **4 fail**（2026-11-15 实测，详见文末复查小节） |
 
-**缺陷分级**：P0 ×10（DEF-01、DEF-02、DEF-03、T-1~T-9）、P1 ×3（T-10~T-12）、已知未知 ×4（不分级但不可瞒）。
+**缺陷分级**：P0（DEF-01~03、T-1~T-9）、P1（T-10~T-12、GATE-VSKIP）、已知未知（GAP-16、D-MATRIX、DEBT-LEDGER、STASH-0，不分级但不可瞒）。
 
 ---
 
@@ -40,9 +41,10 @@
 | T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
 | T-12 | 门禁脚本零单测 | P1 | CI/Gate | **DONE**（2026-11-14 销项：gen_coverage_manifest.py 脚本行为单测 20 用例入库全绿（9b9a698），回归 25 用例绿，真实脚本 --print-summary exit 0，详见 §3 T-12） |
 | GAP-16 | skip 站点 root_cause 0/456 复核 | 已知未知 | Audit | OPEN |
+| GATE-VSKIP | `validate_skip.py --self-check` 23 pass / 4 fail（468≠456 站点集、2 项基线哈希未刷新、`conftest.py` 1 条 file_sha256 漂移） | P1 | CI/Gate | OPEN（2026-11-15 新增登记） |
 | D-MATRIX | D 专项矩阵未写 | 已知未知 | Test Design | OPEN |
 | DEBT-LEDGER | 技术债账本 4 项漏登 | 已知未知 | Audit | OPEN |
-| STASH-0 | 原 `stash@{0}`(review-edits-2026-10-28) 已清除；2026-11-14 核实存在新 `stash@{0}`(e741-prod-wip)，内容与本次审计无关 | 已知未知 | Repo Hygiene | OPEN（原条目销项，新 stash 待 owner 处置） |
+| STASH-0 | 原 review-edits stash 已清；`e741-prod-wip` 为上游另一工作副本观察，本机无此条；本机 2026-11-15 实况为两条冲突备份 stash（`local-1114-conflict-merge` / `local-1113-ledger-alignment`），已文件级备份至 `E:/tmp/local_backup_1115/` | 已知未知 | Repo Hygiene | OPEN（待 owner 决定丢弃或保留） |
 
 ---
 
@@ -178,7 +180,7 @@
 | GAP-16 | `docs/testing/SKIP_SITES.json` 456 个 skip 站点 `root_cause_reviewed=True = 0`；零人工根因复核 | 最大「已知未知」：skip 是否真必要无人证 | Audit agent |
 | D-MATRIX | `TESTING_PLAN.md` §7 的 D 专项矩阵（G/I/J/E/W/S/A/X 域 + 16 语言正/负/恢复/并发）未写 | 专项验收无基线 | Test Design agent |
 | DEBT-LEDGER | 技术债账本 4 项漏登（何序5.2，独立于机器账本） | 技术债不可见 | Audit agent |
-| STASH-0 | 原 `stash@{0}`（review-edits-2026-10-28，11 文件）已清除；当前存在新 `stash@{0}`(e741-prod-wip，内容未核) | 冗余、未来 pop 会与已提交内容冲突 | Repo Hygiene |
+| STASH-0 | 原 review-edits-2026-10-28（11 文件）已清除；`e741-prod-wip` 为上游另一工作副本观察、本机无此条；本机 2026-11-15 实况为两条冲突备份 stash（`local-1114-conflict-merge` / `local-1113-ledger-alignment`） | 冗余、未来 pop 会与已提交内容冲突 | Repo Hygiene |
 
 ---
 
@@ -200,12 +202,23 @@
 
 > 派发提示：其他 agent 修改源码后，只需重跑 `python docs/testing/gen_test_cases.py --revision <新HEAD>` 重生成三账本并 `--check`，数字会自动刷新；DEF-02 已根治（`.gitattributes eol=lf` + `digest()` LF 归一化，commit `554ac20`），任何行尾状态的工作树重生账本哈希一致。
 
-### 基线真值复核（8e7ee65，2026-11-14）
+### 基线真值复核（da27ddf，2026-11-15）
 
-上表已按 HEAD `8e7ee65` 重生成核对（`--check` PASS、CRLF=0）。与本文件早先登记态的差异：
+上表已按 HEAD `da27ddf` 重生成核对（`--check` PASS、CRLF=0；python 定义 7233 / py 文件 698，因 T-12 新增 20 用例脚本行为单测）。与本文件早先登记态的差异：
 
 1. **GAP-15 / DEF-03 已闭合**（2026-11-11 用户签字，commit `f4d4575`）：以源码为权威语义；Adjudicator v4 模板 §29/§32 已对齐，一致性测试在位。详见 `COVERAGE_AUDIT.md` GAP-15 行。
-2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**T-2 已于 2026-11-14（HEAD efad200）复验销项**（nodeid 过滤在位、双 profile exit 0、删条目 exit 2 拦截有效、test_cicd_gates.py 14 用例全绿）；**T-5 已于 2026-11-14（HEAD 550bbdd）复验销项**（修复实现见 2e7b2d6：`_is_within_workspace` 校验在位，相对穿越/绝对越界均 failed 未落盘，test_fuzz.py 6/6 绿）；**T-12 已于 2026-11-14（HEAD 9b9a698）销项**（gen_coverage_manifest.py 脚本行为单测 20 用例入库全绿，账本按 9b9a698 重生）。T-12 描述修正：check_selector_manifest/check_ci_gates 已有直接单测，仅 gen_coverage_manifest.py 缺脚本行为单测。
+2. **团队终审 T-1~T-12 并非全开**：上游 `77951ca` 已回填——T-1/T-3/T-4/T-6/T-7/T-11 DONE，T-8/T-9/T-10 本地 DONE；**T-2 已于 2026-11-14（HEAD efad200）复验销项**（nodeid 过滤在位、双 profile exit 0、删条目 exit 2 拦截有效、test_cicd_gates.py 14 用例全绿）；**T-5 已于 2026-11-14（HEAD 550bbdd）复验销项**（修复实现见 2e7b2d6：`_is_within_workspace` 校验在位，相对穿越/绝对越界均 failed 未落盘，test_fuzz.py 6/6 绿）；**T-12 已于 2026-11-14（HEAD 9b9a698）销项**（gen_coverage_manifest.py 脚本行为单测 20 用例入库全绿，账本按 9b9a698 重生）。**结论：T-1~T-12 已全部销项，台账内不再有 OPEN 的 T 项**；但 `full_stack_review_20261024.md` 门禁结论仍「不通过」，须 owner 复审改判——销项 ≠ 门禁翻绿。
 3. **「17 卡全 closed / 门禁 PASS」（commit `7163645`）只作用于 ADR-002 远端控制面**，不等于团队终审通过——`full_stack_review_20261024.md` 结论仍为"不通过"，两者不可混用。
 4. **GAP-16 仍 OPEN**：root_cause 复核 0/456。
-5. STASH-0：原 review-edits stash 已清；当前 stash@{0} = `e741-prod-wip`（内容未核，非本表范围）。
+5. STASH-0：原 review-edits stash 已清；`e741-prod-wip` 系上游另一工作副本的观察（迁移报告证据指向另一台 Windows 机器的 wanpi 用户目录），**本机 `git stash list` 无此条**；本机 2026-11-15 实况为两条冲突备份 stash：`stash@{0} = local-1114-conflict-merge`、`stash@{1} = local-1113-ledger-alignment`（已文件级备份至 `E:/tmp/local_backup_1115/`，待 owner 处置）。
+
+---
+
+### 复查补充（2026-11-15，HEAD `da27ddf`）
+
+- **pull 冲突与处理**：上游 `31493f3..da27ddf` 7 提交与本机 5 个未提交改动中的 3 个重叠（DEFECT_HANDOFF / SKIP_SITES / STATIC_AUDIT），`git pull --ff-only` 拒绝覆盖。已先文件级备份至 `E:/tmp/local_backup_1115/` 并 `git stash push`（`stash@{0}`），再快进到 `da27ddf`；按该 HEAD 重生账本，`--check` PASS、revision==HEAD、6 文件 CRLF=0。
+- **DEF-02 真收口（重点）**：`554ac20` 把 `gen_test_cases.py` 的 `digest()` 改为 CRLF/CR→LF 归一化后哈希，`validate_skip.py` 磁盘对拍同步归一化，`revision_note` 同步声明 EOL 无关。此前 `5ecf7db` 的 `.gitattributes` 只在 checkout/add 生效、上游 CRLF 工作树存量文件仍使哈希漂移；现在**任何行尾状态的工作树重生账本均得同一哈希**，本机与上游账本不再互相判红。本表 §0「CRLF 稳定性」已由 🔴 改 🟢。
+- **真值（da27ddf）**：MCP 244（rust_native 201 / task_rpc 43）｜CLI 86 顶层 / 21 类 / 233 叶子｜python 定义 **7233** / **698** 文件（T-12 新增 `tests/test_coverage_manifest_script.py` 20 用例，7213→7233）｜rust 属性 2122 / cfg 121｜skip 三机制 456（classic 432 / 131 文件，skip 210 / skipif 222 / importorskip 24）｜reason 267/167/22｜schema 漂移 0（GAP-14 闭）｜**root_cause 复核 0/456（GAP-16 仍 OPEN）**。
+- **新增门禁红项 GATE-VSKIP（本表首次登记）**：`python docs/testing/planning/skip/validate_skip.py --self-check` 实测 **23 pass / 4 fail / 0 warn**（exit 1）。四项性质不同，不可一并当缺陷：① `skip_sites_id_set_equal`：reviews 复核台账 **468** 站点 vs `SKIP_SITES.json` **456** 站点，差 12 条——两套账本口径未同步，须 owner 明确权威基准；② `file_sha256_disk_match`：`tests/conftest.py:22:8:pytest.skip` 的 `file_sha256` 与磁盘不符（源码改过但复核结论仍绑旧内容），须重新审查该站点；③ `skip_sites_hash_baseline` / ④ `generator_hash_baseline`：`docs/testing/registration/source_baseline.json` 硬编码哈希未随 `SKIP_SITES.json` 重生与 `gen_test_cases.py`（554ac20）改动刷新，属**基线未刷新**，须 owner 按流程重新签字刷新，不是数据错误。提交信息称「失败集与改动前一致、不在本范围」，但按门禁铁闸原则，红项必须登记而非静默排除。
+- **不可复跑项（诚实标注）**：本机自备 Python 3.13.12 **无 pytest、无项目 venv、系统 python3 亦无 pytest**，故 T-12 的 20 用例、回归 25 用例、`gen_coverage_manifest.py --print-summary` 均 **NOT_RUN**；本轮采信上游提交信息（`9b9a698`/`da27ddf`）与入库文件 `tests/test_coverage_manifest_script.py`，未做独立实跑验证。
+- **门禁裁决（不变）**：**红，不能发**。T-1~T-12 全部销项仅是必要条件；`full_stack_review_20261024.md` 结论仍「不通过」且本轮 7 提交未改该文档，须 owner 复审改判。另 GAP-16（0/456）、D-MATRIX、DEBT-LEDGER、GATE-VSKIP 均未闭。
