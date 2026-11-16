@@ -2609,6 +2609,49 @@ rust_ext/Cargo.toml route_matrix` 通过；三端 `--check` 一致。
 - 标注债：矩阵 op_class=READ_ONLY 与其写语义不符（§9.25 遗留待办仍开放）；
   处置方向（写连接迁移 vs 仅修正 op_class 标注）待后续批次决策。
 
+## 9.29 defect_learn 主库写连接迁移（2026-11-16，用户决策：迁移到写连接）
+
+> 本小节关闭 §9.25 遗留待办 + §9.28 标注债：defect_learn 成为 HTTP 面
+> 可用的写工具，至此**写面迁移全部收口**（83 项写工具 HTTP 面全可用）。
+
+**1. 路由变更**（`snapshot_state.rs`）：`"defect_learn"` 从只读快照组
+（open_query_connection，fail-closed）移除，加入主库写组
+（open_codegraph_db_write + owned_workspace ACL）为显式 match 分支；
+只读组内层 `_ =>` fallback 改 fail-closed `method_not_found`。
+
+**2. 写 handler**（`compat_native_handlers.rs::handle_defect_learn`）：逐条
+复刻 Python 真相源 `db/db_defect_kb.py::learn_defect_from_fix`（L549-696）
+语义——git_symbol_changes(modified, old≠new) → sha256 内容哈希 →
+semgrep_findings 规则关联（snippet 空或命中 old 内容才接受，content_hash
+退化路径）→ DP-{rule_id} upsert（learned_from='git_fix'）+ 四元组查重 →
+INSERT defect_fixes(effectiveness=1.0)，事务一次性提交。只读 fail-closed
+实现 `handle_summary_defect_learn` 成死代码，已删除。
+
+**3. op_class 修正三端对齐**：矩阵真相源 `gen_route_matrix.py`
+READ_ONLY→PROTECTED_MUTATION（`--emit-json`/`--emit-rust`/`--check` OK）；
+capability registry（http_server.rs）operation_class read_only→
+protected_mutation；MCP 客户端路由（server/tools/tools_summary.py）同步
+（route_rpc 随 PROTECTED_MUTATION 附 request_id 幂等键）。CLI 分发表
+（cli/main.py:974）本就是 PROTECTED_MUTATION，矩阵标注错误至此修正。
+
+**4. 有意偏差登记**：daemon handler 未加入 `PROTECTED_MUTATION_METHODS`
+串行点列表（与同写组 build_defect_knowledge/gc_purge 先例一致，加入会改变
+派发路径，超出本决策范围）；`rust_ext/src/cli/external.rs::run_defect
+("learn")` 是带 workspace 过滤的 CLI 本地变体，与 daemon/Python 真相源
+（无过滤）并存，未统一——后续如收敛双实现另立任务。
+
+**5. 验收**：`cargo test defect` 15 通过（含 2 个新增写路径单测）；
+`test_mcp_defect_learn_http_rpc.py` 5 通过（含新正向用例：HTTP 调
+defect_learn 实证 defect_fixes/defect_patterns 真实落库 + 重跑 duplicate
+不再写）；`test_defect_read_rpc_http.py` 路由断言更新；
+`gen_test_cases --check` PASS。
+
+**6. 存量失败登记（非本卡引入，干净基线复跑一致）**：
+`test_task_get_defect_correlation_*` 2 项（tools_task 陈旧 patch 目标
+get_db）+ `test_http_combined_worker_cutover.py`
+TestRealDaemonCombinedWorkerCutover 4 项（自带 spawn 未注入 mTLS 证书
+env）——待另卡整改。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`
