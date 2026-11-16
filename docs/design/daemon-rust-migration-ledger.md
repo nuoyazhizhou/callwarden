@@ -2580,6 +2580,35 @@ batch/status/终态三词拼接进 batch，status 键反而丢失）。
 **5. 验收**：`test_m1_route_matrix.py` 7 项通过；`cargo test --manifest-path
 rust_ext/Cargo.toml route_matrix` 通过；三端 `--check` 一致。
 
+## 9.28 写面迁移状态核查与 T02-job 批次补记（2026-11-16）
+
+> 追溯补记：T02-job 批次（task_rpc 长任务面）完成时未入账本，仅落在矩阵
+> batch 字段与验收套件提交（`f8eb1fe` TP-11J / `6ea46e3` TP-11S /
+> `253573d` TP-11X），现补齐核查结论。
+
+**1. 写面终态（矩阵实锤，83 项）**：
+
+- GOVERNANCE_WRITE 5 + PROTECTED_MUTATION rust_native 43：直写 handler
+  （edit.* / rule.* / admin.* / lease.* / workspace.* / gate.* 等，
+  `compat_native_handlers.rs` 等，主库写连接）。
+- PROTECTED_MUTATION task_rpc 35：经 `task.job_submit` + JobRunner
+  （`job_runner.rs`，`4b1380a` 引入；`f8eb1fe` 落库修复，作业状态机持久化）；
+  长任务 executor 含 `git_history`/`git_blame`/semgrep/embed/clones/coverage
+  等（`exec_git_history` 等，job kind 注册表见 job_runner.rs L410-433）。
+- **§9.25 W4-4 的"import_git_history 保持 fail-closed"决策已被后续 T02-job
+  批次推翻**：import_git_history 现经 `task.job_submit`（kind=git_history）
+  在 Rust 侧执行（git 子进程 + INSERT git_commits 事务），矩阵标 migrated。
+
+**2. 唯一 HTTP 面不可用写工具：defect_learn**：
+
+- 路由：rust_native（P0-COMPAT-v3 迁移），但执行于**只读快照连接**，
+  有 qualifying 数据时 fail-closed 报错（`query_compat_handlers.rs`
+  `handle_summary_defect_learn` L9192-9199）——**有意 parity 决策**
+  （`http_server.rs` L912-914：与 Python worker readonly 语义一致），
+  非回归、非越权风险（拒绝写入，与 T-13 类"READ_ONLY 带写副作用"不同）。
+- 标注债：矩阵 op_class=READ_ONLY 与其写语义不符（§9.25 遗留待办仍开放）；
+  处置方向（写连接迁移 vs 仅修正 op_class 标注）待后续批次决策。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`
