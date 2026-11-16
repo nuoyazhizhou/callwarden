@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "9b9a69822fa825ed454eec961713e0b9ac596f79",
+  "supplied_source_revision": "ebb1f8ea84d1d87308683629baba9590e981453d",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,8 +38,8 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7233,
-    "python_source_files": 698,
+    "python_definitions": 7244,
+    "python_source_files": 699,
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 24,
@@ -3648,6 +3648,10 @@
     {
       "path": "tests/test_sync_log_cleanup.py",
       "sha256": "480849ca1175d961da40c4fb4a405bdf2bf5a41f9c98d5cba1681bf4f8e848e9"
+    },
+    {
+      "path": "tests/test_t13_write_containment.py",
+      "sha256": "12bf9af67d249e649ca8c4d26ec2b662a79ed3948042b08c6d1bc565f4beae4e"
     },
     {
       "path": "tests/test_task_attribution.py",
