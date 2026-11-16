@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "1b42f05d9e33d5febf8461823ffc0fef11cd1428",
+  "supplied_source_revision": "2987b331edd91b941fafb918535517678145987e",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -3767,7 +3767,7 @@
     },
     {
       "path": "tests/test_task_split_governance.py",
-      "sha256": "fbdb5dd56e88c1f656040803847475f1aceeafb26bdbec24e03026e91ae9038b"
+      "sha256": "cc4ed839953a4cd2b73b2cd535bc8e341f50bd5d586f5ed338cf3ffcaab9512a"
     },
     {
       "path": "tests/test_task_split_steps.py",
