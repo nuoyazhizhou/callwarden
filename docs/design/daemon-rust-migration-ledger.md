@@ -2516,6 +2516,70 @@ independent_reviewer 复审；不得 apply/close。
   （peer 持有 snapshot 库即可查库内全部 workspace 的分支），如需分支级
   最小权限需后续 schema/租约演进。
 
+## 9.26 补记：P0-COMPAT-v3 白名单清零批次（2026-09-10～09-19，任务 `T-1788963104058-fdb2e848` 等）
+
+> 本小节为 2026-11-16 HTTP 迁移状态核查时的**追溯补记**：该批次的完成证据
+> 只落在代码注释（`http_server.rs` COMPAT_ROUTE_WHITELIST 数组头注释、
+> `compat_registry.py` 路由表注释），未入账本，违反「实现即真相 + 账本同步」
+> 惯例，现补齐。
+
+**1. 批次内容**：
+
+- tools_summary 组 19 个只读方法（get_summary / project_brief / repo_map /
+  test_impact_selection / who_to_ask / get_ownership_map / guardrail_scan /
+  guardrail_check_edit / guardrail_list_rules / blast_radius / ask_codebase /
+  get_token_savings_report / get_vulnerability_blast_radius /
+  get_clone_aware_impact / review_readiness / cross_layer_impact /
+  evolution_frequency / hotspot_evolution / defect_learn）迁移 rust_native
+  （任务 `T-1788963106520-907544c8`）。
+- tools_semantic 组 5 个只读方法（find_similar_functions /
+  get_project_dependencies / get_symbol_commit_history / parse_codeowners /
+  semantic_search）迁移 rust_native（任务 `T-1788963104879-2e9e6270`）。
+- 矩阵最后 11 项残留 python_compat/transition 由 commit `4135fdb`
+  （2026-09-19）迁 rust_native/migrated。
+
+**2. 终态（核查实锤）**：
+
+- `COMPAT_ROUTE_WHITELIST`（`rust_ext/src/daemon/http_server.rs` L887-956）：
+  数组**清零**（888-956 行全为注释，0 个真实条目），`compat_route()` 恒 None，
+  worker 分派分支成死代码，白名单空时 compat worker 跳过启动
+  （`disabled_no_compat_routes`）。
+- `RUST_COMPAT_ROUTE`（`server/compat_registry.py` L206-220）：同为空 dict，
+  两端对齐。
+- 路由矩阵 244 条 target_backend 全部 RustNative(201)/TaskRpc(43)，
+  **0 条 PythonCompat**。
+- 至此 H5 快照（§9.9）记录的 99 项 compat 路由全部收敛完毕。
+
+**3. 遗留（本小节登记，后续小节处置）**：
+
+- 19 个 tools_summary 迁移条目在真相源 `gen_route_matrix.py` ROUTE_OVERRIDES
+  中缺 `status` 字段（生成器默认回落 `transition`），且 batch 值被历史脚本
+  编辑损坏为 `P0-COMPAT-v3transitionmigrated`——见 §9.27。
+- 写面通道（import_git_history 等 governance_write/index_write）仍 HTTP
+  fail-closed（E_HTTP_COMPAT_UNSUPPORTED），待独立批次。
+
+## 9.27 transition 状态升格 + batch 损坏修正（2026-11-16）
+
+**1. 根因**：`scripts/gen_route_matrix.py`（route_matrix.rs 的 SSOT，RP-07）
+ROUTE_OVERRIDES 中 tools_summary 组 19 条目缺 `status` 键，生成器
+`override.get("status", "transition")`（L570）将其标为 transition；同时
+batch 字段为损坏值 `P0-COMPAT-v3transitionmigrated`（疑似历史一次性脚本把
+batch/status/终态三词拼接进 batch，status 键反而丢失）。
+
+**2. 修复**：19 条目显式改为 `"batch": "P0-COMPAT-v3", "status": "migrated"`；
+`--emit-json` 重生 `deliverables/software-company/tool_migration_matrix.json`
+（244 工具）+ `--emit-rust` 写回 `route_matrix.rs` marker 区间；
+`--check` OK（矩阵 JSON 与 Rust mirror 均与内存生成字节级一致）。
+
+**3. 状态分布**：migrated 141→**160**、stable 84、transition 19→**0**。
+
+**4. 安全性论证**：status 字段为纯元数据——Rust 侧仅在 `list_routes` JSON
+序列化输出（route_matrix.rs L394），无逻辑消费；Python 收敛测试
+`test_m1_route_matrix.py` 不断言 status 分布（仅注释提及）。升格零行为变更。
+
+**5. 验收**：`test_m1_route_matrix.py` 7 项通过；`cargo test --manifest-path
+rust_ext/Cargo.toml route_matrix` 通过；三端 `--check` 一致。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "ebb1f8ea84d1d87308683629baba9590e981453d",
+  "supplied_source_revision": "11b3ae66de46387f71dea413ba8c2cf4e11c80b3",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -67,7 +67,7 @@
     },
     {
       "path": "deliverables/software-company/tool_migration_matrix.json",
-      "sha256": "935060e0972cc08febf84b461c50ea0f9b1eeae07590b6a032ed9daa7ef26c03"
+      "sha256": "d1c4f780734e0ec035647795518df964abd0d1eef489cbae02aa033d5ce3057f"
     },
     {
       "path": "docs/testing/gen_test_cases.py",
@@ -423,7 +423,7 @@
     },
     {
       "path": "rust_ext/src/daemon/route_matrix.rs",
-      "sha256": "726e3a7d3196437822c8136e533ee569dd8303599c97a002cf0e925a64408f38"
+      "sha256": "c09340f7a0e0298411fb91344212b030c12e5be7250605e1c35d49debcc63f19"
     },
     {
       "path": "rust_ext/src/daemon/schema_migrator_handlers.rs",

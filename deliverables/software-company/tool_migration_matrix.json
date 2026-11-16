@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-11-11T00:22:31",
+  "generated_at": "2026-11-16T22:15:10",
   "total_tools": 244,
   "backends": [
     "rust_native",
@@ -1322,8 +1322,8 @@
       "target_backend": "rust_native",
       "rpc_method": "ask_codebase",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "blast_radius",
@@ -1332,8 +1332,8 @@
       "target_backend": "rust_native",
       "rpc_method": "blast_radius",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "churn_analysis",
@@ -1352,8 +1352,8 @@
       "target_backend": "rust_native",
       "rpc_method": "cross_layer_impact",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "defect_correlation",
@@ -1372,8 +1372,8 @@
       "target_backend": "rust_native",
       "rpc_method": "defect_learn",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "defect_search",
@@ -1422,8 +1422,8 @@
       "target_backend": "rust_native",
       "rpc_method": "evolution_frequency",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "find_uncovered_functions",
@@ -1452,8 +1452,8 @@
       "target_backend": "rust_native",
       "rpc_method": "get_clone_aware_impact",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_coverage_for_symbol",
@@ -1472,8 +1472,8 @@
       "target_backend": "rust_native",
       "rpc_method": "get_ownership_map",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_summary",
@@ -1482,8 +1482,8 @@
       "target_backend": "rust_native",
       "rpc_method": "get_summary",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_token_savings_report",
@@ -1492,8 +1492,8 @@
       "target_backend": "rust_native",
       "rpc_method": "get_token_savings_report",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_vulnerability_blast_radius",
@@ -1502,8 +1502,8 @@
       "target_backend": "rust_native",
       "rpc_method": "get_vulnerability_blast_radius",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "guardrail_add_rule",
@@ -1522,8 +1522,8 @@
       "target_backend": "rust_native",
       "rpc_method": "guardrail_check_edit",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "guardrail_list_rules",
@@ -1532,8 +1532,8 @@
       "target_backend": "rust_native",
       "rpc_method": "guardrail_list_rules",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "guardrail_scan",
@@ -1542,8 +1542,8 @@
       "target_backend": "rust_native",
       "rpc_method": "guardrail_scan",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "hotspot_evolution",
@@ -1552,8 +1552,8 @@
       "target_backend": "rust_native",
       "rpc_method": "hotspot_evolution",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "import_coverage",
@@ -1573,8 +1573,8 @@
       "target_backend": "rust_native",
       "rpc_method": "project_brief",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "record_token_savings",
@@ -1593,8 +1593,8 @@
       "target_backend": "rust_native",
       "rpc_method": "repo_map",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "review_readiness",
@@ -1603,8 +1603,8 @@
       "target_backend": "rust_native",
       "rpc_method": "review_readiness",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "test_impact_selection",
@@ -1613,8 +1613,8 @@
       "target_backend": "rust_native",
       "rpc_method": "test_impact_selection",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "who_to_ask",
@@ -1623,8 +1623,8 @@
       "target_backend": "rust_native",
       "rpc_method": "who_to_ask",
       "op_class": "READ_ONLY",
-      "batch": "P0-COMPAT-v3transitionmigrated",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "audit_verify_chain",
