@@ -2867,8 +2867,9 @@ review / apply，只能手工 `supersede` 收编。
 ## 38. HTTPS + mTLS 远端控制面验收矩阵（规划，2026-11-04）
 
 > 设计单源：`docs/design/mtls-remote-plane.md`（ADR-002）。
-> 状态：**已实现，收口对账（2026-11-11）**。S1–S4 四张子卡均已 `closed / completed`；
-> deferred 范围由承接卡 `T-1793807024448-17d4cd60`（[REMOTE-S4-FU]）补齐，该卡当前 `review`。
+> 状态：**已实现，收口对账（2026-11-11，2026-11-12 补记）**。S1–S4 四张子卡、父卡与 deferred
+> 承接卡 `T-1793807024448-17d4cd60`（[REMOTE-S4-FU]）均已 `closed / completed`（S4-FU Verdict
+> `V-dfa3ac0b7e64b682e5451cd8`、父卡 `V-5f6cc39e06c831aa367b1f5e`，均 pass）。
 > 本节登记验收口径、负例、命令与证据；逐行结论以 `python scripts/check_e2e_matrix_closure.py`
 > 实跑为准，不以本文档文字代替实跑。
 > 父卡：`[REMOTE] HTTPS+mTLS 远端控制面：删除 pipe/UDS/bridge（S1–S4）`；子卡 S1/S2/S3/S4。

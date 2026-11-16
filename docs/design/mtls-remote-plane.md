@@ -2,9 +2,9 @@
 
 > 状态：**已裁决（2026-11-04）**。本文档冻结架构决策与不变量；实现按 §10 的 S1–S4 分期，
 > 每期一张独立任务卡（父卡 `[REMOTE] HTTPS+mTLS 远端控制面`）。
-> 实施对账（2026-11-11）：S1–S4 四张子卡均已 `closed / completed`；deferred 范围由承接卡
-> `T-1793807024448-17d4cd60`（[REMOTE-S4-FU]）补齐，该卡当前 `review`。逐卡状态、依赖、
-> allowed/excluded 口径与回滚见 §17。
+> 实施对账（2026-11-11，2026-11-12 补记）：S1–S4 四张子卡、父卡与 deferred 承接卡
+> `T-1793807024448-17d4cd60`（[REMOTE-S4-FU]）均已 `closed / completed`；S4-FU 闭环后父卡
+> `verify` 步已执行并裁决通过。逐卡状态、依赖、allowed/excluded 口径与回滚见 §17。
 > 取代：`docs/design/http-security-profile-v2-design.md`（其 v2 `loopback_token_authenticated`
 > 与 v3 `cross_host_mutual_tls` 方向均被本 ADR 收敛为单轨 mTLS）。
 > 验收矩阵：`docs/design/cli-mcp-matrix-backlog.md` §38。
@@ -805,17 +805,19 @@ workspace 根（`CALLWARDEN_WORKSPACE` → MCP `_project_root`，同 F-5 修复�
 
 | 期 | 任务卡 | lifecycle | 合同 | Verdict 数 | 合入提交 |
 | --- | --- | --- | --- | --- | --- |
-| 父卡 | `T-1793774104011-34e361b4` | open（本步 `govern`） | r1 | — | — |
+| 父卡 | `T-1793774104011-34e361b4` | closed / completed | r1 | 1 | — |
 | S1 | `T-1793774130685-6acab9d4` | closed / completed | r1 | 1 | 见 §15 盘点基线 |
 | S2 | `T-1793774130739-6e096a14` | closed / completed | r1 | 1 | 见 §16 协议冻结 |
 | S3 | `T-1793774130800-71aa5b74` | closed / completed | r1 | 2 | `4b3c456` |
 | S4 | `T-1793774130880-766de4a0` | closed / completed | r1 | 0（门禁前遗留） | `7e178cb` |
-| S4-FU | `T-1793807024448-17d4cd60` | review | r1 | 0（待复核） | `ef28ab9` |
+| S4-FU | `T-1793807024448-17d4cd60` | closed / completed | r1 | 1 | `ef28ab9` |
 
 四张子卡均持有 `Task Contract`（revision ≥ r1），满足父卡 `govern` 步的「计划树冻结 + 子卡
 具备完整验收合同」口径。**已知治理观测**：S4 卡在 Verdict Ledger 强制门禁生效前闭环，因此
 `verdict_count = 0`；本步只做只读对账，不在本卡内补建历史 Verdict（补建需回放当时快照，
-超出本步 allowed paths）。
+超出本步 allowed paths）。S4 卡的字面 deferred 范围由 S4-FU 承接，后者已于 2026-11-12 以
+Verdict `V-dfa3ac0b7e64b682e5451cd8`（pass）闭环；父卡随后完成 `verify` 并以 Verdict
+`V-5f6cc39e06c831aa367b1f5e`（pass）闭环。
 
 ### 17.2 依赖声明
 
@@ -837,8 +839,6 @@ workspace 根（`CALLWARDEN_WORKSPACE` → MCP `_project_root`，同 F-5 修复�
 
 ### 17.4 收口后未关闭项
 
-- S4-FU（`T-1793807024448-17d4cd60`）尚处 `review`，未进入 adjudication；父卡的 `verify`
-  步应在其闭环后执行。
 - 矩阵 S4-06（跨 OS 实机回归）：**双向只读已取证 PASS**（§17.5）；写治理链路的跨 OS
   实机面已由 `[REMOTE-S4-06-D4]` 卡（`T-1794452006394-a7a161a0`）补入口并执行
   （2026-11-12），A 方向实机暴露产品缺陷 S4-06-D4-1（`BLOCKED`，§17.6）；该缺陷已由
