@@ -283,7 +283,7 @@ C1正常语义；C2逐参数等价类/默认/边界/互斥；C3精确负向及�
 | MCP:cross_repo_impact | diagnostics | rust_native / READ_ONLY | symbol_hash | depth | 待合同化；wire快照待复核 |
 | MCP:cross_repo_summary | diagnostics | rust_native / READ_ONLY |  |  | 待合同化；wire快照待复核 |
 | MCP:defect_correlation | code_health | rust_native / READ_ONLY | symbol_hash | window_commits | 待合同化；wire快照待复核 |
-| MCP:defect_learn | semgrep_defects | rust_native / READ_ONLY | fix_commit_hash |  | 待合同化；wire快照待复核 |
+| MCP:defect_learn | semgrep_defects | rust_native / PROTECTED_MUTATION | fix_commit_hash |  | 待合同化；wire快照待复核 |
 | MCP:defect_search | semgrep_defects | rust_native / READ_ONLY |  | category, severity_filter | 待合同化；wire快照待复核 |
 | MCP:defect_stats | semgrep_defects | rust_native / READ_ONLY |  |  | 待合同化；wire快照待复核 |
 | MCP:defect_suggest_fix | semgrep_defects | rust_native / READ_ONLY | symbol_hash | finding_id | 待合同化；wire快照待复核 |

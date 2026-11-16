@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "11b3ae66de46387f71dea413ba8c2cf4e11c80b3",
+  "supplied_source_revision": "3c54b48871d95ac6f815b644f4468a210ff3dd1d",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -27,8 +27,8 @@
     },
     "mcp_op_classes": {
       "GOVERNANCE_WRITE": 5,
-      "PROTECTED_MUTATION": 78,
-      "READ_ONLY": 161
+      "PROTECTED_MUTATION": 79,
+      "READ_ONLY": 160
     },
     "source_matrix_category_set_consistent": true,
     "schema_matrix_set_consistent": true,
@@ -38,7 +38,7 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7244,
+    "python_definitions": 7245,
     "python_source_files": 699,
     "convergence_definitions": 58,
     "skip_calls": {
@@ -57,7 +57,7 @@
     "reason_absent_sites": 22,
     "reason_nonliteral_or_absent_sites": 189,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2122,
+    "rust_src_attributes": 2124,
     "rust_src_cfg_test_files": 121
   },
   "inputs": [
@@ -67,7 +67,7 @@
     },
     {
       "path": "deliverables/software-company/tool_migration_matrix.json",
-      "sha256": "d1c4f780734e0ec035647795518df964abd0d1eef489cbae02aa033d5ce3057f"
+      "sha256": "6e0adec2a0e4f9c9c222b4bf3bc5e26de654aa15a68f2521a2796ba77e7a2656"
     },
     {
       "path": "docs/testing/gen_test_cases.py",
@@ -303,7 +303,7 @@
     },
     {
       "path": "rust_ext/src/daemon/compat_native_handlers.rs",
-      "sha256": "a09fb0f99d50084e31903046dfcafa4010eef783c14e0ecafed6aba77dc7c768"
+      "sha256": "1ed094392e717b4327dd2f9ee2a82229c34cb5534581bfffa2d18d6ad9b20fa4"
     },
     {
       "path": "rust_ext/src/daemon/config.rs",
@@ -359,7 +359,7 @@
     },
     {
       "path": "rust_ext/src/daemon/http_server.rs",
-      "sha256": "72197b55a5f021cc5c447db5b5de797f278a6bef4e1aef637f1ef27a6272c79b"
+      "sha256": "8ea2c45eb070b4b915a646c7c61f4479f147593d2d6f483c9206329c8e60b6a6"
     },
     {
       "path": "rust_ext/src/daemon/job_executor_handlers.rs",
@@ -407,7 +407,7 @@
     },
     {
       "path": "rust_ext/src/daemon/query_compat_handlers.rs",
-      "sha256": "4d0e740e15124fe7fae3cbd19e2d26950bfc8ed28ed4fb7641d6749c41e93248"
+      "sha256": "6fb9750ef93701df1f2f4615aa758c1e49c559639132da2d3e6316d01c1ff6ca"
     },
     {
       "path": "rust_ext/src/daemon/query_handlers.rs",
@@ -423,7 +423,7 @@
     },
     {
       "path": "rust_ext/src/daemon/route_matrix.rs",
-      "sha256": "c09340f7a0e0298411fb91344212b030c12e5be7250605e1c35d49debcc63f19"
+      "sha256": "9ab9dc08830859d85b574bd53d1d28319ecd05feb4af68d0f5ffc8e86186669e"
     },
     {
       "path": "rust_ext/src/daemon/schema_migrator_handlers.rs",
@@ -455,7 +455,7 @@
     },
     {
       "path": "rust_ext/src/daemon/snapshot_state.rs",
-      "sha256": "8b58fea947baedfc4b91f8cd83724b7c319296c79abdbd256ccdb5c1ba18a69e"
+      "sha256": "10821bf480c4e1149bd9c9661b1b3a73dce6818f160724e678672856b5d6e856"
     },
     {
       "path": "rust_ext/src/daemon/stage_toggle.rs",
@@ -1027,7 +1027,7 @@
     },
     {
       "path": "server/tools/tools_summary.py",
-      "sha256": "f6c468d0b28704d0df32b69f5c08ed4c2a3b01bf1134396b3506bfecedd84464"
+      "sha256": "b1bd506e2e6ac61fd2d6b14bd33f1d0c2d054ebb5599ac29b6d35ec718aaecc1"
     },
     {
       "path": "server/tools/tools_task.py",
@@ -2251,7 +2251,7 @@
     },
     {
       "path": "tests/test_defect_read_rpc_http.py",
-      "sha256": "9d666cd689207854fcb60e6d044e24e91ee9d42d6213592df1de1136ed1237e8"
+      "sha256": "035b7b74524e73fbdc11f832e39949ee04144d58a1349a04618cdc9f46c7c070"
     },
     {
       "path": "tests/test_degraded_mode.py",
@@ -2575,7 +2575,7 @@
     },
     {
       "path": "tests/test_mcp_defect_learn_http_rpc.py",
-      "sha256": "e8e3b4a3b23a1374c6ac259311d374181a05fe6f6e4fe0e209d147c34c8a8a01"
+      "sha256": "1f788726dd996d081433d2ca14efcdd3e4f8712d98d51e3aadc5d19b1aebce06"
     },
     {
       "path": "tests/test_mcp_detect_cycle_http_rpc.py",
