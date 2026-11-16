@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "2d3cd98b153f1ddc07a967018fb68090ed3c5402",
+  "supplied_source_revision": "1b42f05d9e33d5febf8461823ffc0fef11cd1428",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -143,7 +143,7 @@
     },
     {
       "path": "rust_ext/src/cli/external.rs",
-      "sha256": "e7fb0c6d0e81abcbde114235908c2ba8d2ed711910b3d11ee00bb127d7513d5a"
+      "sha256": "fb83a8fca2fd330c1a020c9a3d6d57a59c882844681a068c16e94f8e744210b1"
     },
     {
       "path": "rust_ext/src/cli/file_query.rs",
@@ -1331,7 +1331,7 @@
     },
     {
       "path": "tests/convergence/fixtures/audit_mcp_inventory.json",
-      "sha256": "44aa806e7a396de8af0432f2bcf5a77892b8c53c42cbd39289c1b03429d1c3f1"
+      "sha256": "0d5a91b5803c0a4f48487ee9b3e4619a18a33af62a9fb3ec92c8cd3da87724ff"
     },
     {
       "path": "tests/convergence/fixtures/cli_full_params.json",
@@ -2251,7 +2251,7 @@
     },
     {
       "path": "tests/test_defect_read_rpc_http.py",
-      "sha256": "035b7b74524e73fbdc11f832e39949ee04144d58a1349a04618cdc9f46c7c070"
+      "sha256": "fa692d8978ef6c34a7c97da74e3ee9ccc8eeab4d68a77a32c11ccf8337d8ef5a"
     },
     {
       "path": "tests/test_degraded_mode.py",
@@ -2339,7 +2339,7 @@
     },
     {
       "path": "tests/test_http_combined_worker_cutover.py",
-      "sha256": "ad71848fc086937d4ad3baa3aa9750e201323b4743ca56bf289eb3ab05fc13ab"
+      "sha256": "6d7223e9112b439dc45c268e4a80f34db90574e15e8d3355bdafb953a0b0a395"
     },
     {
       "path": "tests/test_http_compat_read_cutover.py",
