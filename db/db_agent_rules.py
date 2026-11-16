@@ -920,6 +920,24 @@ class AgentRulesMixin:
         else:
             abs_path = target_path
 
+        # T-13（GAP-SEC-01 同族）：写目标必须落在 workspace_root 内，
+        # 拦 `..` 相对穿越与 workspace 外绝对路径（realpath 覆盖符号链接逃逸）。
+        if not self._is_within_workspace(abs_path):
+            return {
+                "success": False,
+                "dry_run": dry_run,
+                "target_path": target_path,
+                "rule_count": 0,
+                "rule_ids": [],
+                "before_hash": "",
+                "after_hash": "",
+                "error": t(
+                    "cli.messages.edit_path_out_of_workspace",
+                    default="Path escapes workspace root; write rejected: {path}",
+                    path=target_path,
+                ),
+            }
+
         # 读取文件内容（不存在视为空）
         if os.path.isfile(abs_path):
             with open(abs_path, "r", encoding="utf-8") as f:
@@ -1075,6 +1093,18 @@ class AgentRulesMixin:
             abs_path = os.path.join(ws_root, target_path)
         else:
             abs_path = target_path
+
+        # T-13（GAP-SEC-01 同族）：同 rule_sync_agents_md，拦截越界写。
+        if not self._is_within_workspace(abs_path):
+            return {
+                "success": False,
+                "target_path": target_path,
+                "message": t(
+                    "cli.messages.edit_path_out_of_workspace",
+                    default="Path escapes workspace root; write rejected: {path}",
+                    path=target_path,
+                ),
+            }
 
         if os.path.isfile(abs_path):
             with open(abs_path, "r", encoding="utf-8") as f:

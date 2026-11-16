@@ -1264,8 +1264,16 @@ class QueryMixin:
             raise ValueError(f"不支持的格式: {format}")
 
         if output_file:
+            # T-13（GAP-SEC-01 同族）：output_file 为写副作用入口，必须落在
+            # workspace_root 内（拦 `..` 相对穿越与 workspace 外绝对路径，
+            # realpath 覆盖符号链接逃逸）。
+            abs_output = self._resolve_abs_path(output_file)
+            if not self._is_within_workspace(abs_output):
+                raise ValueError(
+                    f"output_file 越出 workspace_root，拒绝写入: {output_file}"
+                )
             # SEC-001：原子写入，避免半写入状态
-            atomic_write_file(output_file, content)
+            atomic_write_file(abs_output, content)
             return output_file
 
         return content

@@ -77,6 +77,10 @@ class CommentMixin:
             return {"success": False, "error": f"版本 v{info['version_num']} 没有注释"}
 
         abs_path = os.path.join(self.workspace_root, info["file_path"])
+        # T-13（GAP-SEC-01 同族，防御纵深）：file_path 来自 DB，可能被投毒；
+        # 写回前校验落点仍在 workspace_root 内（realpath 覆盖穿越/符号链接）。
+        if not self._is_within_workspace(abs_path):
+            return {"success": False, "error": f"路径越出 workspace，拒绝恢复: {info['file_path']}"}
         if not os.path.exists(abs_path):
             return {"success": False, "error": f"文件不存在: {info['file_path']}"}
 
@@ -210,6 +214,11 @@ class CommentMixin:
 
         for fpath, symbols in by_file.items():
             abs_path = os.path.join(self.workspace_root, fpath)
+            # T-13（GAP-SEC-01 同族，防御纵深）：rel_path 来自 DB，可能被投毒
+            if not self._is_within_workspace(abs_path):
+                results["skipped"] += len(symbols)
+                results["errors"].append(f"路径越出 workspace，跳过: {fpath}")
+                continue
             if not os.path.exists(abs_path):
                 results["skipped"] += len(symbols)
                 results["errors"].append(f"文件不存在: {fpath}")

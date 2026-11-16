@@ -39,6 +39,7 @@
 | T-10 | Windows Python 全量零执行 | P1 | CI/Python | DONE 本地（33f9e32：test-windows job，windows-latest × py3.14 + junction；3 连绿验收待 CI） |
 | T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
 | T-12 | 门禁脚本零单测 | P1 | CI/Gate | **DONE**（2026-11-14 销项：gen_coverage_manifest.py 脚本行为单测 20 用例入库全绿（9b9a698），回归 25 用例绿，真实脚本 --print-summary exit 0，详见 §3 T-12） |
+| T-13 | 同族越权写：export/rule-sync/restore 4 入口无 workspace 根约束 | P0 | Security | OPEN（2026-11-16 登记：T-5/GAP-SEC-01 同族漏网，复现与修复指引见 §3 T-13） |
 | GAP-16 | skip 站点 root_cause 0/456 复核 | 已知未知 | Audit | OPEN |
 | D-MATRIX | D 专项矩阵未写 | 已知未知 | Test Design | OPEN |
 | DEBT-LEDGER | 技术债账本 4 项漏登 | 已知未知 | Audit | OPEN |
@@ -168,6 +169,23 @@
 - **修复**：三脚本建单测文件（真实 pytest 输出/JUnit/collected fixture 化，正负向各一组）。
 - **验收**：单测入库且绿；后续改门禁先跑单测。
 - **复验销项（2026-11-14，HEAD 9b9a698）**：描述过期修正——check_ci_gates.py/check_selector_manifest.py 已有直接单测（tests/test_cicd_gates.py 14 用例，T-2 复验确认全绿），残余缺口仅 gen_coverage_manifest.py 脚本行为零单测（test_coverage_manifest.py 只断言 manifest 内容，非脚本行为）。销项达成——① 新增 `tests/test_coverage_manifest_script.py` 20 用例（A-F 六组正负向）：collect_cli_tops 正/重复归类 SystemExit、extract_cli_leaves 解析逻辑（choices 提取/跨行 usage 拼接/中文 `用法:` 前缀/无 choices→[]/缺 usage 与含 -h→RuntimeError，monkeypatch subprocess）、build_cli_entries 单命令降级记 errors 与两次提取不一致 SystemExit、build_mcp_entries 双真相源不一致/重复分类/工具名重复/非法 op_class 四类 SystemExit、main() `--output` 写文件与 `--print-summary` 不落盘、真实 subprocess 冒烟一条顶层命令；② 实跑：新文件 20/20 绿，回归 test_coverage_manifest.py + test_cicd_gates.py 25 用例绿；③ 真实脚本全量 `--print-summary` exit 0（cli_top=86/cli_leaf=197/mcp=244，与事实锚点一致）；④ 账本按 9b9a698 重生（fef6429），`--check` exit 0。
+
+### T-13　同族越权写：4 个 db 写入口无 workspace 根约束　【P0】
+
+- **登记（2026-11-16）**：T-5（GAP-SEC-01，commit 2e7b2d6）只收敛了 `propose_edit`；同一写模式在其他 Mixin 复制粘贴扩散，同族入口漏网。威胁模型：agent 可达面 = `cli/main.py` 工具分发表（~L877-935，镜像 MCP registry）。
+- **现象**：4 个 agent 可达工具可向 workspace 外任意路径落盘：
+  1. `export_module_graph` 的 `output_file`（cli/main.py:877，**op_class=READ_ONLY**——authority 门自动放行类携带写副作用 = 权限分类绕过，本条最重）。写点 `db/db_query.py:1268` `atomic_write_file(output_file)`，无任何约束。复现：`output_file` 指向 workspace 外 → 落盘成功并返回路径。
+  2. `rule_sync_agents_md` 的 `target_path`（cli/main.py:924，PROTECTED_MUTATION）。`db/db_agent_rules.py:914-921` `os.path.isabs` → 绝对路径原样采用；相对路径 join workspace 后不拒 `..`。写点 L999。复现：绝对越界与 `../escape_rel.md` 均 `success=True` 越权写（与 T-5 修复前 `_resolve_abs_path` 逐行同款）。
+  3. `rule_insert_agents_md_block`（cli/main.py:925），同款模式，写点 `db/db_agent_rules.py:1106`。
+  4. `restore_comment` / `restore_all_comments`（cli/main.py:934-935，PROTECTED_MUTATION）。`db/db_comment.py:79/212` 用 DB 中的 rel_path 直接 `os.path.join(workspace_root, ...)` 无包含性校验，写点 L140/L279。静态证据：需 DB rel_path 投毒可达，属防御纵深缺口。
+- **根因**：workspace 包含性校验未提炼为共享约束，各 Mixin 各自 resolve 路径且只做 join/采用，不做包含性判定。
+- **修复指引**：复用 `EditSafetyMixin._is_within_workspace`（realpath+commonpath+normcase，CodeGraphDB 已组合该 Mixin，四入口均可直接调用）：① `db_query.export_module_graph` 写前校验，越界 raise ValueError；② `db_agent_rules` 两入口 resolve 后前置校验，越界返回 `success=False`；③ `db_comment` 两函数写前校验，`restore_comment` 返回 `success=False`、`restore_all_comments` 记 errors 跳过；④ `export_module_graph` op_class 语义处置见验收标准 ④。
+- **验收标准**：
+  1. 4 入口 × 2 形态（`..` 相对穿越 / workspace 外绝对路径）负向用例：一律失败（raise 或 `success=False`）且越界路径不落盘；
+  2. 合法路径（workspace 内）行为不回归（export 落盘成功、rule_sync/insert 对 workspace 内 AGENTS.md 正常写入）；
+  3. Rust 侧复核：`handle_export_module_graph`（rust_ext/src/daemon/query_compat_handlers.rs:1910）只消费 `format`，不消费 `output_file`、不落盘——Rust native 路径无同漏，结论记录在案；
+  4. op_class 语义处置：`export_module_graph` 保持 READ_ONLY 不改（改分类将连锁 MCP registry / route matrix 双真相源与账本），收敛写范围至 workspace 内即消除「READ_ONLY 越权写」的实际后果；残余语义张力（READ_ONLY 类在 workspace 内落盘）作为已知限制在销项行明示。
+- **建议路由**：Security agent。
 
 ---
 
