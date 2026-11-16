@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "3c54b48871d95ac6f815b644f4468a210ff3dd1d",
+  "supplied_source_revision": "2d3cd98b153f1ddc07a967018fb68090ed3c5402",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -115,7 +115,7 @@
     },
     {
       "path": "rust_ext/src/bin/cw_daemon.rs",
-      "sha256": "df2a092f0a95f327e4fde903a15f88e79646350cea384b6f8637fba295043e9b"
+      "sha256": "8e2b77fa9ad4880c5e3f07c920f509935f7c2b88d30c30509710b9d1f33b49dd"
     },
     {
       "path": "rust_ext/src/canonicalize.rs",
@@ -375,7 +375,7 @@
     },
     {
       "path": "rust_ext/src/daemon/mod.rs",
-      "sha256": "1acee01a0e9fc180685c07b1f23cf0734533c40b4f370c996a640c9eac0e8791"
+      "sha256": "d8e79dec212224848912f2bf06f9fe4cf8fd24dd00c240702dd8e91dca615d14"
     },
     {
       "path": "rust_ext/src/daemon/parse_retry_log.rs",
