@@ -4959,8 +4959,8 @@ pub fn handle_get_applicable_rules(
 // - guardrail_scan / guardrail_list_rules：_init_builtin_rules 首行 INSERT →
 //   OperationalError("attempt to write a readonly database")，恒 error；
 //   Rust fail-closed 同语义（写面不落只读快照连接）。
-// - defect_learn：无变更 → {"learned_patterns":0,...}；有 qualifying 变更 →
-//   INSERT → readonly error。
+// - defect_learn：写面（INSERT defect_fixes/defect_patterns），已迁主库写组
+//   compat_native_handlers::handle_defect_learn，不再走只读快照连接。
 // - ask_codebase：embedder 不可用 → keyword_fallback（live 实证 fallback_used）。
 // i18n：t() 在部署机解析为 zh_CN（i18n/zh_CN.json 键值，2026-09-10 抽取）。
 // ============================================================
@@ -8768,7 +8768,7 @@ fn summary_coverage_for_symbol(
     })))
 }
 
-// ---- evolution / hotspot / defect_learn ----
+// ---- evolution / hotspot ----
 
 /// summary_parse_time_window —— 复刻 db_evolution._parse_time_window
 ///（d/w/m/y = 86400/604800/2592000/31536000；返回截止时间戳，0 = 无限制）。
@@ -9154,55 +9154,9 @@ pub fn handle_summary_hotspot_evolution(
     Ok(json!(results))
 }
 
-/// defect_learn —— 复刻 db_defect_kb.learn_defect_from_fix。
-/// 只读连接语义：无 qualifying 变更 → 零结果（与 Python 一致）；有 qualifying
-/// 变更时 Python 必然走到 INSERT（defect_fixes / defect_patterns）→ worker ro
-/// 连接 OperationalError。Rust 同语义 fail-closed（写面不落只读连接）。
-pub fn handle_summary_defect_learn(
-    conn: &Connection,
-    _workspace_id: i64,
-    params: &Value,
-) -> Result<Value, DaemonRpcError> {
-    let fix_commit_hash = get_str_param_or(params, "fix_commit_hash", "");
-    let mut stmt = conn
-        .prepare(
-            "SELECT symbol_hash, old_content, new_content \
-             FROM git_symbol_changes \
-             WHERE commit_hash = ?1 AND change_type = 'modified'",
-        )
-        .map_err(|e| DaemonRpcError::internal_error(format!("defect learn prepare: {e}")))?;
-    let rows = stmt
-        .query_map([fix_commit_hash], |r| {
-            Ok((
-                r.get::<_, Option<String>>(0)?,
-                r.get::<_, Option<String>>(1)?,
-                r.get::<_, Option<String>>(2)?,
-            ))
-        })
-        .map_err(|e| DaemonRpcError::internal_error(format!("defect learn: {e}")))?;
-    let mut has_qualifying = false;
-    for row in rows {
-        let (_hash, old_c, new_c) =
-            row.map_err(|e| DaemonRpcError::internal_error(format!("defect learn row: {e}")))?;
-        if old_c.unwrap_or_default() != new_c.unwrap_or_default() {
-            has_qualifying = true;
-            break;
-        }
-    }
-    if has_qualifying {
-        return Err(DaemonRpcError::internal_error(
-            "defect_learn is write-face (INSERT defect_fixes/defect_patterns); \
-             read-only snapshot connection rejects it \
-             (parity: python worker OperationalError attempt to write a readonly database)"
-                .to_string(),
-        ));
-    }
-    Ok(json!({
-        "learned_patterns": 0,
-        "learned_fixes": 0,
-        "details": [],
-    }))
-}
+// defect_learn（原 handle_summary_defect_learn 只读 fail-closed 实现）已迁至
+// 主库写组：compat_native_handlers::handle_defect_learn（写面语义决策翻转，
+// 只读快照连接不再服务该方法，本文件不留死代码）。
 
 #[cfg(test)]
 mod bootstrap_tests {

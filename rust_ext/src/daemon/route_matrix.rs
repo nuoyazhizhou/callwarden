@@ -221,7 +221,7 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     ToolRoute { name: "churn_analysis", module: "tools_summary", target_backend: Backend::RustNative, rpc_method: "query.churn_analysis", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },
     ToolRoute { name: "cross_layer_impact", module: "tools_summary", target_backend: Backend::RustNative, rpc_method: "cross_layer_impact", op_class: OpClass::ReadOnly, batch: "P0-COMPAT-v3", status: "migrated" },
     ToolRoute { name: "defect_correlation", module: "tools_summary", target_backend: Backend::RustNative, rpc_method: "query.defect_correlation", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },
-    ToolRoute { name: "defect_learn", module: "tools_summary", target_backend: Backend::RustNative, rpc_method: "defect_learn", op_class: OpClass::ReadOnly, batch: "P0-COMPAT-v3", status: "migrated" },
+    ToolRoute { name: "defect_learn", module: "tools_summary", target_backend: Backend::RustNative, rpc_method: "defect_learn", op_class: OpClass::ProtectedMutation, batch: "P0-COMPAT-v3", status: "migrated" },
     ToolRoute { name: "defect_search", module: "tools_summary", target_backend: Backend::RustNative, rpc_method: "query.defect_search", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },
     ToolRoute { name: "defect_stats", module: "tools_summary", target_backend: Backend::RustNative, rpc_method: "defect.stats", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },
     ToolRoute { name: "defect_suggest_fix", module: "tools_summary", target_backend: Backend::RustNative, rpc_method: "query.defect_suggest_fix", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },

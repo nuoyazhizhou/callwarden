@@ -489,7 +489,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             学习结果报告
         """
-        return _route('defect_learn', {"fix_commit_hash": fix_commit_hash}, 'READ_ONLY')
+        return _route('defect_learn', {"fix_commit_hash": fix_commit_hash}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def defect_stats() -> dict:
@@ -690,7 +690,8 @@ def _h_defect_learn(ctx: CompatCallContext) -> Any:
 # defect_correlation / churn_analysis / defect_search / defect_suggest_fix
 # 已 W4-3 迁移 rust_native（T-1786886251769-22b94ee8-sub-3），从本白名单移除
 # （原 24 项）；defect_learn 为写面（INSERT defect_fixes/defect_patterns），
-# 保持 python_compat（W4-3 决策，见 ledger §9.24）。
+# W4-3 曾保持 python_compat（ledger §9.24），compat 下线后临时只读 fail-closed，
+# 现已迁 daemon 主库写连接（handle_defect_learn，op_class 修正 PROTECTED_MUTATION）。
 # review_readiness 依赖 blast_radius 与 cross_layer_impact（均未迁移），
 # 保持 python_compat（W4-2 决策，见 ledger §9.23）。
 # find_uncovered_functions 已 S2 迁移 rust_native
@@ -698,8 +699,11 @@ def _h_defect_learn(ctx: CompatCallContext) -> Any:
 # P0-COMPAT-v3（T-1788963106520-907544c8，2026-09-10）：原 19 项只读白名单
 # 已全部迁移 rust_native，本 dict 清空；_h_* handler 保留作为 Python 真相源
 # 参照（与 tools_security.py 同款退役姿势）。写面语义说明：
-# - guardrail_scan / guardrail_list_rules / defect_learn 在 worker mode=ro
-#   连接上 fail-closed（Rust 侧同语义）。
+# - guardrail_scan / guardrail_list_rules 在 worker mode=ro 连接上 fail-closed
+#   （Rust 侧同语义）。
+# - defect_learn 不再只读 fail-closed：已迁 daemon 主库写连接真写入库
+#   （compat_native_handlers::handle_defect_learn，复刻 db_defect_kb.
+#   learn_defect_from_fix 语义）。
 _SUMMARY_READ_ONLY_METHODS: Dict[str, Any] = {}
 
 # 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并

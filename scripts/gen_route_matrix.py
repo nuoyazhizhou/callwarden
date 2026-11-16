@@ -337,7 +337,7 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "churn_analysis": {"rpc_method": "query.churn_analysis", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "cross_layer_impact": {"rpc_method": "cross_layer_impact", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "defect_correlation": {"rpc_method": "query.defect_correlation", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "defect_learn": {"rpc_method": "defect_learn", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "defect_learn": {"rpc_method": "defect_learn", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "defect_search": {"rpc_method": "query.defect_search", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "defect_stats": {"rpc_method": "defect.stats", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "defect_suggest_fix": {"rpc_method": "query.defect_suggest_fix", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},

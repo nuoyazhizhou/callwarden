@@ -8,6 +8,8 @@
 //!   - list_destructive_operations                ← db/db_git.py
 //!   - get_rollback_config / is_feature_rolled_back ← db/db_rollback_config.py
 //!   - build_defect_knowledge                     ← db/db_defect_kb.py
+//!   - defect_learn                               ← db/db_defect_kb.py
+//!     (learn_defect_from_fix，主库写：INSERT defect_fixes/defect_patterns)
 //!
 //! 库归属:
 //!   - 主库(codegraph,workspace_id 过滤):gc_* / list_destructive_operations /
@@ -1225,6 +1227,190 @@ fn build_defect_fixes(conn: &Connection, now: f64) -> Result<usize, DaemonRpcErr
     Ok(inserted)
 }
 
+// ====================================================================
+// defect_learn —— 复刻 db_defect_kb.learn_defect_from_fix（主库写）。
+// 与 build_defect_knowledge 语义不同：按单个 fix commit 学习
+// （git_symbol_changes → semgrep_findings 关联 → defect_patterns/defect_fixes）。
+// 真相源无 workspace 过滤（defect_patterns/defect_fixes 为全局表），
+// workspace ACL 由调用方 open_codegraph_db_write 的 owned_workspace 校验保证。
+// ====================================================================
+/// `defect_learn` —— 从修复 commit 学习缺陷模式并入库（INSERT
+/// defect_fixes / defect_patterns）。逐条复刻 Python 语义：
+/// - 仅 change_type='modified' 且 old≠new 的变更参与（old/new NULL 视为 ""）；
+/// - before/after hash = sha256(norm_newlines(content))（compute_content_hash）；
+/// - finding 关联：symbol_contents.content_hash→qualified_name→
+///   semgrep_findings.symbol_qualified（snippet 为空或出现在 old 内容才接受），
+///   退化 semgrep_findings.content_hash=before_hash；
+/// - pattern_id=DP-{rule_id}，_ensure_pattern(learned_from='git_fix',
+///   severity='info') 新建计 learned_patterns，case_count+1；
+/// - (pattern_id,symbol_hash,before,after) 已有 defect_fixes → duplicate 跳过；
+/// - 否则 INSERT defect_fixes(effectiveness=1.0) 计 learned_fixes。
+/// 整体单事务（对齐 Python conn.commit() 的一次性提交）。
+pub fn handle_defect_learn(
+    conn: &mut Connection,
+    _workspace_id: i64,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let fix_commit_hash = get_str_param_or(params, "fix_commit_hash", "");
+    let now = now_ts();
+    let prefix8: String = fix_commit_hash.chars().take(8).collect();
+    let description = format!("从修复 commit {prefix8} 学到的缺陷模式");
+
+    let tx = conn
+        .transaction()
+        .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn tx: {e}")))?;
+
+    // 1. 该 commit 的全部 modified 变更（Python 不过滤 NULL 内容，or "" 兜底）
+    let changes: Vec<(Option<String>, Option<String>, Option<String>)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT symbol_hash, old_content, new_content \
+                 FROM git_symbol_changes \
+                 WHERE commit_hash = ?1 AND change_type = 'modified'",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn prepare: {e}")))?;
+        let collected = stmt
+            .query_map(rusqlite::params![fix_commit_hash], |r| {
+                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn query: {e}")))?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()
+            .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn rows: {e}")))?;
+        collected
+    };
+
+    let mut learned_patterns = 0usize;
+    let mut learned_fixes = 0usize;
+    let mut details: Vec<Value> = Vec::new();
+
+    for (symbol_hash, old_c, new_c) in changes.into_iter() {
+        let old_content = old_c.unwrap_or_default();
+        let new_content = new_c.unwrap_or_default();
+        if old_content == new_content {
+            continue; // 无实质变更（Python: old==new → skip）
+        }
+        let before_hash = compute_content_hash(&old_content);
+        let after_hash = compute_content_hash(&new_content);
+        let fix_diff = compute_unified_diff(&old_content, &new_content);
+
+        // 2. symbol_hash → qualified_name（symbol_contents.content_hash）
+        let qualified_name: String = tx
+            .query_row(
+                "SELECT qualified_name FROM symbol_contents WHERE content_hash = ?1",
+                rusqlite::params![symbol_hash],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn qname: {e}")))?
+            .flatten()
+            .unwrap_or_default();
+
+        // 3. finding 关联：先 symbol_qualified（snippet 空或出现在 old 才接受），
+        //    再退化 content_hash=before_hash（Python 逐字复刻）
+        let mut related_rule_id = String::new();
+        if !qualified_name.is_empty() {
+            let row: Option<(Option<String>, Option<String>)> = tx
+                .query_row(
+                    "SELECT rule_id, snippet FROM semgrep_findings \
+                     WHERE symbol_qualified = ?1 ORDER BY scanned_at DESC LIMIT 1",
+                    rusqlite::params![qualified_name],
+                    |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+                )
+                .optional()
+                .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn finding: {e}")))?;
+            if let Some((rule_id, snippet)) = row {
+                let snippet = snippet.unwrap_or_default();
+                if snippet.is_empty() || snippet_in_content(&snippet, &old_content) {
+                    related_rule_id = rule_id.unwrap_or_default();
+                }
+            }
+        }
+        if related_rule_id.is_empty() {
+            let row: Option<Option<String>> = tx
+                .query_row(
+                    "SELECT rule_id FROM semgrep_findings \
+                     WHERE content_hash = ?1 ORDER BY scanned_at DESC LIMIT 1",
+                    rusqlite::params![before_hash],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn finding2: {e}")))?;
+            if let Some(rule_id) = row {
+                related_rule_id = rule_id.unwrap_or_default();
+            }
+        }
+
+        // 4. pattern 确保存在 + case_count 递增（Python _ensure_pattern/_increment）
+        let mut pattern_id: Option<String> = None;
+        if !related_rule_id.is_empty() {
+            let pid = format!("DP-{related_rule_id}");
+            let created = ensure_pattern_git_fix(
+                &tx,
+                &pid,
+                &extract_category(&related_rule_id),
+                &description,
+                &related_rule_id,
+            )?;
+            if created {
+                learned_patterns += 1;
+            }
+            tx.execute(
+                "UPDATE defect_patterns SET case_count = case_count + 1 WHERE pattern_id = ?1",
+                rusqlite::params![pid],
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn case_count: {e}")))?;
+            pattern_id = Some(pid);
+        }
+
+        // 5. 去重（仅 pattern_id 存在时查，Python 同款条件）
+        if let Some(ref pid) = pattern_id {
+            let dup: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM defect_fixes \
+                     WHERE pattern_id = ?1 AND symbol_hash = ?2 AND before_hash = ?3 AND after_hash = ?4)",
+                    rusqlite::params![pid, symbol_hash, before_hash, after_hash],
+                    |r| r.get(0),
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn dup: {e}")))?;
+            if dup {
+                details.push(json!({
+                    "symbol_hash": symbol_hash,
+                    "pattern_id": pid,
+                    "status": "duplicate",
+                }));
+                continue;
+            }
+        }
+
+        // 6. INSERT defect_fixes（pattern_id 可为 NULL，对齐 Python None 绑定）
+        tx.execute(
+            "INSERT INTO defect_fixes \
+               (pattern_id, symbol_hash, before_hash, after_hash, fix_diff, effectiveness, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![pattern_id, symbol_hash, before_hash, after_hash, fix_diff, 1.0_f64, now],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn insert: {e}")))?;
+        learned_fixes += 1;
+        details.push(json!({
+            "symbol_hash": symbol_hash,
+            "pattern_id": pattern_id.clone().unwrap_or_default(),
+            "rule_id": related_rule_id,
+            "before_hash": before_hash,
+            "after_hash": after_hash,
+            "status": "learned",
+        }));
+    }
+
+    tx.commit()
+        .map_err(|e| DaemonRpcError::internal_error(format!("defect_learn commit: {e}")))?;
+
+    Ok(json!({
+        "learned_patterns": learned_patterns,
+        "learned_fixes": learned_fixes,
+        "details": details,
+    }))
+}
+
 /// 复刻 db_defect_kb._snippet_in_content：snippet.strip() 作为子串在 content 中出现。
 /// snippet/content 任一为空 → false。
 fn snippet_in_content(snippet: &str, content: &str) -> bool {
@@ -1236,13 +1422,15 @@ fn snippet_in_content(snippet: &str, content: &str) -> bool {
 
 /// 确保 defect_patterns 存在 git_fix 来源记录（复刻 db_defect_kb._ensure_pattern，
 /// learned_from='git_fix'）。不存在才 INSERT OR IGNORE，case_count=0。
+/// 返回是否新创建（复刻 Python _ensure_pattern 的 bool 返回值，
+/// defect_learn 用它累计 learned_patterns）。
 fn ensure_pattern_git_fix(
     conn: &Connection,
     pattern_id: &str,
     category: &str,
     description: &str,
     detection_rule: &str,
-) -> Result<(), DaemonRpcError> {
+) -> Result<bool, DaemonRpcError> {
     let exists: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM defect_patterns WHERE pattern_id = ?1",
@@ -1252,7 +1440,7 @@ fn ensure_pattern_git_fix(
         .optional()
         .map_err(|e| DaemonRpcError::internal_error(format!("ensure_pattern select: {e}")))?;
     if exists.is_some() {
-        return Ok(());
+        return Ok(false);
     }
     // 描述截断到 500 字符（与 pattern 挖掘段一致，避免存储爆炸）
     let desc = if description.chars().count() > 500 {
@@ -1268,7 +1456,7 @@ fn ensure_pattern_git_fix(
         rusqlite::params![pattern_id, category, desc, detection_rule, now_ts()],
     )
     .map_err(|e| DaemonRpcError::internal_error(format!("ensure_pattern insert: {e}")))?;
-    Ok(())
+    Ok(true)
 }
 
 /// 生成 unified-diff 风格文本（存档展示用，不参与去重/匹配逻辑）。
@@ -1393,7 +1581,7 @@ mod tests {
             CREATE TABLE semgrep_findings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, rule_id TEXT, rule_name TEXT,
                 message TEXT, severity TEXT, snippet TEXT, fix TEXT,
-                content_hash TEXT, symbol_qualified TEXT);
+                content_hash TEXT, symbol_qualified TEXT, scanned_at REAL);
             CREATE TABLE git_symbol_changes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, commit_hash TEXT,
                 symbol_hash TEXT, change_type TEXT, old_content TEXT, new_content TEXT);
@@ -1629,5 +1817,130 @@ mod tests {
         .unwrap();
         let learned = build_defect_fixes(&conn, 1.0).unwrap();
         assert_eq!(learned, 0);
+    }
+
+    #[test]
+    fn defect_learn_writes_pattern_and_fix_and_dedups() {
+        // 复刻 db_defect_kb.learn_defect_from_fix 写语义（主库写连接）：
+        // qualifying 变更 → DP-{rule} 入库 + defect_fixes；重跑 duplicate；
+        // 无 finding 关联 → pattern_id NULL 仍记 fix；未知 commit → 零结果。
+        let mut conn = setup_db();
+        let old = "def run():\n    crash()\n";
+        let new = "def run():\n    guard()\n";
+        let before = compute_content_hash(old);
+        let after = compute_content_hash(new);
+        let sym = "a".repeat(64);
+        conn.execute(
+            "INSERT INTO symbol_contents (content_hash, qualified_name) VALUES (?1, 'crate::run')",
+            rusqlite::params![sym],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO git_symbol_changes
+               (commit_hash, symbol_hash, change_type, old_content, new_content)
+             VALUES ('fixc', ?1, 'modified', ?2, ?3)",
+            rusqlite::params![sym, old, new],
+        )
+        .unwrap();
+        // snippet 出现在 old 内容 → symbol_qualified 关联被接受
+        conn.execute(
+            "INSERT INTO semgrep_findings
+               (rule_id, snippet, content_hash, symbol_qualified, scanned_at)
+             VALUES ('r-sec-x', 'crash()', ?1, 'crate::run', 1.0)",
+            rusqlite::params![before],
+        )
+        .unwrap();
+
+        let out = handle_defect_learn(&mut conn, 1, &json!({"fix_commit_hash": "fixc"})).unwrap();
+        assert_eq!(out["learned_patterns"].as_i64().unwrap(), 1);
+        assert_eq!(out["learned_fixes"].as_i64().unwrap(), 1);
+        assert_eq!(out["details"][0]["status"], "learned");
+        assert_eq!(out["details"][0]["pattern_id"], "DP-r-sec-x");
+        assert_eq!(out["details"][0]["rule_id"], "r-sec-x");
+        assert_eq!(out["details"][0]["before_hash"], before);
+        assert_eq!(out["details"][0]["after_hash"], after);
+
+        // 落库断言：defect_fixes（effectiveness=1.0）+ defect_patterns（git_fix, case_count=1）
+        let (pid, eff): (String, f64) = conn
+            .query_row(
+                "SELECT pattern_id, effectiveness FROM defect_fixes WHERE before_hash = ?1",
+                rusqlite::params![before],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(pid, "DP-r-sec-x");
+        assert_eq!(eff, 1.0);
+        let (lf, cc): (String, i64) = conn
+            .query_row(
+                "SELECT learned_from, case_count FROM defect_patterns WHERE pattern_id = 'DP-r-sec-x'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(lf, "git_fix");
+        assert_eq!(cc, 1);
+
+        // 幂等去重：同 commit 重跑 → duplicate，不重复写（Python 同款条件查询）
+        let out2 = handle_defect_learn(&mut conn, 1, &json!({"fix_commit_hash": "fixc"})).unwrap();
+        assert_eq!(out2["learned_patterns"].as_i64().unwrap(), 0);
+        assert_eq!(out2["learned_fixes"].as_i64().unwrap(), 0);
+        assert_eq!(out2["details"][0]["status"], "duplicate");
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM defect_fixes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+
+        // 未知 commit → 零结果结构（与 Python 一致）
+        let out3 = handle_defect_learn(&mut conn, 1, &json!({"fix_commit_hash": "nope"})).unwrap();
+        assert_eq!(out3["learned_patterns"].as_i64().unwrap(), 0);
+        assert_eq!(out3["learned_fixes"].as_i64().unwrap(), 0);
+        assert!(out3["details"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn defect_learn_null_pattern_fix_and_old_new_equality_skip() {
+        // 无 finding 关联 → related_rule_id 空 → pattern_id NULL 仍 INSERT fix
+        //（Python 语义）；old==new 变更跳过；change_type!='modified' 不参与。
+        let mut conn = setup_db();
+        let old = "fn a() {}";
+        let new = "fn a() { b(); }";
+        let before = compute_content_hash(old);
+        let sym = "b".repeat(64);
+        conn.execute(
+            "INSERT INTO git_symbol_changes
+               (commit_hash, symbol_hash, change_type, old_content, new_content)
+             VALUES ('c1', ?1, 'modified', ?2, ?3)",
+            rusqlite::params![sym, old, new],
+        )
+        .unwrap();
+        // 同 commit 一条 old==new（应跳过）与一条 added（不参与）
+        conn.execute(
+            "INSERT INTO git_symbol_changes
+               (commit_hash, symbol_hash, change_type, old_content, new_content)
+             VALUES ('c1', ?1, 'modified', ?2, ?2)",
+            rusqlite::params![sym, old],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO git_symbol_changes
+               (commit_hash, symbol_hash, change_type, old_content, new_content)
+             VALUES ('c1', ?1, 'added', '', ?2)",
+            rusqlite::params![sym, new],
+        )
+        .unwrap();
+
+        let out = handle_defect_learn(&mut conn, 1, &json!({"fix_commit_hash": "c1"})).unwrap();
+        assert_eq!(out["learned_patterns"].as_i64().unwrap(), 0);
+        assert_eq!(out["learned_fixes"].as_i64().unwrap(), 1);
+        assert_eq!(out["details"].as_array().unwrap().len(), 1);
+        assert_eq!(out["details"][0]["pattern_id"], "");
+        let pid_null: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM defect_fixes WHERE pattern_id IS NULL AND before_hash = ?1",
+                rusqlite::params![before],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pid_null, 1);
     }
 }

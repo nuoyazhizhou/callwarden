@@ -1791,8 +1791,10 @@ impl DaemonStateExt for SnapshotDaemonState {
     // Python db 层（db_evolution.py defect_correlation /
     // get_defect_correlation_by_qn / churn_analysis + db_defect_kb.py
     // defect_pattern_search / suggest_fix）。defect_learn 为写操作
-    // （INSERT/UPDATE defect_patterns/defect_fixes），不迁移 rust_native
-    // （决策见 ledger §9.24），保持 python_compat。
+    // （INSERT/UPDATE defect_patterns/defect_fixes）：原决策（ledger §9.24）
+    // 保持 python_compat，compat 下线后临时走只读快照 fail-closed；
+    // 本批次决策翻转，迁主库写组（open_codegraph_db_write +
+    // compat_native_handlers::handle_defect_learn，复刻 Python 写语义）。
 
     fn handle_query_defect_correlation(
         &mut self,
@@ -3860,13 +3862,14 @@ impl DaemonStateExt for SnapshotDaemonState {
                 }
             }
 
-            // ---- P0-COMPAT-v3（T-1788963106520-907544c8）：tools_summary 组（19）----
+            // ---- P0-COMPAT-v3（T-1788963106520-907544c8）：tools_summary 组（18）----
             // get_summary / project_brief / repo_map / test_impact_selection /
             // who_to_ask / get_ownership_map / guardrail_scan / guardrail_check_edit /
             // guardrail_list_rules / blast_radius / ask_codebase /
             // get_token_savings_report / get_vulnerability_blast_radius /
             // get_clone_aware_impact / review_readiness / cross_layer_impact /
-            // evolution_frequency / hotspot_evolution / defect_learn
+            // evolution_frequency / hotspot_evolution
+            // （defect_learn 为写面，已迁主库写组；见下方 A 类 compat 写组）
             "get_summary"
             | "project_brief"
             | "repo_map"
@@ -3884,8 +3887,7 @@ impl DaemonStateExt for SnapshotDaemonState {
             | "review_readiness"
             | "cross_layer_impact"
             | "evolution_frequency"
-            | "hotspot_evolution"
-            | "defect_learn" => {
+            | "hotspot_evolution" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
                 match method {
@@ -3959,7 +3961,9 @@ impl DaemonStateExt for SnapshotDaemonState {
                     "hotspot_evolution" => {
                         query_compat::handle_summary_hotspot_evolution(&conn, workspace_id, params)
                     }
-                    _ => query_compat::handle_summary_defect_learn(&conn, workspace_id, params),
+                    // defect_learn 已迁主库写组；本组外层 or-pattern 不再含它，
+                    // 此 fallback 仅兜底 fail-closed（method_not_found）。
+                    _ => Err(DaemonRpcError::method_not_found(method)),
                 }
             }
 
@@ -4270,14 +4274,17 @@ impl DaemonStateExt for SnapshotDaemonState {
             // 这些历史裸名方法此前走 compat worker，compat 已永久下线；此处迁为 daemon
             // 原生 handler。统一经 open_codegraph_db_write 取真 workspace_id
             // （resolve_true_workspace_id 按 client_view_root）+ owned_workspace ACL。
+            // defect_learn 自本批次从只读快照组迁入（写面：INSERT defect_fixes/
+            // defect_patterns，原只读 fail-closed 决策已翻转）。
             "gc_status"
             | "gc_restore"
             | "gc_purge"
             | "get_fts_status"
             | "list_destructive_operations"
-            | "build_defect_knowledge" => {
+            | "build_defect_knowledge"
+            | "defect_learn" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
-                let (workspace_id, conn) = self.open_codegraph_db_write(peer, ws)?;
+                let (workspace_id, mut conn) = self.open_codegraph_db_write(peer, ws)?;
                 match method {
                     "gc_status" => {
                         super::compat_native_handlers::handle_gc_status(&conn, workspace_id, params)
@@ -4300,6 +4307,13 @@ impl DaemonStateExt for SnapshotDaemonState {
                             params,
                         )
                     }
+                    // defect_learn 显式分支（不复用 `_ =>` fallback：fallback 指向
+                    // build_defect_knowledge 实现，语义不同，不可混用）。
+                    "defect_learn" => super::compat_native_handlers::handle_defect_learn(
+                        &mut conn,
+                        workspace_id,
+                        params,
+                    ),
                     _ => super::compat_native_handlers::handle_build_defect_knowledge(
                         &conn,
                         workspace_id,

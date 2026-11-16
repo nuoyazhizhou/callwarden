@@ -911,7 +911,9 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     // defect_search / defect_suggest_fix 已 W4-3 迁移 rust_native 并移除白名单，
     // T-1786886251769-22b94ee8-sub-3；剩 20 项（含 defect_learn 写面）已迁
     // rust_native（P0-COMPAT-v3，T-1788963106520-907544c8，2026-09-10，白名单清零；
-    // defect_learn 写面在只读快照连接 fail-closed，与 Python worker readonly 语义一致））
+    // defect_learn 写面曾临时在只读快照连接 fail-closed，现已迁主库写连接
+    // 真写入库：compat_native_handlers::handle_defect_learn，op_class 修正为
+    // PROTECTED_MUTATION））
     // defect_stats 已 W2-3 迁移 rust_native（T-1786840097331-fd01a3f8），白名单条目移除
     // H4C-2 第二批语义/外部符号组只读工具（5 项）已 P0-COMPAT-v3 迁移 rust_native
     // （T-1788963104879-2e9e6270），compat 白名单条目全部移除。
@@ -4505,8 +4507,11 @@ fn build_capability_registry() -> Result<Value, String> {
     // （defect_correlation / churn_analysis / defect_search /
     // defect_suggest_fix）迁移 rust_native，backend 由 python_compat 切换，
     // COMPAT_ROUTE_WHITELIST 对应条目已移除；
-    // defect_learn 为写面（INSERT defect_fixes/defect_patterns），保持
-    // python_compat（W4-3 决策，T-1786886251769-22b94ee8-sub-3，见 ledger §9.24）。
+    // defect_learn 为写面（INSERT defect_fixes/defect_patterns）：W4-3 决策曾
+    // 保持 python_compat（ledger §9.24），compat 下线后临时只读 fail-closed；
+    // 本批次决策翻转——迁主库写连接真写入库（handle_defect_learn），
+    // operation_class 由 read_only 修正为 protected_mutation（矩阵/CLI 分发表
+    // cli/main.py 早已标 PROTECTED_MUTATION，此处对齐）。
     add(
         "query.defect_correlation",
         "defect_correlation",
@@ -4588,7 +4593,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "defect-learn",
         "rust_native",
         "available",
-        "read_only",
+        "protected_mutation",
         "workspace",
         false,
         "/v1/rpc",

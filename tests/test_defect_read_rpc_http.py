@@ -398,12 +398,12 @@ class TestToolRouteContract:
         stale 依据（A 桶 / MCP 工具 `_route` 化）：旧用例断言
         「保持 python_compat，HTTP 模式仍走 route_worker_call」；实际
         `tools_summary.py:492` 为
-        `return _route('defect_learn', {"fix_commit_hash": fix_commit_hash}, 'READ_ONLY')`，
+        `return _route('defect_learn', {"fix_commit_hash": fix_commit_hash}, 'PROTECTED_MUTATION')`，
         `route_worker_call` 已无调用点。
 
-        注（advisory）：`defect_learn` 语义为写面（INSERT defect_fixes /
-        defect_patterns），却以 `READ_ONLY` op_class 下发；本用例只锁当前实际
-        契约，若 op_class 需收紧为 PROTECTED_MUTATION 属生产侧决策，不在本卡 scope。
+        注：`defect_learn` 语义为写面（INSERT defect_fixes / defect_patterns），
+        op_class 已修正为 PROTECTED_MUTATION（daemon 侧迁主库写连接真写入库，
+        与 CLI 分发表 cli/main.py 及路由矩阵对齐）。
         """
         seen = {}
 
@@ -421,4 +421,4 @@ class TestToolRouteContract:
         assert result == {"learned": True, "pattern_id": "DP-1"}
         assert seen["method"] == "defect_learn"
         assert seen["params"] == {"fix_commit_hash": "deadbeef"}
-        assert seen["op"] == "READ_ONLY"
+        assert seen["op"] == "PROTECTED_MUTATION"
