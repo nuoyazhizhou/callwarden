@@ -3048,3 +3048,17 @@ review / apply，只能手工 `supersede` 收编。
 | 非目标 | 不改任务治理语义、不改 codegraph 查询语义、不重写 MCP 工具 |
 | 执行顺序 | **S1 → S2 → S3 → S4 严格串行**，禁止并行 checkout/并行执行。共享文件 `server/daemon_client.py`（S1–S4）、`server/tools/`（S2/S3）、`cli/main.py`（S1/S3）必须由当前阶段独占，前一阶段 adjudicate 闭环后才派发下一张卡；`task_dependencies` 当前库为空，顺序由生命周期与人工派工保证 |
 | 回滚 | S1 保留旧二进制；S4 删除类变更用 revert commit，无数据迁移 |
+
+> **2026-11-17 逐行对账复跑**（`C:\Python314\python.exe scripts\check_e2e_matrix_closure.py --json`，
+> exit 0 / `ok=true`，`violations=[]`、`gaps=[]`）：
+> - 看板 `T-1793238319341-1dfe8098`（[GOV] 9 月 CLI/MCP 验收矩阵收口看板）`closed`，
+>   3 张子卡（`T-1793238550960-0b8411a4` / `T-1793238551533-2db578bc` /
+>   `T-1793238552053-4cb4e644`）全部 `closed` 且步骤全 `done`；
+> - 遗留卡 `T-1789563951668-ba0c338c` 仍 `open`，按 `LEGACY_WAIVERS` 以
+>   `docs/evidence/supersede_9-16_live_e2e_20261029.json` 豁免（脚本已核验含该 task id）；
+> - 远端验收行 41 条全部 `pass`：S1-01…S1-20（pytest 用例标记命中）、
+>   S2-01…S2-09 与 S3-01…S3-10（归属卡 `closed`）、S4-01 / S4-03
+>   （`tests/test_single_track_kernel.py` 的 `test_s4_01` / `test_s4_03`）。
+> - 机检**不覆盖** S4-02 / S4-04 / S4-05 / S4-06 / S4-07：其中 S4-05 即本门禁自身
+>   （本次 PASS），其余四项的结论以 §38.4 的取证记录（`pytest tests/test_windows_bridge_e2e.py`
+>   移除/改矩阵、release 产物清单、跨 OS 双向实机证据、文档残留扫描）为准，本轮未重跑活体。
