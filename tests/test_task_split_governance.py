@@ -10,19 +10,28 @@
   no-bypass —— 子任务治理完整性逐项断言（不允许"有任务有步骤但无合同"残缺态），
               split event 记录真实 workspace_id（非空串）。
 
-依赖：live daemon（含 d7e9a95 修复）经 HttpDaemonRpcClient；权威库只读断言。
+依赖：模块级隔离 daemon（`_w3_harness.setup_w3_client`，USERPROFILE / registry /
+task-DB 全部重定向到 tmp 目录）经 HttpDaemonRpcClient；断言只读该隔离 task-DB。
+
+隔离而非复用常驻 daemon 的原因：本文件用例会在权威库真实建卡（父任务 + split
+子任务），跑在常驻 daemon 上会永久残留 open 卡（历史实测遗留 71 张）。隔离栈在
+fixture teardown kill 进程并随 tmp 目录销毁，真实 `~/.callwarden/callwarden.db`
+零写入。
 """
 
 import os
+import sqlite3
 import uuid
 
 import pytest
 
-from callwarden.server.daemon_client import HttpDaemonRpcClient
 from callwarden.server.daemon_protocol import DaemonRemoteError
+from _w3_harness import restore_w3_env, setup_w3_client
 
-AUTH_DB = r"C:\Users\wanpi\.callwarden\callwarden.db"
 _REPO_ROOT = r"C:\git_work\callwarden"
+# 由 `client` fixture 在模块级填充：隔离 task-DB 路径与权威 workspace 配对。
+_TASK_DB = ""
+_WS_PAIR = (0, "")
 IDENTITY = {
     "agent_id": "executor-workbuddy-v1-cur",
     "session_id": "sess-workbuddy-cw-20260822-0320",
@@ -32,67 +41,35 @@ IDENTITY = {
 
 
 def _db():
-    import sqlite3
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(_TASK_DB)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def _norm_root(path: str) -> str:
-    return os.path.normcase(os.path.abspath(str(path)).replace("\\\\?\\", ""))
+def _seed_capture_rule(task_db: str) -> None:
+    """seed `workspace_capture` c14n rule row（task.create 的 capability 前置）。
 
-
-def _resolve_pair(client):
-    """从 live daemon 解析当前仓库根的权威 (workspace_id, workspace_instance_id) 配对。
-
-    stale 修复（PYT 回归卡 step#4 · A 桶）：task.create 经 daemon 原生 task_loop
-    入口（rust_ext/src/daemon/task_loop/create.rs:36-37，BR-01）强制要求非空
-    workspace_instance_id，缺失即 E_TASK_WORKSPACE_INSTANCE_REQUIRED
-    （rust_ext/src/daemon/task_collab.rs:204-215 bind_task_to_workspace）。旧断言
-    只传数字 workspace_id=1，生产已演进为「registry ↔ task-DB 统一权威」配对。
-
-    配对判定对齐 server/daemon_client.py:3551-3620 的
-    resolve_workspace_pair_from_daemon（workspace.list 找 root 命中的 active 行 →
-    workspace.status 要求 registry_instance_id == task_db_instance_id == instance
-    且 task_db_workspace_id 为正整数）；此处直接用测试既有 client 调用，避免
-    该函数内部 _get_rpc_client_for_route 的 manifest 解析与本用例 client 分歧。
+    隔离 task-DB 由 `setup_w3_client` 建库但不含该 rule row，缺失时 `task.create`
+    以 E_WORKSPACE_AUTHORITY_MISMATCH（capability 未就绪）fail-closed。这里只补
+    rule row、不预置 capture：首条 create 由 daemon 自行追加 rev1 capture，后续
+    create 复用同一 registry identity，避免手工 hash 与 daemon 重算漂移。
     """
-    target = _norm_root(_REPO_ROOT)
-    for row in client.call("workspace.list", {}):
-        if not isinstance(row, dict) or row.get("status") != "active":
-            continue
-        row_root = row.get("client_view_root") or row.get("host_real_root") or ""
-        if _norm_root(row_root) != target:
-            continue
-        instance_id = row.get("workspace_instance_id")
-        if not isinstance(instance_id, str) or not instance_id.strip():
-            continue
-        try:
-            status = client.call(
-                "workspace.status", {"workspace_instance_id": instance_id}
-            )
-        except DaemonRemoteError:
-            continue
-        if not isinstance(status, dict):
-            continue
-        task_db_id = status.get("task_db_workspace_id")
-        if (
-            isinstance(task_db_id, int)
-            and task_db_id > 0
-            and status.get("registry_instance_id") == instance_id
-            and status.get("task_db_instance_id") == instance_id
-        ):
-            return task_db_id, instance_id
-    raise DaemonRemoteError(
-        "E_WORKSPACE_PAIR_NOT_FOUND",
-        f"未找到当前仓库根 {_REPO_ROOT} 的权威 workspace 配对（registry↔task-DB）",
-    )
+    conn = sqlite3.connect(task_db)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO canonicalization_rule_sets "
+            "(domain, canonicalization_version, rules_hash) "
+            "VALUES ('workspace_capture', 'workspace-capture-c14n/v1', 'cli-test-rules-hash')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _create_parent(client, steps=None):
     """经 daemon 创建带 workspace binding 的父任务。"""
     tid = "T-SPLIT-" + uuid.uuid4().hex[:10]
-    ws_id, ws_instance_id = _resolve_pair(client)
+    ws_id, ws_instance_id = _WS_PAIR
     steps = steps or [
         {"action": "port_rust_authority", "target_file": "rust_ext/src/daemon/task_collab_planning.rs"},
     ]
@@ -120,17 +97,26 @@ def _subtask_defs():
 
 
 @pytest.fixture(scope="module")
-def client():
-    # daemon 不可达时 runtime 段整体 skip（与 test_srv_019 /
-    # test_task_cascade_close 的 rpc fixture 同型）：CI fresh runner 无
-    # 常驻 daemon，直接调用会以 OSError(endpoint 不可连接) 染红；
-    # 静态门禁（handler 归属/参数契约断言）不依赖 daemon，仍执行。
-    c = HttpDaemonRpcClient()
+def client(tmp_path_factory):
+    # 隔离栈不可用（无 cw-daemon 二进制 / 启动失败）时 runtime 段整体 skip：
+    # CI fresh runner 无常驻 daemon，直接连 endpoint 会以不可连接染红。
+    data_root = str(tmp_path_factory.mktemp("task_split_"))
+    c, inst, _endpoint, proc = setup_w3_client(data_root, _REPO_ROOT, ws_id=1)
+    if proc is None:
+        pytest.skip("隔离 cw-daemon 不可用：runtime 段跳过（静态门禁仍执行）")
+    global _TASK_DB, _WS_PAIR
+    _TASK_DB = os.path.join(data_root, "task.db")
+    _WS_PAIR = (1, inst)
+    _seed_capture_rule(_TASK_DB)
     try:
-        c.call("ping", {})
-    except Exception:
-        pytest.skip("daemon 不可用：runtime 段跳过（静态门禁仍执行）")
-    return c
+        yield c
+    finally:
+        proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        restore_w3_env()
 
 
 def test_split_success_full_governance(client):
