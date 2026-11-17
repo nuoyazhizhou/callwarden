@@ -58,7 +58,10 @@ where
             };
             rt.block_on(async {
                 match super::http_server::serve(state, sp, config).await {
-                    Ok(addr) => eprintln!("[cw_daemon] [INFO] HTTP listener bound at {}", addr),
+                    Ok(addr) => eprintln!(
+                        "[cw_daemon] [INFO] HTTP listener stopped after drain (was at {})",
+                        addr
+                    ),
                     Err(e) => eprintln!("[cw_daemon] [ERROR] HTTP bind failed: {:?}", e),
                 }
             });
@@ -97,7 +100,10 @@ where
             };
             rt.block_on(async {
                 match super::http_server::serve_prebound(bound, state, sp, config).await {
-                    Ok(addr) => eprintln!("[cw_daemon] [INFO] HTTP listener bound at {}", addr),
+                    Ok(addr) => eprintln!(
+                        "[cw_daemon] [INFO] HTTP listener stopped after drain (was at {})",
+                        addr
+                    ),
                     Err(e) => eprintln!("[cw_daemon] [ERROR] HTTP serve failed: {:?}", e),
                 }
             });

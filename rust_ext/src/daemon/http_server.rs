@@ -33,6 +33,7 @@ pub mod auth_principal;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -169,6 +170,10 @@ pub struct HttpServerConfig {
     pub allow_remote: bool,
     /// PKI 根目录（`CW_PKI_DIR` 优先，否则 manifest 同目录 `pki/`）。
     pub pki_dir: PathBuf,
+    /// §9.32 P1 停止协议：shutdown 开关。daemon 主循环收到 SIGTERM/SIGINT 后
+    /// 置 true，accept loop 停止接受新连接并 drain 在途请求（上限
+    /// [`http_drain_timeout`]，测试可直调 `accept_loop` 传更短时限）。
+    pub shutdown_flag: Arc<AtomicBool>,
 }
 
 impl HttpServerConfig {
@@ -196,6 +201,7 @@ impl HttpServerConfig {
             endpoint: String::new(),
             allow_remote,
             pki_dir,
+            shutdown_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -274,6 +280,23 @@ impl DedupStore {
             .map_err(|e| HttpServerError::Manifest(format!("dedup db open failed: {}", e)))?;
         conn.execute_batch(DEDUP_DDL)
             .map_err(|e| HttpServerError::Manifest(format!("dedup ddl failed: {}", e)))?;
+        // §9.32 P2：启动期清理崩溃残留——dispatch 中途死亡的 mutation 只留下
+        // response_json IS NULL 的占位行，重启后同 request_id 重试会永远 InFlight。
+        // 启动时进程内必然无在途 dispatch，NULL 行必为陈旧残留：直接删除，
+        // 同 request_id 的重试恢复为 First 可重放（24h 保留期内）。
+        {
+            let stale = conn
+                .execute("DELETE FROM http_dedup WHERE response_json IS NULL", [])
+                .map_err(|e| {
+                    HttpServerError::Manifest(format!("dedup stale cleanup failed: {}", e))
+                })?;
+            if stale > 0 {
+                eprintln!(
+                    "[cw_daemon][http] dedup 启动清理：删除 {} 条崩溃残留占位行（response_json IS NULL）",
+                    stale
+                );
+            }
+        }
         Ok(Self {
             conn: StdMutex::new(conn),
         })
@@ -570,6 +593,8 @@ where
     }
     // P0-2：打开持久化去重存储（与 manifest 同目录，跨 restart 保留 ≥24h）
     let dedup = Arc::new(DedupStore::open(&config.dedup_db_path)?);
+    // §9.32 P1：shutdown 开关先克隆出来（config 随后 move 进 AppState）。
+    let stop = Arc::clone(&config.shutdown_flag);
     // ADR-002 §5：principal 授权注册表（磁盘签发台账 + 权威 DB 吊销/授权）。
     let principal_registry = Arc::new(auth_principal::PrincipalRegistry::from_env(
         config.pki_dir.clone(),
@@ -586,7 +611,20 @@ where
     let router = build_router(app_state);
     let listener = tokio::net::TcpListener::from_std(bound.listener)
         .map_err(|e| HttpServerError::Serve(e.to_string()))?;
-    accept_loop(listener, router, bound.tls).await;
+    accept_loop(listener, router, bound.tls, stop, http_drain_timeout()).await;
+    Ok(local)
+}
+
+/// drain 上限（§9.32 P1）：置 stop 后在途请求最多等待这么久，超时 abort。
+/// `CW_HTTP_DRAIN_TIMEOUT_SECS` 可覆盖（>0 整数秒），默认 10s；测试直接调
+/// `accept_loop` 传更短时限，不经环境变量（避免并行测试的 env 竞态）。
+fn http_drain_timeout() -> std::time::Duration {
+    let secs = std::env::var("CW_HTTP_DRAIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(10);
+    std::time::Duration::from_secs(secs)
 }
 
 /// 逐连接 TLS accept 循环（serve 与测试共用）。
@@ -594,47 +632,98 @@ where
 /// TLS 握手阶段即拒非法/过期/未知 CA 的客户端证书；握手成功后把 peer 身份
 /// （principal_id / SAN / 证书指纹）作为 request extension 注入每份 router 副本，
 /// 再交给 hyper 驱动 axum Router。
+///
+/// §9.32 P1 优雅退出：`stop` 置位后停止接受新连接，进入 drain——在途连接
+/// 逐个 join，最多等 `drain` 时限，超时 abort 全部；随后 listener 随本函数
+/// 返回被 drop（socket 关闭），调用方（daemon 主循环）join HTTP 线程后退出。
 async fn accept_loop(
     listener: tokio::net::TcpListener,
     router: Router,
     tls: Arc<rustls::ServerConfig>,
-) -> ! {
+    stop: Arc<AtomicBool>,
+    drain: std::time::Duration,
+) {
     let acceptor = tokio_rustls::TlsAcceptor::from(tls);
+    // 在途连接集合：JoinSet 逐个 join，drain 结束时 abort 残余。
+    let mut conns: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut stop_seen = false;
+    let mut drain_deadline: Option<tokio::time::Instant> = None;
     loop {
-        let (stream, _peer_addr) = match listener.accept().await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("[cw_daemon][http] accept failed: {}", e);
-                continue;
+        if stop_seen {
+            // ---- drain 阶段：不再 accept，只等在途连接结束 ----
+            if conns.is_empty() {
+                eprintln!("[cw_daemon][http] drain 完成（0 个在途连接），listener 关闭");
+                return;
             }
-        };
-        let acceptor = acceptor.clone();
-        let router = router.clone();
-        tokio::spawn(async move {
-            let tls_stream = match acceptor.accept(stream).await {
-                Ok(s) => s,
-                Err(e) => {
-                    // ADR §15.3：握手失败对外只给 E_TLS_HANDSHAKE_FAILED，原因写日志。
-                    eprintln!("[cw_daemon][http] E_TLS_HANDSHAKE_FAILED: {}", e);
+            let deadline = drain_deadline.expect("drain_deadline 随 stop_seen 一起设置");
+            match tokio::time::timeout_at(deadline, conns.join_next()).await {
+                Ok(Some(_)) => continue, // 一个在途连接结束（Ok 或 panic 均算）
+                Ok(None) => {
+                    eprintln!("[cw_daemon][http] drain 完成（在途连接全部结束）");
                     return;
                 }
-            };
-            let peer = tls_peer_of(tls_stream.get_ref().1);
-            let app = router.layer(Extension(peer));
-            let io = TokioIo::new(tls_stream);
-            let svc = TowerToHyperService::new(app);
-            // ADR-002 §5.3：连接最大存活时间兜底——吊销/授权变更对**旧连接**的
-            // 最迟生效点是 max_conn_age（默认 300s），到期强制断开。
-            let served = hyper::server::conn::http1::Builder::new().serve_connection(io, svc);
-            match tokio::time::timeout(auth_principal::MAX_CONNECTION_AGE, served).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => eprintln!("[cw_daemon][http] connection closed: {}", e),
-                Err(_) => eprintln!(
-                    "[cw_daemon][http] connection closed: max_conn_age ({}s) exceeded",
-                    auth_principal::MAX_CONNECTION_AGE.as_secs()
-                ),
+                Err(_) => {
+                    eprintln!(
+                        "[cw_daemon][http] drain 超时（{}s），强制断开 {} 个在途连接",
+                        drain.as_secs(),
+                        conns.len()
+                    );
+                    conns.abort_all();
+                    return;
+                }
             }
-        });
+        }
+        tokio::select! {
+            _ = tick.tick() => {
+                if stop.load(Ordering::SeqCst) {
+                    stop_seen = true;
+                    drain_deadline = Some(tokio::time::Instant::now() + drain);
+                    eprintln!(
+                        "[cw_daemon][http] 收到停止信号：停止接受新连接，drain {} 个在途连接（上限 {}s）",
+                        conns.len(),
+                        drain.as_secs()
+                    );
+                }
+            }
+            accepted = listener.accept() => {
+                let (stream, _peer_addr) = match accepted {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("[cw_daemon][http] accept failed: {}", e);
+                        continue;
+                    }
+                };
+                let acceptor = acceptor.clone();
+                let router = router.clone();
+                conns.spawn(async move {
+                    let tls_stream = match acceptor.accept(stream).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            // ADR §15.3：握手失败对外只给 E_TLS_HANDSHAKE_FAILED，原因写日志。
+                            eprintln!("[cw_daemon][http] E_TLS_HANDSHAKE_FAILED: {}", e);
+                            return;
+                        }
+                    };
+                    let peer = tls_peer_of(tls_stream.get_ref().1);
+                    let app = router.layer(Extension(peer));
+                    let io = TokioIo::new(tls_stream);
+                    let svc = TowerToHyperService::new(app);
+                    // ADR-002 §5.3：连接最大存活时间兜底——吊销/授权变更对**旧连接**的
+                    // 最迟生效点是 max_conn_age（默认 300s），到期强制断开。
+                    let served = hyper::server::conn::http1::Builder::new().serve_connection(io, svc);
+                    match tokio::time::timeout(auth_principal::MAX_CONNECTION_AGE, served).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => eprintln!("[cw_daemon][http] connection closed: {}", e),
+                        Err(_) => eprintln!(
+                            "[cw_daemon][http] connection closed: max_conn_age ({}s) exceeded",
+                            auth_principal::MAX_CONNECTION_AGE.as_secs()
+                        ),
+                    }
+                });
+            }
+        }
     }
 }
 
@@ -5576,7 +5665,14 @@ mod tests {
         // 在测试运行时中驱动 accept loop；丢弃 JoinHandle 仅分离任务（运行时结束才终止）。
         // CR10：bind_http 返回 std listener，serve 前转 tokio listener。
         let tokio_listener = tokio::net::TcpListener::from_std(bound.listener).unwrap();
-        let _ = tokio::spawn(accept_loop(tokio_listener, router, tls));
+        // 测试路径：永不置位的 stop 标记 + 60s drain 上限（仅负向防御，正常不触发）。
+        let _ = tokio::spawn(accept_loop(
+            tokio_listener,
+            router,
+            tls,
+            Arc::new(AtomicBool::new(false)),
+            std::time::Duration::from_secs(60),
+        ));
         // 给 accept loop 一点启动时间，避免竞态导致连接被拒。
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         addr
@@ -6071,6 +6167,110 @@ mod tests {
         assert_eq!(s3, 200);
         let v3: Value = serde_json::from_str(&r3).unwrap();
         assert_eq!(v3["error"]["data"]["code"], "E_REQUEST_ID_REUSE_MISMATCH");
+    }
+
+    // ============================================
+    // §9.32 P2：dedup 崩溃残留占位行启动清理
+    // ============================================
+
+    /// 崩溃残留的 response_json IS NULL 占位行在 `DedupStore::open` 时被删除，
+    /// 同 request_id 重试恢复为 First（不再永远 InFlight）；正常完成路径
+    /// （store_result 回填）不受清理影响。
+    #[test]
+    fn test_dedup_stale_placeholder_cleaned_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("http-dedup-v1.sqlite");
+        {
+            let store = DedupStore::open(&db).unwrap();
+            assert!(matches!(
+                store
+                    .check_and_reserve("ws1", "snapshot.publish", "rid-1", "hash-a")
+                    .unwrap(),
+                DedupCheck::First
+            ));
+            // 模拟崩溃：drop 而不 store_result → 留下 NULL 占位行
+        }
+        {
+            let store = DedupStore::open(&db).unwrap();
+            // 启动清理后同 key 重试应恢复为 First，而不是 InFlight
+            assert!(
+                matches!(
+                    store
+                        .check_and_reserve("ws1", "snapshot.publish", "rid-1", "hash-a")
+                        .unwrap(),
+                    DedupCheck::First
+                ),
+                "stale NULL placeholder row must be cleaned on open, retry must be First"
+            );
+            // 正常路径不受影响：回填后重放 → Replay
+            store
+                .store_result("ws1", "snapshot.publish", "rid-1", &json!({"ok": true}))
+                .unwrap();
+            assert!(matches!(
+                store
+                    .check_and_reserve("ws1", "snapshot.publish", "rid-1", "hash-a")
+                    .unwrap(),
+                DedupCheck::Replay(_)
+            ));
+        }
+    }
+
+    // ============================================
+    // §9.32 P1：accept_loop 优雅停止（stop flag + drain）
+    // ============================================
+
+    /// stop 置位且无在途连接：accept_loop 在下一个 tick 即返回（drain 0 连接）。
+    #[tokio::test]
+    async fn test_accept_loop_returns_after_stop_with_no_connections() {
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let mut cfg =
+            HttpServerConfig::new("127.0.0.1:0".into(), dir.path().join("http-manifest.json"));
+        cfg.pki_dir = test_pki().ca_root.clone();
+        let bound = bind_http(&cfg).unwrap();
+        let listener = tokio::net::TcpListener::from_std(bound.listener).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = tokio::spawn(accept_loop(
+            listener,
+            Router::new(),
+            bound.tls,
+            Arc::clone(&stop),
+            Duration::from_secs(1),
+        ));
+        stop.store(true, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("accept_loop 应在 stop 置位后退出")
+            .expect("accept_loop task panic");
+    }
+
+    /// stop 置位后挂起中的在途连接（TLS 握手永不完成）在 drain 超时被 abort，
+    /// accept_loop 返回而不是永久阻塞。
+    #[tokio::test]
+    async fn test_accept_loop_drain_timeout_aborts_hanging_connection() {
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let mut cfg =
+            HttpServerConfig::new("127.0.0.1:0".into(), dir.path().join("http-manifest.json"));
+        cfg.pki_dir = test_pki().ca_root.clone();
+        let bound = bind_http(&cfg).unwrap();
+        let addr = bound.local_addr;
+        let listener = tokio::net::TcpListener::from_std(bound.listener).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = tokio::spawn(accept_loop(
+            listener,
+            Router::new(),
+            bound.tls,
+            Arc::clone(&stop),
+            Duration::from_millis(500),
+        ));
+        // 原始 TCP 连接、不发任何数据 → 服务端 TLS 握手挂起，构成在途连接
+        let _hung = TcpStream::connect(addr).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await; // 等 accept 吞下连接
+        stop.store(true, Ordering::SeqCst);
+        // drain 上限 500ms：超时 abort 后返回（含 100ms tick 与调度余量）
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("accept_loop 应在 drain 超时后退出")
+            .expect("accept_loop task panic");
     }
 
     // ============================================

@@ -507,8 +507,11 @@ mod unix {
         };
 
         // 7. 启动 HTTPS accept loop（唯一传输，共享同一串行化点）。
+        // §9.32 P1：先克隆 shutdown 开关（config 随后 move 进 spawn），并保留
+        // 线程 JoinHandle——停止路径置位 stop 后 join，等 accept loop drain 完。
         let serialization_point = new_serialization_point();
-        spawn_http_transport_prebound(
+        let http_stop = Arc::clone(&prebound_http.1.shutdown_flag);
+        let http_join = spawn_http_transport_prebound(
             prebound_http.0,
             Arc::clone(&http_state),
             Arc::clone(&serialization_point),
@@ -566,8 +569,11 @@ mod unix {
             }
         }
 
-        // 12. 优雅关闭：HTTPS accept 线程随进程退出（单轨无独立 listener 句柄）
+        // 12. 优雅关闭：置位 HTTP shutdown 开关 → accept loop 停止接受新连接、
+        // drain 在途请求（上限 CW_HTTP_DRAIN_TIMEOUT_SECS，默认 10s）→ join 线程。
         eprintln!("[cw_daemon] [INFO] shutting down daemon...");
+        http_stop.store(true, Ordering::SeqCst);
+        let _ = http_join.join();
         eprintln!("[cw_daemon] [INFO] daemon exited cleanly");
         0
     }
@@ -2530,8 +2536,11 @@ mod windows {
         };
 
         // 7. 启动 HTTPS accept loop（唯一传输，共享同一串行化点）。
+        // §9.32 P1：先克隆 shutdown 开关（config 随后 move 进 spawn），并保留
+        // 线程 JoinHandle——停止路径置位 stop 后 join，等 accept loop drain 完。
         let serialization_point = new_serialization_point();
-        spawn_http_transport_prebound(
+        let http_stop = Arc::clone(&prebound_http.1.shutdown_flag);
+        let http_join = spawn_http_transport_prebound(
             prebound_http.0,
             Arc::clone(&http_state),
             Arc::clone(&serialization_point),
@@ -2555,8 +2564,12 @@ mod windows {
             thread::sleep(Duration::from_millis(100));
         }
 
-        // 10. 优雅关闭：HTTPS accept 线程随进程退出（单轨无独立 listener 句柄）
+        // 10. 优雅关闭：置位 HTTP shutdown 开关 → accept loop 停止接受新连接、
+        // drain 在途请求（上限 CW_HTTP_DRAIN_TIMEOUT_SECS，默认 10s）→ join 线程。
+        // 注：Windows 停止信号来自控制台 Ctrl 处理器（§9.31：SIGTERM 不可达）。
         eprintln!("[cw_daemon] [INFO] shutting down daemon...");
+        http_stop.store(true, Ordering::SeqCst);
+        let _ = http_join.join();
         eprintln!("[cw_daemon] [INFO] daemon exited cleanly");
         0
     }

@@ -1125,21 +1125,28 @@ def daemon_collab_e2e(report: dict) -> list[str]:
         errors.append(f"[14.24/14.25/14.26] 自动唤起失败: {autostart_detail}")
 
     # --- T6: 单实例互斥（Req 14.23）---
-    # 停止 daemon 后并发唤起
-    _run_command(
+    # 停止 daemon 后并发唤起。stop 必须成功（rc=0）才能保证后续并发唤起
+    # 从干净状态开始；此前返回值被丢弃，stop 静默失败会污染互斥判定。
+    stop_rc, _, stop_err = _run_command(
         [sys.executable, "cw.py", "daemon", "stop", "--endpoint", endpoint],
         cwd=Path(__file__).resolve().parents[3],
-        timeout=10.0,
+        timeout=30.0,
     )
+    stop_ok = stop_rc == 0
+    results["daemon_stop"] = {"ok": stop_ok, "detail": f"rc={stop_rc} {stop_err.strip()[:200]}"}
+    if not stop_ok:
+        errors.append(f"[daemon stop] T6 前置停止失败: rc={stop_rc} {stop_err.strip()[:200]}")
     time.sleep(1)
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     def _attempt_ensure():
+        # `daemon ensure` 子命令不存在（§9.32 审计）；start 语义 = 已运行复用，
+        # 与 ensure 等价。
         r, _, _ = _run_command(
-            [sys.executable, "cw.py", "daemon", "ensure", "--endpoint", endpoint],
+            [sys.executable, "cw.py", "daemon", "start", "--endpoint", endpoint],
             cwd=Path(__file__).resolve().parents[3],
-            timeout=15.0,
+            timeout=30.0,
         )
         return r == 0
 
@@ -1191,23 +1198,31 @@ def daemon_collab_e2e(report: dict) -> list[str]:
         results["macos_cross_user_acl"] = {"ok": True, "detail": f"跳过（{plat}）"}
 
     # --- T8: 有界等待窗口（Req 14.22）---
-    _run_command(
+    stop_rc8, _, stop_err8 = _run_command(
         [sys.executable, "cw.py", "daemon", "stop", "--endpoint", endpoint],
         cwd=Path(__file__).resolve().parents[3],
-        timeout=10.0,
+        timeout=30.0,
     )
+    if stop_rc8 != 0:
+        errors.append(
+            f"[daemon stop] T8 前置停止失败: rc={stop_rc8} {stop_err8.strip()[:200]}"
+        )
     time.sleep(1)
     t0 = time.monotonic()
-    _run_command(
-        [sys.executable, "cw.py", "daemon", "ensure", "--endpoint", endpoint],
+    start_rc, _, start_err = _run_command(
+        # `daemon ensure` 子命令不存在（§9.32 审计）；start 语义 = 已运行复用
+        [sys.executable, "cw.py", "daemon", "start", "--endpoint", endpoint],
         cwd=Path(__file__).resolve().parents[3],
-        timeout=20.0,
+        timeout=30.0,
     )
     elapsed = time.monotonic() - t0
-    wait_ok = elapsed <= BOUNDED_WAIT_WINDOW_S + 2.0
-    wait_detail = f"耗时 {elapsed:.1f}s（窗口 {BOUNDED_WAIT_WINDOW_S}s）"
+    wait_ok = start_rc == 0 and elapsed <= BOUNDED_WAIT_WINDOW_S + 2.0
+    wait_detail = (f"耗时 {elapsed:.1f}s（窗口 {BOUNDED_WAIT_WINDOW_S}s）, "
+                   f"rc={start_rc} {start_err.strip()[:120]}")
     results["bounded_wait_window"] = {"ok": wait_ok, "detail": wait_detail}
-    if not wait_ok:
+    if start_rc != 0:
+        errors.append(f"[14.22] daemon start 失败: rc={start_rc} {start_err.strip()[:200]}")
+    elif not wait_ok:
         errors.append(f"[14.22] 有界等待超时: {wait_detail}")
 
     report["daemon_collab_e2e"] = {

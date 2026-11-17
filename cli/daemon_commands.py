@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from typing import Any, Dict, Optional, Sequence
 
 from callwarden.config import (
@@ -51,6 +52,15 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
                            help="等待 daemon 就绪的最长秒数(默认 15)")
     start_cmd.add_argument("--force", action="store_true",
                            help="即使探测到已有 daemon 也强制启动新实例(慎用)")
+
+    stop_cmd = sub.add_parser(
+        "stop",
+        help="停止本机 HTTP daemon。POSIX 发 SIGTERM（优雅 drain）；"
+             "Windows 用 taskkill /F 硬停（SIGTERM 不可达，见账本 §9.31）。"
+             "daemon 未运行时幂等成功",
+    )
+    stop_cmd.add_argument("--wait", type=float, default=15.0,
+                          help="等待 daemon 退出的最长秒数(默认 15)")
 
     register = sub.add_parser("register", help="注册当前 UID 的 workspace")
     register.add_argument("root")
@@ -403,6 +413,104 @@ def _dispatch_toolchain_cli(client, args) -> dict:
     raise AssertionError(action)
 
 
+def _send_daemon_stop_signal(pid: int) -> str:
+    """向 daemon 进程发送停止信号，返回使用的机制名。
+
+    - POSIX：`SIGTERM`（Rust daemon §9.32 P1 优雅退出：accept loop 停止
+      接受新连接并 drain 在途请求，上限 CW_HTTP_DRAIN_TIMEOUT_SECS）。
+    - Windows：`taskkill /F` 硬停——SIGTERM 对 Windows 进程不可达（§9.31），
+      daemon 的优雅退出路径只有控制台 Ctrl 事件；后台/远程停止只能硬停。
+
+    Raises:
+        OSError: 信号发送失败（进程不存在 / taskkill 非零退出）。
+    """
+    if os.name == "posix":
+        import signal
+        os.kill(pid, signal.SIGTERM)
+        return "sigterm"
+    import subprocess
+    proc = subprocess.run(
+        ["taskkill", "/PID", str(pid), "/F"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise OSError(
+            "taskkill /PID {} /F 失败: {}".format(
+                pid, (proc.stderr or proc.stdout).strip()
+            )
+        )
+    return "taskkill_force"
+
+
+def _run_daemon_stop(args) -> int:
+    """`cw daemon stop`：探活取 pid → PID 复用校验 → 发停止信号 → 轮询退出。
+
+    - 幂等：daemon 不可达（无 manifest 或 /health 连接失败）→
+      `{"ok": true, "status": "not_running"}`，rc 0。
+    - fail-closed：/health pid 与 manifest pid 不一致（PID 复用嫌疑）→
+      拒绝停止 rc 1，绝不 kill 不可信 pid。
+    - 超时：发送信号后 `--wait` 秒内 daemon 仍可达 → rc 1。
+    """
+    manifest_pid: Optional[int] = None
+    try:
+        _ep, manifest = resolve_http_endpoint_and_manifest(validate=True)
+        raw_pid = manifest.get("pid")
+        if isinstance(raw_pid, int):
+            manifest_pid = raw_pid
+    except Exception:
+        manifest_pid = None  # 无可用 manifest：只信 /health 的 pid
+
+    try:
+        health = HttpDaemonRpcClient().health()
+    except DaemonUnavailableError as e:
+        _print_json({"ok": True, "action": "stop", "status": "not_running",
+                     "detail": str(e)})
+        return 0
+    except DaemonRemoteError as e:
+        # manifest_id/PID 交叉核对失败等：身份不可信，拒绝停止（fail-closed）
+        _print_json({"ok": False, "action": "stop", "status": "failed",
+                     "error": "E_DAEMON_STOP_VERIFY_FAILED",
+                     "detail": f"停止前身份校验失败: {e}"})
+        return 1
+
+    health_pid = health.get("pid")
+    if not isinstance(health_pid, int) or health_pid <= 0:
+        _print_json({"ok": False, "action": "stop", "status": "failed",
+                     "error": "E_DAEMON_STOP_VERIFY_FAILED",
+                     "detail": "/health 未返回可信 pid，拒绝盲杀进程"})
+        return 1
+    if manifest_pid is not None and manifest_pid != health_pid:
+        _print_json({"ok": False, "action": "stop", "status": "failed",
+                     "error": "E_DAEMON_STOP_PID_MISMATCH",
+                     "detail": (f"manifest pid={manifest_pid} 与 /health pid="
+                                f"{health_pid} 不一致（PID 复用嫌疑），拒绝停止")})
+        return 1
+
+    try:
+        mechanism = _send_daemon_stop_signal(health_pid)
+    except OSError as e:
+        _print_json({"ok": False, "action": "stop", "status": "failed",
+                     "error": "E_DAEMON_STOP_SIGNAL_FAILED", "detail": str(e)})
+        return 1
+
+    deadline = time.monotonic() + max(args.wait, 0.0)
+    while True:
+        try:
+            HttpDaemonRpcClient().health()
+        except (DaemonUnavailableError, DaemonRemoteError):
+            _print_json({"ok": True, "action": "stop", "status": "stopped",
+                         "pid": health_pid, "mechanism": mechanism})
+            return 0
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
+
+    _print_json({"ok": False, "action": "stop", "status": "failed",
+                 "error": "E_DAEMON_STOP_TIMEOUT",
+                 "detail": f"daemon pid={health_pid} 在 {args.wait}s 内未退出"})
+    return 1
+
+
 def _run_daemon_diag_http(args) -> int:
     """CLI-01 (A′ 恢复)：health / manifest / capability 经 HTTP thin client 查询 Rust daemon。
 
@@ -469,6 +577,9 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
                                 "~/.callwarden/runtime/current/cw-daemon.exe 是否存在、"
                                 "端口是否被占用")})
         return 1
+
+    if args.action == "stop":
+        return _run_daemon_stop(args)
 
     if args.action == "mode":
         if args.set:

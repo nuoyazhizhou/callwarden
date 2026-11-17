@@ -2788,6 +2788,79 @@ READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
 - 测试账本按新提交 hash 重生；`rust_ext/src/daemon/**` 属
   RUNTIME_AFFECTING_PATH_PREFIXES，合入后需 `scripts/refresh_shared_runtime.ps1`。
 
+## 9.32 daemon stop 优雅退出改造（P1 shutdown/drain + P2 dedup 清理 + P3 CLI stop）（2026-11-17）
+
+> 触发：用户指令「按 P1 优先级实施 accept_loop 改造，添加 shutdown token 和
+> drain 逻辑，先修复 dedup 表陈旧占位行的清理逻辑，补全 Python CLI 的
+> daemon stop 子命令并修复 e2e 脚本」。接续 §9.31 第 3 节审计报告，三项
+> P1/P2/P3 全部实施。
+
+### 1. P1（Rust）：accept_loop shutdown token + 在途连接 drain
+
+- `HttpServerConfig` 新增 `shutdown_flag: Arc<AtomicBool>`（默认 false），
+  `serve`/`serve_prebound` 对外签名不变；daemon 主循环经
+  `prebound_http.1.shutdown_flag` 克隆持有开关。
+- `accept_loop` 重写：签名追加 `stop: Arc<AtomicBool>` 与
+  `drain: Duration`（去掉 `-> !`）。正常阶段 `tokio::select!` 驱动
+  accept 与 100ms tick 轮询 stop flag；每连接任务移入
+  `tokio::task::JoinSet` 追踪。stop 置位后停止 accept 进入 drain：
+  `timeout_at(deadline, conns.join_next())` 逐个等在途连接结束，
+  超时（默认 10s，`CW_HTTP_DRAIN_TIMEOUT_SECS` 可覆盖）`abort_all()`
+  强制断开；连接数归零即返回，listener 随函数返回 drop。
+- `cw_daemon.rs` unix/windows 双模块：启动时 `let http_stop =
+  Arc::clone(&prebound_http.1.shutdown_flag)` + 保留 `http_join =
+  spawn_http_transport_prebound(...)` 的 JoinHandle；停止路径置位
+  `http_stop` 后 `http_join.join()` 等 drain 完成再退出（替换原
+  「HTTPS accept 线程随进程退出」注释语义）。
+- drain 时限经参数传入 `accept_loop` 而非函数内读 env：测试直调可传
+  更短时限，避免并行测试的 env 竞态。
+- `server.rs` 两处 spawn 的线程日志改 drain 语义
+  （`HTTP listener stopped after drain (was at …)`）。
+
+### 2. P2（Rust）：dedup 崩溃残留占位行启动清理
+
+- `DedupStore::open` 在 DDL 初始化后执行
+  `DELETE FROM http_dedup WHERE response_json IS NULL`，清理条数 >
+  0 时打印启动日志。依据：启动期进程内必然无在途 dispatch，NULL 行
+  必为崩溃残留（§9.31 审计项 3），删除后同 `(ws, method, request_id)`
+  重试恢复 `First` 可重放（24h 保留期内）；已回填结果不受影响。
+- 清理失败 → `HttpServerError::Manifest`，daemon 启动 fail-closed。
+
+### 3. P3（Python）：`cw daemon stop` 子命令 + e2e 修复
+
+- `cli/daemon_commands.py` 新增 `stop` 子命令（`--wait` 默认 15s）与
+  `_run_daemon_stop`：
+  - 探活取 pid：`HttpDaemonRpcClient().health()`（无 autostart，
+    fail-closed）；不可达 → 幂等 `not_running` rc 0。
+  - PID 复用防护：manifest pid 与 /health pid 交叉核对，不一致 →
+    `E_DAEMON_STOP_PID_MISMATCH` rc 1 拒绝停止；/health 无可信 pid →
+    `E_DAEMON_STOP_VERIFY_FAILED` rc 1，绝不盲杀。
+  - `_send_daemon_stop_signal`：POSIX `os.kill(SIGTERM)`（配合 P1 真
+    优雅 drain）；Windows `taskkill /PID x /F` 硬停（SIGTERM 不可达，
+    §9.31 审计项 4），失败传播 `E_DAEMON_STOP_SIGNAL_FAILED`。
+  - 发信号后轮询 /health 等退出（上限 `--wait`），超时
+    `E_DAEMON_STOP_TIMEOUT` rc 1；探活阶段 `DaemonRemoteError`
+    （manifest_id/PID 交叉核对失败）→ fail-closed 拒绝停止。
+- `.github/workflows/e2e/run_platform_e2e.py`：T6/T8 前置的
+  `daemon stop` 调用改为捕获返回值并在 rc != 0 时计入 errors（原先
+  静默失效会污染互斥/有界等待判定）；两处 `daemon ensure`（子命令
+  不存在，argparse exit 2）改为 `daemon start`（已运行复用语义等价），
+  T8 并将 start rc 纳入 wait_ok 判定。
+
+### 4. 测试与验收
+
+- Rust：`test_dedup_stale_placeholder_cleaned_on_open`（崩溃残留 →
+  reopen 后 First，回填路径 Replay 不受影响）；
+  `test_accept_loop_returns_after_stop_with_no_connections`（stop 后
+  无在途连接立即退出）；`test_accept_loop_drain_timeout_aborts_hanging_
+  connection`（握手挂起连接在 drain 超时被 abort）。
+- pytest：新增 `tests/test_cli_daemon_stop.py` 10 例（幂等 / SIGTERM
+  happy path / PID mismatch 拒止 / 无可信 pid 拒止 / 超时 / 信号失败
+  传播 / Windows taskkill 成败两路 / DaemonRemoteError 拒止 / parser
+  注册）。
+- `rust_ext/src/daemon/**` 属 RUNTIME_AFFECTING_PATH_PREFIXES，合入后
+  需 `scripts/refresh_shared_runtime.ps1`。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`
