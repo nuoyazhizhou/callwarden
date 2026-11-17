@@ -2712,6 +2712,82 @@ READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
 单测）；`test_defect_read_rpc_http.py` + `test_http_combined_worker_cutover.py`
 56 通过；`gen_route_matrix.py --check` 通过；测试账本按新提交 hash 重生。
 
+## 9.31 证书到期监控 + 长任务心跳 watchdog + daemon stop 优雅退出审计（2026-11-17）
+
+> 触发：用户指令「先做证书到期监控和长任务心跳，请核查 daemon stop 的优雅退出逻辑」。
+> 前两项为实现，第三项为只核查报告（不改代码，修复建议待拍板）。
+
+### 1. 证书到期监控
+
+- Rust `pki_api.rs` 新增 `server_cert_expires_in_days(pki_root) -> Option<i64>`：
+  读 `<pki_root>/server/server.crt`（与 `ensure_server_cert_locked` 权威路径一致），
+  解析 notAfter 与当前 unix 时间差（向下取整天数）；文件缺失 / 坏 PEM → `None`
+  （只读、不 panic、不阻塞 /health）。单测 3 例（有效证书正天数且 ≤ 1y、缺文件、坏 PEM）。
+- `http_server.rs` `health_handler` 响应追加 `cert_expires_in_days`（`None` → `-1`
+  缺省哨兵）。契约：加字段不加新工具，不动 route_matrix；字段无敏感信息，
+  S1-17 /health 字段白名单已同步放行（tests/test_mtls_control_plane.py）。
+- Python `HttpDaemonRpcClient.verify_health` → `_warn_cert_expiry`：
+  `0 <= days < CERT_EXPIRY_WARN_DAYS(14)` 临期 warning；`days < 0 且非 -1` 已过期
+  warning（消息区分）；`-1` 哨兵 / 字段缺失（旧 daemon）静默。实例级限频
+  `_cert_expiry_warned`（每实例至多一条）。`call_with_autostart` 经
+  `discover → verify_health` 自然覆盖；watchdog 探活不经过该路径，不会刷屏。
+
+### 2. 长任务心跳（slow RPC watchdog）
+
+- 判定：`_rpc_timeout_for(method, base)` 返回值 > base（即 `http_method_timeout`
+  放宽的慢方法：workspace.build_graph / snapshot.publish / import.* 等）→ 走
+  `HttpDaemonRpcClient._call_with_watchdog`；快方法与 caller 显式短超时路径不变。
+- 实现：主 RPC 移入 worker 线程（`http.client.HTTPSConnection`，独立阻塞）；
+  watchdog 守护线程每 5s 经独立短连接 GET /health（timeout 2s），连续 2 次失败
+  判定 daemon 死亡/假死 → 主线程立即抛 `DaemonUnavailableError(E_HTTP_DAEMON_UNAVAILABLE)`。
+  daemon 正常响应时零行为差异。
+- 平台注记（Windows 实测）：跨线程 `sock.shutdown(SHUT_RDWR)` 与 `conn.close()`
+  均**无法**唤醒另一线程阻塞中的 SSL read（阻塞持续到对端响应/超时），故弃用
+  socket 手术方案改用 worker 线程模型——判死后 worker 仍在后台阻塞至 socket
+  超时（上限即慢方法超时），但 caller 已快速失败。
+- 测试 `tests/test_slow_rpc_watchdog.py`：慢/快方法判定单测 3 例 +
+  fake TLS daemon 集成 3 例（假死快速失败 < 20s 且错误码正确 / 健康不误杀 /
+  快方法不进 watchdog）；`tests/test_cert_expiry_monitor.py` 单测 4 例 +
+  隔离 daemon /health 字段集成 1 例。
+
+### 3. daemon stop 优雅退出审计（报告-only，本轮不改代码）
+
+1. **Python CLI 无 `cw daemon stop` 子命令**：`cli/daemon_commands.py` `_parser`
+   无 stop 分支；`.github/workflows/e2e/run_platform_e2e.py:1130/1195` 调用
+   `cw.py daemon stop --endpoint …` 会 argparse `invalid choice` exit 2，返回值
+   未检查 → 静默失效。
+2. **无 in-flight drain**：`cw_daemon.rs` 主循环收到 SIGTERM/SIGINT 置 stop_flag
+   后 break（L542-560），L569-571 注释自认「HTTPS accept 线程随进程退出」；
+   `http_server.rs` `serve`/`serve_prebound` 未用 `with_graceful_shutdown`
+   （全仓无命中）→ 在途请求被硬切断。
+3. **dedup 崩溃残留**：mutation 先 `INSERT OR IGNORE` 占位（`http_server.rs`
+   L304-315），dispatch 中途进程死亡 → `response_json` 恒 NULL → 重启后同
+   `(ws, method, request_id)` 重试永远 `InFlight`（L329-332），24h 内不可重放；
+   客户端换新 request_id 才能重执行。
+4. **Windows 无优雅停止路径**：signal-hook 的 SIGTERM 在 Windows 不可达
+   （`cw_daemon.rs` L523-525 `.ok()` 吞掉注册结果），实际只能 taskkill 硬杀。
+5. **manifest 不清理**：shutdown 不删 manifest 文件，依赖客户端
+   `resolve_http_endpoint_and_manifest(validate=True)` 探活失败 + autostart
+   重唤起兜底（可接受，无需改）。
+
+可选修复建议（**待拍板，未实施**）：
+- P1：`serve_prebound` 接 `with_graceful_shutdown`（watch stop_flag），SIGTERM
+  后 drain 在途请求（带上限如 10s）。
+- P2：dedup `InFlight` 占位行在 daemon 重启时清除（NULL response 行视为陈旧
+  占位）或加 takeover 语义。
+- P3：补 Python CLI `cw daemon stop`（读 manifest/PID 发 SIGTERM / Windows
+  graceful taskkill）或修 e2e 脚本调用。
+
+### 4. 验收
+
+- `cargo test --lib pki_api::tests` 3 通过；`cargo check --bins` 通过；
+  full `cargo test --lib` 回归通过。
+- pytest：`test_cert_expiry_monitor.py` + `test_slow_rpc_watchdog.py` 11 通过；
+  `test_mtls_control_plane.py`（S1-17 白名单更新）+ `test_mtls_enrollment.py` +
+  `test_http_daemon_integration.py` 31 通过。
+- 测试账本按新提交 hash 重生；`rust_ext/src/daemon/**` 属
+  RUNTIME_AFFECTING_PATH_PREFIXES，合入后需 `scripts/refresh_shared_runtime.ps1`。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

@@ -17,13 +17,16 @@ import base64
 import contextlib
 import gzip
 import hashlib
+import http.client
 import json
 import logging
 import os
 import ssl
 import subprocess
 import tempfile
+import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
@@ -74,6 +77,14 @@ SNAPSHOT_UPLOAD_INLINE_MAX_BYTES = 32 * 1024 * 1024   # gzip 流 ≤32MiB 走内
 SNAPSHOT_UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024    # 单块上限（total_chunks ≥ 2 时切块）
 SNAPSHOT_UPLOAD_MAX_CHUNKS = 4096                     # 块数上限
 SNAPSHOT_UPLOAD_BODY_MAX_BYTES = 64 * 1024 * 1024     # 上传面 body 口径（覆盖通用 8MiB）
+
+# §9.31 证书到期监控：/health `cert_expires_in_days` 低于该值打 warning。
+CERT_EXPIRY_WARN_DAYS = 14
+
+# §9.31 长任务心跳（watchdog）：慢方法调用期间的 /health 探活参数。
+WATCHDOG_PROBE_INTERVAL_SECS = 5.0    # 探活周期
+WATCHDOG_PROBE_TIMEOUT_SECS = 2.0     # 单次探活超时（短连接）
+WATCHDOG_PROBE_FAILURES_TO_ABORT = 2  # 连续失败 N 次 → 强制中止主调用
 
 
 class DaemonUnavailableError(RuntimeError):
@@ -1352,6 +1363,8 @@ class HttpDaemonRpcClient:
         self.last_request_id: Optional[str] = None
         # ADR-002：懒构建的 mTLS 上下文（CA pin + 客户端证书）。
         self._ssl_ctx: Optional[ssl.SSLContext] = None
+        # §9.31：证书到期告警限频（每实例至多一条 warning）。
+        self._cert_expiry_warned = False
 
     # ------------------------------------------------------------------
     # 发现与校验（fail-closed 门禁）
@@ -1409,7 +1422,32 @@ class HttpDaemonRpcClient:
                     E_HTTP_MANIFEST_STALE,
                     "/health PID 与 manifest 不一致",
                 )
+        self._warn_cert_expiry(health)
         return health
+
+    def _warn_cert_expiry(self, health: Dict[str, Any]) -> None:
+        """§9.31：/health `cert_expires_in_days` 到期告警（实例级限频一次）。
+
+        - 0 <= days < CERT_EXPIRY_WARN_DAYS → 临期 warning；
+        - days < 0 且非 -1 → 已过期 warning（消息区分）；
+        - 字段缺失 / -1（PKI 材料缺省哨兵）→ 静默跳过。
+        watchdog 探活路径不经过本方法，不会刷屏。
+        """
+        days = health.get("cert_expires_in_days")
+        if self._cert_expiry_warned or not isinstance(days, int) or days == -1:
+            return
+        if days < 0:
+            self._cert_expiry_warned = True
+            logger.warning(
+                "daemon 服务端证书已过期（超期 %d 天）；请立即 `cw pki renew` 换发",
+                -days,
+            )
+        elif days < CERT_EXPIRY_WARN_DAYS:
+            self._cert_expiry_warned = True
+            logger.warning(
+                "daemon 服务端证书将在 %d 天内到期；请及时 `cw pki renew` 换发",
+                days,
+            )
 
     # ------------------------------------------------------------------
     # 底层 HTTP
@@ -1560,7 +1598,13 @@ class HttpDaemonRpcClient:
                 E_REQUEST_TOO_LARGE,
                 f"请求体 {len(body)} 字节超过 {body_limit} 字节上限",
             )
+        timeout = self._timeout_for(method)
         try:
+            # §9.31 长任务心跳：慢方法（超时被 http_method_timeout 放宽）走
+            # watchdog 路径——daemon 死亡/假死时快速失败，而非等满慢超时。
+            # 快方法路径（含 caller 显式短超时的诊断/测试场景）保持不变。
+            if timeout > self._timeout:
+                return self._call_with_watchdog(url, body, timeout, rid)
             req = urllib.request.Request(
                 url, data=body, method="POST",
                 headers={"Content-Type": "application/json"},
@@ -1568,7 +1612,7 @@ class HttpDaemonRpcClient:
             # nosec B310：url = 本地 daemon endpoint + "/v1/rpc"（见上行拼接），
             # 非用户输入；B310 对本地 RPC 客户端为误报。
             with urllib.request.urlopen(  # nosec B310
-                req, timeout=self._timeout_for(method), context=self._ssl_context()
+                req, timeout=timeout, context=self._ssl_context()
             ) as resp:
                 raw = resp.read()
                 status = resp.status
@@ -1586,6 +1630,106 @@ class HttpDaemonRpcClient:
         except OSError as e:
             raise self._connection_error(e, url)
         return self._handle_response(status, raw, rid, url)
+
+    def _call_with_watchdog(self, url: str, body: bytes, timeout: float,
+                            rid: str) -> Any:
+        """§9.31 长任务心跳：慢方法 watchdog 调用（/health 探活 + 判死快速失败）。
+
+        主 RPC 在 worker 线程执行（`http.client.HTTPSConnection`，独立阻塞）；
+        watchdog 守护线程每 WATCHDOG_PROBE_INTERVAL_SECS 经独立短连接
+        GET /health，连续 WATCHDOG_PROBE_FAILURES_TO_ABORT 次失败即判定
+        daemon 死亡/假死 → 主线程立即以 E_HTTP_DAEMON_UNAVAILABLE 失败，
+        而非等满慢方法超时（~130s）。
+
+        平台注记（Windows 实测 2026-11-17）：跨线程 `sock.shutdown()` /
+        `conn.close()` 均无法唤醒另一线程阻塞中的 SSL read，故放弃 socket
+        手术改用 worker 线程模型——判死后 worker 仍在后台阻塞至 socket
+        超时（上限即慢方法超时），但 caller 已快速失败。daemon 正常响应时
+        零行为差异；探活不复用 verify_health 告警路径，不触发证书到期 warning。
+        """
+        parsed = urllib.parse.urlsplit(url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = parsed.path or "/v1/rpc"
+        # 主线程先构建 ssl ctx（懒初始化非线程安全），两个子线程只读复用。
+        ctx = self._ssl_context()
+        done = threading.Event()      # RPC 完成 或 watchdog 判死
+        aborted = threading.Event()   # watchdog 判死
+        box: Dict[str, Any] = {}      # worker 结果（ok 时含 status/raw）
+
+        def _rpc_worker() -> None:
+            try:
+                conn = http.client.HTTPSConnection(
+                    host, port=port, context=ctx, timeout=timeout)
+                try:
+                    conn.request(
+                        "POST", path, body=body,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    resp = conn.getresponse()
+                    box["status"] = resp.status
+                    box["raw"] = resp.read()
+                    box["ok"] = True
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+            except (http.client.HTTPException, OSError) as e:
+                box["ok"] = False
+                box["error"] = e
+            finally:
+                done.set()
+
+        def _probe_loop() -> None:
+            consecutive_failures = 0
+            while not done.is_set():
+                try:
+                    hc = http.client.HTTPSConnection(
+                        host, port=port, context=ctx,
+                        timeout=WATCHDOG_PROBE_TIMEOUT_SECS,
+                    )
+                    try:
+                        hc.request("GET", "/health")
+                        probe_resp = hc.getresponse()
+                        probe_resp.read()
+                    finally:
+                        hc.close()
+                    consecutive_failures = 0
+                except Exception:  # noqa: BLE001 - 探活失败原因不影响语义
+                    consecutive_failures += 1
+                    if consecutive_failures >= WATCHDOG_PROBE_FAILURES_TO_ABORT:
+                        logger.warning(
+                            "watchdog: /health 探活连续 %d 次失败，"
+                            "中止慢方法调用（request_id=%s）",
+                            consecutive_failures, rid,
+                        )
+                        aborted.set()
+                        done.set()
+                        return
+                done.wait(WATCHDOG_PROBE_INTERVAL_SECS)
+
+        worker = threading.Thread(
+            target=_rpc_worker, name="cw-rpc-slow-call", daemon=True)
+        watcher = threading.Thread(
+            target=_probe_loop, name="cw-rpc-watchdog", daemon=True)
+        worker.start()
+        watcher.start()
+        # 主线程等待：RPC 完成（成功/失败）或 watchdog 判死，任一先到。
+        while not done.wait(0.5):
+            pass
+        watcher.join(timeout=1.0)
+        if aborted.is_set():
+            raise DaemonUnavailableError(
+                f"{E_HTTP_DAEMON_UNAVAILABLE}: 慢方法调用期间 daemon 不可达"
+                f"（watchdog 判死中止, url={url}, request_id={rid}）"
+            )
+        if not box.get("ok"):
+            raise DaemonUnavailableError(
+                f"{E_HTTP_DAEMON_UNAVAILABLE}: 慢方法调用连接中断"
+                f"（url={url}）: {box.get('error')}"
+            )
+        return self._handle_response(box["status"], box["raw"], rid, url)
 
     def call_multipart(
         self,

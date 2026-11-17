@@ -820,6 +820,10 @@ pub fn build_router<S: DaemonStateExt + Send + Sync + 'static>(app: AppState<S>)
 }
 
 /// GET /health — 返回安全 profile + 端点 + PID + git + schema + worker + registry revision。
+///
+/// §9.31 证书到期监控：`cert_expires_in_days` 为服务端叶证书
+/// （`<pki_dir>/server/server.crt`）剩余有效天数；PKI 材料缺失/解析失败时为 `-1`
+/// （缺省哨兵，客户端静默跳过告警）。
 async fn health_handler<S: DaemonStateExt + Send + Sync + 'static>(
     State(app): State<AppState<S>>,
 ) -> Response {
@@ -832,6 +836,7 @@ async fn health_handler<S: DaemonStateExt + Send + Sync + 'static>(
         "schema_version": SCHEMA_VERSION,
         "worker_status": cfg.worker_status,
         "capability_registry_revision": cfg.capability_registry_revision,
+        "cert_expires_in_days": pki_api::server_cert_expires_in_days(&cfg.pki_dir).unwrap_or(-1),
     });
     json_response(StatusCode::OK, serde_json::to_string(&body).unwrap())
 }

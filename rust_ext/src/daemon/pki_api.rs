@@ -875,3 +875,57 @@ pub fn consume_enroll_token(ca: &LocalCa, token: &str) -> Result<EnrollTokenReco
         expires_at,
     })
 }
+
+// ============================================
+// 证书到期监控（§9.31）
+// ============================================
+
+/// 服务端叶证书剩余有效天数（向下取整；证书缺失 / 解析失败 → `None`）。
+///
+/// `/health` `cert_expires_in_days` 字段的数据源：读 `<pki_root>/server/server.crt`
+/// （与 [`ensure_server_cert_locked`] 的权威路径一致），解析 notAfter 与当前
+/// unix 时间差。只读、不 panic、不阻塞 /health（任何失败返回 `None`，
+/// HTTP 层以 `-1` 作为缺省哨兵透出）。
+pub fn server_cert_expires_in_days(pki_root: &Path) -> Option<i64> {
+    let crt_path = pki_root.join("server").join("server.crt");
+    let cert_pem = std::fs::read_to_string(crt_path).ok()?;
+    let der = pem_decode(&cert_pem, "CERTIFICATE")?;
+    let (_, cert) = x509_parser::parse_x509_certificate(&der).ok()?;
+    let not_after = cert.validity().not_after.timestamp();
+    Some((not_after - now_unix()).div_euclid(86_400))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_server_cert_expires_in_days_valid() {
+        let root = tempfile::tempdir().unwrap();
+        let ca = ensure_ca(root.path()).unwrap();
+        let bind: SocketAddr = "127.0.0.1:8456".parse().unwrap();
+        ensure_server_cert(&ca, &bind).unwrap();
+        let days = server_cert_expires_in_days(root.path()).unwrap();
+        assert!(days > 0, " freshly issued server cert must have days > 0, got {}", days);
+        assert!(
+            days <= SERVER_VALIDITY_SECS / 86_400,
+            "days {} must not exceed 1y validity",
+            days
+        );
+    }
+
+    #[test]
+    fn test_server_cert_missing_returns_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(server_cert_expires_in_days(root.path()).is_none());
+    }
+
+    #[test]
+    fn test_server_cert_garbage_pem_returns_none() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("server");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("server.crt"), "not a pem").unwrap();
+        assert!(server_cert_expires_in_days(root.path()).is_none());
+    }
+}

@@ -404,6 +404,8 @@ class TestDefaultTlsListener:
             "security_profile", "endpoint", "pid", "git_commit",
             "schema_version", "worker_status", "capability_registry_revision",
             "manifest_id",
+            # §9.31 证书到期监控：剩余天数（无敏感信息，客户端告警数据源）
+            "cert_expires_in_days",
         }, f"/health 泄露了额外字段: {sorted(health)}"
         assert "principal" not in health
         assert "grants" not in health
