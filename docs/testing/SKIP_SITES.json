@@ -1082,6 +1082,30 @@
       "root_cause": "UNREVIEWED"
     },
     {
+      "site_id": "tests/test_cert_expiry_monitor.py:24:13:pytest.mark.skipif",
+      "file": "tests/test_cert_expiry_monitor.py",
+      "line": 24,
+      "column": 13,
+      "mechanism": "pytest.mark.skipif",
+      "reason_literal": "§9.31 证书到期监控用例需要 Windows + loopback HTTPS daemon（集成部分）",
+      "reason_expression": "'§9.31 证书到期监控用例需要 Windows + loopback HTTPS daemon（集成部分）'",
+      "condition_or_module": "sys.platform != 'win32'",
+      "file_sha256": "974697caffe2d1234165a26689a683ee2e57b87115b58ac95a2e9eabaa6b7ffa",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_cert_expiry_monitor.py:100:19:pytest.mark.skipif",
+      "file": "tests/test_cert_expiry_monitor.py",
+      "line": 100,
+      "column": 19,
+      "mechanism": "pytest.mark.skipif",
+      "reason_literal": "test_mtls_control_plane 夹具不可用",
+      "reason_expression": "'test_mtls_control_plane 夹具不可用'",
+      "condition_or_module": "not _HARNESS_OK",
+      "file_sha256": "974697caffe2d1234165a26689a683ee2e57b87115b58ac95a2e9eabaa6b7ffa",
+      "root_cause": "UNREVIEWED"
+    },
+    {
       "site_id": "tests/test_cicd_gates.py:379:8:pytest.skip",
       "file": "tests/test_cicd_gates.py",
       "line": 379,
@@ -1882,7 +1906,7 @@
       "reason_literal": "daemon TLS 控制面需要 Windows + loopback HTTPS daemon",
       "reason_expression": "'daemon TLS 控制面需要 Windows + loopback HTTPS daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb",
+      "file_sha256": "e58b94c82d007c5cad756e22fc705e3bbb1711f61a7959ea6a289c5135e93763",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1894,7 +1918,7 @@
       "reason_literal": "未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "_DAEMON_BIN is None",
-      "file_sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb",
+      "file_sha256": "e58b94c82d007c5cad756e22fc705e3bbb1711f61a7959ea6a289c5135e93763",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1906,7 +1930,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'cryptography'",
-      "file_sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb",
+      "file_sha256": "e58b94c82d007c5cad756e22fc705e3bbb1711f61a7959ea6a289c5135e93763",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1918,7 +1942,7 @@
       "reason_literal": "cw-daemon 未构建",
       "reason_expression": "'cw-daemon 未构建'",
       "condition_or_module": null,
-      "file_sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb",
+      "file_sha256": "e58b94c82d007c5cad756e22fc705e3bbb1711f61a7959ea6a289c5135e93763",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4871,6 +4895,42 @@
       "reason_expression": "_RUST_EXT_SKIP_REASON",
       "condition_or_module": "not _RUST_EXT_AVAILABLE",
       "file_sha256": "7d58e9c47ff8f25b237baea508d93038beb2e89d47f2f28295ec835f67286043",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_slow_rpc_watchdog.py:33:13:pytest.mark.skipif",
+      "file": "tests/test_slow_rpc_watchdog.py",
+      "line": 33,
+      "column": 13,
+      "mechanism": "pytest.mark.skipif",
+      "reason_literal": "§9.31 watchdog 用例需要 Windows + loopback TLS fake daemon",
+      "reason_expression": "'§9.31 watchdog 用例需要 Windows + loopback TLS fake daemon'",
+      "condition_or_module": "sys.platform != 'win32'",
+      "file_sha256": "660b04fdb35ad599a2f77f33a2e5c3911ba92e362831185379f90a06301d2ea0",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_slow_rpc_watchdog.py:38:0:pytest.importorskip",
+      "file": "tests/test_slow_rpc_watchdog.py",
+      "line": 38,
+      "column": 0,
+      "mechanism": "pytest.importorskip",
+      "reason_literal": null,
+      "reason_expression": null,
+      "condition_or_module": "'cryptography'",
+      "file_sha256": "660b04fdb35ad599a2f77f33a2e5c3911ba92e362831185379f90a06301d2ea0",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_slow_rpc_watchdog.py:205:8:pytest.skip",
+      "file": "tests/test_slow_rpc_watchdog.py",
+      "line": 205,
+      "column": 8,
+      "mechanism": "pytest.skip",
+      "reason_literal": "test_mtls_control_plane.make_fake_tls_material 不可用",
+      "reason_expression": "'test_mtls_control_plane.make_fake_tls_material 不可用'",
+      "condition_or_module": null,
+      "file_sha256": "660b04fdb35ad599a2f77f33a2e5c3911ba92e362831185379f90a06301d2ea0",
       "root_cause": "UNREVIEWED"
     },
     {

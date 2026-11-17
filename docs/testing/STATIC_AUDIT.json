@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "2987b331edd91b941fafb918535517678145987e",
+  "supplied_source_revision": "612aeaf0876ca6ed53f03adcd3eca1f90c7c2a41",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,27 +38,27 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7245,
-    "python_source_files": 699,
+    "python_definitions": 7256,
+    "python_source_files": 701,
     "convergence_definitions": 58,
     "skip_calls": {
-      "pytest.importorskip": 24,
-      "pytest.mark.skipif": 222,
-      "pytest.skip": 210
+      "pytest.importorskip": 25,
+      "pytest.mark.skipif": 225,
+      "pytest.skip": 211
     },
-    "classic_skip_sites": 432,
-    "classic_skip_files": 131,
+    "classic_skip_sites": 436,
+    "classic_skip_files": 133,
     "parser_contract_classic_sites": 44,
     "core_not_installed_exact_sites": 46,
     "core_not_built_exact_sites": 4,
     "parser_core_not_installed_exact_sites": 18,
-    "reason_literal_sites": 267,
+    "reason_literal_sites": 271,
     "reason_expression_sites": 167,
-    "reason_absent_sites": 22,
-    "reason_nonliteral_or_absent_sites": 189,
+    "reason_absent_sites": 23,
+    "reason_nonliteral_or_absent_sites": 190,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2124,
-    "rust_src_cfg_test_files": 121
+    "rust_src_attributes": 2127,
+    "rust_src_cfg_test_files": 122
   },
   "inputs": [
     {
@@ -359,7 +359,7 @@
     },
     {
       "path": "rust_ext/src/daemon/http_server.rs",
-      "sha256": "8ea2c45eb070b4b915a646c7c61f4479f147593d2d6f483c9206329c8e60b6a6"
+      "sha256": "30880142d2f2897a88281647b3bb5dd121f82dbb11866b90393482da90192537"
     },
     {
       "path": "rust_ext/src/daemon/job_executor_handlers.rs",
@@ -391,7 +391,7 @@
     },
     {
       "path": "rust_ext/src/daemon/pki_api.rs",
-      "sha256": "77895355cde033e9cd3bb9ef0545ecd9bfc651f800ed37bbbadf59de24865300"
+      "sha256": "0091de7c529e2e4c58bc90b5e361688a35b82b52d1d38466926bf9d62687cf67"
     },
     {
       "path": "rust_ext/src/daemon/pki_handlers.rs",
@@ -1678,6 +1678,10 @@
       "sha256": "d914e0ccaee11d7c4919ef6ecc5925fbe0ac5e77d34130bb1e58a7012a119398"
     },
     {
+      "path": "tests/test_cert_expiry_monitor.py",
+      "sha256": "974697caffe2d1234165a26689a683ee2e57b87115b58ac95a2e9eabaa6b7ffa"
+    },
+    {
       "path": "tests/test_cicd_gates.py",
       "sha256": "fc883781a0c0dcbd43262d1c83e5fb1965fa0aa87cfaf2be86e7923b1b6a1fe0"
     },
@@ -2831,7 +2835,7 @@
     },
     {
       "path": "tests/test_mtls_control_plane.py",
-      "sha256": "857782628a83c3d4c4533f1bea296d674caedc3cf63397079a5f7793519645cb"
+      "sha256": "e58b94c82d007c5cad756e22fc705e3bbb1711f61a7959ea6a289c5135e93763"
     },
     {
       "path": "tests/test_mtls_enrollment.py",
@@ -3552,6 +3556,10 @@
     {
       "path": "tests/test_single_track_kernel.py",
       "sha256": "52f30361151ddc72f2b552ab0493cdb37faa71f471b1e57b0dda6700c2d10cba"
+    },
+    {
+      "path": "tests/test_slow_rpc_watchdog.py",
+      "sha256": "660b04fdb35ad599a2f77f33a2e5c3911ba92e362831185379f90a06301d2ea0"
     },
     {
       "path": "tests/test_snapshot_identity_roundtrip.py",
