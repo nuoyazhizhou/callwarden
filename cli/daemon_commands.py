@@ -13,13 +13,17 @@ from callwarden.config import (
     get_daemon_mode,
     is_daemon_available,
     is_daemon_required,
+    E_HTTP_MANIFEST_STALE,
 )
 from callwarden.server.daemon_client import (
     HttpDaemonRpcClient,
     DaemonUnavailableError,
 )
 from callwarden.server.daemon_protocol import DaemonRemoteError
-from callwarden.server.daemon_autostart import resolve_http_endpoint_and_manifest
+from callwarden.server.daemon_autostart import (
+    resolve_http_endpoint_and_manifest,
+    _pid_alive,
+)
 # ADR-002 单轨：唯一 daemon RPC 传输是 HTTPS+mTLS；Python 影子 daemon
 # （server/daemon_server.py）已整体退休，用户不再有可达入口启动它。
 # Rust 原生 daemon 为唯一权威：cw-daemon.exe（启动模板见 docs/role-loop-templates/）。
@@ -442,6 +446,29 @@ def _send_daemon_stop_signal(pid: int) -> str:
     return "taskkill_force"
 
 
+def _best_effort_manifest_pid() -> Optional[int]:
+    """尽力读取 authority manifest 的 pid（不做任何校验，失败返回 None）。
+
+    用于 resolve 阶段就抛 E_HTTP_MANIFEST_STALE 的场景：manifest 存在但
+    校验失败（典型：pid 已死），此时仍需拿到 pid 才能做「pid 已死 →
+    幂等 not_running」的判定。
+    """
+    try:
+        import json as _json
+        from callwarden.config import get_http_authority_id, get_http_manifest_path
+        path = get_http_manifest_path(get_http_authority_id())
+        if not path or not os.path.isfile(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        pid = data.get("pid")
+        if isinstance(pid, int) and pid > 0:
+            return pid
+    except Exception:
+        pass
+    return None
+
+
 def _run_daemon_stop(args) -> int:
     """`cw daemon stop`：探活取 pid → PID 复用校验 → 发停止信号 → 轮询退出。
 
@@ -457,6 +484,13 @@ def _run_daemon_stop(args) -> int:
         raw_pid = manifest.get("pid")
         if isinstance(raw_pid, int):
             manifest_pid = raw_pid
+    except DaemonRemoteError as e:
+        if e.code == E_HTTP_MANIFEST_STALE:
+            # resolve 阶段就抛 stale：manifest 存在但校验失败（典型 pid 已死），
+            # 尽力读出 pid 供后续幂等判定
+            manifest_pid = _best_effort_manifest_pid()
+        else:
+            manifest_pid = None
     except Exception:
         manifest_pid = None  # 无可用 manifest：只信 /health 的 pid
 
@@ -467,7 +501,15 @@ def _run_daemon_stop(args) -> int:
                      "detail": str(e)})
         return 0
     except DaemonRemoteError as e:
-        # manifest_id/PID 交叉核对失败等：身份不可信，拒绝停止（fail-closed）
+        # E_HTTP_MANIFEST_STALE + manifest pid 已死 = daemon 确实不在运行，
+        # 幂等返回 not_running（stop 的正常空转路径）；pid 仍存活但身份可疑
+        # （executable 不匹配 / manifest_id 交叉核对失败等）→ fail-closed 拒绝停止。
+        if (e.code == E_HTTP_MANIFEST_STALE
+                and manifest_pid is not None
+                and not _pid_alive(manifest_pid)):
+            _print_json({"ok": True, "action": "stop", "status": "not_running",
+                         "detail": str(e)})
+            return 0
         _print_json({"ok": False, "action": "stop", "status": "failed",
                      "error": "E_DAEMON_STOP_VERIFY_FAILED",
                      "detail": f"停止前身份校验失败: {e}"})

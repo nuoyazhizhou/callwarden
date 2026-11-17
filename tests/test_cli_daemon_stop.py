@@ -20,6 +20,7 @@ import pytest
 
 import callwarden.cli.daemon_commands as dc
 from callwarden.cli.daemon_commands import _parser, run_daemon_command
+from callwarden.config import E_HTTP_MANIFEST_STALE
 from callwarden.server.daemon_client import DaemonUnavailableError
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
@@ -190,10 +191,61 @@ def test_stop_windows_taskkill_failure(monkeypatch, capsys):
     assert "access denied" in payload["detail"]
 
 
+def test_stop_idempotent_with_stale_manifest(monkeypatch, capsys):
+    # E_HTTP_MANIFEST_STALE + manifest pid 已死 → 幂等 not_running rc 0
+    _patch_manifest(monkeypatch, 37468)
+    _patch_health(monkeypatch, [
+        DaemonRemoteError(E_HTTP_MANIFEST_STALE,
+                          "manifest PID 37468 已不存活（stale manifest）")
+    ])
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: False)
+    sent = []
+    monkeypatch.setattr(dc, "_send_daemon_stop_signal",
+                        lambda pid: sent.append(pid) or "sigterm")
+
+    rc = run_daemon_command(["stop"])
+
+    assert rc == 0
+    assert sent == []
+    payload = _out_json(capsys)
+    assert payload["ok"] is True
+    assert payload["status"] == "not_running"
+
+
+def test_stop_idempotent_when_resolve_raises_stale(monkeypatch, capsys):
+    # resolve_http_endpoint_and_manifest 阶段就抛 stale（真实场景：
+    # manifest 存在但 pid 已死）→ best-effort 读 pid → 幂等 not_running
+    def _boom(validate=True):
+        raise DaemonRemoteError(E_HTTP_MANIFEST_STALE,
+                                "manifest PID 37468 已不存活（stale manifest）")
+
+    monkeypatch.setattr(dc, "resolve_http_endpoint_and_manifest", _boom)
+    monkeypatch.setattr(dc, "_best_effort_manifest_pid", lambda: 37468)
+    _patch_health(monkeypatch, [
+        DaemonRemoteError(E_HTTP_MANIFEST_STALE,
+                          "manifest PID 37468 已不存活（stale manifest）")
+    ])
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: False)
+    sent = []
+    monkeypatch.setattr(dc, "_send_daemon_stop_signal",
+                        lambda pid: sent.append(pid) or "sigterm")
+
+    rc = run_daemon_command(["stop"])
+
+    assert rc == 0
+    assert sent == []
+    payload = _out_json(capsys)
+    assert payload["status"] == "not_running"
+
+
 def test_stop_remote_error_fail_closed(monkeypatch, capsys):
-    # health 校验阶段抛 DaemonRemoteError（manifest_id/PID 交叉核对失败）
+    # pid 仍存活但身份可疑（manifest_id/PID 交叉核对失败）→ fail-closed 拒止
     _patch_manifest(monkeypatch, 42)
-    _patch_health(monkeypatch, [DaemonRemoteError("E_HTTP_MANIFEST_STALE", "bad")])
+    _patch_health(monkeypatch, [
+        DaemonRemoteError(E_HTTP_MANIFEST_STALE,
+                          "/health manifest_id 与 manifest 不一致")
+    ])
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: True)
     sent = []
     monkeypatch.setattr(dc, "_send_daemon_stop_signal",
                         lambda pid: sent.append(pid) or "sigterm")
