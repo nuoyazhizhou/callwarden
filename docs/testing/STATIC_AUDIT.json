@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "612aeaf0876ca6ed53f03adcd3eca1f90c7c2a41",
+  "supplied_source_revision": "1c161cfc8913e5ad2ac0cb1dd28e4dfaea0e9fd3",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,8 +38,8 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7256,
-    "python_source_files": 701,
+    "python_definitions": 7266,
+    "python_source_files": 702,
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 25,
@@ -57,7 +57,7 @@
     "reason_absent_sites": 23,
     "reason_nonliteral_or_absent_sites": 190,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2127,
+    "rust_src_attributes": 2130,
     "rust_src_cfg_test_files": 122
   },
   "inputs": [
@@ -115,7 +115,7 @@
     },
     {
       "path": "rust_ext/src/bin/cw_daemon.rs",
-      "sha256": "8e2b77fa9ad4880c5e3f07c920f509935f7c2b88d30c30509710b9d1f33b49dd"
+      "sha256": "aa8d2c34f224349b55505db27e9530fa81f69ee143fb9386c335cf036a933fb5"
     },
     {
       "path": "rust_ext/src/canonicalize.rs",
@@ -359,7 +359,7 @@
     },
     {
       "path": "rust_ext/src/daemon/http_server.rs",
-      "sha256": "30880142d2f2897a88281647b3bb5dd121f82dbb11866b90393482da90192537"
+      "sha256": "d9074fa36772e33eaad9e7586c171f7f878a2dbd2d42202266b565ddc6552102"
     },
     {
       "path": "rust_ext/src/daemon/job_executor_handlers.rs",
@@ -439,7 +439,7 @@
     },
     {
       "path": "rust_ext/src/daemon/server.rs",
-      "sha256": "9cab3b18f2c91d57ac24f5cb112141f2987c4bd6a7d6dd38a172fa82b413833c"
+      "sha256": "bba069867719ff507e8aef3dbaf9cd055453826c3e58fc5a1d6f938385aeb9b9"
     },
     {
       "path": "rust_ext/src/daemon/single_instance.rs",
@@ -2092,6 +2092,10 @@
     {
       "path": "tests/test_cli_consistency.py",
       "sha256": "9a6d2ad56e71a22f18e5f249c656ab435696660e9f44a9db991a24306bd31fab"
+    },
+    {
+      "path": "tests/test_cli_daemon_stop.py",
+      "sha256": "378e0d9c038cc8cd0ec0e47f914caa5aa6f91bf6fec8873c24c348febc22ff70"
     },
     {
       "path": "tests/test_cli_dependency.py",
