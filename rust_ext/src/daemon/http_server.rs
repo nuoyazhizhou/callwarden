@@ -472,8 +472,8 @@ pub struct BoundHttp {
     pub listener: std::net::TcpListener,
     pub local_addr: SocketAddr,
     pub manifest: Value,
-    /// rustls 服务端配置（含客户端证书验证器）。
-    pub tls: Arc<rustls::ServerConfig>,
+    /// rustls 服务端配置（含客户端证书验证器）。§9.35：运行期可原子换入。
+    pub tls: HotTls,
     /// 本地 CA（enroll 签发复用）。
     pub ca: pki_api::LocalCa,
     /// §9.34 C：rotate-ca 窗口期旧 CA（None = 无窗口）。
@@ -536,7 +536,7 @@ pub fn bind_http(cfg: &HttpServerConfig) -> Result<BoundHttp, HttpServerError> {
         listener,
         local_addr: local,
         manifest,
-        tls,
+        tls: HotTls::new(tls),
         ca,
         previous_ca,
         server_cert,
@@ -627,10 +627,13 @@ where
     let principal_registry = Arc::new(auth_principal::PrincipalRegistry::from_env(
         config.pki_dir.clone(),
     ));
+    // §9.35：config 先 Arc 化——AppState 与 TLS reload watcher 共享同一份
+    // manifest 字段来源；watcher 在 reload 后重发布 manifest。
+    let config = Arc::new(config);
     let app_state = AppState {
         state,
         serialization: sp,
-        config: Arc::new(config),
+        config: Arc::clone(&config),
         dedup,
         jobs: Arc::new(StdMutex::new(HashMap::new())),
         compat,
@@ -639,7 +642,16 @@ where
     let router = build_router(app_state);
     let listener = tokio::net::TcpListener::from_std(bound.listener)
         .map_err(|e| HttpServerError::Serve(e.to_string()))?;
-    accept_loop(listener, router, bound.tls, stop, http_drain_timeout()).await;
+    // §9.35 证书热加载 watcher：哨兵 1s 检查 + 6h 周期 reload（吸收 §9.34 A
+    // 临期重签，运行期即换新），stop 后退出；随 accept loop 同生命周期。
+    let hot_tls = bound.tls.clone();
+    tokio::spawn(tls_reload_watcher(
+        hot_tls.clone(),
+        Arc::clone(&config),
+        local,
+        Arc::clone(&stop),
+    ));
+    accept_loop(listener, router, hot_tls, stop, http_drain_timeout()).await;
     Ok(local)
 }
 
@@ -655,6 +667,198 @@ fn http_drain_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(secs)
 }
 
+// ============================================
+// TLS 证书热加载（§9.35）
+// ============================================
+
+/// §9.35 证书热加载：进程内共享、可原子换入的 rustls 服务端配置。
+///
+/// 依赖冻结（ADR §15.2）：用 std `RwLock<Arc<ServerConfig>>` 而非 arc_swap。
+/// 读路径（每新连接一次）读锁内 clone Arc；写路径（reload）写锁整体换入。
+/// 语义：**新连接**拿到换入后的配置；**在途连接**持有旧 Arc 不受影响，
+/// 由 max_conn_age（300s）兜底断开重连。
+#[derive(Clone)]
+pub struct HotTls {
+    cell: Arc<std::sync::RwLock<Arc<rustls::ServerConfig>>>,
+}
+
+impl HotTls {
+    pub fn new(config: Arc<rustls::ServerConfig>) -> Self {
+        Self {
+            cell: Arc::new(std::sync::RwLock::new(config)),
+        }
+    }
+
+    /// 当前 TLS 配置（每新连接调用一次；读锁内 clone Arc，纳秒级）。
+    pub fn get(&self) -> Arc<rustls::ServerConfig> {
+        self.cell
+            .read()
+            .expect("HotTls cell poisoned")
+            .clone()
+    }
+
+    /// 原子换入新配置，返回旧配置。
+    pub fn swap(&self, config: Arc<rustls::ServerConfig>) -> Arc<rustls::ServerConfig> {
+        let mut guard = self.cell.write().expect("HotTls cell poisoned");
+        std::mem::replace(&mut *guard, config)
+    }
+}
+
+/// §9.35 热加载结果（日志/对账/测试用）。
+#[derive(Debug, Clone)]
+pub struct TlsReloadOutcome {
+    pub server_cert_sha256: String,
+    pub server_not_after: String,
+    pub ca_fingerprint_sha256: String,
+    pub previous_ca_fingerprint_sha256: Option<String>,
+    pub san: Vec<String>,
+}
+
+/// 哨兵轮询间隔（rotate 命令写哨兵 → 最多 1s 生效）。
+const TLS_RELOAD_SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// 周期性无条件 reload（吸收 §9.34 A 临期重签：reload 路径内
+/// ensure_server_cert 幂等重签，运行期即换新，无需重启）。
+const TLS_RELOAD_PERIODIC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(21_600);
+
+/// reload 失败后的重试退避（哨兵保留，避免每秒热循环刷日志）。
+const TLS_RELOAD_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 无条件从盘上材料重建 TLS 配置并原子换入 + 重发布 manifest。
+///
+/// fail-closed：材料缺失/非法时返回 Err，HotTls 不换入、manifest 不动，
+/// 调用方（watcher）沿用旧配置继续服务。
+pub fn reload_tls_now(
+    hot: &HotTls,
+    cfg: &HttpServerConfig,
+    local: &SocketAddr,
+) -> Result<TlsReloadOutcome, pki_api::PkiError> {
+    let (tls, ca, previous, server) =
+        pki_api::load_tls_config_from_disk(&cfg.pki_dir, local)?;
+    hot.swap(tls);
+    // manifest 重发布：server 指纹/有效期/SAN 与 CA bundle（双根）可能已变化；
+    // manifest_hash 随之重算，消费端据此感知。
+    let manifest = build_manifest(cfg, local, &ca, &server, previous.as_ref());
+    if let Err(e) = publish_manifest_atomic(&cfg.manifest_path, &manifest) {
+        return Err(pki_api::PkiError::new(
+            "E_HTTP_MANIFEST_WRITE",
+            format!("热加载后 manifest 重发布失败: {}", e),
+        ));
+    }
+    Ok(TlsReloadOutcome {
+        server_cert_sha256: server.sha256,
+        server_not_after: server.not_after,
+        ca_fingerprint_sha256: ca.fingerprint_sha256,
+        previous_ca_fingerprint_sha256: previous.map(|p| p.fingerprint_sha256),
+        san: server.san,
+    })
+}
+
+/// 哨兵驱动的一次热加载（watcher 每 [`TLS_RELOAD_SCAN_INTERVAL`] 调用）。
+///
+/// 哨兵（`pki/tls_reload.request`，由 rotate-server / rotate-ca
+/// prepare/commit 写入）存在 → [`reload_tls_now`] → 成功后删除哨兵；
+/// 失败不删（退避重试）。返回 `Ok(None)` = 无哨兵。
+pub fn process_tls_reload(
+    hot: &HotTls,
+    cfg: &HttpServerConfig,
+    local: &SocketAddr,
+) -> Result<Option<TlsReloadOutcome>, pki_api::PkiError> {
+    let sentinel = cfg.pki_dir.join(pki_api::TLS_RELOAD_REQUEST_FILE);
+    if !sentinel.exists() {
+        return Ok(None);
+    }
+    let outcome = reload_tls_now(hot, cfg, local)?;
+    std::fs::remove_file(&sentinel)
+        .map_err(|e| pki_api::PkiError::io_pub("remove tls_reload.request", e))?;
+    Ok(Some(outcome))
+}
+
+/// TLS 热加载 watcher：随 HTTP server 生命周期运行（serve_prebound 派生）。
+///
+/// - 每 [`TLS_RELOAD_SCAN_INTERVAL`] 检查哨兵；
+/// - 每 [`TLS_RELOAD_PERIODIC_INTERVAL`] 无条件 reload（临期重签、漏处理自愈）；
+/// - 失败保留旧配置 + 退避重试，绝不因 reload 失败中断 serve。
+async fn tls_reload_watcher(
+    hot: HotTls,
+    cfg: Arc<HttpServerConfig>,
+    local: SocketAddr,
+    stop: Arc<AtomicBool>,
+) {
+    watcher_loop(
+        hot,
+        &cfg,
+        local,
+        stop,
+        TLS_RELOAD_SCAN_INTERVAL,
+        TLS_RELOAD_PERIODIC_INTERVAL,
+    )
+    .await
+}
+
+/// watcher 主体（间隔参数化，测试用短间隔驱动）。
+async fn watcher_loop(
+    hot: HotTls,
+    cfg: &HttpServerConfig,
+    local: SocketAddr,
+    stop: Arc<AtomicBool>,
+    scan: std::time::Duration,
+    periodic: std::time::Duration,
+) {
+    let mut last_periodic = std::time::Instant::now();
+    let mut last_failure: Option<std::time::Instant> = None;
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let backoff_ok = last_failure
+            .map(|t| t.elapsed() >= TLS_RELOAD_RETRY_BACKOFF)
+            .unwrap_or(true);
+        if backoff_ok {
+            match process_tls_reload(&hot, cfg, &local) {
+                Ok(Some(outcome)) => {
+                    eprintln!(
+                        "[cw_daemon][pki] TLS 热加载完成: server cert {} (not_after {}), CA {}{}",
+                        &outcome.server_cert_sha256[..16.min(outcome.server_cert_sha256.len())],
+                        outcome.server_not_after,
+                        &outcome.ca_fingerprint_sha256
+                            [..16.min(outcome.ca_fingerprint_sha256.len())],
+                        outcome
+                            .previous_ca_fingerprint_sha256
+                            .as_deref()
+                            .map(|p| format!(" + previous {}", &p[..16.min(p.len())]))
+                            .unwrap_or_default(),
+                    );
+                    last_failure = None;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!(
+                        "[cw_daemon][pki] TLS 热加载失败（保留旧配置继续服务，退避 {}s 后重试）: {}",
+                        TLS_RELOAD_RETRY_BACKOFF.as_secs(),
+                        e
+                    );
+                    last_failure = Some(std::time::Instant::now());
+                }
+            }
+        }
+        if last_periodic.elapsed() >= periodic {
+            last_periodic = std::time::Instant::now();
+            match reload_tls_now(&hot, cfg, &local) {
+                Ok(outcome) => eprintln!(
+                    "[cw_daemon][pki] TLS 周期重载完成: server cert {}",
+                    &outcome.server_cert_sha256[..16.min(outcome.server_cert_sha256.len())]
+                ),
+                Err(e) => eprintln!(
+                    "[cw_daemon][pki] TLS 周期重载失败（保留旧配置继续服务）: {}",
+                    e
+                ),
+            }
+        }
+        tokio::time::sleep(scan).await;
+    }
+}
+
 /// 逐连接 TLS accept 循环（serve 与测试共用）。
 ///
 /// TLS 握手阶段即拒非法/过期/未知 CA 的客户端证书；握手成功后把 peer 身份
@@ -664,14 +868,17 @@ fn http_drain_timeout() -> std::time::Duration {
 /// §9.32 P1 优雅退出：`stop` 置位后停止接受新连接，进入 drain——在途连接
 /// 逐个 join，最多等 `drain` 时限，超时 abort 全部；随后 listener 随本函数
 /// 返回被 drop（socket 关闭），调用方（daemon 主循环）join HTTP 线程后退出。
+///
+/// §9.35 证书热加载：`tls` 为共享可换 cell，每新连接读取当前配置构建
+/// acceptor——reload 换入后**新连接**呈现新证书，**在途连接**持有旧 Arc
+/// 不受影响（max_conn_age 兜底断开）。
 async fn accept_loop(
     listener: tokio::net::TcpListener,
     router: Router,
-    tls: Arc<rustls::ServerConfig>,
+    tls: HotTls,
     stop: Arc<AtomicBool>,
     drain: std::time::Duration,
 ) {
-    let acceptor = tokio_rustls::TlsAcceptor::from(tls);
     // 在途连接集合：JoinSet 逐个 join，drain 结束时 abort 残余。
     let mut conns: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
@@ -723,9 +930,12 @@ async fn accept_loop(
                         continue;
                     }
                 };
-                let acceptor = acceptor.clone();
+                let tls = tls.clone();
                 let router = router.clone();
                 conns.spawn(async move {
+                    // §9.35 热切换语义：每新连接读取当前配置构建 acceptor
+                    // （TlsAcceptor 仅是 Arc 包装，逐连接构建代价可忽略）。
+                    let acceptor = tokio_rustls::TlsAcceptor::from(tls.get());
                     let tls_stream = match acceptor.accept(stream).await {
                         Ok(s) => s,
                         Err(e) => {
@@ -5711,7 +5921,7 @@ mod tests {
         cfg.allow_remote = allow_remote;
         let shutdown_flag = Arc::clone(&cfg.shutdown_flag);
         let bound = bind_http(&cfg).unwrap();
-        let tls = Arc::clone(&bound.tls);
+        let tls = bound.tls.clone();
         let addr = bound.local_addr;
         let mut cfg = cfg;
         cfg.endpoint = format!("https://{}", addr);
@@ -5732,6 +5942,7 @@ mod tests {
             CompatAdapterConfig::from_env(std::path::Path::new("cw-daemon-test")),
             Arc::new(SerializationPoint::with_default_timeout()),
         ));
+        let cfg = Arc::new(cfg);
         let app_state = AppState {
             state: Arc::new(TokioMutex::new(ds)),
             serialization: Arc::new(SerializationPoint::with_default_timeout()),
@@ -5739,7 +5950,7 @@ mod tests {
                 test_pki().ca_root.clone(),
                 None,
             )),
-            config: Arc::new(cfg),
+            config: Arc::clone(&cfg),
             dedup,
             jobs: Arc::new(StdMutex::new(HashMap::new())),
             compat,
@@ -5752,7 +5963,7 @@ mod tests {
         let _ = tokio::spawn(accept_loop(
             tokio_listener,
             router,
-            tls,
+            tls.clone(),
             Arc::new(AtomicBool::new(false)),
             std::time::Duration::from_secs(60),
         ));
@@ -6413,15 +6624,18 @@ mod tests {
     // ============================================
 
     /// 以指定 pki 根 spawn 单测 server（spawn_server_with 的独立 pki 变体，
-    /// 供 rotate-ca 双根窗口测试使用；结构与 spawn_server_with 保持一致）。
-    async fn spawn_server_with_pki(pki_root: &std::path::Path) -> SocketAddr {
+    /// 供 rotate-ca 双根窗口 / §9.35 热加载测试使用）。§9.35 需要 hot handle
+    /// 与 cfg（manifest 路径 / pki_dir），故返回三元组。
+    async fn spawn_server_with_pki(
+        pki_root: &std::path::Path,
+    ) -> (SocketAddr, HotTls, Arc<HttpServerConfig>) {
         // tempdir 必须活得比 server 久（dedup DB 与 manifest 落在其下）。
         let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
         let manifest = dir.path().join("http-manifest-rotate.json");
         let mut cfg = HttpServerConfig::new("127.0.0.1:0".into(), manifest);
         cfg.pki_dir = pki_root.to_path_buf();
         let bound = bind_http(&cfg).unwrap();
-        let tls = Arc::clone(&bound.tls);
+        let tls = bound.tls.clone();
         let addr = bound.local_addr;
         let mut cfg = cfg;
         cfg.endpoint = format!("https://{}", addr);
@@ -6440,6 +6654,7 @@ mod tests {
             CompatAdapterConfig::from_env(std::path::Path::new("cw-daemon-test")),
             Arc::new(SerializationPoint::with_default_timeout()),
         ));
+        let cfg = Arc::new(cfg);
         let app_state = AppState {
             state: Arc::new(TokioMutex::new(ds)),
             serialization: Arc::new(SerializationPoint::with_default_timeout()),
@@ -6447,7 +6662,7 @@ mod tests {
                 pki_root.to_path_buf(),
                 None,
             )),
-            config: Arc::new(cfg),
+            config: Arc::clone(&cfg),
             dedup,
             jobs: Arc::new(StdMutex::new(HashMap::new())),
             compat,
@@ -6457,12 +6672,12 @@ mod tests {
         let _ = tokio::spawn(accept_loop(
             tokio_listener,
             router,
-            tls,
+            tls.clone(),
             Arc::new(AtomicBool::new(false)),
             std::time::Duration::from_secs(60),
         ));
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        addr
+        (addr, tls, cfg)
     }
 
     /// 用任意 ClientConfig 建 TLS 连接（连接/握手失败不 panic，返回 Result
@@ -6499,7 +6714,7 @@ mod tests {
         crate::cli::pki::rotate_ca_prepare(&root).expect("rotate-ca prepare 失败");
 
         // 窗口期 server：bind_http 应加载 ca-previous 为第二信任根。
-        let addr = spawn_server_with_pki(&root).await;
+        let (addr, _hot, _cfg) = spawn_server_with_pki(&root).await;
 
         let new_ca_pem = std::fs::read_to_string(root.join("ca").join("ca.crt")).unwrap();
         let prev_ca_pem =
@@ -6519,7 +6734,7 @@ mod tests {
 
         // commit：移除 ca-previous/ → 信任根只剩新 CA。
         crate::cli::pki::rotate_ca_commit(&root, false).expect("rotate-ca commit 失败");
-        let addr2 = spawn_server_with_pki(&root).await;
+        let (addr2, _hot2, _cfg2) = spawn_server_with_pki(&root).await;
         let old_cfg2 = pki_api::client_tls_config(&bundle, &old_cert, &old_key)
             .expect("旧客户端 TLS config 构建失败");
         // TLS 1.3 握手顺序：服务端 Finished 先于客户端 Certificate 飞行——服务端
@@ -6546,6 +6761,188 @@ mod tests {
                 String::from_utf8_lossy(&buf[..n])
             ),
         }
+    }
+
+    // ============================================
+    // §9.35：TLS 热加载（哨兵触发 / 热切换语义 / fail-safe）
+    // ============================================
+
+    /// 无客户端证书、信任指定 CA 的客户端配置（§9.35 测试用独立 pki 根，
+    /// 不能用共享 test_pki 的 OnceLock 版本）。
+    fn anonymous_client_config_for(ca_pem: &str) -> Arc<rustls::ClientConfig> {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let mut roots = rustls::RootCertStore::empty();
+        let der = pki_api::pem_decode(ca_pem, "CERTIFICATE").expect("CA PEM 解析失败");
+        roots
+            .add(rustls::pki_types::CertificateDer::from(der))
+            .expect("CA 装载失败");
+        let cfg = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        Arc::new(cfg)
+    }
+
+    /// 从已建立连接的客户端视角取服务端叶证书 SHA-256（无证书 → None）。
+    fn peer_cert_sha256(conn: &tokio_rustls::client::TlsStream<TcpStream>) -> Option<String> {
+        let (_, session) = conn.get_ref();
+        let certs = session.peer_certificates()?;
+        certs.first().map(|c| {
+            let mut h = Sha256::new();
+            h.update(c.as_ref());
+            format!("{:x}", h.finalize())
+        })
+    }
+
+    /// 在 pki 根上重签服务端叶证书（删 server/ → ensure_server_cert）。
+    fn reissue_server_cert(root: &std::path::Path, bind: SocketAddr) -> pki_api::ServerCertificate {
+        std::fs::remove_dir_all(root.join("server")).expect("删 server/ 失败");
+        let ca = pki_api::ensure_ca(root).expect("ensure_ca 失败");
+        pki_api::ensure_server_cert(&ca, &bind).expect("ensure_server_cert 失败")
+    }
+
+    /// 热切换核心语义：swap 后新连接呈现新证书；在途连接不受影响继续服务。
+    #[tokio::test]
+    async fn test_tls_reload_hot_swap_new_conn_new_cert_inflight_unaffected() {
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let root = dir.path().to_path_buf();
+        let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let ca = pki_api::ensure_ca(&root).unwrap();
+        pki_api::ensure_server_cert(&ca, &bind).unwrap();
+        let (addr, hot, cfg) = spawn_server_with_pki(&root).await;
+
+        let client_cfg = anonymous_client_config_for(&ca.cert_pem);
+
+        // 连接 A（在途）：/health → 200，保持不断开。
+        let conn_a = tls_connect_with(&addr, client_cfg.clone()).await.unwrap();
+        let fp_before = peer_cert_sha256(&conn_a).expect("服务端必须呈示证书");
+        let (mut rd_a, mut wr_a) = tokio::io::split(conn_a);
+        wr_a
+            .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = [0u8; 4096];
+        let n = rd_a.read(&mut buf).await.unwrap();
+        assert!(buf[..n].starts_with(b"HTTP/1.1 200"), "连接 A 首请求应 200");
+
+        // 盘上重签（同 CA）→ 热换入（不重启、不动 listener）。
+        let reissued = reissue_server_cert(&root, bind);
+        let outcome = reload_tls_now(&hot, &cfg, &addr).expect("热加载应成功");
+        assert_eq!(outcome.server_cert_sha256, reissued.sha256);
+
+        // 连接 B（新连接）：必须呈现新证书。
+        let conn_b = tls_connect_with(&addr, client_cfg).await.unwrap();
+        let fp_after = peer_cert_sha256(&conn_b).expect("服务端必须呈示证书");
+        assert_ne!(
+            fp_before, fp_after,
+            "热换入后新连接必须呈现重签后的证书"
+        );
+        assert_eq!(fp_after, outcome.server_cert_sha256);
+
+        // 连接 A（在途，持有旧配置 Arc）：继续可用。
+        wr_a
+            .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let n2 = rd_a.read(&mut buf).await.unwrap();
+        assert!(
+            buf[..n2].starts_with(b"HTTP/1.1 200"),
+            "在途连接不得受热换入影响: {:?}",
+            String::from_utf8_lossy(&buf[..n2])
+        );
+    }
+
+    /// 哨兵流程：无哨兵 Ok(None)；有哨兵 → 热加载 + 删哨兵 + manifest 重发布；
+    /// 盘上材料损坏 → Err 且 fail-closed（旧配置继续服务、哨兵保留待重试）。
+    #[tokio::test]
+    async fn test_process_tls_reload_sentinel_manifest_and_fail_safe() {
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let root = dir.path().to_path_buf();
+        let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let ca = pki_api::ensure_ca(&root).unwrap();
+        pki_api::ensure_server_cert(&ca, &bind).unwrap();
+        let (addr, hot, cfg) = spawn_server_with_pki(&root).await;
+        let sentinel = root.join(pki_api::TLS_RELOAD_REQUEST_FILE);
+
+        // 无哨兵 → Ok(None)。
+        assert!(matches!(process_tls_reload(&hot, &cfg, &addr), Ok(None)));
+
+        // 重签 + 写哨兵 → Ok(Some)、哨兵删除、manifest 重发布、新连接新证书。
+        let reissued = reissue_server_cert(&root, bind);
+        std::fs::write(&sentinel, "{}").unwrap();
+        let outcome = process_tls_reload(&hot, &cfg, &addr)
+            .unwrap()
+            .expect("哨兵存在必须触发加载");
+        assert_eq!(outcome.server_cert_sha256, reissued.sha256);
+        assert!(!sentinel.exists(), "成功后哨兵必须删除");
+        let manifest: Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg.manifest_path).unwrap()).unwrap();
+        assert_eq!(
+            manifest["tls"]["server_cert_sha256"], outcome.server_cert_sha256,
+            "热加载必须重发布 manifest"
+        );
+        let client_cfg = anonymous_client_config_for(&ca.cert_pem);
+        let conn = tls_connect_with(&addr, client_cfg.clone()).await.unwrap();
+        assert_eq!(peer_cert_sha256(&conn).unwrap(), outcome.server_cert_sha256);
+
+        // fail-safe：哨兵 + CA 损坏 → Err；旧配置继续服务；哨兵保留。
+        std::fs::write(&sentinel, "{}").unwrap();
+        std::fs::write(root.join("ca").join("ca.crt"), "not a pem").unwrap();
+        assert!(
+            process_tls_reload(&hot, &cfg, &addr).is_err(),
+            "盘上 CA 损坏必须加载失败"
+        );
+        assert!(sentinel.exists(), "失败必须保留哨兵供退避重试");
+        let conn2 = tls_connect_with(&addr, client_cfg).await.unwrap();
+        assert_eq!(
+            peer_cert_sha256(&conn2).unwrap(),
+            outcome.server_cert_sha256,
+            "fail-closed：加载失败必须沿用上一份好配置"
+        );
+    }
+
+    /// watcher 路径：哨兵写入后短扫描间隔内自动热加载并删哨兵；stop 置位后退出。
+    #[tokio::test]
+    async fn test_tls_reload_watcher_processes_sentinel_and_stops() {
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let root = dir.path().to_path_buf();
+        let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let ca = pki_api::ensure_ca(&root).unwrap();
+        pki_api::ensure_server_cert(&ca, &bind).unwrap();
+        let (addr, hot, cfg) = spawn_server_with_pki(&root).await;
+        let sentinel = root.join(pki_api::TLS_RELOAD_REQUEST_FILE);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher = tokio::spawn(tls_reload_watcher(
+            hot.clone(),
+            Arc::clone(&cfg),
+            addr,
+            Arc::clone(&stop),
+        ));
+
+        let reissued = reissue_server_cert(&root, bind);
+        std::fs::write(&sentinel, "{}").unwrap();
+
+        // 轮询等待 watcher 完成热加载（扫描间隔 1s，上限 10s）。
+        let client_cfg = anonymous_client_config_for(&ca.cert_pem);
+        let mut seen = false;
+        for _ in 0..100 {
+            let conn = tls_connect_with(&addr, client_cfg.clone()).await.unwrap();
+            if peer_cert_sha256(&conn).as_deref() == Some(reissued.sha256.as_str()) {
+                seen = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(seen, "watcher 必须在哨兵写入后热加载新证书");
+        assert!(!sentinel.exists(), "watcher 成功后必须删哨兵");
+
+        stop.store(true, Ordering::Release);
+        tokio::time::timeout(Duration::from_secs(5), watcher)
+            .await
+            .expect("watcher 必须响应 stop 退出")
+            .expect("watcher 任务不应 panic");
     }
 
     // ============================================

@@ -50,6 +50,14 @@ const CLIENT_VALIDITY_SECS: i64 = 90 * 24 * 3600;
 /// 引导 token TTL（ADR §4.2：600s）。
 pub const ENROLL_TOKEN_TTL_SECS: u64 = 600;
 
+/// §9.35 TLS 热加载哨兵文件名（位于 PKI 根目录下）。
+///
+/// 「磁盘即协议」先例（rotate-ca 的目录 rename + window.json 同款）：
+/// `cw pki rotate-server` / `rotate-ca prepare/commit` 收尾写入
+/// `pki/tls_reload.request`，daemon watcher 检测到后热加载并删除。
+/// daemon 未运行时哨兵保留，下次启动首轮自愈（幂等）。
+pub const TLS_RELOAD_REQUEST_FILE: &str = "tls_reload.request";
+
 // ============================================
 // 错误
 // ============================================
@@ -680,6 +688,30 @@ pub fn build_tls_config_with_roots(
     Ok(Arc::new(cfg))
 }
 
+/// §9.35 热加载：从盘上材料无条件重建 TLS 服务端配置（幂等，无副作用除非
+/// 重签实际发生）。
+///
+/// 流程：`load_ca`（缺失/非法 → `E_PKI_CA_LOAD` fail-closed）→
+/// `load_previous_ca`（rotate-ca 双 CA 窗口，无则 None）→
+/// `ensure_server_cert`（幂等：缺失/过期/临期 ≤30 天自动重签——rotate-ca
+/// prepare 删除 `server/` 后由此以新 CA 重签）→
+/// `build_tls_config_with_roots`（当前 CA + 可选旧 CA 双信任根）。
+///
+/// 返回 `(ServerConfig, LocalCa, Option<PreviousCa>, ServerCertificate)`，
+/// 供调用方（http_server::reload_tls_now）重发布 manifest。
+pub fn load_tls_config_from_disk(
+    root: &Path,
+    bind: &SocketAddr,
+) -> Result<(Arc<ServerConfig>, LocalCa, Option<PreviousCa>, ServerCertificate), PkiError> {
+    let ca = load_ca(root)?.ok_or_else(|| {
+        PkiError::new("E_PKI_CA_LOAD", format!("PKI 根目录无 CA: {}", root.display()))
+    })?;
+    let previous = load_previous_ca(root)?;
+    let server = ensure_server_cert(&ca, bind)?;
+    let tls = build_tls_config_with_roots(&ca, previous.as_ref(), &server)?;
+    Ok((tls, ca, previous, server))
+}
+
 /// 生成一个 TLS 客户端配置（信任 pin 的 CA + 携带客户端证书）。
 ///
 /// daemon 侧测试与本地工具复用；生产 Python 客户端由 `ssl.SSLContext` 承担。
@@ -1152,5 +1184,77 @@ mod tests {
             "fresh cert must be reused (no reissue) across calls"
         );
         assert!(server_cert_expires_in_days(root.path()).unwrap() > 340);
+    }
+
+    // ============================================
+    // §9.35：TLS 热加载（load_tls_config_from_disk）
+    // ============================================
+
+    #[test]
+    fn test_load_tls_config_from_disk_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        ensure_ca(root.path()).unwrap();
+        let bind: SocketAddr = "127.0.0.1:8461".parse().unwrap();
+
+        let (cfg1, ca1, prev1, server1) = load_tls_config_from_disk(root.path(), &bind).unwrap();
+        let (cfg2, ca2, prev2, server2) = load_tls_config_from_disk(root.path(), &bind).unwrap();
+
+        assert_eq!(server1.sha256, server2.sha256, "idempotent: no reissue");
+        assert_eq!(ca1.fingerprint_sha256, ca2.fingerprint_sha256);
+        assert!(prev1.is_none() && prev2.is_none(), "no rotate-ca window");
+    }
+
+    #[test]
+    fn test_load_tls_config_from_disk_no_ca_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let bind: SocketAddr = "127.0.0.1:8462".parse().unwrap();
+        let err = load_tls_config_from_disk(root.path(), &bind).unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD", "missing CA must fail closed");
+    }
+
+    #[test]
+    fn test_load_tls_config_from_disk_after_rotate_ca_prepare() {
+        // 模拟 rotate-ca prepare 的磁盘效果：旧 CA rename 到 ca-previous/
+        // + 新 CA 落位 + server/ 删除。reload 必须以新 CA 重签服务端证书，
+        // 且 previous 指纹 = 旧 CA 指纹（双信任根窗口语义）。
+        let root = tempfile::tempdir().unwrap();
+        let old_ca = ensure_ca(root.path()).unwrap();
+        let old_fp = old_ca.fingerprint_sha256.clone();
+        let bind: SocketAddr = "127.0.0.1:8463".parse().unwrap();
+        ensure_server_cert(&old_ca, &bind).unwrap();
+
+        std::fs::rename(root.path().join("ca"), root.path().join("ca-previous")).unwrap();
+        ensure_ca(root.path()).unwrap();
+        std::fs::remove_dir_all(root.path().join("server")).unwrap();
+
+        let (_cfg, new_ca, prev, server) = load_tls_config_from_disk(root.path(), &bind).unwrap();
+        assert_ne!(
+            new_ca.fingerprint_sha256, old_fp,
+            "current CA must be the newly created one"
+        );
+        let prev = prev.expect("rotate-ca prepare leaves ca-previous window");
+        assert_eq!(
+            prev.fingerprint_sha256, old_fp,
+            "previous trust root must be the pre-rotate CA"
+        );
+        // 新服务端证书必须由新 CA 签发：issuer DN == 新 CA subject DN，
+        // 且 != 旧 CA subject DN（§9.34 同 DN 缺陷修复后的代际区分不变量）。
+        let old_der = pem_decode(&old_ca.cert_pem, "CERTIFICATE").unwrap();
+        let new_der = pem_decode(&new_ca.cert_pem, "CERTIFICATE").unwrap();
+        let server_der = pem_decode(&server.cert_pem, "CERTIFICATE").unwrap();
+        let (_, old_ca_parsed) = x509_parser::parse_x509_certificate(&old_der).unwrap();
+        let (_, new_ca_parsed) = x509_parser::parse_x509_certificate(&new_der).unwrap();
+        let (_, server_parsed) = x509_parser::parse_x509_certificate(&server_der).unwrap();
+        let old_subject = old_ca_parsed.subject().to_string();
+        let new_subject = new_ca_parsed.subject().to_string();
+        let server_issuer = server_parsed.issuer().to_string();
+        assert_ne!(
+            old_subject, new_subject,
+            "new CA DN must differ from old CA DN"
+        );
+        assert_eq!(
+            server_issuer, new_subject,
+            "reissued server cert must be issued by the new CA"
+        );
     }
 }

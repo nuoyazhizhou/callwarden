@@ -166,8 +166,8 @@ daemon 首次启动（无 CA）
 | 操作 | 行为 |
 | --- | --- |
 | `cw pki renew` | 已持有效客户端证书者经 `/v1/enroll/renew` 换发新证书；旧证书在 overlap 窗口后吊销 |
-| `cw pki rotate-server` | 用同一 CA 签发新服务端证书；写入 `server/`，重启生效，manifest 同步更新 |
-| `cw pki rotate-ca` | 生成新 CA，双 CA 信任窗口（旧+新并存 ≤ 24h），全部客户端重签后吊销旧 CA |
+| `cw pki rotate-server` | 用同一 CA 签发新服务端证书；写入 `server/`，写热加载哨兵（daemon 运行中 1s 内热换入，不重启），manifest 同步重发布 |
+| `cw pki rotate-ca` | 生成新 CA，双 CA 信任窗口（旧+新并存 ≤ 24h），全部客户端重签后吊销旧 CA；prepare/commit 均写热加载哨兵，daemon 不重启 |
 | `cw pki revoke --serial <s>` | 写 `pki_revocations`（权威 DB + 审计），daemon 内存吊销集热更新 |
 | 吊销生效 | 握手期拒绝；已建立的 keep-alive 连接由 `max_conn_age`（默认 300s）强制断开重连 |
 
@@ -178,9 +178,9 @@ rotate-ca 落地细则（§9.34，2026-11-18）：
   （`prepared_at`、`deadline`、`deadline_unix`、`previous_ca_fingerprint_sha256`）。
   窗口 24h（`CA_ROTATION_WINDOW_SECS`）。
 - `--action prepare`：旧 CA 目录整体 rename 为 `ca-previous/` → 生成新 CA 到
-  `ca/` → 删除 `server/`（下次启动 `ensure_server_cert` 自动重签）→ 写
-  `window.json`；`ensure_ca` 失败回滚 rename。已有窗口未 commit 时重复
-  prepare → `E_PKI_ROTATE_PENDING`。
+  `ca/` → 删除 `server/`（daemon 热加载或下次启动 `ensure_server_cert` 自动
+  以新 CA 重签）→ 写 `window.json` → 写热加载哨兵；`ensure_ca` 失败回滚
+  rename。已有窗口未 commit 时重复 prepare → `E_PKI_ROTATE_PENDING`。
 - 双根窗口：daemon 启动加载 `ca-previous/ca.crt` 为第二信任根（只验签不签发，
   `PreviousCa` 无 issuer），manifest `tls.ca_cert_pem` 变为「新 CA + 旧 CA」
   PEM bundle；`ca_fingerprint_sha256` 恒为 bundle **首张**（新 CA），新增可选
@@ -193,6 +193,28 @@ rotate-ca 落地细则（§9.34，2026-11-18）：
   无需逐 serial；无窗口 → `E_PKI_ROTATE_NO_WINDOW`；超窗需 `--force`
   （否则 `E_PKI_ROTATE_WINDOW_EXPIRED`）。
 - daemon 端窗口过期仅 WARN 不自动收敛（fail-safe：收敛必须显式 commit）。
+
+证书热加载落地细则（§9.35，2026-11-19，关闭 §14 #3）：
+
+- `HotTls = Arc<RwLock<Arc<rustls::ServerConfig>>>`（依赖冻结 ADR §15.2，
+  不引 arc_swap）：accept loop 逐连接 `get()` 构建 `TlsAcceptor`（仅 Arc
+  包装，代价可忽略）。语义：**新连接**呈现换入后的证书；**在途连接**持有
+  旧 Arc 不受影响，由 `max_conn_age`（300s）兜底断开重连。客户端验证走
+  CA 链 + hostname（无服务端证书指纹 pinning），热换对客户端透明。
+- reload 路径（幂等，`load_tls_config_from_disk`）：`load_ca`（缺失/非法 →
+  `E_PKI_CA_LOAD` fail-closed）→ `load_previous_ca`（双根窗口）→
+  `ensure_server_cert`（缺失/过期/临期 ≤30 天自动重签）→
+  `build_tls_config_with_roots` → 换入 → `build_manifest` +
+  `publish_manifest_atomic` 重发布（`manifest_hash` 重算供消费端感知）。
+- 触发：哨兵文件 `pki/tls_reload.request`（「磁盘即协议」，与 rotate-ca 的
+  目录 rename + window.json 同款）。`cw pki rotate-server` /
+  `rotate-ca prepare/commit` 收尾写入（best-effort，失败仅 eprintln 不阻断
+  rotate 主流程）；daemon watcher（随 serve_prebound 生命周期）1s 扫描 +
+  6h 周期无条件 reload（吸收 §9.34 A 临期重签）。成功才删哨兵；失败保留
+  旧配置 + 哨兵，退避 30s 重试，绝不因 reload 失败中断 serve。
+- daemon 未运行时哨兵保留，下次启动 bind 时 reload 路径自愈（幂等）。
+- 输出语义：rotate 命令的 `restart_required: true` 废弃，改为
+  `hot_reload: "requested"` + note。
 - 外部 CA（`CW_CA_CERT` 指向外部文件）：daemon 不改写外部文件，窗口期内
   用户须自行替换文件内容为新 CA。
 
@@ -495,7 +517,9 @@ python scripts/check_e2e_matrix_closure.py
    `ssl.SSLContext`，零新增运行时依赖**；仅当双向认证/证书链测试被 stdlib 阻塞时，
    再单独评估引入 `httpx` 并同步 `requirements.txt` 与打包声明。
 2. 外部 CA 导入的配置面与 UI。
-3. 证书热加载（不重启轮换服务端证书）。
+3. ~~证书热加载（不重启轮换服务端证书）~~ **已决（2026-11-19，§9.35）：
+   哨兵文件 `pki/tls_reload.request` + daemon watcher 1s 扫描 + 6h 周期
+   reload；`HotTls` 原子换入，新连接新证书、在途连接不受影响**。
 4. 多租户/多组织 CA 分层（当前单 CA 足够）。
 5. `write.commit` 的 delta 格式（unified diff vs 全量内容 + hash）。
 

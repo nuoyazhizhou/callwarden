@@ -11,7 +11,8 @@
 //!   （旧证书保留到过期/显式 `revoke`，即 ADR §4.3 的 overlap 语义）。
 //! - `revoke`：把 serial 写入权威 DB（`pki_revocations` + `pki_issued_certs.status`）
 //!   并刷新 `revocations.json` 缓存；幂等（重复吊销同一 serial 成功且不重复插行）。
-//! - `rotate-server`：同一 CA 下强制重签服务端证书（daemon 重启后生效）。
+//! - `rotate-server`：同一 CA 下强制重签服务端证书（写热加载哨兵，
+//!   daemon 运行中 §9.35 热加载生效，不重启）。
 //!
 //! 传输约束：本模块只使用 `rustls`（与 daemon 同一 TLS 后端、同一 pinned CA），
 //! 不引入任何明文 HTTP 分支；服务器证书主机名校验由 rustls `ServerName` 承担
@@ -407,9 +408,10 @@ fn read_rotation_window(root: &Path) -> Result<Option<Value>, PkiError> {
 /// 1. 已有窗口 → `E_PKI_ROTATE_PENDING`（先 commit 或删除 `ca-previous/` 回滚）；
 /// 2. `ca/` 整目录 rename 为 `ca-previous/`（原子，保留旧 CA 三件套）；
 /// 3. `ensure_ca` 生成新 CA（`ca/` 恒为当前签发 CA，enroll/renew 零改动）；
-/// 4. 删 `server/`——daemon 重启后 `ensure_server_cert` 缺失分支自动以新 CA 重签；
+/// 4. 删 `server/`——daemon 热加载（§9.35）时 `ensure_server_cert` 缺失分支
+///    自动以新 CA 重签；
 /// 5. 写 `ca-previous/window.json`（prepared_at/deadline/旧 CA 指纹）；
-/// 6. 输出 `{deadline, restart_required: true}`。
+/// 6. 写热加载哨兵 + 输出 `{deadline, hot_reload: "requested"}`。
 pub fn rotate_ca_prepare(root: &Path) -> Result<Value, PkiError> {
     let _guard = pki_api::pki_write_lock();
     if read_rotation_window(root)?.is_some() {
@@ -459,19 +461,20 @@ pub fn rotate_ca_prepare(root: &Path) -> Result<Value, PkiError> {
             return Err(e);
         }
     };
-    // 服务端叶证书随旧 CA 失效——删除后由 daemon 重启时的
+    // 服务端叶证书随旧 CA 失效——删除后由 daemon 热加载（§9.35）或重启时的
     // ensure_server_cert 缺失分支自动以新 CA 重签。
     let server_dir = root.join("server");
     if server_dir.exists() {
         std::fs::remove_dir_all(&server_dir).map_err(|e| PkiError::io_pub("remove server dir", e))?;
     }
+    request_tls_reload(root, "rotate-ca-prepare");
     Ok(json!({
         "action": "prepare",
         "previous_ca_fingerprint_sha256": old_fingerprint,
         "new_ca_fingerprint_sha256": new_ca.fingerprint_sha256,
         "deadline": window["deadline"],
-        "restart_required": true,
-        "note": "daemon 重启后双信任根生效；各客户端在窗口内 `cw pki renew` 换发",
+        "hot_reload": "requested",
+        "note": "daemon 热加载后双信任根生效（不重启）；各客户端在窗口内 `cw pki renew` 换发",
     }))
 }
 
@@ -497,6 +500,9 @@ pub fn rotate_ca_commit(root: &Path, force: bool) -> Result<Value, PkiError> {
     }
     let prev_dir = root.join("ca-previous");
     std::fs::remove_dir_all(&prev_dir).map_err(|e| PkiError::io_pub("remove ca-previous", e))?;
+    // §9.35：收敛后旧 CA 信任根从盘上消失——热加载让 daemon 立即单根化
+    //（不重启；在途连接由 max_conn_age 兜底退出）。
+    request_tls_reload(root, "rotate-ca-commit");
     Ok(json!({
         "action": "commit",
         "previous_ca_fingerprint_sha256": window["previous_ca_fingerprint_sha256"],
@@ -649,7 +655,30 @@ pub fn revoke(
     Ok(json!({ "serial": serial, "principal_id": principal_id, "revoked_at": now }))
 }
 
+/// §9.35：写 TLS 热加载哨兵（best-effort，失败不阻断 rotate 主流程）。
+///
+/// daemon watcher 每 1s 扫描 `pki/tls_reload.request`，检测到即从盘上材料
+/// 重建 TLS 配置并原子换入（不重启）。daemon 未运行时哨兵保留，下次启动
+/// 首轮自愈。
+fn request_tls_reload(root: &Path, reason: &str) {
+    let sentinel = root.join(pki_api::TLS_RELOAD_REQUEST_FILE);
+    let body = json!({
+        "reason": reason,
+        "requested_at": pki_api::rfc3339_from_unix(unix_now_f64() as i64),
+    });
+    if let Err(e) = std::fs::write(&sentinel, serde_json::to_string_pretty(&body).unwrap_or_default())
+    {
+        eprintln!(
+            "[cw][pki] 写热加载哨兵失败（daemon 重启后仍会生效）: {} ({})",
+            sentinel.display(), e
+        );
+    }
+}
+
 /// 同一 CA 下重签服务端叶证书（先删除旧文件再 `ensure_server_cert` 生成）。
+///
+/// §9.35：收尾写热加载哨兵——daemon 运行中 1s 内换入新证书（不重启），
+/// 输出 `hot_reload: "requested"` 取代旧 `restart_required: true`。
 pub fn rotate_server(root: &Path, bind: SocketAddr) -> Result<Value, PkiError> {
     let ca = pki_api::ensure_ca(root)?;
     let dir = root.join("server");
@@ -690,11 +719,13 @@ pub fn rotate_server(root: &Path, bind: SocketAddr) -> Result<Value, PkiError> {
             ],
         );
     }
+    request_tls_reload(root, "rotate-server");
     Ok(json!({
         "server_cert_sha256": server.sha256,
         "server_not_after": server.not_after,
         "san": server.san,
-        "restart_required": true,
+        "hot_reload": "requested",
+        "note": "daemon 运行中 1s 内热加载新证书（不重启）；未运行则启动时生效",
     }))
 }
 
@@ -1244,9 +1275,9 @@ mod tests {
         let st0 = rotate_ca_status(tmp.path()).unwrap();
         assert_eq!(st0["window_active"], false);
 
-        // prepare：新 CA + 窗口文件 + 旧 CA 归档
+        // prepare：新 CA + 窗口文件 + 旧 CA 归档 + 热加载哨兵（§9.35）
         let out = rotate_ca_prepare(tmp.path()).unwrap();
-        assert_eq!(out["restart_required"], true);
+        assert_eq!(out["hot_reload"], "requested");
         assert_ne!(
             out["previous_ca_fingerprint_sha256"], out["new_ca_fingerprint_sha256"],
             "prepare 后签发 CA 必须已更换"
@@ -1255,6 +1286,7 @@ mod tests {
         assert!(tmp.path().join("ca-previous").join("window.json").exists());
         assert!(tmp.path().join("ca").join("ca.crt").exists());
         assert!(!tmp.path().join("server").exists(), "服务端叶证书须随旧 CA 清除");
+        assert!(tmp.path().join(pki_api::TLS_RELOAD_REQUEST_FILE).exists());
 
         // prepare 幂等拒绝
         assert_eq!(
@@ -1280,6 +1312,24 @@ mod tests {
         assert_eq!(out["action"], "commit");
         assert!(!tmp.path().join("ca-previous").exists());
         assert_eq!(rotate_ca_status(tmp.path()).unwrap()["window_active"], false);
+        assert!(tmp.path().join(pki_api::TLS_RELOAD_REQUEST_FILE).exists(),
+            "commit 收敛后须请求热加载（旧 CA 信任根已从盘上消失）");
+    }
+
+    #[test]
+    fn rotate_server_writes_reload_sentinel_and_hot_reload_output() {
+        // §9.35：rotate-server 不再要求 daemon 重启——写哨兵 + hot_reload 语义。
+        let tmp = tempfile::tempdir().unwrap();
+        let bind: SocketAddr = "127.0.0.1:8464".parse().unwrap();
+
+        let out = rotate_server(tmp.path(), bind).unwrap();
+        assert_eq!(out["hot_reload"], "requested");
+        assert!(
+            tmp.path().join(pki_api::TLS_RELOAD_REQUEST_FILE).exists(),
+            "rotate-server 收尾必须写热加载哨兵"
+        );
+        assert!(out["server_cert_sha256"].as_str().is_some());
+        assert!(out["server_not_after"].as_str().is_some());
     }
 
     #[test]
