@@ -883,7 +883,11 @@ fn discover_endpoint(root: Option<&Path>) -> Result<String, PkiError> {
 }
 
 fn default_principal() -> String {
-    std::env::var("CW_PRINCIPAL_ID").unwrap_or_else(|_| "owner".to_string())
+    // 兜底必须是 owner 固定 principal（`pr_owner`，与 `ensure_owner_identity`
+    // 写入的 identities/pr_owner 一致）；Python 自动续期（§9.34 B）裸调
+    // `pki renew` 不传 --principal，硬编码 "owner" 会找不到身份目录。
+    std::env::var("CW_PRINCIPAL_ID")
+        .unwrap_or_else(|_| OWNER_PRINCIPAL.to_string())
 }
 
 fn read_required(path: &Path, code: &'static str) -> Result<String, PkiError> {
@@ -1085,7 +1089,7 @@ fn ensure_pki_tables(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
 /// 执行 `cw pki <cmd>`；成功输出 JSON 到 stdout，失败输出错误 JSON 到 stderr。
 pub fn run(cmd: PkiCommand) -> i32 {
     let root = resolve_pki_root();
-    let actor = std::env::var("CW_PRINCIPAL_ID").unwrap_or_else(|_| "owner".to_string());
+    let actor = std::env::var("CW_PRINCIPAL_ID").unwrap_or_else(|_| OWNER_PRINCIPAL.to_string());
     let result = match cmd {
         PkiCommand::Init { bind } => parse_bind(&bind).and_then(|b| init(&root, b)),
         PkiCommand::Token { action } => match action {
@@ -1209,6 +1213,20 @@ mod tests {
         // 证书缺失 → E_MTLS_CLIENT_CERT_MISSING
         let err = cert_status(tmp.path(), Some("pr_absent"), None).unwrap_err();
         assert_eq!(err.code, "E_MTLS_CLIENT_CERT_MISSING");
+    }
+
+    #[test]
+    fn default_principal_resolves_owner_identity() {
+        // §9.34 B 回归：Python 自动续期裸调 `pki renew`/`pki cert-status`
+        // 不传 --principal，默认 principal 必须落在 owner 固定身份
+        // （identities/pr_owner），而非历史硬编码的 "owner"（目录不存在，
+        // 自动续期在本机必然 E_MTLS_CLIENT_CERT_MISSING）。
+        let tmp = tempfile::tempdir().unwrap();
+        let ca = pki_api::ensure_ca(tmp.path()).unwrap();
+        pki_api::issue_local_client_identity(&ca, OWNER_PRINCIPAL).unwrap();
+
+        let v = cert_status(tmp.path(), None, None).unwrap();
+        assert_eq!(v["principal_id"], OWNER_PRINCIPAL);
     }
 
     #[test]
