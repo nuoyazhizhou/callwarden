@@ -2906,6 +2906,93 @@ READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
 - `rust_ext/src/daemon/**` 与 `cw_daemon.rs` 属
   RUNTIME_AFFECTING_PATH_PREFIXES，合入后需 `scripts/refresh_shared_runtime.ps1`。
 
+## 9.34 证书自动续期 + rotate-ca 双 CA 窗口（2026-11-18）
+
+> 触发：§17.1 盘点确认 S2/S3/S4 远端面已闭环后，剩余真实缺口 = 证书
+> 到期无自动续期（服务端 1 年 / 客户端 90 天，到期即断链）与 CA 换根
+> 无安全路径。方案：A 服务端启动期自动重签 + B 客户端 fail-open 自动
+> renew + C rotate-ca 双 CA 窗口（24h）。
+
+### 1. 阶段 A：服务端证书自动续期
+
+- `pki_api.rs`：新增 `SERVER_CERT_RENEW_THRESHOLD_DAYS = 30` 与纯函数
+  `server_cert_needs_renewal(der, now, threshold)`（days_left =
+  `div_euclid(86_400)`；解析失败 fail-closed 返回 true）。
+  `ensure_server_cert` 幂等条件从「文件存在 + SAN 覆盖」扩展为
+  「…且未临期」——临期/过期落入既有重签路径，调用方零改动。
+  注意 `set_validity` 粒度到天（civil 日零点截断），31 天输入实际
+  days_left=30，阈值外侧测试用 32 天。
+- `cw_daemon.rs`（unix + windows 主循环）：每 6h（21_600 × 10 tick）
+  调 `server_cert_expires_in_days`，经纯函数
+  `server_cert_expiry_message(days, threshold)` 输出 WARN（≤30 天，
+  提示下次重启自动重签）/ ERROR（已过期）。运行期 TLS 热替换暂不做
+  （重启即重签，窗口足够）。
+
+### 2. 阶段 B：客户端自动 renew（fail-open）
+
+- `cli/pki.rs` 新增 `cert-status` 子命令：读
+  `identities/<principal>/client.crt` 解析出 days_left / expired /
+  principal_id / serial，供外部编排。
+- `daemon_client.py` `_maybe_auto_renew()`：resolve 客户端证书路径前
+  调用（renew 先于首次 resolve，首次连接即用新证书）；days_left ≤ 7
+  时子进程执行 `cw pki renew`，成功后清 `_ssl_ctx` 缓存。fail-open：
+  任何失败仅 warning（含手动 `cw pki renew` 提示），不阻断连接；
+  `_auto_renew_attempted` 单次防重入；`CW_CLIENT_CERT` 外部证书跳过；
+  `CW_AUTO_RENEW_DISABLED=1` 逃生开关。
+
+### 3. 阶段 C：rotate-ca 双 CA 窗口（24h）
+
+- 布局不变量：`ca/` **恒为签发 CA**（enroll/renew 零改动），
+  `ca-previous/` = 旧 CA + `window.json{prepared_at, deadline,
+  deadline_unix, previous_ca_fingerprint_sha256}`。`PreviousCa` 无
+  `issuer()`——旧 CA 只验签不签发；commit 移除 `ca-previous/` 即旧 CA
+  整体失去信任（无需逐 serial 吊销）。
+- `pki_api.rs`：`load_previous_ca` / `build_tls_config_with_roots`
+  （双根 RootCertStore）/ `pem_decode_all`（bundle 逐块解析，
+  `client_tls_config` 支持 PEM bundle）/ 导出 `ensure_ca_locked`、
+  `pki_write_lock`、`sha256_hex`。
+- `http_server.rs` `bind_http`：加载 previous_ca + 窗口 WARN（过期
+  提示 `rotate-ca --action commit`）；`build_manifest` 窗口期输出
+  `ca_cert_pem` = 新 + 旧 CA bundle，`ca_fingerprint_sha256` 恒为首张
+  （当前 CA），新增可选 `previous_ca_fingerprint_sha256`。
+- `cli/pki.rs` `rotate-ca --action prepare|commit|status`：
+  prepare（持锁 rename + 重签服务端证书 + 失败回滚；重复 prepare →
+  `E_PKI_ROTATE_PENDING`）、commit（无窗口 `E_PKI_ROTATE_NO_WINDOW`；
+  超窗需 `--force` → `E_PKI_ROTATE_WINDOW_EXPIRED`）、status（按 AKI
+  vs 当前 CA SKI 输出 `pending_renewal_principals`，证书解析失败
+  fail-closed 归入清单）。
+- 消费端兼容：Python `load_verify_locations(cadata=)` 原生支持 bundle
+  零改动；`daemon_autostart.py` `_pem_sha256` 改取 bundle **首张**
+  证书块（`_first_pem_cert_block`），否则窗口期 CA pin 失败；
+  `CW_CA_CERT` 外部文件用户须窗口内自行换文件。
+
+### 4. 踩坑记录
+
+- **同线程 Mutex 死锁**：`rotate_ca_prepare` 持 `pki_write_lock` 后调
+  `ensure_ca`（重入同一非重入锁）→ 测试二进制永久卡死（CPU 归零、
+  无输出）。持锁路径必须用 `ensure_ca_locked`。
+- **rcgen AKI 默认不写**：`use_authority_key_identifier_extension`
+  默认 false，客户端证书无 AKI → rotate-ca status 待重签判定失真。
+  两条签发路径（CSR / 本地身份）均显式开启。
+- **TLS 1.3 客户端证书拒绝对客户端不可见于 connect()**：服务端
+  Finished 先于客户端 Certificate 飞行，旧证书被拒时客户端
+  `connect()` 已返回 Ok，拒绝以 alert/EOF 在首次读写暴露——负向
+  集成断言须做在首次读写（不得获得 200 响应），不能断言 connect 失败。
+
+### 5. 测试与验收
+
+- Rust：pki_api 7 例（阈值边界 32/30/0/-5/garbage、临期/过期重签、
+  新证书幂等）；cw_daemon bin 1 例（WARN/ERROR 消息边界）；cli::pki
+  4 例（cert-status、roundtrip、超窗 force、待重签清单含 fail-closed）；
+  http_server 52 例（含 `test_rotate_ca_dual_root_window_handshake`
+  双根握手 e2e + commit 后旧证书拒止）。
+- pytest：`test_client_cert_auto_renew.py` 12 例；`test_http_manifest_
+  discovery.py` 31 例（bundle 首张 pin + previous_ca 字段放行）。
+- 全量回归：`cargo test --lib` 2024 passed / 0 failed（2300.70s）；
+  pytest 5 套件 71 passed。
+- `rust_ext/**` 属 RUNTIME_AFFECTING_PATH_PREFIXES，合入后需
+  `scripts/refresh_shared_runtime.ps1`。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

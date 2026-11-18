@@ -129,7 +129,17 @@
   SAN 必须覆盖 `DNS:localhost`、`IP:127.0.0.1`、`IP:::1`、`IP:<LAN>`、`DNS:<hostname>`、
   `DNS:<fqdn>`；启动时若 SAN 不覆盖实际绑定地址 → `E_TLS_SAN_MISMATCH` fail-closed。
 - 客户端叶证书：`O=CallWarden Client`，EKU `clientAuth`，有效期 90 天；
-  SAN 必含 `URI:spiffe://callwarden.local/principal/<principal_id>`。
+  SAN 必含 `URI:spiffe://callwarden.local/principal/<principal_id>`；签发写 AKI 扩展
+  （rotate-ca status 以 AKI vs 当前 CA SKI 判定待重签）。
+- 自动续期阈值语义（§9.34，2026-11-18）：
+  - 服务端：`ensure_server_cert` 幂等条件含临期检测——days_left ≤
+    `SERVER_CERT_RENEW_THRESHOLD_DAYS`（30 天）时启动路径自动重签（过期落入
+    同一判定；解析失败 fail-closed 视为需重签）。daemon 主循环每 6h 巡检并
+    WARN/ERROR，实际重签发生在下次启动（运行期 TLS 热替换不做，重启即换新）。
+    注意 validity 粒度到天，31 天输入实际 days_left=30。
+  - 客户端：`daemon_client` 连接前经 `cw pki cert-status` 查 days_left ≤ 7 时
+    子进程 `cw pki renew` 后重载 TLS 上下文；fail-open（失败仅告警不阻断，
+    `CW_AUTO_RENEW_DISABLED=1` 可关；`CW_CLIENT_CERT` 外部证书不参与）。
 - `principal_id`：不透明稳定标识，`pr_` + 32 位小写 hex；由 daemon 签发时分配，
   与 OS 用户、机器、进程均无关。
 
@@ -160,6 +170,31 @@ daemon 首次启动（无 CA）
 | `cw pki rotate-ca` | 生成新 CA，双 CA 信任窗口（旧+新并存 ≤ 24h），全部客户端重签后吊销旧 CA |
 | `cw pki revoke --serial <s>` | 写 `pki_revocations`（权威 DB + 审计），daemon 内存吊销集热更新 |
 | 吊销生效 | 握手期拒绝；已建立的 keep-alive 连接由 `max_conn_age`（默认 300s）强制断开重连 |
+
+rotate-ca 落地细则（§9.34，2026-11-18）：
+
+- 目录布局：`ca/` 恒为**签发 CA**（enroll / renew / 签发路径零改动）；
+  `ca-previous/` 保存旧 CA（`ca.crt`）与 `window.json`
+  （`prepared_at`、`deadline`、`deadline_unix`、`previous_ca_fingerprint_sha256`）。
+  窗口 24h（`CA_ROTATION_WINDOW_SECS`）。
+- `--action prepare`：旧 CA 目录整体 rename 为 `ca-previous/` → 生成新 CA 到
+  `ca/` → 删除 `server/`（下次启动 `ensure_server_cert` 自动重签）→ 写
+  `window.json`；`ensure_ca` 失败回滚 rename。已有窗口未 commit 时重复
+  prepare → `E_PKI_ROTATE_PENDING`。
+- 双根窗口：daemon 启动加载 `ca-previous/ca.crt` 为第二信任根（只验签不签发，
+  `PreviousCa` 无 issuer），manifest `tls.ca_cert_pem` 变为「新 CA + 旧 CA」
+  PEM bundle；`ca_fingerprint_sha256` 恒为 bundle **首张**（新 CA），新增可选
+  字段 `previous_ca_fingerprint_sha256`。Python `load_verify_locations(cadata=)`
+  原生支持多证书 bundle；`daemon_autostart._pem_sha256` pin 取首张。
+- `--action status`：窗口状态 + 待重签清单（identities/*/client.crt 的
+  AKI ≠ 当前 CA SKI 即待重签——新旧 CA 同 DN，不能比 issuer DN；解析失败
+  fail-closed 归入 pending）。
+- `--action commit`：删除 `ca-previous/`——信任根移除即旧 CA 整体吊销，
+  无需逐 serial；无窗口 → `E_PKI_ROTATE_NO_WINDOW`；超窗需 `--force`
+  （否则 `E_PKI_ROTATE_WINDOW_EXPIRED`）。
+- daemon 端窗口过期仅 WARN 不自动收敛（fail-safe：收敛必须显式 commit）。
+- 外部 CA（`CW_CA_CERT` 指向外部文件）：daemon 不改写外部文件，窗口期内
+  用户须自行替换文件内容为新 CA。
 
 ---
 
@@ -276,6 +311,22 @@ E_HTTP_BIND_REMOTE_NOT_ALLOWED
 E_REMOTE_PATH_FORBIDDEN
 E_REMOTE_DB_PATH_FORBIDDEN
 ```
+
+证书自动续期（§9.34，2026-11-18）：
+
+- 服务端：`ensure_server_cert` 存在分支新增有效期判定
+  `server_cert_needs_renewal`——剩余有效期 ≤
+  `SERVER_CERT_RENEW_THRESHOLD_DAYS`（30 天）或解析失败（fail-closed）→
+  落入既有重签路径；daemon 主循环每 6h 巡检
+  `server_cert_expires_in_days`，≤30 天 WARN、已过期 ERROR（日志可见性；
+  重签发生在下次重启的 `ensure_server_cert` 路径，运行期 TLS 热替换延后）。
+  注意 `set_validity` 粒度到天：31 天输入实际 days_left=30，边界测试须用
+  32 天。
+- 客户端：`HttpDaemonRpcClient` 建 TLS 上下文前 fail-open 自动续期——经
+  `cw pki cert-status` 读 days_left ≤ 7 → 子进程 `cw pki renew` → 成功后
+  重建 SSL 上下文；renew 失败仅告警不阻塞连接（fail-open）。`CW_CLIENT_CERT`
+  指向外部证书时跳过（外部生命周期归用户）；`CW_AUTO_RENEW_DISABLED=1`
+  为逃生开关。
 
 ---
 
