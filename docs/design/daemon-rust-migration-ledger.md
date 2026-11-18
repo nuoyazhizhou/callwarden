@@ -2995,10 +2995,16 @@ READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
   `E_MTLS_CLIENT_CERT_MISSING`。修复：兜底改用 `OWNER_PRINCIPAL`
   （`run()` 审计 actor 同步修正），新增
   `default_principal_resolves_owner_identity` 回归测试。
-- **待查：`cw daemon stop` 进程残留**：僵尸 daemon（PID 44668）经
-  `cw daemon stop` 返回 ok 后进程仍残留，需 `Stop-Process` 强杀；
-  与 §9.33 已验证的优雅停止行为不符，疑似优雅停止与 PKI 目录
-  rename 竞争，待后续定位（本轮仅记录，不阻断收尾）。
+- **`cw daemon stop` 报 ok 后进程残留**（已修复）：真机观察僵尸
+  daemon（PID 44668）在 `cw daemon stop` 返回 ok 后进程仍残留，需
+  `Stop-Process` 强杀。根因：CLI 停止等待循环只轮询 `/health` 不可达
+  ——daemon 优雅 drain 期间 listener 不再 accept，新连接在 TCP 层可
+  建立但永无响应，RPC 客户端超时被误判为"已退出"，而 drain/退出阻塞
+  时进程仍存活。修复：等待循环在 RPC 不可达后核实
+  `_pid_alive(health_pid)`（pid 已交叉核对）为假才报 stopped；超时
+  输出 `pid_alive` 详情（rc 1），把静默残留变成可诊断失败。新增
+  `test_stop_rpc_pid_linger_reports_timeout`，stop 套件 15/15 全绿；
+  真机复验 stop → 进程核实退出 → start → health 正常。
 
 ### 5. 测试与验收
 
