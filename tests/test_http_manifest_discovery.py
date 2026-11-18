@@ -175,6 +175,49 @@ def test_validate_manifest_ca_pin_mismatch():
     assert exc.value.code == E_MTLS_UNKNOWN_CA
 
 
+# §9.34 C：rotate-ca 窗口期 ca_cert_pem 为双 CA bundle，pin 取首张（当前 CA）
+def test_pem_sha256_takes_first_block_of_bundle():
+    ca2_pem = "-----BEGIN CERTIFICATE-----\nWFla\n-----END CERTIFICATE-----\n"  # XYZ
+    ca2_fp = hashlib.sha256(b"XYZ").hexdigest()
+    bundle = TEST_CA_PEM + "\n" + ca2_pem
+    assert da._pem_sha256(bundle) == da._pem_sha256(TEST_CA_PEM)
+    assert da._pem_sha256(bundle) != ca2_fp
+    assert da._pem_sha256(TEST_CA_PEM) == TEST_CA_FINGERPRINT
+
+
+def test_validate_manifest_bundle_pin_ok_with_previous_ca_field():
+    ca2_pem = "-----BEGIN CERTIFICATE-----\nWFla\n-----END CERTIFICATE-----\n"
+    m = build_manifest_dict(
+        tls={
+            "min_version": "1.2",
+            "ca_cert_pem": TEST_CA_PEM + "\n" + ca2_pem,
+            "ca_fingerprint_sha256": TEST_CA_FINGERPRINT,
+            "previous_ca_fingerprint_sha256": hashlib.sha256(b"XYZ").hexdigest(),
+            "server_cert_sha256": "deadbeef",
+            "san": ["IP:127.0.0.1"],
+        }
+    )
+    # 首张 = 当前 CA 指纹 → pin 通过；previous_ca_fingerprint_sha256 为可选新字段
+    da.validate_http_manifest(m, AUTHORITY)
+
+
+def test_validate_manifest_bundle_pin_uses_first_block():
+    ca2_pem = "-----BEGIN CERTIFICATE-----\nWFla\n-----END CERTIFICATE-----\n"
+    m = build_manifest_dict(
+        tls={
+            "min_version": "1.2",
+            "ca_cert_pem": TEST_CA_PEM + "\n" + ca2_pem,
+            # 指纹填了第二张（旧 CA）→ 与首张不一致，必须拒绝
+            "ca_fingerprint_sha256": hashlib.sha256(b"XYZ").hexdigest(),
+            "server_cert_sha256": "deadbeef",
+            "san": ["IP:127.0.0.1"],
+        }
+    )
+    with pytest.raises(DaemonRemoteError) as exc:
+        da.validate_http_manifest(m, AUTHORITY)
+    assert exc.value.code == E_MTLS_UNKNOWN_CA
+
+
 def test_validate_manifest_endpoint_must_be_loopback():
     m = build_manifest_dict(endpoint="https://192.168.1.5:443")
     with pytest.raises(DaemonRemoteError) as exc:

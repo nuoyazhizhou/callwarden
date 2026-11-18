@@ -798,16 +798,44 @@ def validate_http_manifest(
 
 
 def _pem_sha256(pem: str) -> str:
-    """PEM 证书 DER 的 SHA-256（用于 manifest CA pin 校验）。"""
+    """PEM 证书 DER 的 SHA-256（用于 manifest CA pin 校验）。
+
+    §9.34 C rotate-ca：`tls.ca_cert_pem` 在双 CA 窗口期为
+    「新 CA + 旧 CA」的 PEM bundle——`ca_fingerprint_sha256` 恒为 bundle
+    **首张**（当前签发 CA）的指纹，故 pin 校验同样取首张证书块。
+    """
     import hashlib
     import ssl
 
+    first_block = _first_pem_cert_block(pem)
+    if first_block is None:
+        return ""
     try:
-        der_b64 = pem.encode("utf-8")
-        der = ssl.PEM_cert_to_DER_cert(der_b64.decode("utf-8", "replace"))
+        der = ssl.PEM_cert_to_DER_cert(first_block)
     except (ValueError, TypeError):
         return ""
     return hashlib.sha256(der).hexdigest()
+
+
+def _first_pem_cert_block(pem: str) -> Optional[str]:
+    """返回 PEM 文本中的首个 CERTIFICATE 块（含 BEGIN/END 行）。
+
+    支持 bundle（多证书）；无合法块返回 None。
+    """
+    lines = pem.splitlines()
+    begin = "-----BEGIN CERTIFICATE-----"
+    end = "-----END CERTIFICATE-----"
+    collecting: Optional[list] = None
+    for line in lines:
+        stripped = line.strip()
+        if collecting is None:
+            if stripped == begin:
+                collecting = [line]
+        else:
+            collecting.append(line)
+            if stripped == end:
+                return "\n".join(collecting)
+    return None
 
 
 def _load_manifest_for_authority(

@@ -21,6 +21,7 @@ import http.client
 import json
 import logging
 import os
+import shutil
 import ssl
 import subprocess
 import tempfile
@@ -80,6 +81,11 @@ SNAPSHOT_UPLOAD_BODY_MAX_BYTES = 64 * 1024 * 1024     # 上传面 body 口径（
 
 # §9.31 证书到期监控：/health `cert_expires_in_days` 低于该值打 warning。
 CERT_EXPIRY_WARN_DAYS = 14
+
+# §9.34 B 客户端证书自动续期：`pki cert-status` 报告的 days_left 低于该值
+# 时自动子进程 `pki renew`（fail-open）；子进程超时秒数。
+CLIENT_CERT_RENEW_THRESHOLD_DAYS = 7
+AUTO_RENEW_TIMEOUT_SECS = 20
 
 # §9.31 长任务心跳（watchdog）：慢方法调用期间的 /health 探活参数。
 WATCHDOG_PROBE_INTERVAL_SECS = 5.0    # 探活周期
@@ -1365,6 +1371,8 @@ class HttpDaemonRpcClient:
         self._ssl_ctx: Optional[ssl.SSLContext] = None
         # §9.31：证书到期告警限频（每实例至多一条 warning）。
         self._cert_expiry_warned = False
+        # §9.34 B：客户端证书自动续期防重入（每实例至多尝试一次）。
+        self._auto_renew_attempted = False
 
     # ------------------------------------------------------------------
     # 发现与校验（fail-closed 门禁）
@@ -1425,6 +1433,95 @@ class HttpDaemonRpcClient:
         self._warn_cert_expiry(health)
         return health
 
+    @staticmethod
+    def _resolve_daemon_binary() -> Optional[str]:
+        """定位 Rust daemon 二进制（§9.34 B 自动续期子进程用）。
+
+        与 `cli._resolve_pki_binary` 口径一致（CW_DAEMON_BIN → PATH →
+        rust_ext/target），轻量复制避免引入 cli.main 重导入链。
+        找不到返回 None（自动续期静默跳过）。
+        """
+        env_bin = os.environ.get("CW_DAEMON_BIN", "").strip()
+        if env_bin and os.path.isfile(env_bin):
+            return env_bin
+        found = shutil.which("cw-daemon")
+        if found:
+            return found
+        pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        binary_name = "cw-daemon.exe" if os.name == "nt" else "cw-daemon"
+        for profile in ("release", "debug"):
+            candidate = os.path.join(
+                pkg_root, "rust_ext", "target", profile, binary_name
+            )
+            if os.path.isfile(candidate):
+                return candidate
+        return None
+
+    def _maybe_auto_renew(self) -> None:
+        """§9.34 B：客户端身份证书临期自动 renew（fail-open，不阻断 RPC）。
+
+        - 同实例至多尝试一次（`_auto_renew_attempted` 防重入）；
+        - `CW_CLIENT_CERT` env 指定外部证书时不参与（renew 写回身份目录，
+          与外部证书脱钩）；`CW_AUTO_RENEW_DISABLED=1` 逃生开关；
+        - 数据源 = Rust `pki cert-status`（解析 client.crt，与 meta.json 无关，
+          防台账与证书漂移）；
+        - `days_left <= CLIENT_CERT_RENEW_THRESHOLD_DAYS` → 子进程 `pki renew`
+          （env 继承同进程 CW_PKI_DIR，指向同一 pki 根）；成功后置空
+          `self._ssl_ctx`，调用方 `_ssl_context()` 重新 resolve 拿到新证书；
+        - 子进程异常/失败 → `logger.warning`（§9.31 消息风格）后沿用旧证书：
+          证书确已过期时 mTLS 握手失败属 fail-closed，无明文降级路径。
+        """
+        if self._auto_renew_attempted:
+            return
+        self._auto_renew_attempted = True
+        if os.environ.get("CW_CLIENT_CERT", "").strip():
+            return
+        if os.environ.get("CW_AUTO_RENEW_DISABLED", "").strip().lower() in ("1", "true"):
+            return
+        binary = self._resolve_daemon_binary()
+        if not binary:
+            return
+        try:
+            status = subprocess.run(
+                [binary, "pki", "cert-status"],
+                capture_output=True, text=True,
+                timeout=AUTO_RENEW_TIMEOUT_SECS,
+                stdin=subprocess.DEVNULL,
+            )
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return
+        if status.returncode != 0:
+            return
+        try:
+            payload = json.loads(status.stdout)
+            days_left = int(payload.get("days_left", 10 ** 9))
+        except (ValueError, TypeError):
+            return
+        if days_left > CLIENT_CERT_RENEW_THRESHOLD_DAYS:
+            return
+        logger.warning(
+            "客户端证书剩余 %d 天（<= %d 阈值），自动 `pki renew` 换发中…",
+            days_left, CLIENT_CERT_RENEW_THRESHOLD_DAYS,
+        )
+        try:
+            renew = subprocess.run(
+                [binary, "pki", "renew"],
+                capture_output=True, text=True,
+                timeout=AUTO_RENEW_TIMEOUT_SECS,
+                stdin=subprocess.DEVNULL,
+            )
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            logger.warning("客户端证书自动 renew 失败（子进程异常），沿用旧证书")
+            return
+        if renew.returncode != 0:
+            logger.warning(
+                "客户端证书自动 renew 失败（rc=%d: %s），沿用旧证书；"
+                "daemon 不可达或证书已失效时请手动 `cw pki renew`",
+                renew.returncode, (renew.stderr or "").strip()[:200],
+            )
+            return
+        self._ssl_ctx = None
+
     def _warn_cert_expiry(self, health: Dict[str, Any]) -> None:
         """§9.31：/health `cert_expires_in_days` 到期告警（实例级限频一次）。
 
@@ -1465,6 +1562,9 @@ class HttpDaemonRpcClient:
         if self._ssl_ctx is not None:
             return self._ssl_ctx
 
+        # §9.34 B：身份证书临期自动 renew（成功后 _ssl_ctx=None，下方
+        # resolve_client_cert_paths 重新解析拿到新证书）。
+        self._maybe_auto_renew()
         cert, key, ca_file = resolve_client_cert_paths()
         if not cert or not key:
             raise DaemonUnavailableError(
