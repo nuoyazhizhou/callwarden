@@ -2978,6 +2978,27 @@ READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
   Finished 先于客户端 Certificate 飞行，旧证书被拒时客户端
   `connect()` 已返回 Ok，拒绝以 alert/EOF 在首次读写暴露——负向
   集成断言须做在首次读写（不得获得 200 响应），不能断言 connect 失败。
+- **同 DN 双 CA bundle 的 OpenSSL 选根歧义**（修复 `2729e4d`）：
+  初版 `ensure_ca_locked` 复用旧 subject DN（`CN=CallWarden Local
+  CA`），rotate-ca 窗口期 manifest `ca_cert_pem` = 新 + 旧 CA bundle
+  同 DN → Python CLI（OpenSSL 后端）按 DN 选候选信任根且不回溯，
+  命中旧 CA 公钥验新 CA 证书 → `certificate signature failure`。
+  修复：CA subject DN 携带 8 hex 公钥指纹（`CN=CallWarden Local CA
+  <指纹>`），`ensure_ca_locked` 先生成密钥再据公钥定 DN，
+  `ca.meta.json` subject 同步——同 DN 物理不可能复现。回归：
+  rotate_ca 4 + needs_renewal 1 + ensure_server_cert 3 + expiry 3
+  用例全绿（Python 测试自建 CA 无 DN 依赖）。
+- **默认 principal 兜底与 owner 身份目录不一致**（修复 `2a40898`）：
+  `default_principal()` 兜底硬编码 `"owner"`，而
+  `ensure_owner_identity` 写入的是 `identities/pr_owner`；Python 自动
+  续期（§9.34 B）裸调 `pki renew` 不传 `--principal`，真机验证首跑即
+  `E_MTLS_CLIENT_CERT_MISSING`。修复：兜底改用 `OWNER_PRINCIPAL`
+  （`run()` 审计 actor 同步修正），新增
+  `default_principal_resolves_owner_identity` 回归测试。
+- **待查：`cw daemon stop` 进程残留**：僵尸 daemon（PID 44668）经
+  `cw daemon stop` 返回 ok 后进程仍残留，需 `Stop-Process` 强杀；
+  与 §9.33 已验证的优雅停止行为不符，疑似优雅停止与 PKI 目录
+  rename 竞争，待后续定位（本轮仅记录，不阻断收尾）。
 
 ### 5. 测试与验收
 
@@ -2988,10 +3009,41 @@ READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
   双根握手 e2e + commit 后旧证书拒止）。
 - pytest：`test_client_cert_auto_renew.py` 12 例；`test_http_manifest_
   discovery.py` 31 例（bundle 首张 pin + previous_ca 字段放行）。
-- 全量回归：`cargo test --lib` 2024 passed / 0 failed（2300.70s）；
-  pytest 5 套件 71 passed。
+- 全量回归：`cargo test --lib` 2024 passed / 0 failed（同 DN 修复后
+  复跑 1497.38s，HEAD `2729e4d`）；pytest 5 套件 71 passed。
 - `rust_ext/**` 属 RUNTIME_AFFECTING_PATH_PREFIXES，合入后需
   `scripts/refresh_shared_runtime.ps1`。
+
+### 6. 真机验证链（2026-11-19，全绿）
+
+> 运行时基线：refresh `2729e4d`（2026-11-18 23:11:23–23:25:12，
+> 14m，evidence `20261118-231123-2729e4d16441-09f82e3c`）→
+> refresh `2a40898`（23:47:03–00:04:31，17m，evidence
+> `20261118-234703-2a40898d8883-9f76e5cf`）。两次均 `status: passed`。
+
+1. `cw daemon health`：`git_commit=2729e4d…`，`cert_expires_in_days=364`。
+2. `rotate-ca --action status`：无窗口基线（`window_active=false`）。
+3. `prepare`：旧 CA `b4c0d985…` → 新 CA `ea124f0d…`，窗口至
+   `2026-11-19T15:36:59Z`，`restart_required=true`。
+4. `cw daemon stop`（rpc_graceful，进程核实退出）+ `start`：窗口激活，
+   manifest `ca_cert_pem` = 新旧双 CA bundle，`previous_ca_fingerprint_
+   sha256` 存在；新 CA `CN=CallWarden Local CA b57ce753`（DN 修复可见）。
+5. 裸 `cw pki renew`：首跑暴露默认 principal 缺陷（见 §4，修复
+   `2a40898` + refresh 后复跑）→ 成功换发（serial `31FA4DEA…`，
+   not_after `2027-02-16`）。
+6. `rotate-ca --action status`：`pending_renewal_principals` 清空
+   （新证书 AKI 匹配新 CA SKI）。
+7. `commit`：窗口收敛（committed_at `2026-11-18T16:20:36Z`），
+   `window_active=false`。
+8. 重启 daemon：health 正常（PID 46324，`git_commit=2a40898…`）。
+9. 负向：`CW_CLIENT_CERT` 指向备份的旧 CA 客户端证书 →
+   `TLSV1_ALERT_UNKNOWN_CA`，exit 1（拒绝在握手层暴露，无 200 响应）。
+10. 对照：新证书 TLS 握手通过、请求到达应用层授权
+    （`E_PRINCIPAL_WORKSPACE_FORBIDDEN` 为 workspace 绑定的既有业务
+    约束，SAN 主体 renew 前后一致，与 PKI 无关）。
+
+结论：A 自动重签 / B 自动 renew 数据源 / C rotate-ca 双 CA 窗口
+prepare→renew→commit→旧证书拒止 全链路真机闭环。
 
 ## 10. 相关真相源
 
