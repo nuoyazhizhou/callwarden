@@ -25,10 +25,13 @@ from callwarden.server.daemon_client import DaemonUnavailableError
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
 
-def _patch_health(monkeypatch, script, calls=None):
+def _patch_health(monkeypatch, script, calls=None, rpc=None):
     """把 dc.HttpDaemonRpcClient 替换为按 script 依次返回/抛出的假 client。
 
     script 耗尽后重复最后一项；calls 列表（若给）记录每次调用。
+    rpc 控制 fake 的 call()（daemon.shutdown RPC，§9.33）：None → 抛
+    E_METHOD_NOT_FOUND（旧 daemon 回退信号路径）；Exception → 抛出；
+    其余 → 正常返回。
     """
 
     class _FakeClient:
@@ -42,6 +45,16 @@ def _patch_health(monkeypatch, script, calls=None):
             if isinstance(item, Exception):
                 raise item
             return item
+
+        def call(self, method, params=None, **kwargs):
+            if calls is not None:
+                calls.append(method)
+            if rpc is None:
+                raise DaemonRemoteError("E_METHOD_NOT_FOUND",
+                                        "unknown method (old daemon)")
+            if isinstance(rpc, Exception):
+                raise rpc
+            return rpc
 
     monkeypatch.setattr(dc, "HttpDaemonRpcClient", _FakeClient)
 
@@ -62,6 +75,44 @@ def test_parser_registers_stop_with_wait_default():
     args = _parser().parse_args(["stop"])
     assert args.action == "stop"
     assert args.wait == 15.0
+
+
+def test_stop_rpc_graceful_happy_path(monkeypatch, capsys):
+    # §9.33：daemon.shutdown RPC 成功 → mechanism=rpc_graceful，不发任何 OS 信号
+    _patch_manifest(monkeypatch, 4321)
+    _patch_health(monkeypatch, [{"pid": 4321},
+                                DaemonUnavailableError("gone")],
+                  rpc={"ok": True, "status": "shutting_down"})
+    sent = []
+    monkeypatch.setattr(dc, "_send_daemon_stop_signal",
+                        lambda pid: sent.append(pid) or "sigterm")
+
+    rc = run_daemon_command(["stop", "--wait", "2"])
+
+    assert rc == 0
+    assert sent == [], "RPC 优雅路径不得回退发 OS 信号"
+    payload = _out_json(capsys)
+    assert payload["status"] == "stopped"
+    assert payload["mechanism"] == "rpc_graceful"
+
+
+def test_stop_rpc_failure_falls_back_to_signal(monkeypatch, capsys):
+    # RPC 抛业务错误（旧 daemon 无方法 / 远端拒绝）→ 回退 _send_daemon_stop_signal
+    _patch_manifest(monkeypatch, 4321)
+    _patch_health(monkeypatch, [{"pid": 4321},
+                                DaemonUnavailableError("gone")],
+                  rpc=DaemonRemoteError("E_METHOD_NOT_FOUND", "old daemon"))
+    sent = []
+    monkeypatch.setattr(dc, "_send_daemon_stop_signal",
+                        lambda pid: sent.append(pid) or "sigterm")
+
+    rc = run_daemon_command(["stop", "--wait", "2"])
+
+    assert rc == 0
+    assert sent == [4321]
+    payload = _out_json(capsys)
+    assert payload["status"] == "stopped"
+    assert payload["mechanism"] == "sigterm"
 
 
 def test_stop_idempotent_when_daemon_unreachable(monkeypatch, capsys):

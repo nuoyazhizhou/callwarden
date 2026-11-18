@@ -547,6 +547,11 @@ mod unix {
                 eprintln!("[cw_daemon] [INFO] received stop signal, shutting down...");
                 break;
             }
+            // §9.33：daemon.shutdown RPC 经 HTTP 线程置位 shutdown 开关 → 同样优雅退出
+            if http_stop.load(Ordering::SeqCst) {
+                eprintln!("[cw_daemon] [INFO] received shutdown RPC, shutting down...");
+                break;
+            }
             if reload_flag.swap(false, Ordering::SeqCst) {
                 eprintln!("[cw_daemon] [INFO] received SIGHUP, reload requested");
                 handle_reload(&cli.config, &config);
@@ -2561,12 +2566,20 @@ mod windows {
                 eprintln!("[cw_daemon] [INFO] received stop signal, shutting down...");
                 break;
             }
+            // §9.33：daemon.shutdown RPC 经 HTTP 线程置位 shutdown 开关 →
+            // Windows 上 taskkill /F 之外的优雅停止路径（有控制台时 Ctrl 事件同样生效）。
+            if http_stop.load(Ordering::SeqCst) {
+                eprintln!("[cw_daemon] [INFO] received shutdown RPC, shutting down...");
+                break;
+            }
             thread::sleep(Duration::from_millis(100));
         }
 
         // 10. 优雅关闭：置位 HTTP shutdown 开关 → accept loop 停止接受新连接、
         // drain 在途请求（上限 CW_HTTP_DRAIN_TIMEOUT_SECS，默认 10s）→ join 线程。
-        // 注：Windows 停止信号来自控制台 Ctrl 处理器（§9.31：SIGTERM 不可达）。
+        // 注：Windows 停止信号来源 = daemon.shutdown RPC（§9.33，首选优雅路径）
+        // 或控制台 Ctrl 处理器（§9.31：SIGTERM 不可达）；§9.32 起 stop 路径统一
+        // 置位开关后 join（RPC 场景开关已由 HTTP 线程置位，此处幂等）。
         eprintln!("[cw_daemon] [INFO] shutting down daemon...");
         http_stop.store(true, Ordering::SeqCst);
         let _ = http_join.join();

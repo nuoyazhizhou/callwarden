@@ -2861,6 +2861,51 @@ READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
 - `rust_ext/src/daemon/**` 属 RUNTIME_AFFECTING_PATH_PREFIXES，合入后
   需 `scripts/refresh_shared_runtime.ps1`。
 
+## 9.33 Windows 优雅停止 RPC（daemon.shutdown）（2026-11-18）
+
+> 触发：§9.32 收尾后的遗留盘点确认「Windows 仍 taskkill /F 硬停」（§9.31
+> 审计项 4 未闭环）。方案：daemon 新增经 mTLS 鉴权的 `daemon.shutdown`
+> RPC，复用 §9.32 的 `shutdown_flag` + drain 机制，`cw daemon stop` 在
+> Windows 走 RPC 而非杀进程，优雅退出全平台闭环。
+
+### 1. Rust：`daemon.shutdown` RPC 端点
+
+- `http_server.rs` `rpc_handler` 在 envelope 校验后、dedup/dispatch 前
+  拦截 `method == "daemon.shutdown"`（非 workspace mutation，幂等，不进
+  dedup）：
+  - 授权：客户端证书已由中间件保证（缺证书 403）；fail-closed 限定
+    **仅 loopback 绑定**（`allow_remote == false`）的 daemon 接受——
+    `allow_remote` 时对端物理位置不可知，拒绝远程停止
+    （`E_DAEMON_SHUTDOWN_REMOTE_NOT_ALLOWED` 403），须登录宿主机本地。
+  - 行为：`config.shutdown_flag.store(true)` 后立即返回
+    `{"ok": true, "status": "shutting_down"}`；daemon 主循环 100ms 内
+    感知 break，accept loop 停止 accept + drain 在途请求（本响应已写出）。
+- `cw_daemon.rs`：unix / windows 两个主循环均新增
+  `http_stop.load()` → break（RPC 是信号之外的第二个停止源）；windows
+  停止路径注释同步更新（§9.32 的 `http_stop.store(true)` + `join()` 在
+  RPC 场景幂等）。
+
+### 2. Python：stop 改为 RPC 优先
+
+- `_run_daemon_stop` 停止机制按优先级：
+  1. `daemon.shutdown` RPC（`client.call`，无 autostart，fail-closed）
+     成功 → `mechanism="rpc_graceful"`；
+  2. 回退：RPC 抛 `DaemonRemoteError`（旧 daemon 无方法 / 远端拒绝）或
+     `DaemonUnavailableError` → 原路径（POSIX SIGTERM / Windows taskkill /F）。
+- PID 复用防护、幂等 not_running、轮询退出等语义不变。
+
+### 3. 测试与验收
+
+- Rust：`spawn_server` 参数化为 `spawn_server_with(allow_remote)`（返回
+  shutdown_flag 克隆供断言）；新增 `test_rpc_daemon_shutdown_sets_flag`
+  （200 + 开关置位）与 `test_rpc_daemon_shutdown_rejected_when_allow_
+  remote`（403 + 开关不置位）。`cargo check --bins --lib --tests` 通过；
+  `cargo test --lib` 全量回归通过。
+- pytest：`test_cli_daemon_stop.py` 扩充到 14 例（新增 RPC graceful
+  happy path 不发 OS 信号、RPC 失败回退信号两例）。
+- `rust_ext/src/daemon/**` 与 `cw_daemon.rs` 属
+  RUNTIME_AFFECTING_PATH_PREFIXES，合入后需 `scripts/refresh_shared_runtime.ps1`。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

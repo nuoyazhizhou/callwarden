@@ -1122,6 +1122,38 @@ async fn rpc_handler<S: DaemonStateExt + Send + Sync + 'static>(
         Err(resp) => return resp,
     };
 
+    // §9.33 Windows 优雅停止：daemon.shutdown RPC。客户端证书已由中间件保证
+    // （缺证书 → 403 E_MTLS_CLIENT_CERT_MISSING，不会到达此处）。fail-closed
+    // 授权：仅 loopback 绑定（allow_remote=false）的 daemon 接受本方法——
+    // allow_remote 时对端物理位置不可知，拒绝远程停止（须登录宿主机本地执行）。
+    // 置位 [`HttpServerConfig::shutdown_flag`] 后立即返回 200；daemon 主循环
+    // 100ms 内感知并 break，accept loop 停止 accept + drain 在途请求（本响应
+    // 已写出）。不走 dedup/dispatch（非 workspace mutation，幂等）。
+    if method == "daemon.shutdown" {
+        if app.config.allow_remote {
+            return json_rpc_error(
+                Some(&id),
+                -32000,
+                "E_DAEMON_SHUTDOWN_REMOTE_NOT_ALLOWED",
+                "daemon.shutdown is only allowed on loopback-bound daemons; \
+                 stop a remote daemon on its host instead",
+                403,
+                &app.config.git_commit,
+            );
+        }
+        eprintln!(
+            "[cw_daemon][http] daemon.shutdown RPC: setting shutdown flag (id={})",
+            id
+        );
+        app.config.shutdown_flag.store(true, Ordering::SeqCst);
+        return build_rpc_response(
+            &id,
+            // build_rpc_response 约定：{"ok": bool, "result": <payload>} 包装层
+            &json!({"ok": true, "result": {"ok": true, "status": "shutting_down"}}),
+            &app.config.git_commit,
+        );
+    }
+
     // mutation request_id 去重（P0-2：持久化 + 原子占位，跨 restart 保留 ≥24h）
     let ws = params
         .get("workspace_instance_id")
@@ -5617,6 +5649,12 @@ mod tests {
     /// accept loop），返回绑定地址。使用测试运行时可避免独立 runtime 中 axum::serve
     /// 内部 tokio::spawn 的 accept loop 不被驱动、请求无响应的问题。
     async fn spawn_server() -> SocketAddr {
+        spawn_server_with(false).await.0
+    }
+
+    /// spawn_server 的参数化变体（§9.33）：allow_remote=true 用于 daemon.shutdown
+    /// 远端拒绝负例；返回 (绑定地址, config 的 shutdown_flag 克隆) 供测试断言。
+    async fn spawn_server_with(allow_remote: bool) -> (SocketAddr, Arc<AtomicBool>) {
         // tempdir 必须活得比 server 久：dedup DB 与 http manifest 都落在它下面。
         // 原先 `let dir = tempfile::tempdir()` 是函数局部量，spawn_server 返回时
         // 即被 Drop → 目录删除 → SQLite 无法创建 -wal/-journal，写请求返回
@@ -5627,6 +5665,8 @@ mod tests {
         let mut cfg = HttpServerConfig::new("127.0.0.1:0".into(), manifest);
         // 共享测试 CA（避免每个用例重复生成 10 年 CA）。
         cfg.pki_dir = test_pki().ca_root.clone();
+        cfg.allow_remote = allow_remote;
+        let shutdown_flag = Arc::clone(&cfg.shutdown_flag);
         let bound = bind_http(&cfg).unwrap();
         let tls = Arc::clone(&bound.tls);
         let addr = bound.local_addr;
@@ -5675,7 +5715,7 @@ mod tests {
         ));
         // 给 accept loop 一点启动时间，避免竞态导致连接被拒。
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        addr
+        (addr, shutdown_flag)
     }
 
     /// 发送原始 HTTP/1.1 请求（异步，避免阻塞单线程测试运行时），返回 (status, body)。
@@ -6271,6 +6311,58 @@ mod tests {
             .await
             .expect("accept_loop 应在 drain 超时后退出")
             .expect("accept_loop task panic");
+    }
+
+    // ============================================
+    // §9.33 Windows 优雅停止：daemon.shutdown RPC
+    // ============================================
+
+    /// loopback 绑定的 daemon 接受 daemon.shutdown：返回 200 且置位 shutdown 开关
+    /// （测试 server 的 accept_loop 用独立 flag，不会真的停服；真实停止路径由
+    /// daemon 主循环轮询同一开关覆盖）。
+    #[tokio::test]
+    async fn test_rpc_daemon_shutdown_sets_flag() {
+        let (addr, shutdown_flag) = spawn_server_with(false).await;
+        let body = br#"{"jsonrpc":"2.0","id":"sd-1","protocol_version":"1","method":"daemon.shutdown","params":{}}"#;
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc",
+            "application/json",
+            body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 200, "{}", resp);
+        assert!(resp.contains("\"shutting_down\""), "{}", resp);
+        assert!(shutdown_flag.load(Ordering::SeqCst), "shutdown 开关应被置位");
+    }
+
+    /// allow_remote=true（非 loopback 绑定）的 daemon 拒绝 daemon.shutdown：
+    /// 403 E_DAEMON_SHUTDOWN_REMOTE_NOT_ALLOWED，开关保持未置位（fail-closed）。
+    #[tokio::test]
+    async fn test_rpc_daemon_shutdown_rejected_when_allow_remote() {
+        let (addr, shutdown_flag) = spawn_server_with(true).await;
+        let body = br#"{"jsonrpc":"2.0","id":"sd-2","protocol_version":"1","method":"daemon.shutdown","params":{}}"#;
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc",
+            "application/json",
+            body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 403, "{}", resp);
+        assert!(
+            resp.contains("E_DAEMON_SHUTDOWN_REMOTE_NOT_ALLOWED"),
+            "{}",
+            resp
+        );
+        assert!(
+            !shutdown_flag.load(Ordering::SeqCst),
+            "拒绝时不得置位 shutdown 开关"
+        );
     }
 
     // ============================================

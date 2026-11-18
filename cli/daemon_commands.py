@@ -470,13 +470,20 @@ def _best_effort_manifest_pid() -> Optional[int]:
 
 
 def _run_daemon_stop(args) -> int:
-    """`cw daemon stop`：探活取 pid → PID 复用校验 → 发停止信号 → 轮询退出。
+    """`cw daemon stop`：探活取 pid → PID 复用校验 → 停止 → 轮询退出。
+
+    停止机制（按优先级）：
+    1. `daemon.shutdown` RPC（§9.33，全平台优雅：daemon 置位 shutdown 开关 →
+       accept loop drain 在途请求 → 主循环退出）；旧 daemon 无此方法或远端
+       绑定拒绝时回退。
+    2. POSIX：SIGTERM（os.kill）→ 走 daemon 侧 signal-hook 优雅路径。
+    3. Windows：taskkill /F（硬停；§9.31 SIGTERM 不可达）。
 
     - 幂等：daemon 不可达（无 manifest 或 /health 连接失败）→
       `{"ok": true, "status": "not_running"}`，rc 0。
     - fail-closed：/health pid 与 manifest pid 不一致（PID 复用嫌疑）→
       拒绝停止 rc 1，绝不 kill 不可信 pid。
-    - 超时：发送信号后 `--wait` 秒内 daemon 仍可达 → rc 1。
+    - 超时：发送停止后 `--wait` 秒内 daemon 仍可达 → rc 1。
     """
     manifest_pid: Optional[int] = None
     try:
@@ -495,7 +502,8 @@ def _run_daemon_stop(args) -> int:
         manifest_pid = None  # 无可用 manifest：只信 /health 的 pid
 
     try:
-        health = HttpDaemonRpcClient().health()
+        client = HttpDaemonRpcClient()
+        health = client.health()
     except DaemonUnavailableError as e:
         _print_json({"ok": True, "action": "stop", "status": "not_running",
                      "detail": str(e)})
@@ -528,12 +536,22 @@ def _run_daemon_stop(args) -> int:
                                 f"{health_pid} 不一致（PID 复用嫌疑），拒绝停止")})
         return 1
 
+    # §9.33：优先走 daemon.shutdown RPC（全平台优雅 + drain）；失败回退信号。
+    # 回退条件：旧 daemon 无此方法（E_* 业务错误）、连接失败、远端绑定拒绝。
+    mechanism: Optional[str] = None
     try:
-        mechanism = _send_daemon_stop_signal(health_pid)
-    except OSError as e:
-        _print_json({"ok": False, "action": "stop", "status": "failed",
-                     "error": "E_DAEMON_STOP_SIGNAL_FAILED", "detail": str(e)})
-        return 1
+        client.call("daemon.shutdown", {})
+        mechanism = "rpc_graceful"
+    except (DaemonUnavailableError, DaemonRemoteError):
+        mechanism = None
+
+    if mechanism is None:
+        try:
+            mechanism = _send_daemon_stop_signal(health_pid)
+        except OSError as e:
+            _print_json({"ok": False, "action": "stop", "status": "failed",
+                         "error": "E_DAEMON_STOP_SIGNAL_FAILED", "detail": str(e)})
+            return 1
 
     deadline = time.monotonic() + max(args.wait, 0.0)
     while True:
