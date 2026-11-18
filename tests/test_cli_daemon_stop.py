@@ -83,6 +83,7 @@ def test_stop_rpc_graceful_happy_path(monkeypatch, capsys):
     _patch_health(monkeypatch, [{"pid": 4321},
                                 DaemonUnavailableError("gone")],
                   rpc={"ok": True, "status": "shutting_down"})
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: False)
     sent = []
     monkeypatch.setattr(dc, "_send_daemon_stop_signal",
                         lambda pid: sent.append(pid) or "sigterm")
@@ -96,12 +97,32 @@ def test_stop_rpc_graceful_happy_path(monkeypatch, capsys):
     assert payload["mechanism"] == "rpc_graceful"
 
 
+def test_stop_rpc_pid_linger_reports_timeout(monkeypatch, capsys):
+    # §9.34 真机踩坑：RPC 优雅停止后 /health 已不可达（drain 期 listener 不
+    # 再 accept），但进程仍存活 → 不得报 stopped，须等到超时 rc 1 并带
+    # pid_alive 详情。
+    _patch_manifest(monkeypatch, 4321)
+    _patch_health(monkeypatch, [{"pid": 4321},
+                                DaemonUnavailableError("drain")],
+                  rpc={"ok": True, "status": "shutting_down"})
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: True)
+
+    rc = run_daemon_command(["stop", "--wait", "0.5"])
+
+    assert rc == 1
+    payload = _out_json(capsys)
+    assert payload["error"] == "E_DAEMON_STOP_TIMEOUT"
+    assert payload["pid_alive"] is True
+    assert "仍存活" in payload["detail"]
+
+
 def test_stop_rpc_failure_falls_back_to_signal(monkeypatch, capsys):
     # RPC 抛业务错误（旧 daemon 无方法 / 远端拒绝）→ 回退 _send_daemon_stop_signal
     _patch_manifest(monkeypatch, 4321)
     _patch_health(monkeypatch, [{"pid": 4321},
                                 DaemonUnavailableError("gone")],
                   rpc=DaemonRemoteError("E_METHOD_NOT_FOUND", "old daemon"))
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: False)
     sent = []
     monkeypatch.setattr(dc, "_send_daemon_stop_signal",
                         lambda pid: sent.append(pid) or "sigterm")
@@ -132,6 +153,7 @@ def test_stop_sigterm_happy_path(monkeypatch, capsys):
     # 第一次探活返回 pid，发送信号后 daemon 消失（第二次探活不可达）
     _patch_health(monkeypatch, [{"pid": 4321},
                                 DaemonUnavailableError("gone")])
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: False)
     sent = []
     monkeypatch.setattr(dc, "_send_daemon_stop_signal",
                         lambda pid: sent.append(pid) or "sigterm")
@@ -180,6 +202,7 @@ def test_stop_refuses_without_trustworthy_pid(monkeypatch, capsys):
 def test_stop_timeout_returns_1(monkeypatch, capsys):
     _patch_manifest(monkeypatch, 42)
     _patch_health(monkeypatch, [{"pid": 42}])  # 永远可达 → 超时
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: True)
     monkeypatch.setattr(dc, "_send_daemon_stop_signal", lambda pid: "sigterm")
 
     rc = run_daemon_command(["stop", "--wait", "0"])
@@ -209,6 +232,7 @@ def test_stop_windows_taskkill_force(monkeypatch, capsys):
     _patch_manifest(monkeypatch, 777)
     _patch_health(monkeypatch, [{"pid": 777},
                                 DaemonUnavailableError("gone")])
+    monkeypatch.setattr(dc, "_pid_alive", lambda pid: False)
     monkeypatch.setattr(dc.os, "name", "nt")
     killed = []
     proc = type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()

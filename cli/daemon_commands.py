@@ -483,7 +483,8 @@ def _run_daemon_stop(args) -> int:
       `{"ok": true, "status": "not_running"}`，rc 0。
     - fail-closed：/health pid 与 manifest pid 不一致（PID 复用嫌疑）→
       拒绝停止 rc 1，绝不 kill 不可信 pid。
-    - 超时：发送停止后 `--wait` 秒内 daemon 仍可达 → rc 1。
+    - 超时：发送停止后 `--wait` 秒内 daemon 仍可达，或 RPC 已不可达但
+      pid 仍存活（drain 期连接不可达 ≠ 进程退出）→ rc 1。
     """
     manifest_pid: Optional[int] = None
     try:
@@ -558,16 +559,25 @@ def _run_daemon_stop(args) -> int:
         try:
             HttpDaemonRpcClient().health()
         except (DaemonUnavailableError, DaemonRemoteError):
-            _print_json({"ok": True, "action": "stop", "status": "stopped",
-                         "pid": health_pid, "mechanism": mechanism})
-            return 0
+            # drain 期间 listener 不再 accept：新连接在 TCP 层可建立但永无
+            # 响应，RPC 不可达 ≠ 进程已退出（§9.34 真机踩坑：报 ok 后 pid
+            # 残留）。pid 已交叉核对（health==manifest），此处须核实进程
+            # 真退出才报 stopped。
+            if not _pid_alive(health_pid):
+                _print_json({"ok": True, "action": "stop", "status": "stopped",
+                             "pid": health_pid, "mechanism": mechanism})
+                return 0
         if time.monotonic() >= deadline:
             break
         time.sleep(0.2)
 
+    pid_alive = _pid_alive(health_pid)
     _print_json({"ok": False, "action": "stop", "status": "failed",
                  "error": "E_DAEMON_STOP_TIMEOUT",
-                 "detail": f"daemon pid={health_pid} 在 {args.wait}s 内未退出"})
+                 "detail": (f"daemon pid={health_pid} RPC 已不可达但进程仍存活"
+                            f"（{args.wait}s，疑似 drain/退出阻塞）" if pid_alive else
+                            f"daemon pid={health_pid} 在 {args.wait}s 内未退出"),
+                 "pid_alive": pid_alive})
     return 1
 
 
