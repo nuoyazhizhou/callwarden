@@ -306,6 +306,255 @@ pub fn renew(
 }
 
 // ============================================
+// cert-status（§9.34 B 自动续期数据源）
+// ============================================
+
+/// `cw pki cert-status [--principal <id>] [--identity-dir <dir>]`
+///
+/// 只读检查客户端证书状态：解析 `identities/<principal>/client.crt` 输出
+/// `serial/not_before/not_after/days_left`。不联网、不写盘——Python 客户端
+/// 自动续期（§9.34 B）以本命令的 `days_left` 为唯一数据源（以 Rust 解析
+/// 证书为准，避免读 meta.json 与证书漂移）。证书缺失 →
+/// `E_MTLS_CLIENT_CERT_MISSING`。
+pub fn cert_status(
+    root: &Path,
+    principal: Option<&str>,
+    identity_dir: Option<&Path>,
+) -> Result<Value, PkiError> {
+    let dir = match identity_dir {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let id = principal.map(|s| s.to_string()).unwrap_or_else(default_principal);
+            root.join("identities").join(id)
+        }
+    };
+    let cert_pem = read_required(&dir.join("client.crt"), "E_MTLS_CLIENT_CERT_MISSING")?;
+    let der = pki_api::pem_decode(&cert_pem, "CERTIFICATE").ok_or_else(|| {
+        PkiError::new(
+            "E_MTLS_CLIENT_CERT_MISSING",
+            "client.crt 不是合法 PEM 证书",
+        )
+    })?;
+    let (_, cert) = x509_parser::parse_x509_certificate(&der).map_err(|e| {
+        PkiError::new(
+            "E_MTLS_CLIENT_CERT_MISSING",
+            format!("client.crt 解析失败: {}", e),
+        )
+    })?;
+    let not_before_ts = cert.validity().not_before.timestamp();
+    let not_after_ts = cert.validity().not_after.timestamp();
+    let now = unix_now_f64() as i64;
+    let days_left = (not_after_ts - now).div_euclid(86_400);
+    Ok(json!({
+        "identity_dir": dir.to_string_lossy(),
+        "principal_id": pki_api::principal_id_from_cert(&der).unwrap_or_default(),
+        "serial": pki_api::cert_serial_hex(&der),
+        "not_before": pki_api::rfc3339_from_unix(not_before_ts),
+        "not_after": pki_api::rfc3339_from_unix(not_after_ts),
+        "days_left": days_left,
+        "expired": days_left < 0,
+    }))
+}
+
+// ============================================
+// rotate-ca（§9.34 C：双 CA 信任窗口 ≤24h，ADR §4.3）
+// ============================================
+
+/// rotate-ca 信任窗口时长（秒）：prepare 后 daemon 双信任根并存（≤24h），
+/// 各客户端在窗口内 `cw pki renew` 换发到新 CA；commit 收敛单 CA。
+pub const CA_ROTATION_WINDOW_SECS: i64 = 24 * 3600;
+
+/// 证书 Subject Key Identifier（当前 CA 身份比对基准）。
+fn cert_subject_key_id(der: &[u8]) -> Option<Vec<u8>> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
+    for ext in cert.extensions() {
+        if let x509_parser::extensions::ParsedExtension::SubjectKeyIdentifier(kid) =
+            ext.parsed_extension()
+        {
+            return Some(kid.0.to_vec());
+        }
+    }
+    None
+}
+
+/// 证书 Authority Key Identifier（客户端证书签发方身份比对基准）。
+fn cert_authority_key_id(der: &[u8]) -> Option<Vec<u8>> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
+    for ext in cert.extensions() {
+        if let x509_parser::extensions::ParsedExtension::AuthorityKeyIdentifier(aki) =
+            ext.parsed_extension()
+        {
+            return aki.key_identifier.as_ref().map(|k| k.0.to_vec());
+        }
+    }
+    None
+}
+
+fn read_rotation_window(root: &Path) -> Result<Option<Value>, PkiError> {
+    let path = root.join("ca-previous").join("window.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = read_required(&path, "E_PKI_CA_LOAD")?;
+    let v = serde_json::from_str(&text)
+        .map_err(|e| PkiError::new("E_PKI_CA_LOAD", format!("window.json 解析失败: {}", e)))?;
+    Ok(Some(v))
+}
+
+/// `cw pki rotate-ca --action prepare`
+///
+/// 生成新 CA 并进入 ≤24h 双信任根窗口：
+/// 1. 已有窗口 → `E_PKI_ROTATE_PENDING`（先 commit 或删除 `ca-previous/` 回滚）；
+/// 2. `ca/` 整目录 rename 为 `ca-previous/`（原子，保留旧 CA 三件套）；
+/// 3. `ensure_ca` 生成新 CA（`ca/` 恒为当前签发 CA，enroll/renew 零改动）；
+/// 4. 删 `server/`——daemon 重启后 `ensure_server_cert` 缺失分支自动以新 CA 重签；
+/// 5. 写 `ca-previous/window.json`（prepared_at/deadline/旧 CA 指纹）；
+/// 6. 输出 `{deadline, restart_required: true}`。
+pub fn rotate_ca_prepare(root: &Path) -> Result<Value, PkiError> {
+    let _guard = pki_api::pki_write_lock();
+    if read_rotation_window(root)?.is_some() {
+        return Err(PkiError::new(
+            "E_PKI_ROTATE_PENDING",
+            "rotate-ca 窗口已在进行中（ca-previous/ 存在）；先 --action commit 收敛",
+        ));
+    }
+    let ca_dir = root.join("ca");
+    if !ca_dir.join("ca.crt").exists() {
+        return Err(PkiError::new(
+            "E_PKI_CA_LOAD",
+            "pki 根缺少 ca/ca.crt——先 `cw pki init`",
+        ));
+    }
+    let old_fingerprint = {
+        let crt = std::fs::read(ca_dir.join("ca.crt"))
+            .map_err(|e| PkiError::io_pub("read ca.crt", e))?;
+        let der = pki_api::pem_decode(
+            std::str::from_utf8(&crt).map_err(|e| PkiError::new("E_PKI_CA_LOAD", e.to_string()))?,
+            "CERTIFICATE",
+        )
+        .ok_or_else(|| PkiError::new("E_PKI_CA_LOAD", "ca.crt 不是合法 PEM"))?;
+        pki_api::sha256_hex(&der)
+    };
+    let prev_dir = root.join("ca-previous");
+    std::fs::rename(&ca_dir, &prev_dir).map_err(|e| PkiError::io_pub("rotate ca dir", e))?;
+
+    let now = unix_now_f64() as i64;
+    let deadline = now + CA_ROTATION_WINDOW_SECS;
+    let window = json!({
+        "prepared_at": pki_api::rfc3339_from_unix(now),
+        "deadline": pki_api::rfc3339_from_unix(deadline),
+        "deadline_unix": deadline,
+        "previous_ca_fingerprint_sha256": old_fingerprint,
+    });
+    std::fs::write(prev_dir.join("window.json"), serde_json::to_string_pretty(&window).unwrap())
+        .map_err(|e| PkiError::io_pub("write window.json", e))?;
+
+    // 新 CA 生成（失败则整体回滚：rename 回去，不留在半途状态）。
+    // 注意：本函数已持有 pki_write_lock，必须用 ensure_ca_locked——
+    // ensure_ca 会重入同一把非重入锁，同线程自死锁（§9.34 测试实测踩坑）。
+    let new_ca = match pki_api::ensure_ca_locked(root) {
+        Ok(ca) => ca,
+        Err(e) => {
+            let _ = std::fs::rename(&prev_dir, &ca_dir);
+            return Err(e);
+        }
+    };
+    // 服务端叶证书随旧 CA 失效——删除后由 daemon 重启时的
+    // ensure_server_cert 缺失分支自动以新 CA 重签。
+    let server_dir = root.join("server");
+    if server_dir.exists() {
+        std::fs::remove_dir_all(&server_dir).map_err(|e| PkiError::io_pub("remove server dir", e))?;
+    }
+    Ok(json!({
+        "action": "prepare",
+        "previous_ca_fingerprint_sha256": old_fingerprint,
+        "new_ca_fingerprint_sha256": new_ca.fingerprint_sha256,
+        "deadline": window["deadline"],
+        "restart_required": true,
+        "note": "daemon 重启后双信任根生效；各客户端在窗口内 `cw pki renew` 换发",
+    }))
+}
+
+/// `cw pki rotate-ca --action commit [--force]`
+///
+/// 窗口收敛：移除 `ca-previous/`（旧 CA 信任根消失即整体吊销，无需逐 serial）。
+/// 超过 deadline 且无 `--force` → `E_PKI_ROTATE_WINDOW_EXPIRED`。
+pub fn rotate_ca_commit(root: &Path, force: bool) -> Result<Value, PkiError> {
+    let _guard = pki_api::pki_write_lock();
+    let window = read_rotation_window(root)?.ok_or_else(|| {
+        PkiError::new("E_PKI_ROTATE_NO_WINDOW", "无进行中的 rotate-ca 窗口")
+    })?;
+    let deadline_unix = window["deadline_unix"].as_i64().unwrap_or(0);
+    let now = unix_now_f64() as i64;
+    if now > deadline_unix && !force {
+        return Err(PkiError::new(
+            "E_PKI_ROTATE_WINDOW_EXPIRED",
+            format!(
+                "rotate-ca 窗口已过期（deadline={}）；确认所有客户端已换发后加 --force 强制收敛",
+                window["deadline"].as_str().unwrap_or("?")
+            ),
+        ));
+    }
+    let prev_dir = root.join("ca-previous");
+    std::fs::remove_dir_all(&prev_dir).map_err(|e| PkiError::io_pub("remove ca-previous", e))?;
+    Ok(json!({
+        "action": "commit",
+        "previous_ca_fingerprint_sha256": window["previous_ca_fingerprint_sha256"],
+        "committed_at": pki_api::rfc3339_from_unix(now),
+        "forced": force,
+    }))
+}
+
+/// `cw pki rotate-ca --action status`
+///
+/// 窗口剩余时间 + 待重签 principal 清单（identities/*/client.crt 的 AKI
+/// 与当前 CA SKI 比对，不匹配 = 旧 CA 签发，需 `cw pki renew`）。
+pub fn rotate_ca_status(root: &Path) -> Result<Value, PkiError> {
+    let window = read_rotation_window(root)?;
+    let pending = match &window {
+        Some(_) => {
+            let ca = pki_api::load_ca(root)?.ok_or_else(|| {
+                PkiError::new("E_PKI_CA_LOAD", "pki 根缺少 ca/ca.crt")
+            })?;
+            let ca_ski = cert_subject_key_id(ca.cert_der.as_ref());
+            let mut pending = Vec::new();
+            let identities = root.join("identities");
+            if identities.exists() {
+                let mut entries: Vec<_> = std::fs::read_dir(&identities)
+                    .map_err(|e| PkiError::io_pub("read identities", e))?
+                    .filter_map(|e| e.ok())
+                    .collect();
+                entries.sort_by_key(|e| e.file_name());
+                for entry in entries {
+                    let crt = entry.path().join("client.crt");
+                    let Ok(text) = std::fs::read_to_string(&crt) else {
+                        // client.crt 缺失（enroll 半途目录）不报警
+                        continue;
+                    };
+                    let Some(der) = pki_api::pem_decode(&text, "CERTIFICATE") else {
+                        // 证书内容无法解析 → fail-closed 归入待重签（宁可误报）
+                        pending.push(entry.file_name().to_string_lossy().to_string());
+                        continue;
+                    };
+                    if cert_authority_key_id(&der) != ca_ski {
+                        pending.push(entry.file_name().to_string_lossy().to_string());
+                    }
+                }
+            }
+            pending
+        }
+        None => Vec::new(),
+    };
+    let now = unix_now_f64() as i64;
+    Ok(json!({
+        "window_active": window.is_some(),
+        "deadline": window.as_ref().map(|w| w["deadline"].clone()).unwrap_or(Value::Null),
+        "seconds_left": window.as_ref().and_then(|w| w["deadline_unix"].as_i64()).map(|d| d - now),
+        "pending_renewal_principals": pending,
+    }))
+}
+
+// ============================================
 // revoke / rotate-server
 // ============================================
 
@@ -721,6 +970,22 @@ pub enum PkiCommand {
         #[arg(long)]
         identity_dir: Option<PathBuf>,
     },
+    /// 只读检查客户端证书状态（§9.34 B 自动续期数据源，不联网）
+    CertStatus {
+        #[arg(long)]
+        principal: Option<String>,
+        #[arg(long)]
+        identity_dir: Option<PathBuf>,
+    },
+    /// rotate-ca 双 CA 信任窗口（§9.34 C）：--action prepare|commit|status
+    RotateCa {
+        /// prepare | commit | status
+        #[arg(long)]
+        action: String,
+        /// commit：超过窗口期后强制收敛（放弃未换发的旧客户端证书）
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
     /// 吊销证书 serial（幂等）
     Revoke {
         #[arg(long)]
@@ -851,6 +1116,19 @@ pub fn run(cmd: PkiCommand) -> i32 {
             endpoint.as_deref(),
             identity_dir.as_deref(),
         ),
+        PkiCommand::CertStatus {
+            principal,
+            identity_dir,
+        } => cert_status(&root, principal.as_deref(), identity_dir.as_deref()),
+        PkiCommand::RotateCa { action, force } => match action.as_str() {
+            "prepare" => rotate_ca_prepare(&root),
+            "commit" => rotate_ca_commit(&root, force),
+            "status" => rotate_ca_status(&root),
+            other => Err(PkiError::new(
+                "E_PKI_ARGS",
+                format!("未知 --action {}（应为 prepare|commit|status）", other),
+            )),
+        },
         PkiCommand::Revoke {
             serial,
             reason,
@@ -907,5 +1185,134 @@ mod tests {
             "重复 init 不得换 CA"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn cert_status_reports_days_left_and_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ca = pki_api::ensure_ca(tmp.path()).unwrap();
+        // issue_local_client_identity 写 identities/<principal>/client.crt
+        pki_api::issue_local_client_identity(&ca, "pr_status_test").unwrap();
+
+        let v = cert_status(tmp.path(), Some("pr_status_test"), None).unwrap();
+        assert_eq!(v["principal_id"], "pr_status_test");
+        let days = v["days_left"].as_i64().unwrap();
+        // set_validity 粒度到天（not_after 截断到 civil 日零点），
+        // 90 天证书 days_left ∈ [88, 90]
+        assert!((80..=90).contains(&days), "days_left = {}", days);
+        assert_eq!(v["expired"], false);
+        assert!(
+            v["serial"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
+            "serial 必须非空"
+        );
+
+        // 证书缺失 → E_MTLS_CLIENT_CERT_MISSING
+        let err = cert_status(tmp.path(), Some("pr_absent"), None).unwrap_err();
+        assert_eq!(err.code, "E_MTLS_CLIENT_CERT_MISSING");
+    }
+
+    #[test]
+    fn rotate_ca_prepare_commit_status_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        // prepare 前捕获旧 CA handle：窗口前签发的证书由它持有（rename 后仍有效）
+        let ca_old = pki_api::ensure_ca(tmp.path()).unwrap();
+
+        // 无窗口时 commit → E_PKI_ROTATE_NO_WINDOW
+        assert_eq!(
+            rotate_ca_commit(tmp.path(), false).unwrap_err().code,
+            "E_PKI_ROTATE_NO_WINDOW"
+        );
+
+        let st0 = rotate_ca_status(tmp.path()).unwrap();
+        assert_eq!(st0["window_active"], false);
+
+        // prepare：新 CA + 窗口文件 + 旧 CA 归档
+        let out = rotate_ca_prepare(tmp.path()).unwrap();
+        assert_eq!(out["restart_required"], true);
+        assert_ne!(
+            out["previous_ca_fingerprint_sha256"], out["new_ca_fingerprint_sha256"],
+            "prepare 后签发 CA 必须已更换"
+        );
+        assert!(tmp.path().join("ca-previous").join("ca.crt").exists());
+        assert!(tmp.path().join("ca-previous").join("window.json").exists());
+        assert!(tmp.path().join("ca").join("ca.crt").exists());
+        assert!(!tmp.path().join("server").exists(), "服务端叶证书须随旧 CA 清除");
+
+        // prepare 幂等拒绝
+        assert_eq!(
+            rotate_ca_prepare(tmp.path()).unwrap_err().code,
+            "E_PKI_ROTATE_PENDING"
+        );
+
+        // status：窗口激活、待重签清单含窗口前签发的旧证书
+        // （必须用 prepare 前捕获的旧 CA handle 签发——load_ca 此刻已是新 CA）
+        let (_cert_pem, _key) =
+            pki_api::issue_local_client_identity(&ca_old, "pr_stale").unwrap();
+        let st1 = rotate_ca_status(tmp.path()).unwrap();
+        assert_eq!(st1["window_active"], true);
+        let pending = st1["pending_renewal_principals"].as_array().unwrap();
+        assert!(
+            pending.iter().any(|p| p.as_str() == Some("pr_stale")),
+            "旧 CA 签发的 principal 必须出现在待重签清单: {:?}",
+            pending
+        );
+
+        // commit：收敛单 CA、窗口目录移除、status 回到无窗口
+        let out = rotate_ca_commit(tmp.path(), false).unwrap();
+        assert_eq!(out["action"], "commit");
+        assert!(!tmp.path().join("ca-previous").exists());
+        assert_eq!(rotate_ca_status(tmp.path()).unwrap()["window_active"], false);
+    }
+
+    #[test]
+    fn rotate_ca_commit_after_window_expired_requires_force() {
+        let tmp = tempfile::tempdir().unwrap();
+        pki_api::ensure_ca(tmp.path()).unwrap();
+        rotate_ca_prepare(tmp.path()).unwrap();
+
+        // 篡改 window.json 到过去（模拟超窗）
+        let window_path = tmp.path().join("ca-previous").join("window.json");
+        let mut w: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&window_path).unwrap(),
+        )
+        .unwrap();
+        w["deadline_unix"] = serde_json::json!(unix_now_f64() as i64 - 3600);
+        std::fs::write(&window_path, serde_json::to_string(&w).unwrap()).unwrap();
+
+        assert_eq!(
+            rotate_ca_commit(tmp.path(), false).unwrap_err().code,
+            "E_PKI_ROTATE_WINDOW_EXPIRED"
+        );
+        // --force 放行
+        rotate_ca_commit(tmp.path(), true).unwrap();
+        assert!(!tmp.path().join("ca-previous").exists());
+    }
+
+    #[test]
+    fn rotate_ca_pending_list_excludes_renewed_clients() {
+        let tmp = tempfile::tempdir().unwrap();
+        pki_api::ensure_ca(tmp.path()).unwrap();
+        rotate_ca_prepare(tmp.path()).unwrap();
+        let ca = pki_api::load_ca(tmp.path()).unwrap().unwrap();
+        // 窗口期内以新 CA 换发的客户端：不在待重签清单
+        pki_api::issue_local_client_identity(&ca, "pr_fresh").unwrap();
+        // 旧 CA 签发残留（prepare 前的 identities 未清）
+        std::fs::create_dir_all(tmp.path().join("identities").join("pr_old")).unwrap();
+        std::fs::write(
+            tmp.path().join("identities").join("pr_old").join("client.crt"),
+            "garbage",
+        )
+        .unwrap();
+
+        let st = rotate_ca_status(tmp.path()).unwrap();
+        let pending = st["pending_renewal_principals"].as_array().unwrap();
+        assert!(
+            !pending.iter().any(|p| p.as_str() == Some("pr_fresh")),
+            "新 CA 签发的客户端不在待重签清单"
+        );
+        assert!(
+            pending.iter().any(|p| p.as_str() == Some("pr_old")),
+            "无法解析的旧证书按 fail-closed 归入待重签"
+        );
     }
 }

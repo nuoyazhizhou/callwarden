@@ -42,6 +42,9 @@ pub const PRINCIPAL_URI_PREFIX: &str = "spiffe://callwarden.local/principal/";
 const CA_VALIDITY_SECS: i64 = 3650 * 24 * 3600;
 /// 服务端叶证书有效期（1 年）。
 const SERVER_VALIDITY_SECS: i64 = 365 * 24 * 3600;
+/// 服务端证书自动续期阈值（天）：剩余有效期 ≤ 该值时 `ensure_server_cert`
+/// 启动路径自动重签（§9.34 阶段 A1）。过期自然落入该判定。
+pub const SERVER_CERT_RENEW_THRESHOLD_DAYS: i64 = 30;
 /// 客户端叶证书有效期（90 天）。
 const CLIENT_VALIDITY_SECS: i64 = 90 * 24 * 3600;
 /// 引导 token TTL（ADR §4.2：600s）。
@@ -68,6 +71,11 @@ impl PkiError {
 
     fn io(ctx: &str, e: std::io::Error) -> Self {
         Self::new("E_PKI_IO", format!("{}: {}", ctx, e))
+    }
+
+    /// 跨模块复用的 io 包装（§9.34 C rotate-ca CLI 需要）。
+    pub fn io_pub(ctx: &str, e: std::io::Error) -> Self {
+        Self::io(ctx, e)
     }
 
     fn rcgen(ctx: &str, e: rcgen::Error) -> Self {
@@ -102,15 +110,30 @@ pub fn pem_encode(label: &str, der: &[u8]) -> String {
 
 /// 解析 PEM 文本中指定 label 的 DER（失败返回 None）。
 pub fn pem_decode(text: &str, label: &str) -> Option<Vec<u8>> {
+    pem_decode_all(text, label).into_iter().next()
+}
+
+/// 解析 PEM 文本中**全部**同名标签块（§9.34 C：manifest `ca_cert_pem` 在
+/// rotate-ca 窗口期为 新 CA + 旧 CA 的 PEM bundle，消费端须逐块装载）。
+pub fn pem_decode_all(text: &str, label: &str) -> Vec<Vec<u8>> {
     let begin = format!("-----BEGIN {}-----", label);
     let end = format!("-----END {}-----", label);
-    let start = text.find(&begin)? + begin.len();
-    let stop = text.find(&end)?;
-    if stop <= start {
-        return None;
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(pos) = rest.find(&begin) {
+        let start = pos + begin.len();
+        let Some(stop_rel) = rest[start..].find(&end) else {
+            break;
+        };
+        let stop = start + stop_rel;
+        let body: String =
+            rest[start..stop].chars().filter(|c| !c.is_whitespace()).collect();
+        if let Ok(der) = base64::engine::general_purpose::STANDARD.decode(&body) {
+            out.push(der);
+        }
+        rest = &rest[stop + end.len()..];
     }
-    let body: String = text[start..stop].chars().filter(|c| !c.is_whitespace()).collect();
-    base64::engine::general_purpose::STANDARD.decode(body).ok()
+    out
 }
 
 /// PKI 根目录：`CW_PKI_DIR` 优先，否则与 manifest 同目录下的 `pki/`
@@ -134,6 +157,11 @@ static PKI_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn pki_write_guard() -> std::sync::MutexGuard<'static, ()> {
     PKI_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 跨模块复用的进程内 PKI 写入锁（§9.34 C rotate-ca prepare/commit 需要）。
+pub fn pki_write_lock() -> std::sync::MutexGuard<'static, ()> {
+    pki_write_guard()
 }
 
 fn ensure_dir(p: &Path) -> Result<(), PkiError> {
@@ -180,7 +208,7 @@ fn read_text(path: &Path) -> Result<String, PkiError> {
     std::fs::read_to_string(path).map_err(|e| PkiError::io(&format!("read {}", path.display()), e))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     format!("{:x}", h.finalize())
@@ -326,13 +354,47 @@ pub fn load_ca(root: &Path) -> Result<Option<LocalCa>, PkiError> {
     }))
 }
 
+/// 旧 CA 信任根（§9.34 C rotate-ca 双 CA 窗口）。
+///
+/// 只承载验签材料：**不得用于签发**（签发永远走 `ca/` 当前 CA——布局保证，
+/// `PreviousCa` 不暴露 `issuer()`）。`ca-previous/` 由 `cw pki rotate-ca
+/// prepare` 创建、`--commit` 移除。
+#[derive(Debug, Clone)]
+pub struct PreviousCa {
+    pub cert_pem: String,
+    pub cert_der: CertificateDer<'static>,
+    pub fingerprint_sha256: String,
+}
+
+/// 读取 rotate-ca 窗口中的旧 CA（`ca-previous/ca.crt`）；无窗口返回 Ok(None)。
+pub fn load_previous_ca(root: &Path) -> Result<Option<PreviousCa>, PkiError> {
+    let crt = root.join("ca-previous").join("ca.crt");
+    if !crt.exists() {
+        return Ok(None);
+    }
+    let cert_pem = read_text(&crt)?;
+    let Some(der) = pem_decode(&cert_pem, "CERTIFICATE") else {
+        return Err(PkiError::new(
+            "E_PKI_CA_LOAD",
+            format!("{} 不是合法 PEM 证书", crt.display()),
+        ));
+    };
+    Ok(Some(PreviousCa {
+        fingerprint_sha256: sha256_hex(&der),
+        cert_der: CertificateDer::from(der),
+        cert_pem,
+    }))
+}
+
 /// 确保 CA 存在（缺失则生成自签 CA：ECDSA P-256，10 年）。
 pub fn ensure_ca(root: &Path) -> Result<LocalCa, PkiError> {
     let _guard = pki_write_guard();
     ensure_ca_locked(root)
 }
 
-fn ensure_ca_locked(root: &Path) -> Result<LocalCa, PkiError> {
+/// 已持有 `pki_write_lock` 的调用方（§9.34 rotate-ca prepare）使用此变体，
+/// 避免 `ensure_ca` 重入同一把非重入锁导致同线程死锁。
+pub fn ensure_ca_locked(root: &Path) -> Result<LocalCa, PkiError> {
     if let Some(ca) = load_ca(root)? {
         return Ok(ca);
     }
@@ -444,7 +506,9 @@ fn host_name() -> Option<String> {
         .filter(|s| !s.is_empty() && !s.contains(' '))
 }
 
-/// 确保服务端叶证书存在且 SAN 覆盖绑定地址；不覆盖 → `E_TLS_SAN_MISMATCH`。
+/// 确保服务端叶证书存在、SAN 覆盖绑定地址且未临期；SAN 不覆盖 →
+/// `E_TLS_SAN_MISMATCH`；文件存在但剩余有效期 ≤
+/// [`SERVER_CERT_RENEW_THRESHOLD_DAYS`]（含已过期）→ 自动重签（§9.34 A1）。
 pub fn ensure_server_cert(
     ca: &LocalCa,
     bind: &SocketAddr,
@@ -479,15 +543,24 @@ fn ensure_server_cert_locked(
                 ),
             ));
         }
-        let cert_der = CertificateDer::from(der);
-        return Ok(ServerCertificate {
-            cert_pem,
-            key_pem,
-            sha256: sha256_hex(cert_der.as_ref()),
-            not_after: cert_not_after_rfc3339(cert_der.as_ref()),
-            san,
-            cert_der,
-        });
+        let cert_der = CertificateDer::from(der.clone());
+        if !server_cert_needs_renewal(&der, now_unix(), SERVER_CERT_RENEW_THRESHOLD_DAYS) {
+            return Ok(ServerCertificate {
+                cert_pem,
+                key_pem,
+                sha256: sha256_hex(cert_der.as_ref()),
+                not_after: cert_not_after_rfc3339(cert_der.as_ref()),
+                san,
+                cert_der,
+            });
+        }
+        // §9.34 A1：临期/已过期 → 不复用，落入下方重签路径（覆盖 server.crt/key，
+        // SAN 以 required 为准）。重签失败按 PkiError 正常上抛（fail-closed，
+        // 不静默沿用临期证书）。
+        eprintln!(
+            "[cw_daemon][pki] server cert expiring/expired (<= {} days left), reissuing",
+            SERVER_CERT_RENEW_THRESHOLD_DAYS
+        );
     }
 
     ensure_dir(&dir)?;
@@ -555,11 +628,27 @@ pub fn build_tls_config(
     ca: &LocalCa,
     server: &ServerCertificate,
 ) -> Result<Arc<ServerConfig>, PkiError> {
+    build_tls_config_with_roots(ca, None, server)
+}
+
+/// 双信任根版本（§9.34 C rotate-ca 窗口期）：`previous` 非空时旧 CA 同入
+/// `RootCertStore`——窗口内旧 CA 签发的客户端证书继续可用，签发一律走
+/// 当前 CA。`max_conn_age` 保证窗口收敛后旧连接自然退出。
+pub fn build_tls_config_with_roots(
+    ca: &LocalCa,
+    previous: Option<&PreviousCa>,
+    server: &ServerCertificate,
+) -> Result<Arc<ServerConfig>, PkiError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut roots = RootCertStore::empty();
     roots.add(ca.cert_der.clone()).map_err(|e| {
         PkiError::new("E_PKI_CA_LOAD", format!("信任根装载失败: {}", e))
     })?;
+    if let Some(prev) = previous {
+        roots.add(prev.cert_der.clone()).map_err(|e| {
+            PkiError::new("E_PKI_CA_LOAD", format!("旧 CA 信任根装载失败: {}", e))
+        })?;
+    }
     let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
         .allow_unauthenticated()
         .build()
@@ -583,13 +672,16 @@ pub fn build_tls_config(
 /// 生成一个 TLS 客户端配置（信任 pin 的 CA + 携带客户端证书）。
 ///
 /// daemon 侧测试与本地工具复用；生产 Python 客户端由 `ssl.SSLContext` 承担。
+/// `ca_pem` 支持多证书 PEM bundle（§9.34 C rotate-ca 窗口期双信任根）。
 pub fn client_tls_config(
     ca_pem: &str,
     client_cert_pem: &str,
     client_key_pem: &str,
 ) -> Result<Arc<rustls::ClientConfig>, PkiError> {
-    let ca_der = pem_decode(ca_pem, "CERTIFICATE")
-        .ok_or_else(|| PkiError::new("E_PKI_CA_LOAD", "CA PEM 解析失败"))?;
+    let ca_ders = pem_decode_all(ca_pem, "CERTIFICATE");
+    if ca_ders.is_empty() {
+        return Err(PkiError::new("E_PKI_CA_LOAD", "CA PEM 解析失败"));
+    }
     let cert_der = pem_decode(client_cert_pem, "CERTIFICATE")
         .ok_or_else(|| PkiError::new("E_PKI_CA_LOAD", "client.crt 解析失败"))?;
     let key_der = pem_decode(client_key_pem, "PRIVATE KEY")
@@ -597,9 +689,11 @@ pub fn client_tls_config(
 
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut roots = RootCertStore::empty();
-    roots
-        .add(CertificateDer::from(ca_der))
-        .map_err(|e| PkiError::new("E_PKI_CA_LOAD", format!("信任根装载失败: {}", e)))?;
+    for der in ca_ders {
+        roots
+            .add(CertificateDer::from(der))
+            .map_err(|e| PkiError::new("E_PKI_CA_LOAD", format!("信任根装载失败: {}", e)))?;
+    }
     let cfg = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|e| PkiError::new("E_TLS_CONFIG", format!("protocol versions: {}", e)))?
@@ -654,6 +748,9 @@ pub fn issue_client_certificate(
             .map_err(|_| PkiError::new("E_ENROLL_CSR_INVALID", "principal_id 含非法字符"))?
     })];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    // §9.34 rotate-ca：写 AKI 扩展（签发方 SKI），供 `rotate-ca status` 按
+    // AKI vs 当前 CA SKI 判定待重签清单。rcgen 默认不写（use_... 默认 false）。
+    params.use_authority_key_identifier_extension = true;
     params.key_usages = vec![
         KeyUsagePurpose::DigitalSignature,
         KeyUsagePurpose::KeyEncipherment,
@@ -718,6 +815,8 @@ pub fn issue_local_client_identity(
         KeyUsagePurpose::KeyEncipherment,
     ];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    // §9.34 rotate-ca：AKI 扩展（同 issue_client_certificate）。
+    params.use_authority_key_identifier_extension = true;
     let uri: SanType = SanType::URI(
         format!("{}{}", PRINCIPAL_URI_PREFIX, principal_id)
             .try_into()
@@ -895,6 +994,18 @@ pub fn server_cert_expires_in_days(pki_root: &Path) -> Option<i64> {
     Some((not_after - now_unix()).div_euclid(86_400))
 }
 
+/// 服务端证书是否临期/已过期（§9.34 A1 启动自动重签判定）。
+///
+/// `days_left <= threshold_days`（含过期，days_left 为负）→ true；
+/// 解析失败 → true（fail-closed：宁可重签也不信任不可读的证书）。
+pub fn server_cert_needs_renewal(der: &[u8], now_unix_secs: i64, threshold_days: i64) -> bool {
+    let Ok((_, cert)) = x509_parser::parse_x509_certificate(der) else {
+        return true;
+    };
+    let days_left = (cert.validity().not_after.timestamp() - now_unix_secs).div_euclid(86_400);
+    days_left <= threshold_days
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -927,5 +1038,108 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("server.crt"), "not a pem").unwrap();
         assert!(server_cert_expires_in_days(root.path()).is_none());
+    }
+
+    // ============================================
+    // §9.34 A1：服务端证书临期自动重签
+    // ============================================
+
+    /// 用给定剩余秒数签发一张服务端 SAN 证书（测试专用：直接写 server/ 目录
+    /// 模拟磁盘上已存在的临期证书）。
+    fn write_server_cert_with_days_left(
+        root: &Path,
+        ca: &LocalCa,
+        bind: &SocketAddr,
+        days_left_secs: i64,
+    ) -> String {
+        let dir = root.join("server");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params.is_ca = IsCa::NoCa;
+        params.subject_alt_names = required_server_sans(bind)
+            .iter()
+            .filter_map(|s| san_type_from_string(s))
+            .collect();
+        let now = now_unix();
+        set_validity(&mut params, now - 3600, now + days_left_secs);
+        let key = KeyPair::generate().unwrap();
+        let cert = params.signed_by(&key, &ca.issuer().unwrap()).unwrap();
+        let cert_pem = pem_encode("CERTIFICATE", cert.der());
+        std::fs::write(dir.join("server.crt"), &cert_pem).unwrap();
+        std::fs::write(dir.join("server.key"), "dummy-key").unwrap();
+        cert_pem
+    }
+
+    #[test]
+    fn test_server_cert_needs_renewal_boundaries() {
+        let ca_root = tempfile::tempdir().unwrap();
+        let ca = ensure_ca(ca_root.path()).unwrap();
+        let bind: SocketAddr = "127.0.0.1:8457".parse().unwrap();
+        let now = now_unix();
+        let make = |days_left: i64| {
+            let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+            set_validity(&mut params, now - 3600, now + days_left * 86_400);
+            let key = KeyPair::generate().unwrap();
+            let cert = params.signed_by(&key, &ca.issuer().unwrap()).unwrap();
+            cert.der().to_vec()
+        };
+        // 边界（set_validity 粒度到天，not_after 截断到 civil 日零点，
+        // 故阈值外侧用 32 天保证 days_left ≥ 31）：32 天 → false；
+        // 30/29/0/过期 → true。
+        assert!(!server_cert_needs_renewal(&make(32), now, SERVER_CERT_RENEW_THRESHOLD_DAYS));
+        assert!(server_cert_needs_renewal(&make(30), now, SERVER_CERT_RENEW_THRESHOLD_DAYS));
+        assert!(server_cert_needs_renewal(&make(29), now, SERVER_CERT_RENEW_THRESHOLD_DAYS));
+        assert!(server_cert_needs_renewal(&make(0), now, SERVER_CERT_RENEW_THRESHOLD_DAYS));
+        assert!(server_cert_needs_renewal(&make(-5), now, SERVER_CERT_RENEW_THRESHOLD_DAYS));
+        // 解析失败 → fail-closed 重签。
+        assert!(server_cert_needs_renewal(b"garbage", now, SERVER_CERT_RENEW_THRESHOLD_DAYS));
+    }
+
+    #[test]
+    fn test_ensure_server_cert_reissues_when_expiring() {
+        let root = tempfile::tempdir().unwrap();
+        let ca = ensure_ca(root.path()).unwrap();
+        let bind: SocketAddr = "127.0.0.1:8458".parse().unwrap();
+        let old_pem = write_server_cert_with_days_left(root.path(), &ca, &bind, 10 * 86_400);
+
+        ensure_server_cert(&ca, &bind).unwrap();
+
+        let days = server_cert_expires_in_days(root.path()).unwrap();
+        assert!(
+            days > 340,
+            "expiring cert must be reissued to ~1y validity, got {} days",
+            days
+        );
+        let new_pem =
+            std::fs::read_to_string(root.path().join("server").join("server.crt")).unwrap();
+        assert_ne!(old_pem, new_pem, "server.crt must be overwritten on renewal");
+    }
+
+    #[test]
+    fn test_ensure_server_cert_reissues_when_expired() {
+        let root = tempfile::tempdir().unwrap();
+        let ca = ensure_ca(root.path()).unwrap();
+        let bind: SocketAddr = "127.0.0.1:8459".parse().unwrap();
+        write_server_cert_with_days_left(root.path(), &ca, &bind, -86_400);
+
+        ensure_server_cert(&ca, &bind).unwrap();
+        assert!(server_cert_expires_in_days(root.path()).unwrap() > 340);
+    }
+
+    #[test]
+    fn test_ensure_server_cert_fresh_cert_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let ca = ensure_ca(root.path()).unwrap();
+        let bind: SocketAddr = "127.0.0.1:8460".parse().unwrap();
+
+        let first = ensure_server_cert(&ca, &bind).unwrap();
+        let second = ensure_server_cert(&ca, &bind).unwrap();
+
+        assert_eq!(
+            first.sha256, second.sha256,
+            "fresh cert must be reused (no reissue) across calls"
+        );
+        assert!(server_cert_expires_in_days(root.path()).unwrap() > 340);
     }
 }

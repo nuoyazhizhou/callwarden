@@ -44,6 +44,60 @@ fn main() {
     }
 }
 
+// ============================================
+// §9.34 A1：服务端证书运行期到期巡检（纯函数，两平台主循环共用）
+// ============================================
+
+/// 巡检节流：主循环 100ms tick 计数（6h = 21600s × 10 tick/s）。
+/// 启动路径 `ensure_server_cert` 已对临期证书自动重签，此处只做运行期
+/// 可见性告警（daemon 长驻不重启时的兜底）。
+const SERVER_CERT_CHECK_INTERVAL_TICKS: u64 = 21_600 * 10;
+
+/// 服务端证书到期巡检消息（纯函数便于单测）。
+///
+/// - `Some(d)` 且 `d < 0` → ERROR（已过期；握手失败属 fail-closed，不降级）
+/// - `Some(d)` 且 `0 ≤ d ≤ threshold` → WARN（将在下次重启自动重签）
+/// - 其余（含 `None` = 证书缺失/解析失败）→ `None`（缺失场景 `bind_http`
+///   已 fail-closed 拒启，此处不重复告警）
+fn server_cert_expiry_message(days: Option<i64>, threshold_days: i64) -> Option<String> {
+    match days {
+        Some(d) if d < 0 => Some(format!(
+            "[cw_daemon][pki] [ERROR] server cert EXPIRED (overdue {} day(s)); \
+             tls handshakes will fail until next restart reissues it",
+            -d
+        )),
+        Some(d) if d <= threshold_days => Some(format!(
+            "[cw_daemon][pki] [WARN] server cert expires in {} day(s); \
+             it will be reissued automatically on next restart",
+            d
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod server_cert_expiry_tests {
+    use super::server_cert_expiry_message;
+
+    #[test]
+    fn test_expiry_message_boundaries() {
+        assert!(server_cert_expiry_message(Some(400), 30).is_none());
+        assert!(server_cert_expiry_message(Some(31), 30).is_none());
+        assert_eq!(
+            server_cert_expiry_message(Some(30), 30).unwrap(),
+            "[cw_daemon][pki] [WARN] server cert expires in 30 day(s); \
+             it will be reissued automatically on next restart"
+        );
+        assert!(
+            server_cert_expiry_message(Some(0), 30)
+                .unwrap()
+                .contains("expires in 0 day")
+        );
+        assert!(server_cert_expiry_message(Some(-3), 30).unwrap().contains("EXPIRED"));
+        assert!(server_cert_expiry_message(None, 30).is_none());
+    }
+}
+
 #[cfg(unix)]
 mod unix {
     use std::io;
@@ -511,6 +565,8 @@ mod unix {
         // 线程 JoinHandle——停止路径置位 stop 后 join，等 accept loop drain 完。
         let serialization_point = new_serialization_point();
         let http_stop = Arc::clone(&prebound_http.1.shutdown_flag);
+        // §9.34 A1：巡检用 pki 目录（prebound_http.1 随后 move 进 HTTP 线程）
+        let server_cert_pki_dir = prebound_http.1.pki_dir.clone();
         let http_join = spawn_http_transport_prebound(
             prebound_http.0,
             Arc::clone(&http_state),
@@ -542,6 +598,7 @@ mod unix {
         }
 
         // 10. 主循环：等待信号
+        let mut cert_check_ticks: u64 = 0;
         loop {
             if stop_flag.load(Ordering::SeqCst) {
                 eprintln!("[cw_daemon] [INFO] received stop signal, shutting down...");
@@ -563,6 +620,20 @@ mod unix {
                     "[cw_daemon] [INFO] drain complete: compacted {} applied entries",
                     compacted
                 );
+            }
+            // §9.34 A1：服务端证书到期巡检（6h 节流）
+            cert_check_ticks += 1;
+            if cert_check_ticks >= crate::SERVER_CERT_CHECK_INTERVAL_TICKS {
+                cert_check_ticks = 0;
+                let days = callwarden_core::daemon::http_server::pki_api::server_cert_expires_in_days(
+                    &server_cert_pki_dir,
+                );
+                if let Some(msg) = crate::server_cert_expiry_message(
+                    days,
+                    callwarden_core::daemon::http_server::pki_api::SERVER_CERT_RENEW_THRESHOLD_DAYS,
+                ) {
+                    eprintln!("{}", msg);
+                }
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -2545,6 +2616,8 @@ mod windows {
         // 线程 JoinHandle——停止路径置位 stop 后 join，等 accept loop drain 完。
         let serialization_point = new_serialization_point();
         let http_stop = Arc::clone(&prebound_http.1.shutdown_flag);
+        // §9.34 A1：巡检用 pki 目录（prebound_http.1 随后 move 进 HTTP 线程）
+        let server_cert_pki_dir = prebound_http.1.pki_dir.clone();
         let http_join = spawn_http_transport_prebound(
             prebound_http.0,
             Arc::clone(&http_state),
@@ -2561,6 +2634,7 @@ mod windows {
         );
 
         // 9. 主循环：等待停止信号
+        let mut cert_check_ticks: u64 = 0;
         loop {
             if STOP_FLAG.load(Ordering::SeqCst) {
                 eprintln!("[cw_daemon] [INFO] received stop signal, shutting down...");
@@ -2571,6 +2645,20 @@ mod windows {
             if http_stop.load(Ordering::SeqCst) {
                 eprintln!("[cw_daemon] [INFO] received shutdown RPC, shutting down...");
                 break;
+            }
+            // §9.34 A1：服务端证书到期巡检（6h 节流）
+            cert_check_ticks += 1;
+            if cert_check_ticks >= crate::SERVER_CERT_CHECK_INTERVAL_TICKS {
+                cert_check_ticks = 0;
+                let days = callwarden_core::daemon::http_server::pki_api::server_cert_expires_in_days(
+                    &server_cert_pki_dir,
+                );
+                if let Some(msg) = crate::server_cert_expiry_message(
+                    days,
+                    callwarden_core::daemon::http_server::pki_api::SERVER_CERT_RENEW_THRESHOLD_DAYS,
+                ) {
+                    eprintln!("{}", msg);
+                }
             }
             thread::sleep(Duration::from_millis(100));
         }

@@ -476,6 +476,8 @@ pub struct BoundHttp {
     pub tls: Arc<rustls::ServerConfig>,
     /// 本地 CA（enroll 签发复用）。
     pub ca: pki_api::LocalCa,
+    /// §9.34 C：rotate-ca 窗口期旧 CA（None = 无窗口）。
+    pub previous_ca: Option<pki_api::PreviousCa>,
     /// 服务端叶证书公开信息（manifest 指纹/有效期来源）。
     pub server_cert: pki_api::ServerCertificate,
 }
@@ -494,10 +496,29 @@ pub fn bind_http(cfg: &HttpServerConfig) -> Result<BoundHttp, HttpServerError> {
     validate_security_profile_from_env()?;
     let addr = resolve_bind(&cfg.bind_spec, cfg.allow_remote)?;
     let ca = pki_api::ensure_ca(&cfg.pki_dir).map_err(|e| HttpServerError::Tls(e.to_string()))?;
+    let previous_ca = pki_api::load_previous_ca(&cfg.pki_dir)
+        .map_err(|e| HttpServerError::Tls(e.to_string()))?;
+    if let Some(prev) = &previous_ca {
+        // §9.34 C：窗口状态可见性。过期仅 WARN 不自动收敛（fail-safe，
+        // 收敛必须由 `cw pki rotate-ca --action commit` 显式执行）。
+        let deadline_unix = std::fs::read_to_string(cfg.pki_dir.join("ca-previous").join("window.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|w| w["deadline_unix"].as_i64());
+        let state = match deadline_unix {
+            Some(d) if d < now_unix() as i64 => "EXPIRED (run `cw pki rotate-ca --action commit`)",
+            _ => "active",
+        };
+        eprintln!(
+            "[cw_daemon][pki] rotate-ca window {}: trusting previous CA {}",
+            state,
+            &prev.fingerprint_sha256[..16.min(prev.fingerprint_sha256.len())]
+        );
+    }
     let server_cert =
         pki_api::ensure_server_cert(&ca, &addr).map_err(|e| HttpServerError::Tls(e.to_string()))?;
-    let tls =
-        pki_api::build_tls_config(&ca, &server_cert).map_err(|e| HttpServerError::Tls(e.to_string()))?;
+    let tls = pki_api::build_tls_config_with_roots(&ca, previous_ca.as_ref(), &server_cert)
+        .map_err(|e| HttpServerError::Tls(e.to_string()))?;
 
     let listener =
         std::net::TcpListener::bind(addr).map_err(|e| HttpServerError::Bind(e.to_string()))?;
@@ -509,7 +530,7 @@ pub fn bind_http(cfg: &HttpServerConfig) -> Result<BoundHttp, HttpServerError> {
     let local = listener
         .local_addr()
         .map_err(|e| HttpServerError::Bind(e.to_string()))?;
-    let manifest = build_manifest(cfg, &local, &ca, &server_cert);
+    let manifest = build_manifest(cfg, &local, &ca, &server_cert, previous_ca.as_ref());
     publish_manifest_atomic(&cfg.manifest_path, &manifest)?;
     Ok(BoundHttp {
         listener,
@@ -517,6 +538,7 @@ pub fn bind_http(cfg: &HttpServerConfig) -> Result<BoundHttp, HttpServerError> {
         manifest,
         tls,
         ca,
+        previous_ca,
         server_cert,
     })
 }
@@ -583,7 +605,13 @@ where
     config.endpoint = format!("https://{}", local);
     // CR10：compat worker 状态回写 manifest（非致命：失败仅影响 manifest 字段新鲜度）
     {
-        let manifest = build_manifest(&config, &local, &bound.ca, &bound.server_cert);
+        let manifest = build_manifest(
+            &config,
+            &local,
+            &bound.ca,
+            &bound.server_cert,
+            bound.previous_ca.as_ref(),
+        );
         if let Err(e) = publish_manifest_atomic(&config.manifest_path, &manifest) {
             eprintln!(
                 "[cw_daemon][http] manifest worker_status 回写失败（忽略）: {}",
@@ -2094,12 +2122,37 @@ fn make_id(prefix: &str) -> String {
 /// 构造 manifest（`callwarden-http-manifest/v2`，ADR-002 §15.4）。
 ///
 /// `manifest_hash` 排除自身；不含任何私钥、principal 列表、grant 或 workspace 路径。
+///
+/// §9.34 C rotate-ca：`previous_ca` 非空（窗口期）时 `tls.ca_cert_pem` 变为
+/// 新 CA + 旧 CA 的 PEM bundle（消费端逐块装载，双信任根验签）；
+/// `ca_fingerprint_sha256` 恒为 bundle 首张（当前签发 CA）；
+/// 新增可选字段 `previous_ca_fingerprint_sha256`。
 fn build_manifest(
     cfg: &HttpServerConfig,
     local: &SocketAddr,
     ca: &pki_api::LocalCa,
     server_cert: &pki_api::ServerCertificate,
+    previous_ca: Option<&pki_api::PreviousCa>,
 ) -> Value {
+    let mut ca_pem_bundle = ca.cert_pem.clone();
+    if let Some(prev) = previous_ca {
+        if !ca_pem_bundle.ends_with('\n') {
+            ca_pem_bundle.push('\n');
+        }
+        ca_pem_bundle.push_str(&prev.cert_pem);
+    }
+    let mut tls_block = json!({
+        "min_version": "1.2",
+        "ca_cert_pem": ca_pem_bundle,
+        "ca_fingerprint_sha256": ca.fingerprint_sha256,
+        "server_cert_sha256": server_cert.sha256,
+        "server_not_after": server_cert.not_after,
+        "san": server_cert.san,
+    });
+    if let Some(prev) = previous_ca {
+        tls_block["previous_ca_fingerprint_sha256"] =
+            Value::String(prev.fingerprint_sha256.clone());
+    }
     let mut m = std::collections::BTreeMap::new();
     m.insert(
         "schema".to_string(),
@@ -2125,17 +2178,7 @@ fn build_manifest(
         "auth".to_string(),
         Value::String("mtls_client_cert_required".into()),
     );
-    m.insert(
-        "tls".to_string(),
-        json!({
-            "min_version": "1.2",
-            "ca_cert_pem": ca.cert_pem,
-            "ca_fingerprint_sha256": ca.fingerprint_sha256,
-            "server_cert_sha256": server_cert.sha256,
-            "server_not_after": server_cert.not_after,
-            "san": server_cert.san,
-        }),
-    );
+    m.insert("tls".to_string(), tls_block);
 
     // 诊断/兼容字段（不含敏感数据）
     m.insert(
@@ -6363,6 +6406,146 @@ mod tests {
             !shutdown_flag.load(Ordering::SeqCst),
             "拒绝时不得置位 shutdown 开关"
         );
+    }
+
+    // ============================================
+    // §9.34 C：rotate-ca 双 CA 窗口真机 TLS 集成
+    // ============================================
+
+    /// 以指定 pki 根 spawn 单测 server（spawn_server_with 的独立 pki 变体，
+    /// 供 rotate-ca 双根窗口测试使用；结构与 spawn_server_with 保持一致）。
+    async fn spawn_server_with_pki(pki_root: &std::path::Path) -> SocketAddr {
+        // tempdir 必须活得比 server 久（dedup DB 与 manifest 落在其下）。
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let manifest = dir.path().join("http-manifest-rotate.json");
+        let mut cfg = HttpServerConfig::new("127.0.0.1:0".into(), manifest);
+        cfg.pki_dir = pki_root.to_path_buf();
+        let bound = bind_http(&cfg).unwrap();
+        let tls = Arc::clone(&bound.tls);
+        let addr = bound.local_addr;
+        let mut cfg = cfg;
+        cfg.endpoint = format!("https://{}", addr);
+        let ds = DaemonState {
+            start_time: std::time::Instant::now(),
+            schema_version: SCHEMA_VERSION,
+            pid: std::process::id(),
+            task_collab_store: None,
+            authority_id: "test-authority".to_string(),
+            transport: "https-mtls".to_string(),
+            task_db_fingerprint: String::new(),
+            task_loop_control: None,
+        };
+        let dedup = Arc::new(DedupStore::open(&cfg.dedup_db_path).unwrap());
+        let compat = Arc::new(CompatAdapter::new(
+            CompatAdapterConfig::from_env(std::path::Path::new("cw-daemon-test")),
+            Arc::new(SerializationPoint::with_default_timeout()),
+        ));
+        let app_state = AppState {
+            state: Arc::new(TokioMutex::new(ds)),
+            serialization: Arc::new(SerializationPoint::with_default_timeout()),
+            principal_registry: Arc::new(auth_principal::PrincipalRegistry::new(
+                pki_root.to_path_buf(),
+                None,
+            )),
+            config: Arc::new(cfg),
+            dedup,
+            jobs: Arc::new(StdMutex::new(HashMap::new())),
+            compat,
+        };
+        let router = build_router(app_state);
+        let tokio_listener = tokio::net::TcpListener::from_std(bound.listener).unwrap();
+        let _ = tokio::spawn(accept_loop(
+            tokio_listener,
+            router,
+            tls,
+            Arc::new(AtomicBool::new(false)),
+            std::time::Duration::from_secs(60),
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        addr
+    }
+
+    /// 用任意 ClientConfig 建 TLS 连接（连接/握手失败不 panic，返回 Result
+    /// 供握手成败断言）。
+    async fn tls_connect_with(
+        addr: &SocketAddr,
+        config: Arc<rustls::ClientConfig>,
+    ) -> Result<tokio_rustls::client::TlsStream<TcpStream>, std::io::Error> {
+        let connector = tokio_rustls::TlsConnector::from(config);
+        let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+            .await
+            .expect("connect timed out")
+            .expect("connect failed");
+        let server_name =
+            rustls::pki_types::ServerName::IpAddress(rustls::pki_types::IpAddr::from(addr.ip()));
+        tokio::time::timeout(Duration::from_secs(5), connector.connect(server_name, stream)).await
+            .expect("tls handshake timed out")
+    }
+
+    /// rotate-ca 双 CA 窗口端到端：窗口期内旧 CA 签发的客户端证书握手成功
+    /// （服务端双根验签），commit 后（信任根移除旧 CA）同证书握手失败。
+    #[tokio::test]
+    async fn test_rotate_ca_dual_root_window_handshake() {
+        // 独立 pki 根（leak，活得比 server 久）。
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let root = dir.path().to_path_buf();
+
+        // prepare 前用旧 CA 签发客户端证书；CA handle 常驻内存，rename 后仍可持有。
+        let ca1 = pki_api::ensure_ca(&root).expect("CA1 生成失败");
+        let (old_cert, old_key) =
+            pki_api::issue_local_client_identity(&ca1, "pr_rotate_old").expect("旧客户端证书签发失败");
+
+        // prepare：真实 CLI 流程（ca/ → ca-previous/、删 server/、生成新 CA、写 window.json）。
+        crate::cli::pki::rotate_ca_prepare(&root).expect("rotate-ca prepare 失败");
+
+        // 窗口期 server：bind_http 应加载 ca-previous 为第二信任根。
+        let addr = spawn_server_with_pki(&root).await;
+
+        let new_ca_pem = std::fs::read_to_string(root.join("ca").join("ca.crt")).unwrap();
+        let prev_ca_pem =
+            std::fs::read_to_string(root.join("ca-previous").join("ca.crt")).unwrap();
+        let bundle = format!("{}\n{}", new_ca_pem, prev_ca_pem);
+
+        // 旧 CA 客户端证书：信任 bundle（含新 CA，以校验新 CA 签发的服务端证书），
+        // 呈现旧 CA 签发的客户端证书 → 服务端经旧根验签，握手必须成功。
+        let old_cfg = pki_api::client_tls_config(&bundle, &old_cert, &old_key)
+            .expect("旧客户端 TLS config 构建失败");
+        let conn = tls_connect_with(&addr, old_cfg).await;
+        assert!(
+            conn.is_ok(),
+            "窗口期内旧 CA 客户端证书必须握手成功: {:?}",
+            conn.err()
+        );
+
+        // commit：移除 ca-previous/ → 信任根只剩新 CA。
+        crate::cli::pki::rotate_ca_commit(&root, false).expect("rotate-ca commit 失败");
+        let addr2 = spawn_server_with_pki(&root).await;
+        let old_cfg2 = pki_api::client_tls_config(&bundle, &old_cert, &old_key)
+            .expect("旧客户端 TLS config 构建失败");
+        // TLS 1.3 握手顺序：服务端 Finished 先于客户端 Certificate 飞行——服务端
+        // 对旧证书的拒绝发生在客户端 connect() 返回 Ok **之后**，以 alert/连接关闭
+        // 形式在首次读写时暴露。因此负向断言做在首次读写：不得获得 200 响应
+        // （期望 bad_certificate alert / EOF / 连接错误）。
+        let conn2 = tls_connect_with(&addr2, old_cfg2).await
+            .expect("旧客户端 connect 不应超时");
+        let (mut rd, mut wr) = tokio::io::split(conn2);
+        wr.write_all(
+            b"POST /v1/rpc HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .expect("旧客户端写请求不应失败（TLS 1.3 客户端侧握手已 Ok）");
+        let mut buf = [0u8; 1024];
+        let read_result =
+            tokio::time::timeout(Duration::from_secs(5), rd.read(&mut buf)).await;
+        match read_result {
+            // TLS alert / IO 错误 / EOF / 读超时：均为「未获得认证访问」，符合预期
+            Err(_) | Ok(Err(_)) | Ok(Ok(0)) => {}
+            Ok(Ok(n)) => assert!(
+                !buf[..n].starts_with(b"HTTP/1.1 200"),
+                "commit 后旧 CA 客户端证书不得获得 200 响应: {:?}",
+                String::from_utf8_lossy(&buf[..n])
+            ),
+        }
     }
 
     // ============================================
