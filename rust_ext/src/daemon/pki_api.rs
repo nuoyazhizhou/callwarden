@@ -403,13 +403,6 @@ pub fn ensure_ca_locked(root: &Path) -> Result<LocalCa, PkiError> {
     let mut params = CertificateParams::new(Vec::<String>::new())
         .map_err(|e| PkiError::rcgen("ca params", e))?;
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.distinguished_name = rcgen::DistinguishedName::new();
-    params
-        .distinguished_name
-        .push(DnType::OrganizationName, "CallWarden Local CA");
-    params
-        .distinguished_name
-        .push(DnType::CommonName, "CallWarden Local CA");
     params.key_usages = vec![
         KeyUsagePurpose::KeyCertSign,
         KeyUsagePurpose::CrlSign,
@@ -418,7 +411,25 @@ pub fn ensure_ca_locked(root: &Path) -> Result<LocalCa, PkiError> {
     let now = now_unix();
     set_validity(&mut params, now - 3600, now + CA_VALIDITY_SECS);
 
+    // 先生成密钥再定 DN：CN 携带公钥指纹前缀，保证不同代 CA 的 subject DN
+    // 互不相同。rotate-ca 窗口期 manifest 会同时装载 新+旧 两张 CA 证书，
+    // 若两者同 DN，OpenSSL（Python `cw` CLI）按 DN 选候选信任根且不回溯，
+    // 会把新 CA 签名的证书交给旧 CA 公钥验证 → certificate signature failure。
+    // webpki/rustls 无此问题，但信任根 DN 必须对全部消费端可区分（§9.34）。
     let key = KeyPair::generate().map_err(|e| PkiError::rcgen("ca keygen", e))?;
+    let key_fp_prefix: String = {
+        let digest = Sha256::digest(key.public_key_raw());
+        digest.iter().take(4).map(|b| format!("{:02x}", b)).collect()
+    };
+    let ca_common_name = format!("CallWarden Local CA {}", key_fp_prefix);
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    params
+        .distinguished_name
+        .push(DnType::OrganizationName, "CallWarden Local CA");
+    params
+        .distinguished_name
+        .push(DnType::CommonName, ca_common_name.clone());
+
     let cert = params
         .self_signed(&key)
         .map_err(|e| PkiError::rcgen("ca self-signed", e))?;
@@ -431,7 +442,7 @@ pub fn ensure_ca_locked(root: &Path) -> Result<LocalCa, PkiError> {
     write_file(&root.join("ca").join("ca.key"), &key_pem, true)?;
     write_file(&root.join("ca").join("ca.crt"), &cert_pem, false)?;
     let meta = serde_json::json!({
-        "subject": "O=CallWarden Local CA",
+        "subject": format!("O=CallWarden Local CA, CN={}", ca_common_name),
         "serial": cert_serial_hex(cert_der.as_ref()),
         "not_after": cert_not_after_rfc3339(cert_der.as_ref()),
         "fingerprint_sha256": fingerprint,
