@@ -4522,7 +4522,19 @@
       "reason_literal": "跨 OS 写治理矩阵需 CW_S2_REMOTE_ENDPOINT/ROOT/CERT/KEY/CA（对侧 OS daemon）",
       "reason_expression": "'跨 OS 写治理矩阵需 CW_S2_REMOTE_ENDPOINT/ROOT/CERT/KEY/CA（对侧 OS daemon）'",
       "condition_or_module": "not (_REMOTE_ENDPOINT and _REMOTE_ROOT and os.environ.get('CW_S2_REMOTE_CERT') and os.environ.get('CW_S2_REMOTE_KEY') and os.environ.get('CW_S2_REMOTE_CA'))",
-      "file_sha256": "6be6b7078af4982e89d0df9af2f4f4b945da7e9e046840aef4ae918bb8a0df56",
+      "file_sha256": "3ff9a12633e6ba47392224123aea82ba7c24ae34ce7677fedc3d9dc6766f6e5b",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_remote_write_governance.py:974:16:pytest.skip",
+      "file": "tests/test_remote_write_governance.py",
+      "line": 974,
+      "column": 16,
+      "mechanism": "pytest.skip",
+      "reason_literal": "审计直读需 CW_S2_REMOTE_CGDB（本机 daemon codegraph DB 目录）",
+      "reason_expression": "'审计直读需 CW_S2_REMOTE_CGDB（本机 daemon codegraph DB 目录）'",
+      "condition_or_module": null,
+      "file_sha256": "3ff9a12633e6ba47392224123aea82ba7c24ae34ce7677fedc3d9dc6766f6e5b",
       "root_cause": "UNREVIEWED"
     },
     {

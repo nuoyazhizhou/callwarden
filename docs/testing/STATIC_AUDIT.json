@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "e5945ae3e8c6c78d40c418022bfa8a4207deb0af",
+  "supplied_source_revision": "de6dc8d14400cb31d7cb1213cca0377a30b53bea",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,21 +38,21 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7286,
+    "python_definitions": 7287,
     "python_source_files": 703,
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 25,
       "pytest.mark.skipif": 225,
-      "pytest.skip": 211
+      "pytest.skip": 212
     },
-    "classic_skip_sites": 436,
+    "classic_skip_sites": 437,
     "classic_skip_files": 133,
     "parser_contract_classic_sites": 44,
     "core_not_installed_exact_sites": 46,
     "core_not_built_exact_sites": 4,
     "parser_core_not_installed_exact_sites": 18,
-    "reason_literal_sites": 271,
+    "reason_literal_sites": 272,
     "reason_expression_sites": 167,
     "reason_absent_sites": 23,
     "reason_nonliteral_or_absent_sites": 190,
@@ -3499,7 +3499,7 @@
     },
     {
       "path": "tests/test_remote_write_governance.py",
-      "sha256": "6be6b7078af4982e89d0df9af2f4f4b945da7e9e046840aef4ae918bb8a0df56"
+      "sha256": "3ff9a12633e6ba47392224123aea82ba7c24ae34ce7677fedc3d9dc6766f6e5b"
     },
     {
       "path": "tests/test_reopen_docs_structure.py",

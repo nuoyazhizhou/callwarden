@@ -778,3 +778,231 @@ class TestS3RemoteCrossOsWriteGovernance:
                 probe.unlink()
             except OSError:
                 pass
+
+
+@requires_remote_write_daemon
+class TestS3RemoteContentReconciliation:
+    """§9.38：write.commit content↔new_hash 对账实机探针（§9.37 驱动脚本回归化）。
+
+    §9.37 裁决（ADR §14 #5）：write.commit 载荷唯一格式 = 全量 content + new_hash，
+    daemon 强制 sha256(content) == new_hash 对账（E_WRITE_CONTENT_REQUIRED /
+    E_WRITE_CONTENT_HASH_MISMATCH fail-closed）。本类把 §9.37 沙箱一次性探针
+    （驱动脚本，见 ledger §9.37 §6）转正为可重复回归资产：
+
+    - ① 成功路径：grant → 本机原子写 → commit（对账通过）
+    - ② 伪造 new_hash → E_WRITE_CONTENT_HASH_MISMATCH，且 grant 未误消费
+      （同 grant 换正确载荷重提成功）
+    - ③ 缺 content → E_WRITE_CONTENT_REQUIRED，同 grant 重提成功
+    - ④ 重放已消费 grant → E_WRITE_GRANT_CONSUMED（既有不变量回归）
+    - ⑤ daemon 审计直读：allow 行 detail 含 content_sha256（与 new_hash 一致）
+      且零 delta 残留——仅本机 daemon 场景（CW_S2_REMOTE_CGDB 指向 daemon
+      codegraph DB 所在目录）执行，跨 OS 对端不可直读，缺省 skip
+
+    另有两个本机口径可选 env（全新 daemon 的 task.create 需预种）：
+      CW_S2_REMOTE_TASKDB = daemon task-DB 路径（预种 workspaces 行，
+        resolve_create_authority case 4「首建 capture」正规语义）
+      CW_S2_REMOTE_CGDB  = daemon codegraph DB 目录（启用 ⑤）
+    """
+
+    _make_remote_client = TestS3RemoteCrossOsWriteGovernance._make_remote_client
+
+    def _seed_task_db_workspace(self, root):
+        """本机全新 daemon 场景：task-DB 预种 workspaces 行（env 缺省时跳过）。"""
+        taskdb = os.environ.get("CW_S2_REMOTE_TASKDB", "")
+        if not taskdb:
+            return
+        import sqlite3
+
+        conn = sqlite3.connect(taskdb)
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, root_path, created_at) "
+                "VALUES (1, 'ws-probe', ?, strftime('%s','now'))",
+                (str(root).replace("\\", "/"),),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_write_commit_content_hash_reconciliation(self, monkeypatch):
+        from callwarden.server.tools import tools_workspace
+
+        root = Path(_REMOTE_ROOT)
+        root.mkdir(parents=True, exist_ok=True)
+        probe = root / "d4_probe.py"
+        try:
+            probe.write_bytes(b"old\n")
+            client = self._make_remote_client(monkeypatch, str(root))
+            monkeypatch.setattr(tools_workspace, "_remote_client", lambda: client)
+            mcp = _CaptureMCP()
+            tools_workspace.register(mcp)
+            tools = mcp._tools
+
+            # 0) workspace 注册 + task/step 引导
+            built = tools["build_graph"]()
+            assert built.get("ok") is True, f"build_graph: {built}"
+            ws_inst = client._remote_workspace_id
+            assert ws_inst, "build_graph 后应已注册远端 workspace"
+            self._seed_task_db_workspace(root)
+            ws = client.call("workspace.status", {"workspace_instance_id": ws_inst})
+            ws_num = (
+                ws.get("workspace_id")
+                or ws.get("registry_workspace_id")
+                or ws.get("id")
+            )
+            assert isinstance(ws_num, int) and ws_num > 0, f"workspace.status: {ws}"
+            created = client.call(
+                "task.create",
+                {
+                    "title": "S9.37 content reconciliation probe",
+                    "workspace_id": ws_num,
+                    "workspace_instance_id": ws_inst,
+                    "steps": [{"action": "write", "target_file": "d4_probe.py"}],
+                    "request_id": uuid.uuid4().hex,
+                },
+                request_id=uuid.uuid4().hex,
+            )
+            task_id = created["task_id"]
+            step_id = client.call("task.status", {"task_id": task_id})["steps"][0][
+                "step_id"
+            ]
+
+            # ① 成功路径：content 对账通过
+            result = dc.governed_write_file(
+                "d4_probe.py",
+                b"new\n",
+                task_id,
+                step_id,
+                workspace_instance_id=ws_inst,
+            )
+            assert result["ok"] is True
+            assert result["new_hash"] == _sha(b"new\n")
+            assert probe.read_bytes() == b"new\n"
+
+            def _grant(base_hash):
+                return client.call(
+                    "write.grant",
+                    {
+                        "workspace_instance_id": ws_inst,
+                        "task_id": task_id,
+                        "step_id": step_id,
+                        "path": "d4_probe.py",
+                        "base_hash": base_hash,
+                        "request_id": uuid.uuid4().hex,
+                    },
+                    request_id=uuid.uuid4().hex,
+                )["grant_id"]
+
+            # ② 伪造 new_hash → HASH_MISMATCH，grant 未被消费（重提成功）
+            gid2 = _grant(_sha(b"new\n"))
+            with pytest.raises(DaemonRemoteError) as forged:
+                client.call(
+                    "write.commit",
+                    {
+                        "workspace_instance_id": ws_inst,
+                        "grant_id": gid2,
+                        "path": "d4_probe.py",
+                        "new_hash": _sha(b"evil"),
+                        "content": "tampered\n",
+                        "request_id": uuid.uuid4().hex,
+                    },
+                    request_id=uuid.uuid4().hex,
+                )
+            assert forged.value.code == "E_WRITE_CONTENT_HASH_MISMATCH"
+            retried = client.call(
+                "write.commit",
+                {
+                    "workspace_instance_id": ws_inst,
+                    "grant_id": gid2,
+                    "path": "d4_probe.py",
+                    "new_hash": _sha(b"new2\n"),
+                    "content": "new2\n",
+                    "request_id": uuid.uuid4().hex,
+                },
+                request_id=uuid.uuid4().hex,
+            )
+            assert retried["ok"] is True, "对账拒绝不得误消费 grant"
+
+            # ③ 缺 content → CONTENT_REQUIRED，grant 未被消费（重提成功）
+            gid3 = _grant(_sha(b"new2\n"))
+            with pytest.raises(DaemonRemoteError) as missing:
+                client.call(
+                    "write.commit",
+                    {
+                        "workspace_instance_id": ws_inst,
+                        "grant_id": gid3,
+                        "path": "d4_probe.py",
+                        "new_hash": _sha(b"new3\n"),
+                        "request_id": uuid.uuid4().hex,
+                    },
+                    request_id=uuid.uuid4().hex,
+                )
+            assert missing.value.code == "E_WRITE_CONTENT_REQUIRED"
+            retried3 = client.call(
+                "write.commit",
+                {
+                    "workspace_instance_id": ws_inst,
+                    "grant_id": gid3,
+                    "path": "d4_probe.py",
+                    "new_hash": _sha(b"new3\n"),
+                    "content": "new3\n",
+                    "request_id": uuid.uuid4().hex,
+                },
+                request_id=uuid.uuid4().hex,
+            )
+            assert retried3["ok"] is True, "缺 content 拒绝不得误消费 grant"
+
+            # ④ 重放已消费 grant（既有不变量回归）
+            with pytest.raises(DaemonRemoteError) as replay:
+                client.call(
+                    "write.commit",
+                    {
+                        "workspace_instance_id": ws_inst,
+                        "grant_id": gid3,
+                        "path": "d4_probe.py",
+                        "new_hash": _sha(b"new3\n"),
+                        "content": "new3\n",
+                        "request_id": uuid.uuid4().hex,
+                    },
+                    request_id=uuid.uuid4().hex,
+                )
+            assert replay.value.code == "E_WRITE_GRANT_CONSUMED"
+
+            # ⑤ daemon 审计直读（本机口径，env 缺省 skip）
+            cgdb_dir = os.environ.get("CW_S2_REMOTE_CGDB", "")
+            if not cgdb_dir:
+                pytest.skip("审计直读需 CW_S2_REMOTE_CGDB（本机 daemon codegraph DB 目录）")
+            import sqlite3
+
+            from pathlib import Path as _P
+
+            cgs = sorted(_P(cgdb_dir).glob("cg-*.db"))
+            assert cgs, f"未发现 codegraph DB: {cgdb_dir}"
+            conn = sqlite3.connect(f"file:{cgs[0]}?mode=ro", uri=True)
+            try:
+                rows = conn.execute(
+                    "SELECT outcome, new_hash, detail_json FROM write_audit_events "
+                    "WHERE path='d4_probe.py' AND event_type IN ('commit','reject') "
+                    "ORDER BY event_id"
+                ).fetchall()
+            finally:
+                conn.close()
+            allow_rows = [r for r in rows if r[0] == "allow"]
+            deny_rows = [r for r in rows if r[0] == "deny"]
+            assert allow_rows, "无 allow commit 审计"
+            details = [json.loads(r[2]) for r in allow_rows]
+            assert all("content_sha256" in d for d in details), (
+                f"detail 缺 content_sha256: {details[0]}"
+            )
+            assert all("delta_bytes" not in d and "delta_sha256" not in d for d in details), (
+                "delta 占位字段残留（§9.37 应已移除）"
+            )
+            assert any(
+                d["content_sha256"] == r[1] for d, r in zip(details, allow_rows)
+            ), "content_sha256 与 new_hash 未对账"
+            assert len(deny_rows) >= 2, "两类对账拒绝均应 deny 留痕"
+        finally:
+            try:
+                probe.unlink()
+            except OSError:
+                pass

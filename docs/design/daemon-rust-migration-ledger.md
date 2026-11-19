@@ -3394,6 +3394,57 @@ delta_bytes/delta_sha256，零解析逻辑），客户端 `governed_write_file` 
 - 实现提交 `e5945ae`（3 文件 +182/−20）；全量回归 2044/0；refresh passed；
   实机探针 ①-⑤ 全绿。§14 未决清单至此全部收口（#4 多租户 CA 已决"不做"）。
 
+## 9.38 write.commit 对账实机探针回归化（2026-11-19）
+
+### 1. 立项与范围
+
+§9.37 关闭 ADR §14 #5 后，其真机验证依赖一次性沙箱驱动脚本（临时脚手架，
+workspace 外 `%TEMP%\cw937_verify\driver.py`），不可重复回归。选题盘点确认
+ADR §14 与 backlog 矩阵（P3-1~5、C1-C12、§12-§36 后续）均已收口，多数历史
+"遗留待办"已被后续批次关闭（blast_radius/review_readiness → P0-COMPAT-v3
+整体 rust_native；defect_learn 标注债 → §9.29；import_git_history →
+task.job_submit 批次；taskkill 硬停 → §9.33）。确认开放项中用户裁决本轮
+选题：**write.commit 对账实机探针回归化**——把 §9.37 探针转正为 env-gated
+pytest 回归资产，并对生产 daemon 补 fail-closed 探针。
+
+### 2. 实现清单
+
+`tests/test_remote_write_governance.py` 新增 env-gated 类
+`TestS3RemoteContentReconciliation`（复用 `requires_remote_write_daemon`
+gate 与 `_make_remote_client` 实机客户端引导）：
+
+| 探针 | 内容 | 场景区 |
+| --- | --- | --- |
+| ① | 治理写成功路径（grant → 原子写 → commit，对账通过） | 纯 RPC，跨 OS 可用 |
+| ② | 伪造 new_hash → `E_WRITE_CONTENT_HASH_MISMATCH`，grant 未误消费（同 grant 重提成功） | 纯 RPC |
+| ③ | 缺 content → `E_WRITE_CONTENT_REQUIRED`，grant 未误消费 | 纯 RPC |
+| ④ | 重放已消费 grant → `E_WRITE_GRANT_CONSUMED` | 纯 RPC |
+| ⑤ | daemon 审计直读：allow 行 detail 含 `content_sha256`（与 new_hash 对账）且零 delta 残留 | 仅本机（`CW_S2_REMOTE_CGDB`），跨 OS 缺省 skip |
+
+本机口径可选 env：`CW_S2_REMOTE_TASKDB`（全新 daemon 预种 task-DB
+workspaces 行，resolve_create_authority case 4「首建 capture」正规语义，
+无 env 依赖对侧已有 capture）、`CW_S2_REMOTE_CGDB`（启用 ⑤）。
+
+### 3. 测试与验收
+
+- pytest 定向全量：`tests/test_remote_write_governance.py` **25 passed /
+  0 failed**（沙箱 remote daemon，含新类 ①-⑤ + 既有 `_FakeWriteDaemon`
+  客户端半 24 项 + S4-06-D4 实机 roundtrip 类）。
+- 生产 daemon fail-closed 探针：loopback bind（PID 42808）下
+  `python cw.py write …` → **`E_WRITE_REMOTE_ONLY`**（"治理写仅支持
+  bind_scope=remote 的 daemon；loopback 不允许旁路写"），零旁路。
+- 纯 Python 测试面（`tests/` 不在 RUNTIME_AFFECTING_PATH_PREFIXES，
+  [db_tasks.py](file:///c:/git_work/callwarden/db/db_tasks.py#L75)）→ 免
+  refresh；Rust 基线 2044 未动（§9.37）。
+- 收益：§9.37 一次性探针成为可重复回归资产——未来写路径任何改动（载荷
+  格式、对账语义、错误码）均可一条 pytest 命令复验全链路 + 审计直读。
+
+### 4. 结论
+
+§9.37 裁决的验证面闭环升级：一次性手工验证 → env-gated 实机回归资产；
+生产面 fail-closed 门禁（loopback → `E_WRITE_REMOTE_ONLY`）补验通过。
+ADR §14 #5 关闭后的回归保护就位。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`
