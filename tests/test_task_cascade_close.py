@@ -13,12 +13,15 @@
 """
 
 import json
+import shutil
 import sqlite3
+import tempfile
 import uuid
 from pathlib import Path
 
 import pytest
 
+from callwarden.config import get_pki_dir, resolve_client_cert_paths
 from callwarden.server.daemon_client import HttpDaemonRpcClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -68,20 +71,99 @@ def db_conn():
     return conn
 
 
-@pytest.fixture(scope="module")
-def ws_instance(rpc) -> str:
-    """daemon 权威解析 workspace 1 的实例 ID（task.create 强制要求显式实例）。
+def _client_principal_id() -> str:
+    """解析当前 mTLS 客户端证书对应的 principal_id。
 
-    v59 之后 `task.create` 拒绝空 `workspace_instance_id`（禁止合成 `ws-{id}`，
-    E_TASK_WORKSPACE_INSTANCE_REQUIRED），故 fixture 必须传入真实实例。
+    resolve_client_cert_paths 按 ADR-002 §7 定位证书；本机 enroll 铸证的目录
+    布局是 `identities/<principal_id>/client.crt`（目录名与证书 SAN 同名），
+    故取证书路径父目录名即 principal_id。CW_CLIENT_CERT 直指定路径时该推导
+    不成立，直接断言失败提示（本套件不覆盖该部署形态）。
     """
-    st = rpc.call("workspace.status", {"workspace_id": 1})
-    inst = st.get("task_db_instance_id") or st.get("workspace_instance_id")
-    assert inst, f"无法解析 workspace 1 的权威 instance: {st}"
-    return inst
+    cert, _key, _ca = resolve_client_cert_paths()
+    assert cert, "无法定位 mTLS 客户端证书（cw pki init/enroll 未执行？）"
+    name = Path(cert).parent.name
+    assert name.startswith("pr_"), f"证书路径不含 identities/<principal>/ 布局: {cert}"
+    return name
 
 
-def make_tree(rpc, depth: int, instance: str, with_policy: bool = True) -> list[str]:
+@pytest.fixture(scope="module")
+def task_ws(rpc):
+    """§9.39 归一：自建隔离 workspace，替代对共享 workspace 1 的归属假设。
+
+    历史：本文件原先硬编码 workspace 1（root 恰为 pytest 临时目录）。
+    §9.36 CA 轮换后 owner principal 变更，workspace 1-8 的 owner_key 归
+    历史 principal → workspace.status 授权拒（E_PRINCIPAL_WORKSPACE_FORBIDDEN），
+    runtime 段全红。「共享全局状态可用」不是环境前置，改为测试自建：
+
+    1. `workspace.register` 注册唯一临时 root（当前 principal 名下）→
+       权威 (workspace_id, workspace_instance_id)；
+    2. dispatch 层 principal 白名单补 grant：向当前 principal 的磁盘
+       `grants.json` 精确追加新 workspace（磁盘台账每次 authorize 实时读取，
+       天然热更新）。不走 DB `workspace_principal_grants`：该列 INTEGER 亲和
+       会把数字型 workspace_id 强转整数存储，Rust load_snapshot 以 String
+       读取时 InvalidColumnType 静默丢行（§9.39 实测发现，fail-closed 方向
+       的产品缺陷，另行立项）；
+    3. task-DB 补种 workspaces 行（resolve_create_authority case 4 语义，
+       同 §9.38 沙箱实测）；
+    4. teardown 精确清理：grants.json 还原为测试前字节 + task-DB
+       workspaces 行 + registry.db daemon_workspaces 行（任务行由既有
+       T-CSC-% 清理 fixture 处理）。
+    """
+    root = Path(tempfile.mkdtemp(prefix="cw-task-ws-"))
+    name = f"ws-csc-{uuid.uuid4().hex[:8]}"
+    reg = rpc.call("workspace.register", {
+        "name": name,
+        "client_view_root": str(root),
+        "description": "test_task_cascade_close 隔离 workspace",
+    })
+    wid = reg.get("workspace_id") or (reg.get("result") or {}).get("workspace_id")
+    inst = (
+        reg.get("workspace_instance_id")
+        or (reg.get("result") or {}).get("workspace_instance_id")
+    )
+    assert wid and inst, f"workspace.register 返回缺 id/instance: {reg}"
+    principal = _client_principal_id()
+    grants_path = Path(get_pki_dir()) / "identities" / principal / "grants.json"
+    grants_before = (
+        grants_path.read_text(encoding="utf-8") if grants_path.is_file() else None
+    )
+    doc = json.loads(grants_before) if grants_before is not None else {}
+    ids = doc.setdefault("workspace_ids", [])
+    if str(wid) not in ids:
+        ids.append(str(wid))
+    grants_path.parent.mkdir(parents=True, exist_ok=True)
+    grants_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    conn = sqlite3.connect(str(DB))
+    conn.execute(
+        "INSERT OR IGNORE INTO workspaces (id, name, root_path, created_at) "
+        "VALUES (?, ?, ?, strftime('%s','now'))",
+        (wid, name, str(root).replace("\\", "/")),
+    )
+    conn.commit()
+    conn.close()
+    yield int(wid), str(inst)
+    # teardown：grants.json 还原为测试前状态（不存在过则删除）
+    if grants_before is None:
+        grants_path.unlink(missing_ok=True)
+    else:
+        grants_path.write_text(grants_before, encoding="utf-8")
+    conn = sqlite3.connect(str(DB))
+    conn.execute("DELETE FROM workspaces WHERE id=?", (int(wid),))
+    conn.commit()
+    conn.close()
+    reg_db = Path.home() / ".callwarden" / "registry.db"
+    if reg_db.exists():
+        conn = sqlite3.connect(str(reg_db))
+        conn.execute(
+            "DELETE FROM daemon_workspaces WHERE workspace_instance_id=?", (str(inst),)
+        )
+        conn.commit()
+        conn.close()
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def make_tree(rpc, depth: int, instance: str, workspace_id: int,
+              with_policy: bool = True) -> list[str]:
     """构造 depth+1 层的任务树，返回 [leaf, mid, root]。
 
     创建顺序 = 先根后叶（i=0 为根，无 parent；i=depth 为叶子，parent 指向
@@ -111,7 +193,7 @@ def make_tree(rpc, depth: int, instance: str, with_policy: bool = True) -> list[
             "steps": steps,
             "role_contracts": [{"role": "executor"}, {"role": "reviewer"}, {"role": "adjudicator"}],
             "identity_policy": "legacy_identity_v1",
-            "workspace_id": 1,
+            "workspace_id": workspace_id,
             "workspace_instance_id": instance,
             "request_id": f"mk-{uuid.uuid4().hex[:8]}",
         }
@@ -142,10 +224,11 @@ def make_tree(rpc, depth: int, instance: str, with_policy: bool = True) -> list[
 # ============================================================
 
 
-def test_success_cascade_closes_ancestors(rpc, ws_instance):
+def test_success_cascade_closes_ancestors(rpc, task_ws):
     """叶子 closed 后 cascade-close(mid) → mid + root 自动 closed（自底向上）。"""
+    wid, inst = task_ws
     # 构造 3 层：leaf(done, closed) -> mid(review) -> root(review)
-    ids = make_tree(rpc, depth=2, instance=ws_instance)
+    ids = make_tree(rpc, depth=2, instance=inst, workspace_id=wid)
     leaf, mid, root = ids[0], ids[1], ids[2]
 
     # 前置：leaf 已闭环（直写 closed），mid/root 卡在 review
@@ -163,7 +246,7 @@ def test_success_cascade_closes_ancestors(rpc, ws_instance):
                      "session_id": "sess-coord-wb-20260820",
                      "model_id": "workbuddy", "role": "coordinator"},
         "request_id": f"cs-{uuid.uuid4().hex[:8]}",
-        "workspace_id": 1,
+        "workspace_id": wid,
     })
     closed = res.get("closed", [])
     assert root in closed, f"root 应被级联关闭: {closed}"
@@ -181,12 +264,13 @@ def test_success_cascade_closes_ancestors(rpc, ws_instance):
 # ============================================================
 
 
-def test_identity_policy_autofill(rpc, ws_instance):
+def test_identity_policy_autofill(rpc, task_ws):
     """聚合节点缺 identity_policy → cascade 自动追加 revision（legacy 默认）。"""
+    wid, inst = task_ws
     # v59 治理硬化后 task.create 强制要求 identity_policy（创建即拒绝缺 policy），
     # autofill 只对存量历史任务有意义：先带 policy 建树，再从最新 revision
     # payload 删除 identity_policy 字段模拟存量缺 policy。
-    ids = make_tree(rpc, depth=1, instance=ws_instance)
+    ids = make_tree(rpc, depth=1, instance=inst, workspace_id=wid)
     leaf, root = ids[0], ids[1]
 
     # 构造前置：删除 root 最新 revision 中的 identity_policy
@@ -217,7 +301,7 @@ def test_identity_policy_autofill(rpc, ws_instance):
                      "session_id": "sess-coord-wb-20260820",
                      "model_id": "workbuddy", "role": "coordinator"},
         "request_id": f"cs-{uuid.uuid4().hex[:8]}",
-        "workspace_id": 1,
+        "workspace_id": wid,
     })
     assert root in res.get("closed", []), f"root 应关闭: {res}"
 
@@ -236,9 +320,10 @@ def test_identity_policy_autofill(rpc, ws_instance):
 # ============================================================
 
 
-def test_not_all_closed_reject(rpc, ws_instance):
+def test_not_all_closed_reject(rpc, task_ws):
     """子树仍有 open 节点 → cascade 不关闭任何祖先（stop）。"""
-    ids = make_tree(rpc, depth=1, instance=ws_instance)
+    wid, inst = task_ws
+    ids = make_tree(rpc, depth=1, instance=inst, workspace_id=wid)
     _leaf, root = ids[0], ids[1]
 
     # 打开一个子任务（模拟未完成）：给 leaf 挂一个 open 兄弟
@@ -248,8 +333,8 @@ def test_not_all_closed_reject(rpc, ws_instance):
         "steps": [{"action": "govern", "target_file": "open.rs"}],
         "role_contracts": [{"role": "executor"}, {"role": "reviewer"}, {"role": "adjudicator"}],
         "identity_policy": "legacy_identity_v1",
-        "parent_id": root, "workspace_id": 1,
-        "workspace_instance_id": ws_instance,
+        "parent_id": root, "workspace_id": wid,
+        "workspace_instance_id": inst,
         "request_id": f"mk-{uuid.uuid4().hex[:8]}",
     })
 
@@ -259,7 +344,7 @@ def test_not_all_closed_reject(rpc, ws_instance):
                      "session_id": "sess-coord-wb-20260820",
                      "model_id": "workbuddy", "role": "coordinator"},
         "request_id": f"cs-{uuid.uuid4().hex[:8]}",
-        "workspace_id": 1,
+        "workspace_id": wid,
     })
     # root 有 open 子任务 → 不关闭 root
     assert root not in res.get("closed", []), f"root 不应关闭（有 open 子任务）: {res}"
@@ -274,9 +359,10 @@ def test_not_all_closed_reject(rpc, ws_instance):
 # ============================================================
 
 
-def test_idempotent(rpc, ws_instance):
+def test_idempotent(rpc, task_ws):
     """重复 cascade-close 幂等：已 closed 节点跳过，不重复写。"""
-    ids = make_tree(rpc, depth=1, instance=ws_instance)
+    wid, inst = task_ws
+    ids = make_tree(rpc, depth=1, instance=inst, workspace_id=wid)
     _leaf, root = ids[0], ids[1]
 
     params = {
@@ -284,7 +370,7 @@ def test_idempotent(rpc, ws_instance):
         "identity": {"agent_id": "coordinator-workbuddy-v1",
                      "session_id": "sess-coord-wb-20260820",
                      "model_id": "workbuddy", "role": "coordinator"},
-        "workspace_id": 1,
+        "workspace_id": wid,
     }
     params["request_id"] = f"cs-{uuid.uuid4().hex[:8]}"
     r1 = rpc.call(CASCADE, params)

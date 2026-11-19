@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "de6dc8d14400cb31d7cb1213cca0377a30b53bea",
+  "supplied_source_revision": "1a43a99dc23d4256ac2fbecddfb251853cc71c14",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -3675,7 +3675,7 @@
     },
     {
       "path": "tests/test_task_cascade_close.py",
-      "sha256": "e9a5a64af0c01888ced85f22b375a6f7a820b929a6b2f5f77929852b97e4a964"
+      "sha256": "1b09ebc458c4aa26ede9e0af596736c3be273fbf1973e85f7092e612118f731c"
     },
     {
       "path": "tests/test_task_close.py",
@@ -3755,7 +3755,7 @@
     },
     {
       "path": "tests/test_task_reconciliation_contract.py",
-      "sha256": "2eaf293546ad2df85f15a12d9852785854031ee20f7e10cb754bbe8c0ad0ddd9"
+      "sha256": "2f632b18053a5791e3155926688f94a1baef72b5bdef50e71fca68b95599e998"
     },
     {
       "path": "tests/test_task_reopen.py",

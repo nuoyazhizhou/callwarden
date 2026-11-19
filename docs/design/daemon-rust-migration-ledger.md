@@ -3445,6 +3445,79 @@ workspaces 行，resolve_create_authority case 4「首建 capture」正规语义
 生产面 fail-closed 门禁（loopback → `E_WRITE_REMOTE_ONLY`）补验通过。
 ADR §14 #5 关闭后的回归保护就位。
 
+## 9.39 C7 卡外残留收尾：cascade/reconciliation 测试自建隔离 workspace（2026-11-19）
+
+### 1. 立项与范围
+
+用户裁决本轮选题：**未归一 44 测试归一（C7 卡外残留收尾）**。选题侦察实测
+推翻 C7 台账（[cli-mcp-matrix-backlog.md](file:///c:/git_work/callwarden/docs/design/cli-mcp-matrix-backlog.md) §7.5）"已由 §14-§19 收口"的结论：
+44 项中仍有两文件 runtime 段真实红——
+[tests/test_task_cascade_close.py](file:///c:/git_work/callwarden/tests/test_task_cascade_close.py)
+（4 ERROR）与
+[tests/test_task_reconciliation_contract.py](file:///c:/git_work/callwarden/tests/test_task_reconciliation_contract.py)
+（2 FAILED + 2 ERROR）。
+
+### 2. 根因
+
+两文件硬编码 `workspace_id: 1` 并经 `HttpDaemonRpcClient()`（mTLS owner）
+连生产 daemon。§9.36 CA 轮换后 owner principal 变更
+（pr_b488648aba88…），workspace 1-8 的 owner_key 归历史 principal →
+`workspace.status` / `task.create` 全部 `E_PRINCIPAL_WORKSPACE_FORBIDDEN`。
+「共享全局 workspace 1 可用」不是环境前置——测试必须自建。
+
+### 3. 方案演进（含一次实测否决）
+
+每文件新增 module-scope `task_ws` fixture（§9.38 沙箱语义的生产化）：
+
+1. `workspace.register` 注册唯一临时 root（`ws-csc-*` / `ws-recon-*` 前缀）
+   → 权威 `(workspace_id, workspace_instance_id)`；
+2. task-DB 补种 `workspaces` 行（resolve_create_authority case 4 语义）；
+3. teardown 精确清理（任务行由既有 T-CSC-% / T-RECON-NEG-% 清理 fixture 处理）。
+
+首次实跑仍 `E_PRINCIPAL_WORKSPACE_FORBIDDEN`：dispatch 层
+[dispatch.rs L3182-3195](file:///c:/git_work/callwarden/rust_ext/src/daemon/dispatch.rs#L3182-L3195)
+还有 principal 台账白名单检查（`allowed_workspace_ids` = 磁盘 grants ∪ DB
+grants）。补 DB grant 行实测**仍然失效**——
+[auth_principal.rs L434-448](file:///c:/git_work/callwarden/rust_ext/src/daemon/auth_principal.rs#L434-L448)
+以 `row.get::<_, String>` 读 `workspace_principal_grants.workspace_id`，
+而该列 INTEGER 亲和把数字型 id 强转整数存储 → `InvalidColumnType`
+→ `rows.flatten()` **静默丢行**（探针实证：TEXT 写入 '1768' 落库变 integer）。
+fail-closed 方向的产品缺陷（多拒不误放），本章不修，见 §5 缺陷登记。
+
+最终方案：fixture 向当前 principal 的磁盘 `grants.json` 精确追加新
+workspace id（`{"workspace_ids": [...]}`，[read_file_record 每次 authorize
+实时读盘](file:///c:/git_work/callwarden/rust_ext/src/daemon/auth_principal.rs#L288-L330)，
+天然热更新）；teardown 还原为测试前字节。principal_id 从
+`resolve_client_cert_paths()` 证书路径的 `identities/<principal>/` 布局推导。
+
+### 4. 实现清单与验收
+
+- cascade：删旧 `ws_instance` fixture；4 测试签名 `(rpc, ws_instance)` →
+  `(rpc, task_ws)`；`make_tree` 加 `workspace_id` 参数；5 处
+  `"workspace_id": 1` 动态化。
+- reconciliation：`_make_neg_task(rpc)` → `_make_neg_task(rpc, wid, inst)`；
+  4 负向测试签名加 `task_ws`。
+- 定向回归：两文件 **14 passed / 0 failed**（生产 daemon 直连）。
+- 残留检查：task-DB `workspaces` 行 / `workspace_principal_grants` 行 /
+  registry.db `daemon_workspaces` 行 / grants.json 全部零残留。
+- 纯 Python 测试面（tests/ 不在 RUNTIME_AFFECTING_PATH_PREFIXES）→ 免
+  refresh；Rust 基线 2044 未动。
+
+### 5. 缺陷登记与口径回写
+
+- **DB grant 整数 id 静默丢行**（auth_principal.rs load_snapshot）：
+  INTEGER 亲和 × `get::<String>`，daemon 侧写入的整数 workspace_id grant
+  （如既有 175 行）同样不生效。fail-closed 方向，待后续章节以
+  `CAST(workspace_id AS TEXT)` 修复 + 单测收口。
+- backlog §7.5 口径回写：`workspace_instance_id` 契约族中 cascade /
+  reconciliation 两文件实际仍红至本轮，标注「§17 收口口径修正 → §9.39」。
+
+### 6. 结论
+
+C7 卡外 44 项残留全部归零：40 项此前已收口（§15-§19），本轮收口最后 6 项
+（cascade 4 + reconciliation 负向 E2E 2，ERROR/FAILED 口径）。测试资产与
+生产环境解耦——workspace 授权不再依赖共享 workspace 1 的历史归属。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

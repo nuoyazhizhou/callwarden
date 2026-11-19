@@ -637,7 +637,10 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   → **已由 §15 收口**、
   `workspace_instance_id` 契约 9（`test_task_cascade_close`、
   `test_task_reconciliation_contract`、`test_http_index_job_cutover`）
-  → **已由 §17 收口**、
+  → **已由 §17 收口**（口径修正 2026-11-19：cascade/reconciliation 两文件
+  runtime 段因 §9.36 CA 轮换 owner 漂移仍真实红，最后由
+  daemon-rust-migration-ledger §9.39 自建隔离 workspace 收口；§17 收口的
+  仅 `test_http_index_job_cutover`）、
   release 验收 2（evidence 停在 `6bd1e9ce` < 当前 HEAD `6d45bbd`；schema_version
   60 vs 61）→ **已由 §14 收口**、`test_http_compat_read_cutover` DID NOT RAISE 2
   → **已由 §18 收口**、`test_p0b_legacy_attestation_fail_closed` 1、
@@ -646,7 +649,11 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
 后续卡建议：① 将「隔离 daemon 按 `data_root` 派生管道名」落到 Rust 侧（根治
 管道冲突）（**已完成**，见 §18）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
 `cargo build`/LLM 前置（**已完成**，见 §12）；③ 修 release 验收 evidence 过期与
-schema_version 断言（**已完成**，见 §14）。
+schema_version 断言（**已完成**，见 §14）；
+④ 修 `auth_principal.rs` load_snapshot 对 `workspace_principal_grants.workspace_id`
+整数值的静默丢行（列 INTEGER 亲和 × `get::<String>` → `InvalidColumnType`
+被 `flatten()` 吞掉，整数 id 的 DB grant 全部不生效；fail-closed 方向，
+实测记录见 daemon-rust-migration-ledger §9.39）。
 
 ---
 

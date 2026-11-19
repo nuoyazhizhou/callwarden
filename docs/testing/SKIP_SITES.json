@@ -5006,15 +5006,15 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_cascade_close.py:37:8:pytest.skip",
+      "site_id": "tests/test_task_cascade_close.py:40:8:pytest.skip",
       "file": "tests/test_task_cascade_close.py",
-      "line": 37,
+      "line": 40,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "daemon 不可用：runtime 段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "e9a5a64af0c01888ced85f22b375a6f7a820b929a6b2f5f77929852b97e4a964",
+      "file_sha256": "1b09ebc458c4aa26ede9e0af596736c3be273fbf1973e85f7092e612118f731c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5150,15 +5150,15 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_reconciliation_contract.py:57:8:pytest.skip",
+      "site_id": "tests/test_task_reconciliation_contract.py:61:8:pytest.skip",
       "file": "tests/test_task_reconciliation_contract.py",
-      "line": 57,
+      "line": 61,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "daemon 不可用：runtime 段跳过（静态门禁仍执行）",
       "reason_expression": "'daemon 不可用：runtime 段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "2eaf293546ad2df85f15a12d9852785854031ee20f7e10cb754bbe8c0ad0ddd9",
+      "file_sha256": "2f632b18053a5791e3155926688f94a1baef72b5bdef50e71fca68b95599e998",
       "root_cause": "UNREVIEWED"
     },
     {
