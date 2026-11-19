@@ -2923,8 +2923,10 @@ pub fn handle_write_commit(
         ));
     }
     let request_id = get_str_param_or(params, "request_id", "");
+    // §9.37（ADR §14 #5 裁决）：write.commit 载荷唯一格式 = 全量 content + new_hash，
+    // 不支持 unified delta（索引读路径本就存全文，diff 应用失败面大且治理写带宽
+    // 非瓶颈）。旧版 delta 参数为纯审计占位、从未被客户端发送，随本裁决一并移除。
     let content = params.get("content").and_then(Value::as_str);
-    let delta = params.get("delta").and_then(Value::as_str);
     let principal_id = write_caller_principal(peer);
     let now = now_ts_secs();
 
@@ -2999,6 +3001,26 @@ pub fn handle_write_commit(
         return Err(reject(&err.code, &err.code, json!({"phase": "commit", "detail": err.message})));
     }
 
+    // §9.37：content ↔ new_hash 密码学对账（fail-closed）。旧实现直接信任客户端
+    // 自述 new_hash 更新索引，content_hash 与入库内容的一致性只是信任声明；
+    // 现在强制 daemon 复算 sha256(content) 与 new_hash 对账，不一致即拒绝且
+    // 不产生索引副作用（不变量 I5 相邻收紧）。
+    let Some(content) = content else {
+        return Err(reject(
+            "E_WRITE_CONTENT_REQUIRED",
+            "E_WRITE_CONTENT_REQUIRED",
+            json!({"phase": "commit", "detail": "commit 载荷必须携带全量 content（§9.37 唯一格式）"}),
+        ));
+    };
+    let content_sha256 = sha256_hex(content.as_bytes());
+    if content_sha256 != new_hash {
+        return Err(reject(
+            "E_WRITE_CONTENT_HASH_MISMATCH",
+            "E_WRITE_CONTENT_HASH_MISMATCH",
+            json!({"phase": "commit", "detail": "sha256(content) 与 new_hash 不一致", "new_hash": new_hash}),
+        ));
+    }
+
     // commit 复核 workspace ACL，避免 grant 签发后 workspace 被移除/归档。
     let workspace = owned_workspace_by_id(registry, peer.uid, grant.workspace_id)?;
     let root = workspace
@@ -3024,11 +3046,10 @@ pub fn handle_write_commit(
         .get("mtime")
         .and_then(Value::as_f64)
         .unwrap_or(now);
-    let delta_detail = json!({
+    let commit_detail = json!({
         "phase": "commit",
-        "content_supplied": content.is_some(),
-        "delta_bytes": delta.map(|d| d.len()).unwrap_or(0),
-        "delta_sha256": delta.map(|d| sha256_hex(d.as_bytes())).unwrap_or_default(),
+        "content_bytes": content.as_bytes().len(),
+        "content_sha256": content_sha256,
         "request_id": request_id,
     });
 
@@ -3080,7 +3101,7 @@ pub fn handle_write_commit(
             )
             .optional()
             .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 查询失败: {e}")))?;
-        let (current_hash, existing_total_lines) = current.unwrap_or_default();
+        let (current_hash, _existing_total_lines) = current.unwrap_or_default();
         if current_hash != grant.base_hash {
             let consumed_after: i64 = conn
                 .query_row(
@@ -3104,10 +3125,8 @@ pub fn handle_write_commit(
                 ),
             ));
         }
-        let total_lines = match content {
-            Some(text) => text.bytes().filter(|b| *b == b'\n').count() as i64,
-            None => existing_total_lines,
-        };
+        // content 恒存在且已对账（§9.37），total_lines 直接按实际内容计算
+        let total_lines = content.bytes().filter(|b| *b == b'\n').count() as i64;
         conn.execute(
             "INSERT OR IGNORE INTO file_contents(content_hash, language, total_lines, first_seen_at) \
              VALUES (?1, ?2, ?3, ?4)",
@@ -3140,7 +3159,7 @@ pub fn handle_write_commit(
                 new_hash: &new_hash,
                 reason_code: "",
                 request_id: &request_id,
-                detail: &delta_detail,
+                detail: &commit_detail,
                 recorded_at: now,
             },
         )?;
@@ -4334,6 +4353,125 @@ mod tests {
         assert!(is_lower_sha256_hex(&"a".repeat(64)));
         assert!(!is_lower_sha256_hex(&"A".repeat(64)));
         assert!(!is_lower_sha256_hex("short"));
+    }
+
+    /// §9.37（ADR §14 #5 裁决）：write.commit 载荷唯一格式 = 全量 content + new_hash，
+    /// daemon 强制 sha256(content) == new_hash 对账，缺失/不一致均 fail-closed
+    /// 且不产生索引副作用；对账通过后审计 detail 记录 content_sha256 供回放复核。
+    #[test]
+    fn test_write_commit_content_hash_reconciliation() {
+        let root = std::env::temp_dir().join(format!(
+            "cw_write_commit_recon_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let workspace = registry
+            .register_workspace(1000, root.to_str().unwrap(), root.to_str().unwrap(), "", "", "")
+            .unwrap();
+        let instance_id = workspace["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let peer = PeerCredential::new_unix(1000, 1000, 1);
+        let content = "def recon():\n    return 42\n";
+        let new_hash = sha256_hex(content.as_bytes());
+
+        // (a) 缺 content → E_WRITE_CONTENT_REQUIRED，无索引副作用
+        let grant = handle_write_grant(
+            &registry,
+            &peer,
+            &json!({
+                "workspace_instance_id": instance_id,
+                "task_id": "T-1",
+                "step_id": "S-1",
+                "path": "src/recon.py",
+                "base_hash": "",
+                "request_id": "recon-a",
+            }),
+            Some(&db_path),
+            None,
+        )
+        .unwrap();
+        let gid_a = grant["grant_id"].as_str().unwrap().to_string();
+        let missing = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": gid_a, "new_hash": new_hash, "request_id": "recon-a2"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(missing.code, "E_WRITE_CONTENT_REQUIRED");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let indexed: Option<String> = conn
+            .query_row(
+                "SELECT current_content_hash FROM file_instances WHERE rel_path = 'src/recon.py'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert!(indexed.is_none(), "缺 content 拒绝不得产生索引副作用");
+
+        // (b) sha256(content) != new_hash → E_WRITE_CONTENT_HASH_MISMATCH
+        //     （grant 未被消费，同一 grant 换正确载荷后仍可提交）
+        let forged_hash = sha256_hex(b"tampered-payload");
+        let mismatch = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": gid_a, "new_hash": forged_hash,
+                    "content": content, "request_id": "recon-b"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(mismatch.code, "E_WRITE_CONTENT_HASH_MISMATCH");
+        let still_active: String = conn
+            .query_row(
+                "SELECT status FROM write_grants WHERE grant_id = ?1",
+                rusqlite::params![gid_a],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_active, "active", "对账失败不得消费 grant");
+
+        // (c) 对账通过 → 索引推进、grant 消费、审计记录 content_sha256
+        let ok = handle_write_commit(
+            &registry,
+            &peer,
+            &json!({"grant_id": gid_a, "new_hash": new_hash,
+                    "content": content, "request_id": "recon-c"}),
+            Some(&db_path),
+            None,
+        )
+        .unwrap();
+        assert_eq!(ok["ok"], true);
+        let indexed_hash: String = conn
+            .query_row(
+                "SELECT current_content_hash FROM file_instances WHERE rel_path = 'src/recon.py'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed_hash, new_hash);
+        let (status, detail_json): (String, String) = conn
+            .query_row(
+                "SELECT outcome, detail_json FROM write_audit_events \
+                 WHERE event_type = 'commit' AND grant_id = ?1 AND outcome = 'allow'",
+                rusqlite::params![gid_a],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "allow");
+        let detail: Value = serde_json::from_str(&detail_json).unwrap();
+        assert_eq!(detail["content_sha256"], new_hash, "审计须记录对账后的 content_sha256");
+        assert!(detail["delta_bytes"].is_null(), "delta 占位字段应已移除");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// review F2：principal/workspace/task 归属 fail-closed。

@@ -3110,8 +3110,10 @@ fn workspace_scope_of(params: &Value) -> Option<String> {
 /// 排除键：
 /// - `db_path`：由 `snapshot.publish` 专属判 E_REMOTE_DB_PATH_FORBIDDEN；
 /// - base64 内容载体：合法 base64 可以 `/` 开头，非路径语义；
-/// - `write.commit` 的 `content` / `delta`：整份文件正文可以 `//`、`/*`、`/**`
+/// - `write.commit` 的 `content`：整份文件正文可以 `//`、`/*`、`/**`
 ///   开头，是载荷而非路径。仅对写治理方法豁免，避免扩大全局豁免面。
+///   §9.37 裁决后 write.commit 载荷唯一格式 = 全量 content + new_hash，
+///   旧 delta 占位字段已随实现移除，不再豁免。
 fn check_remote_path_guard(method: &str, params: &Value) -> Result<(), DaemonRpcError> {
     const PATH_SCAN_EXEMPT_KEYS: &[&str] = &[
         "db_path",
@@ -3120,7 +3122,7 @@ fn check_remote_path_guard(method: &str, params: &Value) -> Result<(), DaemonRpc
         "canonical_bytes_gz_b64",
         "canonical_bytes_b64",
     ];
-    const WRITE_PAYLOAD_KEYS: &[&str] = &["content", "delta"];
+    const WRITE_PAYLOAD_KEYS: &[&str] = &["content"];
 
     let payload_exempt: &[&str] = if method == "write.commit" {
         WRITE_PAYLOAD_KEYS
@@ -5029,6 +5031,7 @@ mod tests {
 
     /// S3 review F1：远端 path 守卫必须放行 `write.commit` 的文件正文载荷，
     /// 但继续拦截路径字符串；豁免只对写治理方法生效，不扩大全局豁免面。
+    /// §9.37 裁决后载荷唯一格式 = 全量 content（delta 占位已移除，不再豁免）。
     #[test]
     fn test_remote_path_guard_exempts_write_commit_payload() {
         // 正文以 `//`、`/*`、`/**` 开头（C/JS/Rust 常见许可证头），不得被判为路径。
@@ -5038,14 +5041,22 @@ mod tests {
                 "grant_id": "G-1",
                 "workspace_instance_id": "ws-1",
                 "path": "src/a.py",
-                "content": "// license\n/* block */\n/** doc */\nint x;\n",
-                "delta": "// leading comment\n"
+                "content": "// license\n/* block */\n/** doc */\nint x;\n"
             }),
         );
         assert!(
             ok.is_ok(),
-            "write.commit 的 content/delta 不得被路径守卫拒绝: {ok:?}"
+            "write.commit 的 content 不得被路径守卫拒绝: {ok:?}"
         );
+
+        // delta 占位字段已随 §9.37 移除：非豁免键可携带 `/` 开头字符串
+        // 不再被特殊放行（回归保护，防止豁免面回潮）。
+        let err = check_remote_path_guard(
+            "write.commit",
+            &json!({"delta": "C:/repo/src/a.py"}),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "E_REMOTE_PATH_FORBIDDEN");
 
         // 同方法内的真实路径参数仍必须拦截。
         let err = check_remote_path_guard(

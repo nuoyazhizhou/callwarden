@@ -394,8 +394,10 @@ E_REMOTE_DB_PATH_FORBIDDEN
 2. daemon 校验 principal 授权 + task/step 归属 + base_hash 与当前索引一致
    → 返回 { grant_id, expires_at(≤15min), base_hash, allowed_paths }
 3. 客户端本机写入文件（原子替换），计算 new_hash
-4. 客户端 `write.commit`：{ grant_id, new_hash, delta(或 full content), request_id }
-5. daemon 校验 grant 未过期/未消费/principal 匹配/base_hash 仍一致
+4. 客户端 `write.commit`：{ grant_id, new_hash, content(全量正文), request_id }
+   （§9.37 裁决：载荷唯一格式 = 全量 content + new_hash，不支持 unified delta）
+5. daemon 校验 grant 未过期/未消费/principal 匹配/base_hash 仍一致，
+   并复算 sha256(content) 与 new_hash 对账
    → 写审计、更新索引、消费 grant；不一致 → 拒绝且不更新索引
 ```
 
@@ -409,10 +411,14 @@ fail-closed 条件：
 | 路径越出 workspace 或不在 grant allowed_paths | `E_WRITE_PATH_FORBIDDEN` |
 | 并发第二个提交使用同一 base_hash | `E_WRITE_STALE_BASE` |
 | task/step 已关闭或不属于该 principal | `E_WRITE_TASK_FORBIDDEN` |
+| commit 缺少全量 content（§9.37） | `E_WRITE_CONTENT_REQUIRED` |
+| sha256(content) 与 new_hash 不一致（§9.37） | `E_WRITE_CONTENT_HASH_MISMATCH` |
 
 - 同一文件并发写：`write.grant` 对 `(workspace_id, path)` 加逻辑租约；后到者等待或拒绝
   （默认拒绝，`E_WRITE_LOCKED`）。
-- 写入完成后必须回传新内容的 hash 与增量；daemon 不复算文件内容，只校验 hash 链。
+- 写入完成后必须回传全量新内容与 new_hash；daemon 复算 sha256(content) 与 new_hash
+  对账（§9.37），一致才更新索引，保证索引 content_hash 与入库内容是密码学事实而非
+  信任声明。
 
 ---
 
@@ -544,7 +550,14 @@ python scripts/check_e2e_matrix_closure.py
    哨兵文件 `pki/tls_reload.request` + daemon watcher 1s 扫描 + 6h 周期
    reload；`HotTls` 原子换入，新连接新证书、在途连接不受影响**。
 4. 多租户/多组织 CA 分层（当前单 CA 足够）。
-5. `write.commit` 的 delta 格式（unified diff vs 全量内容 + hash）。
+5. ~~`write.commit` 的 delta 格式（unified diff vs 全量内容 + hash）~~
+   **已决（2026-11-19，§9.37）：唯一格式 = 全量 content + new_hash**。理由：
+   daemon 索引读路径（file_contents）本就存全文，diff 还需 base 全文 + 应用
+   重构，存储不省且失败面大（fuzz 上下文/行尾/编码）；全量载荷使 daemon 可
+   复算 sha256(content) 与 new_hash 对账（`E_WRITE_CONTENT_REQUIRED` /
+   `E_WRITE_CONTENT_HASH_MISMATCH` fail-closed），把索引 content_hash 与入库
+   内容的一致性从信任声明升级为密码学事实；治理写低频、KB 级载荷，带宽非
+   瓶颈。旧 delta 占位参数与路径守卫豁免同步移除。
 
 ---
 
