@@ -3293,6 +3293,107 @@ Rust daemon **零实现**。目标：env 配置面（`CW_CA_CERT` + `CW_CA_KEY`
 热加载轮换（AKI 归属自愈重签）、fail-closed reload 与退避自愈——
 外部 CA 生命周期全链路真机闭合，生产环境已恢复内置 CA 基线。
 
+## 9.37 write.commit 载荷裁决：全量 content + new_hash 唯一格式与 daemon 侧对账（2026-11-19）
+
+### 1. 立项与范围
+
+ADR §14 未决问题 #5（`write.commit` 的 delta 格式：unified diff vs 全量内容
++ hash）正式立项——§14 已决项收口后唯一剩余实质未决项，此前因"写路径大改"
+搁置。侦察结论：`write.commit` 链路中 `delta` 参数是**纯审计占位**（仅记
+delta_bytes/delta_sha256，零解析逻辑），客户端 `governed_write_file` 从未
+发送；同时暴露相邻缺口——daemon 直接信任客户端自述 `new_hash` 更新索引，
+`sha256(content) == new_hash` 从未复算，索引 `content_hash` 与入库内容的
+一致性只是信任声明（不变量 I5 相邻）。
+
+### 2. 设计决策
+
+- **格式裁决：全量 content + new_hash 唯一格式，不做 unified delta**。理由：
+  1. daemon 索引读路径（`file_contents`）本就存全文——即使传 diff 也要
+     base 全文 + 应用重构才能入库，存储不省；
+  2. diff 应用引入失败面（fuzz 上下文、行尾、编码、二进制），与 fail-closed
+     治理写相性差；
+  3. 全量载荷使 daemon 可复算 `sha256(content)` 与 `new_hash` 对账，把索引
+     一致性升级为密码学事实；
+  4. 治理写低频、KB 级载荷，mTLS 一跳带宽非瓶颈。
+- **对账 fail-closed**：content 缺失 → `E_WRITE_CONTENT_REQUIRED`；
+  `sha256(content) != new_hash` → `E_WRITE_CONTENT_HASH_MISMATCH`；两者
+  均拒绝且零索引副作用、grant 不消费（同 grant 换正确载荷可重提）。校验
+  置于静态检查块（principal/consumed/expired/path/task 之后、事务之前），
+  拒绝路径复用 `audit_write_reject` 留痕。
+- **delta 占位移除**：handler 读取与审计 detail（delta_bytes/delta_sha256）、
+  dispatch 路径守卫豁免（`WRITE_PAYLOAD_KEYS` 收敛为仅 `content`）一并删除，
+  杜绝"看起来支持但不存在"的歧义；守卫测试改为负向断言 delta 不再豁免。
+- **审计 detail 重构**：`content_supplied/delta_*` → `content_bytes` +
+  `content_sha256`（对账后的实际值，审计回放可独立复核 content↔hash 一致）。
+- **契约同步**：ADR §8.2 步骤 4/5 改写（"delta(或 full content)" → 全量
+  content + 对账）；fail-closed 表补两行新错误码；"daemon 不复算文件内容"
+  旧口径废除。
+
+### 3. 实现清单
+
+| 文件 | 内容 |
+| --- | --- |
+| `fs_handlers.rs` | `handle_write_commit`：content 缺失/`sha256(content)!=new_hash` fail-closed（对账置于静态检查块末尾）；`total_lines` 按实际内容恒算；审计 detail 改 `content_bytes`/`content_sha256`；移除 delta 读取；+1 单测（缺失/伪造/通过三路径 + grant 未误消费 + 审计对账断言） |
+| `dispatch.rs` | `check_remote_path_guard` 豁免收敛为仅 `content`；`test_remote_path_guard_exempts_write_commit_payload` 同步（新增 delta 负向断言防豁免面回潮） |
+| ADR | §8.2 契约改写 + fail-closed 表 +2 行；§14 #5 关闭（已决 2026-11-19，§9.37） |
+| Python | 零改动——`governed_write_file` 恒发全量 content，契约未变 |
+
+### 4. 缺陷与修正
+
+1. **new_hash 无对账（侦察发现的产品缺口）**：旧实现直接信任自述
+   `new_hash` 写索引——伪造 hash 即可让索引 `content_hash` 与 `file_contents`
+   语义内容永久错位，且审计 new_hash 与实际入库内容不一致。本轮裁决的
+   对账即修复此缺口。
+2. **delta 守卫豁免为死面**：豁免键 `delta` 对应的能力从未实现，属"豁免
+   攻击面大于功能面"，随裁决收敛。
+
+### 5. 测试与验收
+
+- Rust 新增 1 例：`test_write_commit_content_hash_reconciliation`（缺
+  content 拒绝零索引副作用；伪造 new_hash 拒绝且 grant 仍 active；通过
+  路径索引推进 + 审计 detail content_sha256 对账 + delta 字段零残留）。
+- 全量回归：`cargo test --lib` **2044 passed / 0 failed**（HEAD `e5945ae`）。
+  较 §9.36 基线 2043 净增 1。
+- `rust_ext/**` 属 RUNTIME_AFFECTING_PATH_PREFIXES → refresh（见 §6）。
+
+### 6. 真机验证链（2026-11-19）
+
+- refresh：`scripts\refresh_shared_runtime.ps1`，TaskId
+  `T-1795067673323-1ea46f82`，**passed**，13m22s，evidence
+  `~\.callwarden\runtime\evidence\20261119-135435-e5945ae3e8c6-3bccbb85.json`
+  （新 daemon PID 42808，binary sha256 `8abd4739…ff48`，
+  `daemon ping` OK，principal `pr_b488…`）。authority lease 业务错误
+  （E_TASK_WORKSPACE_UNBOUND，TaskId 未绑 workspace）为预期路径，migration
+  authority 通过。
+- 实机探针（沙箱 remote daemon，`--http-bind 0.0.0.0:9377`，独立
+  PKI `fcf74a63…`/registry/task/cg 四库，owner 身份 mTLS，USERPROFILE 重定向
+  隔离单实例锁；驱动脚本复用 S4-06-D4 实机客户端引导）——**verdict: PASS**：
+  1. 成功路径：grant → 本机原子写 → commit（content 对账通过）→ ok，
+     base `01d09d19…` → new `7aa7a535…`；
+  2. 伪造 new_hash（content=tampered, new_hash=sha256(evil)）→
+     `E_WRITE_CONTENT_HASH_MISMATCH`，且 grant 未被消费——同 grant 换正确
+     载荷重提成功；
+  3. 缺 content → `E_WRITE_CONTENT_REQUIRED`，同 grant 正确载荷重提成功；
+  4. 重放已消费 grant → `E_WRITE_GRANT_CONSUMED`（既有不变量回归）；
+  5. daemon 审计复核（`write_audit_events` 直读）：allow 行 detail 含
+     `content_sha256`（与 `new_hash` 对账一致）与 `content_bytes`，**零
+     delta 字段残留**；两类对账拒绝与重放拒绝均 `deny` 留痕。
+- 沙箱注意事项（复现实机验证时的坑）：① 预铸 server 证书 SAN 不含
+  `IP:0.0.0.0`，需删除沙箱 `pki/server/*` 让 daemon 按绑定地址重签（SAN
+  预检 fail-closed 生效即证 ③ 的既有行为）；② 全新 task-DB 无 workspaces
+  行，`task.create` 按 reconciliation case 4 拒止——预种一行即走"首建
+  capture"正规语义；③ 审计 deny 行 `event_type='reject'`（非 'commit'）。
+
+### 7. 结论
+
+- §9.37 关闭 ADR §14 #5：write.commit 载荷唯一格式 = **全量 content +
+  new_hash**，daemon 侧 `sha256(content)` 对账 fail-closed；unified delta
+  永久不做（理由存 ADR §14）。
+- I5 相邻缺口（new_hash 信任声明 → 密码学对账）修复；delta 死字段与超额
+  守卫豁免移除；审计 detail 升级为可独立回放复核的 `content_sha256`。
+- 实现提交 `e5945ae`（3 文件 +182/−20）；全量回归 2044/0；refresh passed；
+  实机探针 ①-⑤ 全绿。§14 未决清单至此全部收口（#4 多租户 CA 已决"不做"）。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

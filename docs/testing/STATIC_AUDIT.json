@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "3ce9fe546c7fd4da32a6e4a1abbedbeb20927e4c",
+  "supplied_source_revision": "e5945ae3e8c6c78d40c418022bfa8a4207deb0af",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -57,7 +57,7 @@
     "reason_absent_sites": 23,
     "reason_nonliteral_or_absent_sites": 190,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2161,
+    "rust_src_attributes": 2162,
     "rust_src_cfg_test_files": 122
   },
   "inputs": [
@@ -327,7 +327,7 @@
     },
     {
       "path": "rust_ext/src/daemon/dispatch.rs",
-      "sha256": "88e7d6c60a1418aa2988f468e7fb5c1cec2bc805403aad45991e1579cf033890"
+      "sha256": "b73636971c0c710c610c74d08df5d1dc6e223aacf1642530e434396e00d629f7"
     },
     {
       "path": "rust_ext/src/daemon/durable_staging_handlers.rs",
@@ -343,7 +343,7 @@
     },
     {
       "path": "rust_ext/src/daemon/fs_handlers.rs",
-      "sha256": "a49d3b4c2bddbafb2ab7b411f7f4192aedf84bff28e2a01d559b182db41e5aa1"
+      "sha256": "d25c8fa10f2a3d82745970edb8d1f54df21dc7b0f936d28d4b944c0406d78e34"
     },
     {
       "path": "rust_ext/src/daemon/gate_session.rs",
