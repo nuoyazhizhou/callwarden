@@ -67,8 +67,6 @@ pytestmark = pytest.mark.skipif(
     reason="task.next_action 进程级 E2E 需要 Windows 隔离 daemon",
 )
 
-_REAL_PKI_DIR = None
-
 # 任意 next_action 查询都不得改动的表（§6 L612 零写入）
 _ZERO_WRITE_TABLES = [
     "tasks",
@@ -92,16 +90,14 @@ _ZERO_WRITE_TABLES = [
 def lease_env():
     """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。
 
-    隔离 daemon 会生成自己的 CA；客户端使用真实 PKI，故 fixture 内临时设置
-    `CW_PKI_DIR`（隔离 daemon 继承该值，双方证书/CA 一致）。
-    测试只用隔离临时任务库，绝不触碰真实用户任务库。
+    §9.42：不钉真实用户 PKI。真实 enrolled 身份 kind=agent 且 grants 不含隔离
+    ws_id=1 → 携带 workspace_id 的调用一律 E_PRINCIPAL_WORKSPACE_FORBIDDEN；
+    改走 ADR-002 隔离 PKI（pki init 的 service owner 身份，workspace 不限），
+    CLI 子进程经 CW_CLIENT_CERT/KEY/CA 继承同源证书。
     """
-    global _REAL_PKI_DIR
-    from callwarden.config import get_pki_dir
-    from _w3_harness import setup_w3_client
+    from _w3_harness import restore_w3_env, setup_w3_client
 
-    _REAL_PKI_DIR = get_pki_dir()
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     tmp = tempfile.mkdtemp(prefix="cw_task_next_action_")
     proc = None
     try:
@@ -137,6 +133,9 @@ def lease_env():
                 proc.kill()
         if not os.environ.get("CW_KEEP_5D_TMP"):
             shutil.rmtree(tmp, ignore_errors=True)
+        restore_w3_env()
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
 
 
 # ----------------------------------------------------------------------
@@ -160,7 +159,7 @@ def _cli_env(endpoint: str, data_root: str, mode: str = "enterprise",
         env["CW_DAEMON_TRANSPORT"] = "http"
     env["USERPROFILE"] = os.path.join(data_root, "userhome")
     env["HOME"] = env["USERPROFILE"]
-    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
+    env.pop("CW_PKI_DIR", None)  # §9.42：沿用隔离 PKI 的 CW_CLIENT_CERT/KEY/CA
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"

@@ -60,18 +60,22 @@ pytestmark = pytest.mark.skipif(
     reason="CLI↔daemon 生命周期 parity 需要 Windows 隔离 daemon",
 )
 
-_REAL_PKI_DIR = None
-
 
 @pytest.fixture(scope="module")
 def lease_env():
     """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。"""
-    global _REAL_PKI_DIR, _PARITY_SNAPSHOT_ID
-    from callwarden.config import get_pki_dir
-    from _w3_harness import seed_cli_task_agent, seed_cli_task_authority, setup_w3_client
+    global _PARITY_SNAPSHOT_ID
+    from _w3_harness import (
+        restore_w3_env,
+        seed_cli_task_agent,
+        seed_cli_task_authority,
+        setup_w3_client,
+    )
 
-    _REAL_PKI_DIR = get_pki_dir()
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    # §9.42：不钉真实用户 PKI（真实 enrolled 身份 kind=agent，grants 不含隔离
+    # ws_id=1 → 全部 workspace_id 携带调用 E_PRINCIPAL_WORKSPACE_FORBIDDEN）。
+    # 走 ADR-002 隔离 PKI 的 service owner 身份后，CLI 子进程继承同源证书。
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     tmp = tempfile.mkdtemp(prefix="cw_cli_lease_parity_")
     proc = None
     try:
@@ -111,6 +115,9 @@ def lease_env():
                 proc.kill()
         if not os.environ.get("CW_KEEP_PARITY_TMP"):
             shutil.rmtree(tmp, ignore_errors=True)
+        restore_w3_env()
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
 
 
 # ----------------------------------------------------------------------
@@ -136,7 +143,7 @@ def _cli_env(endpoint: str, data_root: str, session: str = "", mode: str = "ente
     # manifest 的 manifest_id/PID 与隔离 daemon 不符触发 E_HTTP_MANIFEST_STALE。
     env["USERPROFILE"] = os.path.join(data_root, "userhome")
     env["HOME"] = env["USERPROFILE"]
-    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
+    env.pop("CW_PKI_DIR", None)  # §9.42：沿用隔离 PKI 的 CW_CLIENT_CERT/KEY/CA
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"

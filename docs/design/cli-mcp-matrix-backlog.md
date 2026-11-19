@@ -1713,19 +1713,20 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
   argparse 层的 2 与成功态的 0，不锁业务失败码，该差异登记为文档残留（阶段 3
   「`--flag` 移除评估」之外的独立项；后由 §24 统一为 `rc=1` 闭合）。
 
-### 22.6 待专项卡：CLI 面既有失败三族（§9.41 归因登记）
+### 22.6 CLI 面既有失败三族（§9.41 归因登记，A 族已于 §9.42 修复）
 
-`pytest tests/test_cli_*.py`（645 条）实测 626 passed / 19 failed，19 条均为
-既有环境/鉴权失败，与 §9.41 改动无交集（详见 ledger §9.41 §5.1）：
+`pytest tests/test_cli_*.py`（§9.41 口径 645 条）实测 626 passed / 19 failed，
+19 条均为既有环境/鉴权失败，与 §9.41 改动无交集（详见 ledger §9.41 §5.1）：
 
-| 族 | 签名 | 待办 |
+| 族 | 签名 | 状态 |
 |---|---|---|
-| A | `E_PRINCIPAL_WORKSPACE_FORBIDDEN`：`task create` 直连生产 daemon，principal 无 workspace 1 授权（`test_cli_task_claim_recover` / `test_cli_task_lease_parity` 各 9） | 子进程用例改隔离 daemon，或统一为测试 principal 种子授权 |
-| B | 单轨 HTTPS 后陈旧断言：`endpoint.startswith("http://…")`、期望 `E_HTTP_DAEMON_UNAVAILABLE` 实得 mTLS 缺证书（`test_c16/c17/c21_*_workspace_authority`、`test_cli_03_http_rpc`） | 断言改 `https://` + 按 PKI 门禁调预期 |
-| C | 源码字面量断言漂移：`daemon_client.py` 已无「不提供本地降级」字样（`test_legacy_write_jobs_baseline`） | 改结构化断言 |
+| A | `E_PRINCIPAL_WORKSPACE_FORBIDDEN`：fixture 钉真实用户 PKI，真实 enrolled principal（kind=agent）的 grants 不含隔离 `ws_id=1` | **已修（§9.42）**：10 个模块改走 ADR-002 隔离 PKI（kind=service 不受 workspace 限制）+ env 还原；另修 `spawn_isolated_daemon` 继承客户端证书 env 导致的重启秒退 |
+| B | 单轨 HTTPS 后陈旧断言：`endpoint.startswith("http://…")`、期望 `E_HTTP_DAEMON_UNAVAILABLE` 实得 mTLS 缺证书（`test_c16/c17/c21_*_workspace_authority`、`test_cli_03_http_rpc`） | 待专项卡：断言改 `https://` + 按 PKI 门禁调预期 |
+| C | 源码字面量断言漂移：`daemon_client.py` 已无「不提供本地降级」字样（`test_legacy_write_jobs_baseline`） | 待专项卡：改结构化断言 |
 
-另：全量 `pytest tests/`（9532 条）在本机不可作门禁——失败项各自烧授权/连接
-超时且与执行顺序相关（模块单独跑多数通过），如需全量门禁须先修 A 族。
+§9.42 复跑（116 个 `test_cli_*.py`，622 条）：617 passed / 4 skipped / 1 failed
+（唯一失败即上表 B 族）。全量 `pytest tests/`（9532 条）在本机仍不可作门禁——
+失败项各自烧授权/连接超时且与执行顺序相关，如需全量门禁须分段 + 模块级超时。
 
 ## 23. Orphan 卡清理（空投影恢复）· `T-1793500842034-88eecb60`
 

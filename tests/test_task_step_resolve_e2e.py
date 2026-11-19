@@ -47,19 +47,21 @@ pytestmark = pytest.mark.skipif(
     reason="task.step.resolve 进程级 E2E 需要 Windows 隔离 daemon",
 )
 
-_REAL_PKI_DIR = None
 _WS_INSTANCE_ID = ""
 
 
 @pytest.fixture(scope="module")
 def resolve_env():
-    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。"""
-    global _REAL_PKI_DIR, _WS_INSTANCE_ID
-    from callwarden.config import get_pki_dir
-    from _w3_harness import seed_cli_task_authority, setup_w3_client
+    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。
 
-    _REAL_PKI_DIR = get_pki_dir()
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    §9.42：不钉真实用户 PKI（真实 enrolled 身份 kind=agent 且 grants 不含隔离
+    ws_id=1 → 携带 workspace_id 的调用一律 E_PRINCIPAL_WORKSPACE_FORBIDDEN）；
+    改走 ADR-002 隔离 PKI 的 service owner 身份，CLI 子进程继承同源证书。
+    """
+    global _WS_INSTANCE_ID
+    from _w3_harness import restore_w3_env, seed_cli_task_authority, setup_w3_client
+
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     tmp = tempfile.mkdtemp(prefix="cw_step_resolve_")
     proc = None
     try:
@@ -86,6 +88,9 @@ def resolve_env():
                 proc.kill()
         if not os.environ.get("CW_KEEP_6A_TMP"):
             shutil.rmtree(tmp, ignore_errors=True)
+        restore_w3_env()
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
 
 
 # ----------------------------------------------------------------------
@@ -416,7 +421,7 @@ def _cli_env(endpoint: str, data_root: str, mode: str = "enterprise",
         env["CW_DAEMON_TRANSPORT"] = "http"
     env["USERPROFILE"] = os.path.join(data_root, "userhome")
     env["HOME"] = env["USERPROFILE"]
-    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
+    env.pop("CW_PKI_DIR", None)  # §9.42：沿用隔离 PKI 的 CW_CLIENT_CERT/KEY/CA
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"

@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "0f47d81720c6bdc97b72b04616970d2fcab97226",
+  "supplied_source_revision": "6b83ec47a1a368c8ff93ba642074f09518c22b81",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -1147,7 +1147,7 @@
     },
     {
       "path": "tests/_w3_harness.py",
-      "sha256": "943081cdbaab1521e85efa7bddf7eacfee743a42decb724ab3b22925e8cfdcca"
+      "sha256": "f47ef914304b961e3bcedabb97fe52be506a139ed4536198acd8753c2f0604a6"
     },
     {
       "path": "tests/acceptance/cli/cli_acceptance_harness.py",
@@ -2143,7 +2143,7 @@
     },
     {
       "path": "tests/test_cli_task_claim_recover.py",
-      "sha256": "a1b086b5abce49c1b5ec548bf4299ecd727c30b78c736faa2bea9f6f4e15804a"
+      "sha256": "c39fb2bc21147081b51c80383922d0e9e2d4e36a0f3be185ce38ebdd4e055c50"
     },
     {
       "path": "tests/test_cli_task_fix.py",
@@ -2151,7 +2151,7 @@
     },
     {
       "path": "tests/test_cli_task_lease_parity.py",
-      "sha256": "b8181c22794a0918aa77515ea6a85b4bc66247b3f57d7709300fc02a2cc555de"
+      "sha256": "9a9f5b0ff0b5a0fd29cdfad5c72a57224ac8e0495bd437328107da544ed0fd06"
     },
     {
       "path": "tests/test_cli_task_next_remediation.py",
@@ -2491,11 +2491,11 @@
     },
     {
       "path": "tests/test_lease_gate_empirical.py",
-      "sha256": "427e19a2c1c7583232fa2bb291e2e57ea83374dd84e1140c795cb26bddce08bb"
+      "sha256": "01042a7e9bef2bfa0c71a0fcb78c1df8475f1bcf5884fcbecf535b305ebbd661"
     },
     {
       "path": "tests/test_lease_rpc.py",
-      "sha256": "a1fafd1de68d8b5c85bcedb7a680c134e09088833ee59d28f9adf4bd5d909c4f"
+      "sha256": "11484f67df6898e7b393a8adb9f911e6edfcf97d37464bdad7df44dcb8f24299"
     },
     {
       "path": "tests/test_legacy_237_tools_baseline.py",
@@ -3691,7 +3691,7 @@
     },
     {
       "path": "tests/test_task_create_subtask_steps.py",
-      "sha256": "5cd892dd4a32394bd64d58e5baf1d83c0f9e06f5f55a0e09bb42dfcd3ded5497"
+      "sha256": "aa3462fece7385367814ece29937251183346b67d4b7960008250eddc23e64f6"
     },
     {
       "path": "tests/test_task_create_warning.py",
@@ -3715,7 +3715,7 @@
     },
     {
       "path": "tests/test_task_next_action_e2e.py",
-      "sha256": "cf7f0d97fc702ad1d37bd5dfb784fabb776b5df014d7dc03dce8ac2ae53af35d"
+      "sha256": "6e36556d8b1ddadf5b5bd0ca398551ef0fef408eec9baf519035fffdd9dd8f22"
     },
     {
       "path": "tests/test_task_no_steps_fix.py",
@@ -3783,7 +3783,7 @@
     },
     {
       "path": "tests/test_task_split_governance.py",
-      "sha256": "cc4ed839953a4cd2b73b2cd535bc8e341f50bd5d586f5ed338cf3ffcaab9512a"
+      "sha256": "9913abf8e9029f152f2508b28e8b029c0de8370d6f9c5676d6c326c05e6b7439"
     },
     {
       "path": "tests/test_task_split_steps.py",
@@ -3795,11 +3795,11 @@
     },
     {
       "path": "tests/test_task_step_resolve_e2e.py",
-      "sha256": "c54a3ddddc7347ba84efda89f773bc93c3db9e40ee2ce442414b1a5915b7e321"
+      "sha256": "60bfa4d04d63fad55ef1bff93ac805f47bb21af49a9ef0b5a5c21bfee658fc51"
     },
     {
       "path": "tests/test_task_supersede.py",
-      "sha256": "b367d87dcbe2d2c84f1c3daa7749266286dfb63ba1dc3a58eec7f659b593d089"
+      "sha256": "fc0ca62c299d17f072b3874c42a81f48a0c3e7399848e4bb8f91da2830023f18"
     },
     {
       "path": "tests/test_task_supersede_cli.py",
@@ -3807,7 +3807,7 @@
     },
     {
       "path": "tests/test_task_supersede_daemon.py",
-      "sha256": "bd50febd5b90fcc08c2b0e1de87d08f21f8f32920df845cd2a00741f250710bb"
+      "sha256": "9fc60023d715ba6d5a2c05af01728417e6b496d137f59b7da125df6a7ff26d09"
     },
     {
       "path": "tests/test_task_supersede_route_authority.py",

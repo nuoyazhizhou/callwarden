@@ -3676,6 +3676,91 @@ collab 治理写族 4 条全链路锁定：publish 成功面 + verdict/reveal/ga
 （experiment 族、task contract 族、semgrep scan、coverage import 等，
 留待按族分批）。
 
+## 9.42 A 族失败根治：隔离栈逃逸与授权种子口径更正（2026-11-19）
+
+### 1. 立项与范围
+
+用户裁决选题：**A 族——隔离 daemon 授权种子**（承接 §9.41 §5.1 登记）。
+范围仅 `tests/` 面：让 A 族用例真正跑在隔离身份上，消除对**本机真实
+enrolled PKI** 的隐式依赖。无 `rust_ext`/daemon 二进制改动，免 refresh。
+
+侦察先纠正了 §9.41 的定性偏差：A 族**不是**「用例忘了种 principal 授权」，
+而是**隔离栈逃逸**——三个失败模块在 fixture 里把 `CW_PKI_DIR` 钉到真实
+用户 PKI（`~/.callwarden/pki`），隔离 daemon 继承同一真实 CA，CLI 子进程也
+读真实身份。真实身份是 `pki enroll` 产出的 **kind=agent** principal
+（实测 `pr_b488648aba88a3339628fdf28f414d39`），其 `grants.json` 只覆盖本机
+历史 workspace id（`"c:\\git_work\\callwarden"` / `"175"` / `"10"`），
+与隔离 task-DB 的 `workspaces.id=1` 无交集；任何携带 `workspace_id` 的调用
+都在 `dispatch.rs` 的 `workspace_allowed(principal, "1")` 判据上
+`E_PRINCIPAL_WORKSPACE_FORBIDDEN`。
+
+对照 `peercred.rs::workspace_allowed`：`kind=service` 的本地 owner 身份不受
+workspace 限制。ADR-002 隔离栈的 `pki init` 正产出这种身份（`pr_owner`），
+这也是其余 18 个 `setup_w3_client` 调用方一直正常的原因——它们没有钉真实 PKI。
+
+### 2. 修复口径
+
+统一为「**A 族模块不再钉真实 PKI，改走 ADR-002 隔离 PKI**」：
+
+- fixture 内 `prev_pki = os.environ.pop("CW_PKI_DIR", None)`，使
+  `setup_w3_client` 走 `inject_isolated_mtls_env`（幂等 `pki init` + 注入
+  `CW_CLIENT_CERT/KEY/CA`）；
+- CLI 子进程 env 不再写回真实 `CW_PKI_DIR`（改为 `pop`），继承同源证书；
+- teardown `restore_w3_env()` + 还原 `prev_pki`（避免跨模块 env 污染）。
+
+涉及 10 个文件：
+
+| 文件 | 角色 |
+|---|---|
+| `test_cli_task_claim_recover.py` | A 族主目标（9 条） |
+| `test_cli_task_lease_parity.py` | A 族主目标（9 条） |
+| `test_lease_gate_empirical.py` | A 族主目标（18 条，另有自建 workspace） |
+| `test_task_supersede.py` / `test_task_supersede_daemon.py` | 同源（重启重放用例在此暴露 §3 缺陷） |
+| `test_task_step_resolve_e2e.py` / `test_task_next_action_e2e.py` | 同源 |
+| `test_task_create_subtask_steps.py` | 同源 |
+| `test_lease_rpc.py` | 同源 + **污染源**（只设不还原 `CW_PKI_DIR`） |
+| `test_task_split_governance.py` | 受害者（自身不钉，但被上一模块残留污染） |
+
+### 3. 连带缺陷：隔离 daemon 重启继承客户端证书 env
+
+`test_task_supersede_daemon::test_restart_replay_same_request_id` 在测试内
+重启隔离 daemon（`spawn_isolated_daemon`）。修复后首次启动成功，第二次却
+秒退：
+
+```
+[cw_daemon] [ERROR] HTTPS pre-bind failed:
+Tls("E_PKI_CA_LOAD: CW_CA_CERT 与 CW_CA_KEY 必须同时设置（外部 CA 模式）；
+当前只设置了 CW_CA_CERT")
+```
+
+根因：`inject_isolated_mtls_env` 向 `os.environ` 注入客户端 `CW_CA_CERT`
+（无 `CW_CA_KEY`），`spawn_isolated_daemon` 用 `os.environ.copy()` 起服务端，
+服务端把 `CW_CA_CERT` 误判为外部 CA 模式。修复：`spawn_isolated_daemon`
+在构造子进程 env 时剔除 `CW_CLIENT_CERT` / `CW_CLIENT_KEY` / `CW_CA_CERT`
+（daemon 是服务端，不得继承客户端凭据 env）。该缺陷此前被 A 族首个门禁拒绝
+遮蔽，本章一并暴露并修复。
+
+### 4. 验证
+
+- **A 族 10 模块**：`pytest <10 files> -q` → **110 passed**（两次全量复跑，
+  含模块间顺序效应）。
+- **CLI 面**（116 个 `tests/test_cli_*.py`，共 **622** 条）：
+  **617 passed / 4 skipped / 1 failed**。唯一失败为既有 **B 族**
+  `test_cli_03_http_rpc::test_http_rpc_task_daemon_unavailable_fail_closed`
+  （断言 `E_HTTP_DAEMON_UNAVAILABLE`，实得 mTLS 缺证书提示），按 §9.41 口径
+  登记不修。§9.41 记录的 19 条失败中 18 条 A 族已清零。
+- 回归覆盖含 `test_cli_subcommand_e2e.py`（36 条，§9.41 冻结面）、
+  `convergence` 共享 `spawn_isolated_daemon` 的路径未受影响。
+- 免 cargo / 免 refresh（无 rust_ext 编译产物变更）。
+
+### 5. 残留与口径
+
+- B 族（单轨 HTTPS 后陈旧断言，`test_c16/c17/c21_*_workspace_authority` +
+  `test_cli_03_http_rpc`）与 C 族（`test_legacy_write_jobs_baseline` 源码
+  字面量断言）维持 §9.41 登记，待专项卡。
+- 全量 `pytest tests/` 仍不建议作为本机门禁（9532 条、失败项各自烧授权/
+  连接超时）；A 族清零后，如需全量门禁应以**分段 + 模块级超时**执行。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

@@ -155,8 +155,6 @@ def test_next_step_wrapper_returns_none_without_step():
 
 _CW_BIN = os.path.join(_REPO_ROOT, "cw.py")
 
-_REAL_PKI_DIR = None
-
 
 def _task_db_steps(task_db: str, task_id: str):
     """只读查询隔离临时库的 task_steps（测试专用临时库，非权威库）。"""
@@ -177,12 +175,11 @@ def _task_db_steps(task_db: str, task_id: str):
 @pytest.fixture(scope="module")
 def isolated_daemon():
     """启动隔离 HTTPS daemon，返回 {client, tmp, task_db, endpoint, proc}。"""
-    global _REAL_PKI_DIR
-    from callwarden.config import get_pki_dir
-    from _w3_harness import seed_cli_task_authority, setup_w3_client
+    from _w3_harness import restore_w3_env, seed_cli_task_authority, setup_w3_client
 
-    _REAL_PKI_DIR = get_pki_dir()
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    # §9.42：不钉真实用户 PKI（真实 enrolled 身份 kind=agent 且 grants 不含隔离
+    # ws_id=1 → 携带 workspace_id 的调用一律 E_PRINCIPAL_WORKSPACE_FORBIDDEN）。
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     tmp = tempfile.mkdtemp(prefix="create-subtask-steps-e2e-")
     proc = None
     try:
@@ -216,6 +213,9 @@ def isolated_daemon():
             except subprocess.TimeoutExpired:
                 proc.kill()
         shutil.rmtree(tmp, ignore_errors=True)
+        restore_w3_env()
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
 
 
 def _env_with_daemon(endpoint: str, data_root: str) -> dict:
@@ -225,7 +225,7 @@ def _env_with_daemon(endpoint: str, data_root: str) -> dict:
     env["CW_DAEMON_TRANSPORT"] = "http"
     env["USERPROFILE"] = os.path.join(data_root, "userhome")
     env["HOME"] = env["USERPROFILE"]
-    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
+    env.pop("CW_PKI_DIR", None)  # §9.42：沿用隔离 PKI 的 CW_CLIENT_CERT/KEY/CA
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     env.pop("CW_DAEMON_SOCKET_PATH", None)

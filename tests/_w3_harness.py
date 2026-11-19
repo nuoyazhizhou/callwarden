@@ -765,6 +765,11 @@ def spawn_isolated_daemon(bin_path, data_root, http_bind="127.0.0.1:0"):
     home = os.path.join(data_root, "userhome")
     os.makedirs(os.path.join(home, ".callwarden"), exist_ok=True)
     env = os.environ.copy()
+    # §9.42：daemon 是服务端，不得继承客户端证书 env。`inject_isolated_mtls_env`
+    # 注入 CW_CA_CERT（而无 CW_CA_KEY）后若再次 spawn（如 supersede 重启重放），
+    # 服务端会按「外部 CA 模式」校验并要求 CW_CA_KEY → E_PKI_CA_LOAD 秒退。
+    for _k in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT"):
+        env.pop(_k, None)
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")

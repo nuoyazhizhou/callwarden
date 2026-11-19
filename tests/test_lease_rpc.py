@@ -31,15 +31,12 @@ import time
 import pytest
 
 from callwarden.server.daemon_protocol import DaemonRemoteError
-from callwarden.config import get_pki_dir
 from _w3_harness import seed_cli_task_agent, seed_cli_task_authority, setup_w3_client
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
     reason="进程级 Lease RPC round-trip 需要 Windows 隔离 daemon",
 )
-
-_REAL_PKI_DIR = get_pki_dir()
 
 
 def _seed_lease_tasks(task_db: str, inst: str, root_path: str, ws_id: int = 1) -> None:
@@ -71,8 +68,15 @@ def _seed_lease_tasks(task_db: str, inst: str, root_path: str, ws_id: int = 1) -
 
 @pytest.fixture()
 def lease_env():
-    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc)。"""
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc)。
+
+    §9.42：不钉真实用户 PKI（真实 enrolled 身份 kind=agent 且 grants 不含隔离
+    ws_id=1 → 携带 workspace_id 的调用一律 E_PRINCIPAL_WORKSPACE_FORBIDDEN）；
+    改走 ADR-002 隔离 PKI 的 service owner 身份，并在 teardown 还原 env。
+    """
+    from _w3_harness import restore_w3_env
+
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     tmp = tempfile.mkdtemp(prefix="cw_lease_")
     root_path = os.path.join(tmp, "proj")
     try:
@@ -94,6 +98,9 @@ def lease_env():
             except Exception:
                 proc.kill()
         shutil.rmtree(tmp, ignore_errors=True)
+        restore_w3_env()
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
 
 
 def _lease_acquire(client, task_id, role, identity, ttl_seconds):

@@ -101,6 +101,9 @@ def client(tmp_path_factory):
     # 隔离栈不可用（无 cw-daemon 二进制 / 启动失败）时 runtime 段整体 skip：
     # CI fresh runner 无常驻 daemon，直接连 endpoint 会以不可连接染红。
     data_root = str(tmp_path_factory.mktemp("task_split_"))
+    # §9.42：即便前序模块残留真实 CW_PKI_DIR（跨模块 env 污染），本 fixture 也
+    # 强制走隔离 PKI；否则 client 身份是真实 enrolled agent，无 ws_id=1 授权。
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     c, inst, _endpoint, proc = setup_w3_client(data_root, _REPO_ROOT, ws_id=1)
     if proc is None:
         pytest.skip("隔离 cw-daemon 不可用：runtime 段跳过（静态门禁仍执行）")
@@ -117,6 +120,8 @@ def client(tmp_path_factory):
         except Exception:
             pass
         restore_w3_env()
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
 
 
 def test_split_success_full_governance(client):

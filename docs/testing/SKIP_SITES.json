@@ -1162,19 +1162,19 @@
       "reason_literal": "claim-recover CLI↔daemon E2E 需要 Windows 隔离 daemon",
       "reason_expression": "'claim-recover CLI↔daemon E2E 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "a1b086b5abce49c1b5ec548bf4299ecd727c30b78c736faa2bea9f6f4e15804a",
+      "file_sha256": "c39fb2bc21147081b51c80383922d0e9e2d4e36a0f3be185ce38ebdd4e055c50",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_cli_task_claim_recover.py:66:12:pytest.skip",
+      "site_id": "tests/test_cli_task_claim_recover.py:69:12:pytest.skip",
       "file": "tests/test_cli_task_claim_recover.py",
-      "line": 66,
+      "line": 69,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "a1b086b5abce49c1b5ec548bf4299ecd727c30b78c736faa2bea9f6f4e15804a",
+      "file_sha256": "c39fb2bc21147081b51c80383922d0e9e2d4e36a0f3be185ce38ebdd4e055c50",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1186,19 +1186,19 @@
       "reason_literal": "CLI↔daemon 生命周期 parity 需要 Windows 隔离 daemon",
       "reason_expression": "'CLI↔daemon 生命周期 parity 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "b8181c22794a0918aa77515ea6a85b4bc66247b3f57d7709300fc02a2cc555de",
+      "file_sha256": "9a9f5b0ff0b5a0fd29cdfad5c72a57224ac8e0495bd437328107da544ed0fd06",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_cli_task_lease_parity.py:80:12:pytest.skip",
+      "site_id": "tests/test_cli_task_lease_parity.py:84:12:pytest.skip",
       "file": "tests/test_cli_task_lease_parity.py",
-      "line": 80,
+      "line": 84,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "b8181c22794a0918aa77515ea6a85b4bc66247b3f57d7709300fc02a2cc555de",
+      "file_sha256": "9a9f5b0ff0b5a0fd29cdfad5c72a57224ac8e0495bd437328107da544ed0fd06",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1670,51 +1670,51 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_lease_gate_empirical.py:42:13:pytest.mark.skipif",
+      "site_id": "tests/test_lease_gate_empirical.py:46:13:pytest.mark.skipif",
       "file": "tests/test_lease_gate_empirical.py",
-      "line": 42,
+      "line": 46,
       "column": 13,
       "mechanism": "pytest.mark.skipif",
       "reason_literal": "进程级 Lease 门禁 round-trip 需要 Windows 隔离 daemon",
       "reason_expression": "'进程级 Lease 门禁 round-trip 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "427e19a2c1c7583232fa2bb291e2e57ea83374dd84e1140c795cb26bddce08bb",
+      "file_sha256": "01042a7e9bef2bfa0c71a0fcb78c1df8475f1bcf5884fcbecf535b305ebbd661",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_lease_gate_empirical.py:60:12:pytest.skip",
+      "site_id": "tests/test_lease_gate_empirical.py:65:12:pytest.skip",
       "file": "tests/test_lease_gate_empirical.py",
-      "line": 60,
+      "line": 65,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "427e19a2c1c7583232fa2bb291e2e57ea83374dd84e1140c795cb26bddce08bb",
+      "file_sha256": "01042a7e9bef2bfa0c71a0fcb78c1df8475f1bcf5884fcbecf535b305ebbd661",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_lease_rpc.py:37:13:pytest.mark.skipif",
+      "site_id": "tests/test_lease_rpc.py:36:13:pytest.mark.skipif",
       "file": "tests/test_lease_rpc.py",
-      "line": 37,
+      "line": 36,
       "column": 13,
       "mechanism": "pytest.mark.skipif",
       "reason_literal": "进程级 Lease RPC round-trip 需要 Windows 隔离 daemon",
       "reason_expression": "'进程级 Lease RPC round-trip 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "a1fafd1de68d8b5c85bcedb7a680c134e09088833ee59d28f9adf4bd5d909c4f",
+      "file_sha256": "11484f67df6898e7b393a8adb9f911e6edfcf97d37464bdad7df44dcb8f24299",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_lease_rpc.py:81:12:pytest.skip",
+      "site_id": "tests/test_lease_rpc.py:85:12:pytest.skip",
       "file": "tests/test_lease_rpc.py",
-      "line": 81,
+      "line": 85,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "a1fafd1de68d8b5c85bcedb7a680c134e09088833ee59d28f9adf4bd5d909c4f",
+      "file_sha256": "11484f67df6898e7b393a8adb9f911e6edfcf97d37464bdad7df44dcb8f24299",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5054,15 +5054,15 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_create_subtask_steps.py:191:12:pytest.skip",
+      "site_id": "tests/test_task_create_subtask_steps.py:188:12:pytest.skip",
       "file": "tests/test_task_create_subtask_steps.py",
-      "line": 191,
+      "line": 188,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "5cd892dd4a32394bd64d58e5baf1d83c0f9e06f5f55a0e09bb42dfcd3ded5497",
+      "file_sha256": "aa3462fece7385367814ece29937251183346b67d4b7960008250eddc23e64f6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5122,19 +5122,19 @@
       "reason_literal": "task.next_action 进程级 E2E 需要 Windows 隔离 daemon",
       "reason_expression": "'task.next_action 进程级 E2E 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "cf7f0d97fc702ad1d37bd5dfb784fabb776b5df014d7dc03dce8ac2ae53af35d",
+      "file_sha256": "6e36556d8b1ddadf5b5bd0ca398551ef0fef408eec9baf519035fffdd9dd8f22",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_next_action_e2e.py:110:12:pytest.skip",
+      "site_id": "tests/test_task_next_action_e2e.py:106:12:pytest.skip",
       "file": "tests/test_task_next_action_e2e.py",
-      "line": 110,
+      "line": 106,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "cf7f0d97fc702ad1d37bd5dfb784fabb776b5df014d7dc03dce8ac2ae53af35d",
+      "file_sha256": "6e36556d8b1ddadf5b5bd0ca398551ef0fef408eec9baf519035fffdd9dd8f22",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5162,15 +5162,15 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_split_governance.py:106:8:pytest.skip",
+      "site_id": "tests/test_task_split_governance.py:109:8:pytest.skip",
       "file": "tests/test_task_split_governance.py",
-      "line": 106,
+      "line": 109,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 cw-daemon 不可用：runtime 段跳过（静态门禁仍执行）",
       "reason_expression": "'隔离 cw-daemon 不可用：runtime 段跳过（静态门禁仍执行）'",
       "condition_or_module": null,
-      "file_sha256": "cc4ed839953a4cd2b73b2cd535bc8e341f50bd5d586f5ed338cf3ffcaab9512a",
+      "file_sha256": "9913abf8e9029f152f2508b28e8b029c0de8370d6f9c5676d6c326c05e6b7439",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5218,19 +5218,19 @@
       "reason_literal": "task.step.resolve 进程级 E2E 需要 Windows 隔离 daemon",
       "reason_expression": "'task.step.resolve 进程级 E2E 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "c54a3ddddc7347ba84efda89f773bc93c3db9e40ee2ce442414b1a5915b7e321",
+      "file_sha256": "60bfa4d04d63fad55ef1bff93ac805f47bb21af49a9ef0b5a5c21bfee658fc51",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_step_resolve_e2e.py:68:12:pytest.skip",
+      "site_id": "tests/test_task_step_resolve_e2e.py:70:12:pytest.skip",
       "file": "tests/test_task_step_resolve_e2e.py",
-      "line": 68,
+      "line": 70,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "c54a3ddddc7347ba84efda89f773bc93c3db9e40ee2ce442414b1a5915b7e321",
+      "file_sha256": "60bfa4d04d63fad55ef1bff93ac805f47bb21af49a9ef0b5a5c21bfee658fc51",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5242,19 +5242,19 @@
       "reason_literal": "task.supersede 集成需要 Windows 隔离 daemon",
       "reason_expression": "'task.supersede 集成需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "b367d87dcbe2d2c84f1c3daa7749266286dfb63ba1dc3a58eec7f659b593d089",
+      "file_sha256": "fc0ca62c299d17f072b3874c42a81f48a0c3e7399848e4bb8f91da2830023f18",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_supersede.py:69:12:pytest.skip",
+      "site_id": "tests/test_task_supersede.py:65:12:pytest.skip",
       "file": "tests/test_task_supersede.py",
-      "line": 69,
+      "line": 65,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "b367d87dcbe2d2c84f1c3daa7749266286dfb63ba1dc3a58eec7f659b593d089",
+      "file_sha256": "fc0ca62c299d17f072b3874c42a81f48a0c3e7399848e4bb8f91da2830023f18",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5314,31 +5314,31 @@
       "reason_literal": "task.supersede daemon 测试需要 Windows 隔离 daemon",
       "reason_expression": "'task.supersede daemon 测试需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "bd50febd5b90fcc08c2b0e1de87d08f21f8f32920df845cd2a00741f250710bb",
+      "file_sha256": "9fc60023d715ba6d5a2c05af01728417e6b496d137f59b7da125df6a7ff26d09",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_supersede_daemon.py:63:12:pytest.skip",
+      "site_id": "tests/test_task_supersede_daemon.py:59:12:pytest.skip",
       "file": "tests/test_task_supersede_daemon.py",
-      "line": 63,
+      "line": 59,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "bd50febd5b90fcc08c2b0e1de87d08f21f8f32920df845cd2a00741f250710bb",
+      "file_sha256": "9fc60023d715ba6d5a2c05af01728417e6b496d137f59b7da125df6a7ff26d09",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_supersede_daemon.py:305:12:pytest.skip",
+      "site_id": "tests/test_task_supersede_daemon.py:304:12:pytest.skip",
       "file": "tests/test_task_supersede_daemon.py",
-      "line": 305,
+      "line": 304,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用（重启前置缺失）",
       "reason_expression": "'cw-daemon 二进制不可用（重启前置缺失）'",
       "condition_or_module": null,
-      "file_sha256": "bd50febd5b90fcc08c2b0e1de87d08f21f8f32920df845cd2a00741f250710bb",
+      "file_sha256": "9fc60023d715ba6d5a2c05af01728417e6b496d137f59b7da125df6a7ff26d09",
       "root_cause": "UNREVIEWED"
     },
     {

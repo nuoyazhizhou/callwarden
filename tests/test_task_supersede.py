@@ -45,22 +45,18 @@ _MODEL = "deepseek-v4"
 _EVIDENCE = "evidence/verdict-pass.json"
 _EVIDENCE_HASH = "sha256:ev-p0h-1"
 
-_REAL_PKI_DIR = None
-
 
 @pytest.fixture(scope="module")
 def daemon_env():
     """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。
 
-    隔离 daemon 会生成自己的 CA；客户端使用真实 PKI，故 fixture 内临时设置
-    `CW_PKI_DIR`（隔离 daemon 继承该值，双方证书/CA 一致）。
+    §9.42：不钉真实用户 PKI。真实 enrolled 身份 kind=agent 且 grants 不含隔离
+    ws_id=1 → 携带 workspace_id 的调用一律 E_PRINCIPAL_WORKSPACE_FORBIDDEN；
+    改走 ADR-002 隔离 PKI（pki init 的 service owner 身份，workspace 不限）。
     """
-    global _REAL_PKI_DIR
-    from callwarden.config import get_pki_dir
-    from _w3_harness import seed_cli_task_authority, setup_w3_client
+    from _w3_harness import restore_w3_env, seed_cli_task_authority, setup_w3_client
 
-    _REAL_PKI_DIR = get_pki_dir()
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     tmp = tempfile.mkdtemp(prefix="cw_task_supersede_p0h_")
     proc = None
     try:
@@ -86,6 +82,9 @@ def daemon_env():
                 proc.kill()
         if not os.environ.get("CW_KEEP_SUPERSEDE_TMP"):
             shutil.rmtree(tmp, ignore_errors=True)
+        restore_w3_env()
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
 
 
 def _cli_env(endpoint: str, data_root: str, session: str = "", extra: dict = None) -> dict:
@@ -98,7 +97,7 @@ def _cli_env(endpoint: str, data_root: str, session: str = "", extra: dict = Non
     # 的 manifest_id/PID 与隔离 daemon 不符触发 E_HTTP_MANIFEST_STALE）。
     env["USERPROFILE"] = os.path.join(data_root, "userhome")
     env["HOME"] = env["USERPROFILE"]
-    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
+    env.pop("CW_PKI_DIR", None)  # §9.42：沿用隔离 PKI 的 CW_CLIENT_CERT/KEY/CA
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"

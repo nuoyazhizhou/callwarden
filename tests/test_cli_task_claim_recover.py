@@ -46,18 +46,21 @@ pytestmark = pytest.mark.skipif(
     reason="claim-recover CLI↔daemon E2E 需要 Windows 隔离 daemon",
 )
 
-_REAL_PKI_DIR = None
-
-
 @pytest.fixture(scope="module")
 def recover_env():
     """启动隔离 HTTPS daemon，返回 (client, tmp, task_db, proc, endpoint)。"""
-    global _REAL_PKI_DIR
-    from callwarden.config import get_pki_dir
-    from _w3_harness import seed_cli_task_authority, setup_w3_client
+    from _w3_harness import (
+        restore_w3_env,
+        seed_cli_task_authority,
+        setup_w3_client,
+    )
 
-    _REAL_PKI_DIR = get_pki_dir()
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    # §9.42：不钉真实用户 PKI。真实 enrolled 身份是 kind=agent，grants 只覆盖
+    # 本机历史 workspace id（如 "175"/"10"），与隔离 task-DB 的 ws_id=1 无关 →
+    # 所有携带 workspace_id=1 的 CLI 调用被 E_PRINCIPAL_WORKSPACE_FORBIDDEN 拒绝。
+    # 让 setup_w3_client 走 ADR-002 隔离 PKI（pki init 生成的 owner 身份 kind=service，
+    # workspace 不受限），CLI 子进程经 CW_CLIENT_CERT/KEY/CA 继承同一套信任根。
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     tmp = tempfile.mkdtemp(prefix="cw_cli_claim_recover_")
     proc = None
     try:
@@ -83,6 +86,9 @@ def recover_env():
                 proc.kill()
         if not os.environ.get("CW_KEEP_CLAIM_RECOVER_TMP"):
             shutil.rmtree(tmp, ignore_errors=True)
+        restore_w3_env()
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
 
 
 # ----------------------------------------------------------------------
@@ -100,7 +106,9 @@ def _cli_env(endpoint: str, data_root: str, session: str = "", mode: str = "ente
     # manifest 的 manifest_id/PID 与隔离 daemon 不符触发 E_HTTP_MANIFEST_STALE。
     env["USERPROFILE"] = os.path.join(data_root, "userhome")
     env["HOME"] = env["USERPROFILE"]
-    env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
+    # §9.42：隔离 PKI 的客户端身份经 CW_CLIENT_CERT/KEY/CA 继承，不能再落回
+    # 真实用户 PKI（跨 CA → BadSignature，且真实身份无隔离 workspace 授权）。
+    env.pop("CW_PKI_DIR", None)
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
@@ -478,7 +486,7 @@ class TestCliClaimRecover:
         env["CW_DAEMON_MODE"] = "enterprise"
         env["CW_DAEMON_TRANSPORT"] = "http"
         env["CW_DAEMON_HTTP_ENDPOINT"] = "https://127.0.0.1:1"
-        env["CW_PKI_DIR"] = _REAL_PKI_DIR or env.get("CW_PKI_DIR", "")
+        env.pop("CW_PKI_DIR", None)
         env["CW_TASK_WRITE_POLICY"] = "shared"
         env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
         env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
