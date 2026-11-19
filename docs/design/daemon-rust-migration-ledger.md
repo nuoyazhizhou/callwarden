@@ -3518,6 +3518,54 @@ C7 卡外 44 项残留全部归零：40 项此前已收口（§15-§19），本�
 （cascade 4 + reconciliation 负向 E2E 2，ERROR/FAILED 口径）。测试资产与
 生产环境解耦——workspace 授权不再依赖共享 workspace 1 的历史归属。
 
+## 9.40 缺陷④修复：principal DB grant 整数 workspace_id 静默丢行（2026-11-19）
+
+### 1. 立项与范围
+
+用户裁决选题：**backlog ④ 修复**（§9.39 登记的唯一开放项）。
+[auth_principal.rs](file:///c:/git_work/callwarden/rust_ext/src/daemon/auth_principal.rs)
+`load_snapshot` 对 `workspace_principal_grants.workspace_id` 以
+`row.get::<_, String>` 读取，而该列 INTEGER 亲和把数字型 id 强转整数落库
+→ `InvalidColumnType` 被 `rows.flatten()` 静默吞掉 → 整数 id 的 DB grant
+全部不生效（fail-closed 方向：多拒不误放）。
+
+### 2. 修复
+
+grants 查询改 `SELECT principal_id, CAST(workspace_id AS TEXT) ...`，
+强制文本读取，与 `workspace_allowed` 的字符串比较口径对齐；既有
+`COALESCE(revoked_at, 0) = 0` 语义不变。一行 SQL，零结构变更。
+
+### 3. 单测
+
+新增
+`test_db_grant_integer_workspace_id_visible`：建 INTEGER 亲和 schema
+（与生产 `PKI_SCHEMA_STATEMENTS` 一致），同 principal 混插整数落库（42）
+与文本落库（ws_ext936）两行 grant，断言二者均生效 + 无 grant 的 43 仍拒。
+
+### 4. 回归与部署
+
+- cargo 定向：auth_principal 过滤 10 passed；全量 **2182 passed / 0
+  failed**（13 测试二进制全绿，基线 + 新测试）。
+- runtime refresh **passed**（evidence
+  `20261119-182745-72ce920b0188-317f69e0`，git_head 72ce920，TaskId
+  T-1795084054235-7ea49d09）：daemon sha256 `75f3a140…f84d`（旧
+  `8abd4739…ff48`），PID 42808 → 30676，smoke（--version / daemon ping）
+  通过，callwarden_core.pyd 同步更新。
+
+### 5. 真机验证（生产 daemon 直连，双探针）
+
+- ① 修复实证：注册隔离 workspace → 直写 DB grant（integer 落库，
+  `typeof=integer`，模拟 daemon 写入口径）→ 越 1s 节流窗 →
+  `workspace.status` 通过。旧 binary 下此路径必然
+  `E_PRINCIPAL_WORKSPACE_FORBIDDEN`（§9.39 探针实证）。
+- ② fail-closed 护栏：无 grant 的第二个 workspace 仍拒止。
+
+### 6. 结论
+
+DB grant 热路径与磁盘 grants.json 路径口径统一，整数/文本 id 双兼容。
+§9.39 缺陷登记闭环；§9.39 fixture 的 grants.json 补丁仍可工作（磁盘路径
+本就正确），可选的 fixture 简化不在本章范围。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

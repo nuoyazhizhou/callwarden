@@ -431,8 +431,12 @@ fn load_snapshot(conn: &Connection) -> Result<DbSnapshot, String> {
     }
 
     // `revoked_at` 是 `REAL NOT NULL DEFAULT 0`（0 = 未吊销）。
+    // §9.40：`workspace_id` 列是 INTEGER 亲和——数字型 id 落库会被强转整数存储，
+    // 直接 `get::<_, String>` 对整数值返回 InvalidColumnType 被 `flatten()` 吞掉，
+    // 整数 id 的 DB grant 全部静默失效。`CAST(... AS TEXT)` 强制文本读取，
+    // 与 `workspace_allowed` 的字符串比较口径一致。
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT principal_id, workspace_id FROM workspace_principal_grants \
+        "SELECT principal_id, CAST(workspace_id AS TEXT) FROM workspace_principal_grants \
          WHERE COALESCE(revoked_at, 0) = 0",
     ) {
         if let Ok(rows) = stmt.query_map([], |row| {
@@ -691,6 +695,42 @@ mod tests {
         assert!(ident.workspace_allowed("1"));
         assert!(ident.workspace_allowed("9"));
         assert!(!ident.workspace_allowed("2"));
+    }
+
+    /// §9.40：INTEGER 亲和列中数字型 workspace_id 的 DB grant 必须生效。
+    ///
+    /// 生产 schema（`db_base.py::PKI_SCHEMA_STATEMENTS` / `record_db_ledger`）
+    /// 中 `workspace_id INTEGER NOT NULL`，`INSERT ... VALUES (42)` 落库为
+    /// 整数。修复前 `get::<_, String>` 对整数值报 InvalidColumnType 被
+    /// `flatten()` 静默吞掉 → grant 失效（fail-closed 方向缺陷）。
+    #[test]
+    fn test_db_grant_integer_workspace_id_visible() {
+        let root = pki_root();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db_path = db_dir.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        // 列定义与生产一致（INTEGER 亲和），混插整数落库与文本落库两行
+        conn.execute_batch(
+            "CREATE TABLE pki_principals (principal_id TEXT PRIMARY KEY, status TEXT NOT NULL, kind TEXT);
+             CREATE TABLE pki_revocations (cert_serial TEXT PRIMARY KEY);
+             CREATE TABLE pki_issued_certs (cert_serial TEXT PRIMARY KEY, status TEXT NOT NULL);
+             CREATE TABLE workspace_principal_grants (workspace_id INTEGER NOT NULL, principal_id TEXT NOT NULL, role TEXT NOT NULL, granted_at REAL NOT NULL, granted_by TEXT NOT NULL DEFAULT '', revoked_at REAL NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, principal_id));
+             INSERT INTO pki_principals (principal_id, status, kind) VALUES ('pr_agent', 'active', 'agent');
+             INSERT INTO workspace_principal_grants (workspace_id, principal_id, role, granted_at) VALUES (42, 'pr_agent', 'agent', 0);
+             INSERT INTO workspace_principal_grants (workspace_id, principal_id, role, granted_at) VALUES ('ws_ext936', 'pr_agent', 'agent', 0);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let registry = PrincipalRegistry::new(root.path().to_path_buf(), Some(db_path));
+        registry.refresh_now();
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        // 整数落库行：修复前静默丢行，修复后 CAST AS TEXT 可见
+        assert!(ident.workspace_allowed("42"));
+        // 文本落库行：既有语义不受影响
+        assert!(ident.workspace_allowed("ws_ext936"));
+        // 无 grant 的 workspace 仍 fail-closed
+        assert!(!ident.workspace_allowed("43"));
     }
 
     #[test]

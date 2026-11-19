@@ -650,10 +650,11 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
 管道冲突）（**已完成**，见 §18）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
 `cargo build`/LLM 前置（**已完成**，见 §12）；③ 修 release 验收 evidence 过期与
 schema_version 断言（**已完成**，见 §14）；
-④ 修 `auth_principal.rs` load_snapshot 对 `workspace_principal_grants.workspace_id`
+④ `auth_principal.rs` load_snapshot 对 `workspace_principal_grants.workspace_id`
 整数值的静默丢行（列 INTEGER 亲和 × `get::<String>` → `InvalidColumnType`
-被 `flatten()` 吞掉，整数 id 的 DB grant 全部不生效；fail-closed 方向，
-实测记录见 daemon-rust-migration-ledger §9.39）。
+被 `flatten()` 吞掉，整数 id 的 DB grant 全部不生效；fail-closed 方向）
+→ **已修复**（CAST AS TEXT + 单测 + refresh evidence
+20261119-182745-72ce920b0188-317f69e0，见 daemon-rust-migration-ledger §9.40）。
 
 ---
 
