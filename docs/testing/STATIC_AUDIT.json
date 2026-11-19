@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "0f2284965961df05856d4c7519b62f9a731afb54",
+  "supplied_source_revision": "84f93ace474dda710570ec4a532501e5d497406e",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,7 +38,7 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7285,
+    "python_definitions": 7286,
     "python_source_files": 703,
     "convergence_definitions": 58,
     "skip_calls": {
@@ -57,7 +57,7 @@
     "reason_absent_sites": 23,
     "reason_nonliteral_or_absent_sites": 190,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2143,
+    "rust_src_attributes": 2150,
     "rust_src_cfg_test_files": 122
   },
   "inputs": [
@@ -179,7 +179,7 @@
     },
     {
       "path": "rust_ext/src/cli/pki.rs",
-      "sha256": "c543c447f37761c3e54c4da0d051c53a7e97c341b4b36647180d117a4a8007b0"
+      "sha256": "2406ba5359841eed7d974b8807efa2bc764fae18150be00c4af0e262fca3f8f5"
     },
     {
       "path": "rust_ext/src/cli/readonly.rs",
@@ -359,7 +359,7 @@
     },
     {
       "path": "rust_ext/src/daemon/http_server.rs",
-      "sha256": "d12f60259084b38c04c8e4ad032dddef7f4064bc695511baab89ee7fd75457bf"
+      "sha256": "d60abcc31833c77a6e538fb829f29ac34edfae0dedfed95ee50695f3e4d17d5e"
     },
     {
       "path": "rust_ext/src/daemon/job_executor_handlers.rs",
@@ -391,7 +391,7 @@
     },
     {
       "path": "rust_ext/src/daemon/pki_api.rs",
-      "sha256": "71b396ebb7039d2439124ba3fa613496e2847d8b468ec01f9db0593c33b56cef"
+      "sha256": "cab44a8ea87bd1e0a329045732b6e7ad2d44acf0c917c0ae6f9055d894450760"
     },
     {
       "path": "rust_ext/src/daemon/pki_handlers.rs",
@@ -2095,7 +2095,7 @@
     },
     {
       "path": "tests/test_cli_daemon_stop.py",
-      "sha256": "fd028c1e32946e79fadbf07f868ed981f486da8dc18520937586b1c0854260da"
+      "sha256": "256082b29b23bb8bf5d5b06c7669db9f8ed951bb16a02e2f2c8520340ecfc5d3"
     },
     {
       "path": "tests/test_cli_dependency.py",
