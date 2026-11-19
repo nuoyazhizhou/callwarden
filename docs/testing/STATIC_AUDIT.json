@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "7d3578a33ffe149f194b30de9ce55bf1804d55c6",
+  "supplied_source_revision": "236e74a2ef7b524037b43c66e9855e8905eae5e9",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,7 +38,7 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7291,
+    "python_definitions": 7290,
     "python_source_files": 703,
     "convergence_definitions": 58,
     "skip_calls": {
@@ -2511,7 +2511,7 @@
     },
     {
       "path": "tests/test_legacy_write_jobs_baseline.py",
-      "sha256": "e8b1cb77c9373993c00a99b97d0e1c461dea423b37533ca18129b50599e4b5e2"
+      "sha256": "3a563243cab66355cd56a6c3b832ed6aa503aeefc0e0ff8372e215c196b95f94"
     },
     {
       "path": "tests/test_mcp_ask_codebase_http_rpc.py",

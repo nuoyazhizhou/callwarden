@@ -1713,7 +1713,7 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
   argparse 层的 2 与成功态的 0，不锁业务失败码，该差异登记为文档残留（阶段 3
   「`--flag` 移除评估」之外的独立项；后由 §24 统一为 `rc=1` 闭合）。
 
-### 22.6 CLI 面既有失败三族（§9.41 归因登记，A 族已于 §9.42 修复）
+### 22.6 CLI 面既有失败三族（§9.41 归因登记，A/B/C 三族已清零）
 
 `pytest tests/test_cli_*.py`（§9.41 口径 645 条）实测 626 passed / 19 failed，
 19 条均为既有环境/鉴权失败，与 §9.41 改动无交集（详见 ledger §9.41 §5.1）：
@@ -1722,12 +1722,14 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
 |---|---|---|
 | A | `E_PRINCIPAL_WORKSPACE_FORBIDDEN`：fixture 钉真实用户 PKI，真实 enrolled principal（kind=agent）的 grants 不含隔离 `ws_id=1` | **已修（§9.42）**：10 个模块改走 ADR-002 隔离 PKI（kind=service 不受 workspace 限制）+ env 还原；另修 `spawn_isolated_daemon` 继承客户端证书 env 导致的重启秒退 |
 | B | 单轨 HTTPS 后陈旧断言：`endpoint.startswith("http://…")`、期望 `E_HTTP_DAEMON_UNAVAILABLE` 实得 mTLS 缺证书（`test_c16/c17/c21_*_workspace_authority`、`test_cli_03_http_rpc`） | **已修（§9.43）**：断言改 `https://` + 注入隔离同源 mTLS 身份 + 服务端剥离客户端证书 env；传输层用例显式喂自签材料 |
-| C | 源码字面量断言漂移：`daemon_client.py` 已无「不提供本地降级」字样（`test_legacy_write_jobs_baseline`） | 待专项卡：改结构化断言 |
+| C | 源码字面量断言漂移：`daemon_client.py` 已无「不提供本地降级」字样（`test_legacy_write_jobs_baseline`） | **已修（§9.44）**：9 条改为结构化断言——`build_graph` remote 分支边界、`route_task_write`/`call()` 的 request_id 契约、连接级故障 fail-closed（monkeypatch 实测）、`call_with_autostart` 有界唤起结构 |
 
 §9.42 复跑（116 个 `test_cli_*.py`，622 条）：617 passed / 4 skipped / 1 failed
 （唯一失败即上表 B 族，§9.43 已清零）。§9.43 B 族四模块复跑：59 条
-55 passed / 4 skipped / 0 failed。全量 `pytest tests/`（9532 条）在本机仍不可作门禁——
-失败项各自烧授权/连接超时且与执行顺序相关，如需全量门禁须分段 + 模块级超时。
+55 passed / 4 skipped / 0 failed。§9.44 C 族单模块：30 passed / 0 failed
+（连带 `test_legacy_query_baseline` 共 101 passed）。全量 `pytest tests/`（9532 条）
+在本机仍不可作门禁——失败项各自烧授权/连接超时且与执行顺序相关，如需全量门禁须
+分段 + 模块级超时。
 
 ## 23. Orphan 卡清理（空投影恢复）· `T-1793500842034-88eecb60`
 

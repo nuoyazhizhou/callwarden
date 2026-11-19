@@ -32,9 +32,13 @@ r"""B5（T-1786590722456-db00d074-sub-5）write/jobs legacy 基线核对。
    `task.job_submit`（sync=False）提交，返回契约 `status=pending` + `job_id`；
    `wait_for_job` 透传 timeout/poll_interval 到 `task.wait_for_job`，超时判定
    （`status=timeout` / `elapsed`）由 daemon 侧实现；JobExecutor 有 max_duration 超时
-   fail、cancel 三态；daemon_client `mutation_call` 具备 request_id 幂等 + authority
-   pin + 断线 recovery（task.create 断线 fail-closed 不重放，其他 mutation 先查提交
-   结果再决定）。
+   fail、cancel 三态。mutation 侧现行契约（§9.44 对齐）：非 local 模式下
+   `route_task_write` 为缺省写请求生成 `req-` 前缀 request_id，`HttpDaemonRpcClient.call`
+   按「显式参数 → `params["request_id"]` → uuid4」三级解析 envelope id（重试复用同一
+   params 即命中 daemon dedup）；连接级故障一律 fail-closed（enterprise/auto 抛
+   `DaemonUnavailableError`），**不做 outcome 查询重放、不回退本地 SQLite**；远端业务
+   错误（`DaemonRemoteError`）原样透传。`mutation_call` / `_query_mutation_outcome`
+   等旧 API 已于 4b1380a / ef28ab9 移除。
 
 3. **结构化错误**：mutation 业务错误（DaemonRemoteError）原样透传，不包装为连接错误
    （DaemonUnavailableError）。
@@ -53,10 +57,8 @@ import re
 
 import pytest
 
-from callwarden.server.daemon_client import (
-    DaemonUnavailableError,
-    HttpDaemonRpcClient,
-)
+from callwarden.server import daemon_client as dc
+from callwarden.server.daemon_client import DaemonUnavailableError
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -87,6 +89,15 @@ def _tool_body(src: str, tool: str) -> str:
     next_dec = re.search(r"\n    @", block)
     ends = [x.start() for x in (next_def, next_dec) if x]
     return block[:min(ends)] if ends else block
+
+
+def _def_body(src: str, name: str, indent: str = "    ") -> str:
+    """提取 `<indent>def <name>` 的函数体（到下一条同缩进 def / 装饰器为止）。"""
+    m = re.search(r"\n%sdef\s+%s\b" % (re.escape(indent), re.escape(name)), src)
+    assert m, f"源码缺少 def {name}"
+    block = src[m.end():]
+    nxt = re.search(r"\n%s(?:def |@)" % re.escape(indent), block)
+    return block[:nxt.start()] if nxt else block
 
 
 def _signature(src: str, name: str) -> str:
@@ -172,10 +183,11 @@ class TestWriteToolsRegistered:
             )
 
     def test_build_graph_routes_to_daemon_native(self):
-        """build_graph 已直达 daemon 原生分支（tools_workspace.py:59）。
+        """build_graph 默认路径直达 daemon 原生 RPC，本地全量扫描仅限 remote profile。
 
-        A 桶 stale 依据：本地 `db.build_full_graph()` 调用已移除，改为
-        `workspace.build_graph` RPC（模块 docstring :10-14 声明）。
+        A 桶 stale 依据：loopback 路径已收敛为 `workspace.build_graph` RPC；
+        `cg.build_full_graph(force=True)` 只存在于 S2 §16.4 的 remote profile
+        客户端本机执行分支（产物经 snapshot.upload 回传权威面），不是本地回退。
         """
         method, _params, op_class = _route_call(
             _read_tools("tools_workspace.py"), "build_graph"
@@ -183,7 +195,15 @@ class TestWriteToolsRegistered:
         assert method == "workspace.build_graph"
         assert op_class == "PROTECTED_MUTATION"
         body = _tool_body(_read_tools("tools_workspace.py"), "build_graph")
-        assert "build_full_graph" not in body, "本地全量构建已下沉 daemon"
+        assert "if _is_remote_profile():" in body
+        remote_block = body.split("if _is_remote_profile():")[-1].split("return _route(")[0]
+        assert "cg.build_full_graph(force=True)" in remote_block, (
+            "remote profile 客户端执行分支应本机全量扫描后上传 snapshot"
+        )
+        default_block = body.split("return _route(")[-1]
+        assert "build_full_graph" not in default_block, (
+            "默认（loopback）路径不得本地全量构建，必须直达 daemon"
+        )
 
     def test_refresh_file_routes_to_daemon_native(self):
         """refresh_file 已直达 daemon 原生分支（tools_workspace.py:71）。
@@ -364,114 +384,90 @@ class TestSemgrepTimeoutSemantics:
 
 
 # ----------------------------------------------------------------------
-# 基线 3：mutation recovery 语义（daemon_client.py，B5 Step 0 审计对象）
+# 基线 3：mutation 幂等 / fail-closed 语义（daemon_client.py，B5 Step 0 审计对象）
+#
+# §9.44：旧断言针对已移除的 `HttpDaemonRpcClient.mutation_call` /
+# `_query_mutation_outcome` / `_mutation_outcome_matches`（4b1380a / ef28ab9
+# 移除）。现行契约：
+# - 幂等键：`route_task_write` 为缺省写请求生成 `req-` 前缀 request_id；
+#   `HttpDaemonRpcClient.call` 按「显式参数 → params["request_id"] → uuid4」
+#   三级解析 envelope id（重试复用同一 params 即命中 daemon dedup）。
+# - 连接级故障：统一 fail-closed（enterprise/auto 抛 DaemonUnavailableError），
+#   不做 outcome 查询重放，也不回退本地 SQLite。
+# - 业务错误：`DaemonRemoteError` 原样透传（与连接错误是不同异常类型）。
 # ----------------------------------------------------------------------
 
-# mutation → 只读 outcome 查询 RPC（_query_mutation_outcome 的 read_rpc 映射）
-MUTATION_READ_RPC = {
-    "task.create": "open",
-    "task.claim": "in_progress",
-    "task.report": "review",
-    "task.apply": "applied",
-    "task.close": "closed",
-    "task.reopen": "in_progress",
-}
+class TestMutationRequestIdSemantics:
+    """request_id 幂等键的生成与解析顺序（mutation dedup 依据）。"""
 
-
-def _stub_client():
-    """构造不带 __init__ 的 HttpDaemonRpcClient 空实例（测试替身，禁真实 DB/网络）。
-
-    mutation_call / _query_mutation_outcome 属于 HttpDaemonRpcClient（daemon_client.py
-    L370 起），DaemonClient 是上层封装，测试直接针对实现层。
-    """
-    client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
-    client.verify_authority = lambda *a, **kw: None
-    return client
-
-
-class TestMutationRecoverySemantics:
-    """mutation_call 的幂等 + 断线 recovery + 业务错误透传（plan B5 recovery 语义）。"""
-
-    def test_auto_generates_request_id(self):
-        """无 request_id 时自动生成（req- 前缀），保证重试幂等。"""
-        client = _stub_client()
-        captured = {}
-
-        def fake_call(method, params=None):
-            captured["params"] = params
-            return {"ok": True}
-
-        client.call = fake_call
-        result = client.mutation_call("task.claim", {"task_id": "T-X"})
-        assert result == {"ok": True}
-        rid = captured["params"].get("request_id")
-        assert isinstance(rid, str) and rid.startswith("req-"), (
-            f"mutation_call 应自动生成 req- 前缀 request_id，实际 {rid!r}"
+    def test_route_task_write_generates_req_prefix_request_id(self):
+        body = _def_body(_read_rel("server/daemon_client.py"), "route_task_write", indent="")
+        assert 'if isinstance(params, dict) and "request_id" not in params:' in body
+        assert 'params["request_id"] = f"req-{uuid.uuid4().hex[:12]}"' in body, (
+            "route_task_write 应为缺省写请求生成 req- 前缀幂等键"
         )
 
-    def test_business_error_passthrough_no_retry(self):
-        """DaemonRemoteError 业务错误原样透传，不重试不包装。"""
-        client = _stub_client()
-        calls = []
+    def test_call_request_id_resolution_order(self):
+        """call() 三级解析：显式参数 → params["request_id"] → uuid4，并写入 envelope.id。"""
+        body = _def_body(_read_rel("server/daemon_client.py"), "call")
+        assert "rid = request_id" in body
+        assert 'rid = params.get("request_id") or None' in body
+        assert "rid = str(uuid.uuid4())" in body
+        assert "self.last_request_id = rid" in body
+        assert '"id": rid' in body, "request_id 必须作为 JSON-RPC envelope.id（dedup 键）"
 
-        def fake_call(method, params=None):
-            calls.append(method)
-            raise DaemonRemoteError("E_BUSY", "业务冲突")
 
-        client.call = fake_call
+class TestMutationFailClosedSemantics:
+    """连接级故障统一 fail-closed：无 outcome 查询重放，无本地 SQLite 回退。"""
+
+    def test_business_error_passthrough_no_local_fallback(self, monkeypatch):
+        """DaemonRemoteError 业务结论原样透传，不包装为连接错误、不回退本地写出。"""
+        class _Busy:
+            def call_with_autostart(self, method, params=None):
+                raise DaemonRemoteError("E_TASK_CONFLICT", "业务冲突")
+
+        monkeypatch.setenv("CW_DAEMON_MODE", "enterprise")
+        monkeypatch.setattr(dc, "_get_rpc_client_for_route", lambda: _Busy())
+        monkeypatch.setattr(dc, "_inject_workspace_id", lambda p: p)
+        called = []
         with pytest.raises(DaemonRemoteError) as exc:
-            client.mutation_call("task.claim", {"task_id": "T-X"})
-        assert exc.value.code == "E_BUSY"
-        assert len(calls) == 1, "业务错误不得重试"
+            dc.route_task_write("task.claim", {"task_id": "T-X"}, lambda: called.append(1))
+        assert exc.value.code == "E_TASK_CONFLICT"
+        assert called == [], "业务错误不得回退本地 SQLite 写出"
 
-    def test_task_create_conn_fail_closed(self):
-        """task.create 断线必须 fail-closed，不查询 outcome 不重放（防重复任务）。"""
-        client = _stub_client()
+    def test_connection_failure_fail_closed(self, monkeypatch):
+        """连接级故障在 enterprise/auto 下抛 DaemonUnavailableError，不执行 fallback。"""
+        class _Down:
+            def call_with_autostart(self, method, params=None):
+                raise DaemonUnavailableError("daemon down")
 
-        def fake_call(method, params=None):
-            raise DaemonUnavailableError("daemon down")
-
-        queried = []
-
-        def fake_query(*a, **kw):
-            queried.append(a)
-            return None
-
-        client.call = fake_call
-        client._query_mutation_outcome = fake_query
+        monkeypatch.setenv("CW_DAEMON_MODE", "enterprise")
+        monkeypatch.setattr(dc, "_get_rpc_client_for_route", lambda: _Down())
+        monkeypatch.setattr(dc, "_inject_workspace_id", lambda p: p)
+        called = []
         with pytest.raises(DaemonUnavailableError):
-            client.mutation_call("task.create", {"title": "t"})
-        assert queried == [], "task.create 断线不得调用 _query_mutation_outcome 重放"
+            dc.route_task_write("task.create", {"title": "t"}, lambda: called.append(1))
+        assert called == [], "连接故障必须 fail-closed，不回退本地 SQLite"
 
-    def test_other_mutation_queries_outcome_before_replay(self):
-        """非 task.create 断线：先查提交结果（read RPC），已提交则直接返回不重放。"""
-        client = _stub_client()
+    def test_connect_level_error_classification(self):
+        """连接级错误码集合与业务错误区分（stale/missing manifest、daemon 不可达）。"""
+        assert dc._is_connect_level_daemon_error(
+            DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "down")
+        ) is True
+        assert dc._is_connect_level_daemon_error(
+            DaemonRemoteError("E_HTTP_MANIFEST_STALE", "stale")
+        ) is True
+        assert dc._is_connect_level_daemon_error(
+            DaemonRemoteError("E_TASK_CONFLICT", "conflict")
+        ) is False
+        assert dc._is_connect_level_daemon_error(DaemonUnavailableError("down")) is True
 
-        def fake_call(method, params=None):
-            raise DaemonUnavailableError("daemon down")
-
-        committed = {
-            "committed": True,
-            "request_id": "req-abc",
-            "outcome": {"status": "in_progress"},
-        }
-        client.call = fake_call
-        client._query_mutation_outcome = lambda *a, **kw: committed
-        result = client.mutation_call("task.claim", {"task_id": "T-X"})
-        assert result is committed, "断线 recovery 应返回 outcome 查询结果"
-
-    def test_unavailable_after_reconnect_attempts(self):
-        """重连耗尽仍不可达 → DaemonUnavailableError（含 request_id，可追踪）。"""
-        client = _stub_client()
-
-        def fake_call(method, params=None):
-            raise DaemonUnavailableError("still down")
-
-        client.call = fake_call
-        client._query_mutation_outcome = lambda *a, **kw: None
-        with pytest.raises(DaemonUnavailableError) as exc:
-            client.mutation_call("task.claim", {"task_id": "T-X"})
-        assert "request_id" in str(exc.value), "错误信息应包含 request_id 便于追踪"
+    def test_no_outcome_query_replay_api(self):
+        """断线 recovery 不做 outcome 查询重放（旧 API 已移除，禁止回流）。"""
+        src = _read_rel("server/daemon_client.py")
+        assert "def mutation_call" not in src, "mutation_call 已移除（写请求统一经 route_task_write）"
+        assert "_query_mutation_outcome" not in src, "断线不得查询 outcome 后重放（fail-closed）"
+        assert "_mutation_outcome_matches" not in src
 
     def test_business_error_is_not_connection_error(self):
         """业务错误与连接错误是不同异常类型（不被包装）。"""
@@ -480,32 +476,17 @@ class TestMutationRecoverySemantics:
         )
 
 
-class TestOutcomeReadRpcMapping:
-    """_query_mutation_outcome 的 read_rpc 映射存在，outcome 确认依赖状态+事件。"""
-
-    def test_read_rpc_mapping_present(self):
-        src = _read_rel("server/daemon_client.py")
-        for method in MUTATION_READ_RPC:
-            assert re.search(r'"%s": \("task\.status", "task_id"\)' % re.escape(method), src), (
-                f"_query_mutation_outcome 缺少 {method} → task.status 映射"
-            )
-
-    def test_outcome_matches_expected_status(self):
-        """_mutation_outcome_matches 的期望状态表存在（状态+事件双重确认）。"""
-        src = _read_rel("server/daemon_client.py")
-        for method, expected in MUTATION_READ_RPC.items():
-            assert re.search(r'"%s": "%s"' % (re.escape(method), re.escape(expected)), src), (
-                f"_mutation_outcome_matches 缺少 {method} → {expected} 状态确认"
-            )
-        # 事件 reason_code 确认（防止仅同名任务存在被误认为已提交）
-        assert "reason_code" in src, "_mutation_outcome_matches 必须核对 task_event reason_code"
-
-
 class TestCallWithAutostart:
-    """call_with_autostart：连接失败有界唤起 daemon，不提供本地降级。"""
+    """call_with_autostart：连接失败有界唤起；Governance_Write 不回退本地。"""
 
-    def test_no_local_fallback(self):
-        src = _read_rel("server/daemon_client.py")
-        assert "不提供本地降级" in src, "call_with_autostart 必须声明不提供本地降级"
-        assert "DaemonMutex" in src, "call_with_autostart 必须使用 DaemonMutex 有界唤起"
-        assert "ensure_daemon" in src, "call_with_autostart 必须调用 ensure_daemon"
+    def test_bounded_autostart_and_governance_fail_closed(self):
+        body = _def_body(_read_rel("server/daemon_client.py"), "call_with_autostart")
+        assert "DaemonMutex(endpoint)" in body, "必须经 DaemonMutex 有界互斥唤起"
+        assert "ensure_http_daemon(" in body, "必须调用 ensure_http_daemon 拉起 daemon"
+        assert "mutex.try_acquire()" in body and "mutex.release()" in body
+        # 唤起失败：read_only / Index_Write 返回降级标记；Governance_Write fail-closed
+        assert "route_degraded(method, endpoint, platform)" in body
+        assert "Governance_Write" in body
+        assert "raise DaemonUnavailableError(" in body, (
+            "Governance_Write 唤起失败必须 fail-closed，不得返回本地降级标记"
+        )

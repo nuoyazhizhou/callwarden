@@ -3809,6 +3809,58 @@ Tls("E_PKI_CA_LOAD: CW_CA_CERT 与 CW_CA_KEY 必须同时设置（外部 CA 模�
 至此 §9.41 登记的三族只剩 **C 族**（`test_legacy_write_jobs_baseline` 源码
 字面量断言漂移），待专项卡。
 
+## 9.44 C 族清零：源码字面量断言结构化（2026-11-19）
+
+### 1. 立项与范围
+
+用户裁决选题：**C 族——源码字面量断言漂移**（承接 §9.41 §5.1 / §9.43 §5）。
+范围：`tests/test_legacy_write_jobs_baseline.py` 单模块 9 条 FAILED。纯 tests
+面，无 rust_ext 改动，免 refresh。
+
+### 2. 根因（四类陈旧字面量）
+
+1. `test_build_graph_routes_to_daemon_native` 断言工具体内不出现
+   `build_full_graph`，但 S2 §16.4 的 `bind_scope=remote` 分支合法保留
+   `cg.build_full_graph(force=True)`（客户端本机扫描 + snapshot.upload）。
+2. `TestMutationRecoverySemantics` 5 条调用 `HttpDaemonRpcClient.mutation_call`
+   与其私有 `_query_mutation_outcome`，该 API 已由 `4b1380a` / `ef28ab9`
+   移除（写请求统一经 `route_task_write`）。
+3. `TestOutcomeReadRpcMapping` 2 条正则匹配 `_query_mutation_outcome` 的
+   `task.status` read_rpc 映射与 `_mutation_outcome_matches` 状态表，同样已移除。
+4. `TestCallWithAutostart::test_no_local_fallback` 断言 docstring 含
+   「不提供本地降级」，现行文档措辞为「带自动唤起与降级分流」+ Governance_Write
+   fail-closed。
+
+### 3. 修复（结构化取代字面量）
+
+- 新增 `_def_body(src, name, indent)`：按缩进提取函数体，断言落在实现结构而非
+  全文件出现/缺失。
+- `build_graph`：分别断言 remote profile 分支含 `cg.build_full_graph(force=True)`、
+  默认路径 `return _route(` 之后不含 `build_full_graph`。
+- mutation 幂等：`TestMutationRequestIdSemantics` 断言 `route_task_write` 生成
+  `req-` 前缀、`call()` 按「显式参数 → `params["request_id"]` → uuid4」三级解析
+  并写入 `envelope.id`。
+- mutation fail-closed：`TestMutationFailClosedSemantics` 用 monkeypatch
+  （`CW_DAEMON_MODE=enterprise` + 桩 RPC client）实测——业务错误原样透传且
+  fallback 不执行；连接级故障抛 `DaemonUnavailableError` 且 fallback 不执行；
+  并断言 `mutation_call` / `_query_mutation_outcome` / `_mutation_outcome_matches`
+  不得回流。
+- `call_with_autostart`：改为断言 `DaemonMutex` + `ensure_http_daemon` 有界唤起、
+  `route_degraded` 分流、Governance_Write `raise DaemonUnavailableError`。
+- 模块 docstring 第 2 段同步为现行 mutation 契约，删除 `mutation_call` 描述。
+
+### 4. 验证
+
+- `tests/test_legacy_write_jobs_baseline.py`：**30 passed / 0 failed**（原 9 条
+  FAILED 全清，其余 21 条未改动）。
+- 连带回归 `tests/test_legacy_write_jobs_baseline.py` +
+  `tests/test_legacy_query_baseline.py`：**101 passed**。
+- 未触碰 `_w3_harness.py`、daemon_client 生产源码与 §9.42/§9.43 已修模块。
+
+### 5. 口径
+
+§9.41 登记的三族（A/B/C）**全部清零**；CLI 面既有失败归因闭环。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`
