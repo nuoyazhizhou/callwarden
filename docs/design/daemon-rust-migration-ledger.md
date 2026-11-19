@@ -3896,9 +3896,45 @@ Tls("E_PKI_CA_LOAD: CW_CA_CERT 与 CW_CA_KEY 必须同时设置（外部 CA 模�
 - CLI 面回归判定：**通过**（0 failed）。
 - 4 条 live 用例长期只 skip、未产生真实 round-trip 覆盖。若需纳入常规门禁，应
   改为隔离 daemon 夹具（参照 §9.42 `_w3_harness`）或 env-gated 显式地址——
-  登记为后续候选，不在本章扩大。
+  **已在 §9.46 收口**。
 - 全量 `pytest tests/`（9532 条）仍不可作单次门禁（§22.6：失败项与执行顺序相关
   且各自烧授权/连接超时），分段 + 模块级超时门禁另卡处理。
+
+## 9.46 live round-trip 4 条修复：隔离 daemon 化（2026-11-19）
+
+### 1. 立项与范围
+
+§9.45 登记的 4 条长期 skip：`tests/test_cli_03_http_rpc.py` 的
+`task.status` / `task.list` / `task.status_tree` / authority-failure round-trip。
+纯 tests 面，无 rust_ext / 生产源码改动。
+
+### 2. 根因
+
+旧 fixture `HttpDaemonRpcClient().health()` 依赖**本机常驻生产 daemon** 的
+manifest 发现；测试进程 env 内无可用 endpoint（MCP 宿主的 daemon 不在其发现面）
+→ 一律 `pytest.skip`。且断言依赖真实 DB 的固定任务：CLI-02 卡存在、
+A′ epic（`T-1787293451688-c14b1e44`）有 ≥160 个直接子任务。
+
+### 3. 修复（隔离 daemon + 本地 seed 权威）
+
+- fixture 改 module-scope：`setup_w3_client(tmp, _REPO_ROOT, ws_id=1)`（§9.42
+  隔离 HTTPS daemon + 同源 mTLS），不再触碰生产 daemon / 真实 PKI。
+- `_seed_read_authority(task_db)`：seed 2 张卡（CLI-02 / A′）+ 165 个
+  `parent_id=A′` 子任务，并为两张父卡写 `task_workspace_bindings`（
+  `task.status` / `status_tree` 的 authority 反查；`task.list` 的 JOIN 过滤）。
+  **不 seed `workspace_authority_captures`**：owner ACL 在无 capture 时放行，
+  避免伪造真实用户 registry 身份。
+- teardown：terminate/wait（超时 kill）→ rmtree → `restore_w3_env()` →
+  还原 `CW_PKI_DIR`；前置缺失仍 skip，其余异常保持红（C7 口径）。
+
+### 4. 验证
+
+- 单模块：**5 passed / 0 skipped**（原 1 passed / 4 skipped）。
+- 全量 CLI 面复跑（116 文件 / 622 条）：**622 passed / 0 skipped / 0 failed**。
+
+### 5. 口径
+
+live round-trip 已纳入常规 CLI 回归；CLI 面 skip 清零。
 
 ## 10. 相关真相源
 

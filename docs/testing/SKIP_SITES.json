@@ -1142,15 +1142,15 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_cli_03_http_rpc.py:32:8:pytest.skip",
+      "site_id": "tests/test_cli_03_http_rpc.py:94:12:pytest.skip",
       "file": "tests/test_cli_03_http_rpc.py",
-      "line": 32,
-      "column": 8,
+      "line": 94,
+      "column": 12,
       "mechanism": "pytest.skip",
-      "reason_literal": "daemon 未运行，跳过 HTTP RPC round-trip 用例",
-      "reason_expression": "'daemon 未运行，跳过 HTTP RPC round-trip 用例'",
+      "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
+      "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "bbc3a96e01b1c8c33eef75a3d0642cd4c19f783da2973a0ccb5e30e63e7b7cd8",
+      "file_sha256": "eb8a45c50d8f731c8b85a31157d76afe5df41d4dfa030a1ded09adc5cb13900c",
       "root_cause": "UNREVIEWED"
     },
     {
