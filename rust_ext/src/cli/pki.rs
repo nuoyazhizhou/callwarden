@@ -68,6 +68,10 @@ pub fn init(root: &Path, bind: SocketAddr) -> Result<Value, PkiError> {
     ensure_owner_identity(&ca, root)?;
     Ok(json!({
         "pki_dir": root.to_string_lossy(),
+        "ca_source": match ca.source {
+            pki_api::CaSource::Internal => "internal",
+            pki_api::CaSource::External => "external",
+        },
         "ca_fingerprint_sha256": ca.fingerprint_sha256,
         "ca_cert_pem": ca.cert_pem,
         "server_cert_sha256": server.sha256,
@@ -365,31 +369,8 @@ pub fn cert_status(
 /// 各客户端在窗口内 `cw pki renew` 换发到新 CA；commit 收敛单 CA。
 pub const CA_ROTATION_WINDOW_SECS: i64 = 24 * 3600;
 
-/// 证书 Subject Key Identifier（当前 CA 身份比对基准）。
-fn cert_subject_key_id(der: &[u8]) -> Option<Vec<u8>> {
-    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
-    for ext in cert.extensions() {
-        if let x509_parser::extensions::ParsedExtension::SubjectKeyIdentifier(kid) =
-            ext.parsed_extension()
-        {
-            return Some(kid.0.to_vec());
-        }
-    }
-    None
-}
-
-/// 证书 Authority Key Identifier（客户端证书签发方身份比对基准）。
-fn cert_authority_key_id(der: &[u8]) -> Option<Vec<u8>> {
-    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
-    for ext in cert.extensions() {
-        if let x509_parser::extensions::ParsedExtension::AuthorityKeyIdentifier(aki) =
-            ext.parsed_extension()
-        {
-            return aki.key_identifier.as_ref().map(|k| k.0.to_vec());
-        }
-    }
-    None
-}
+// AKI/SKI 读取已上移 pki_api（§9.36 ensure_server_cert issuer 归属检查复用）：
+// `pki_api::cert_subject_key_id` / `pki_api::cert_authority_key_id`。
 
 fn read_rotation_window(root: &Path) -> Result<Option<Value>, PkiError> {
     let path = root.join("ca-previous").join("window.json");
@@ -414,6 +395,15 @@ fn read_rotation_window(root: &Path) -> Result<Option<Value>, PkiError> {
 /// 6. 写热加载哨兵 + 输出 `{deadline, hot_reload: "requested"}`。
 pub fn rotate_ca_prepare(root: &Path) -> Result<Value, PkiError> {
     let _guard = pki_api::pki_write_lock();
+    // §9.36：外部 CA 模式拒绝 rotate-ca——签发 CA 的生命周期归外部系统管理，
+    // daemon 不改写外部文件；轮换由用户替换 CW_CA_CERT/CW_CA_KEY 文件内容 +
+    // 写热加载哨兵完成（ADR §4.3）。
+    if pki_api::external_ca_paths()?.is_some() {
+        return Err(PkiError::new(
+            "E_PKI_ROTATE_EXTERNAL_CA",
+            "外部 CA 模式不支持 rotate-ca：替换 CW_CA_CERT/CW_CA_KEY 指向的文件并触发 TLS 热加载完成轮换",
+        ));
+    }
     if read_rotation_window(root)?.is_some() {
         return Err(PkiError::new(
             "E_PKI_ROTATE_PENDING",
@@ -522,7 +512,7 @@ pub fn rotate_ca_status(root: &Path) -> Result<Value, PkiError> {
             let ca = pki_api::load_ca(root)?.ok_or_else(|| {
                 PkiError::new("E_PKI_CA_LOAD", "pki 根缺少 ca/ca.crt")
             })?;
-            let ca_ski = cert_subject_key_id(ca.cert_der.as_ref());
+            let ca_ski = pki_api::cert_subject_key_id(ca.cert_der.as_ref());
             let mut pending = Vec::new();
             let identities = root.join("identities");
             if identities.exists() {
@@ -542,7 +532,7 @@ pub fn rotate_ca_status(root: &Path) -> Result<Value, PkiError> {
                         pending.push(entry.file_name().to_string_lossy().to_string());
                         continue;
                     };
-                    if cert_authority_key_id(&der) != ca_ski {
+                    if pki_api::cert_authority_key_id(&der) != ca_ski {
                         pending.push(entry.file_name().to_string_lossy().to_string());
                     }
                 }
@@ -1193,6 +1183,22 @@ fn parse_bind(bind: &str) -> Result<SocketAddr, PkiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotate_ca_prepare_rejected_in_external_mode() {
+        // §9.36：外部 CA 模式下 rotate-ca 必须被拒绝（轮换由用户替换
+        // CW_CA_CERT/CW_CA_KEY 文件 + 热加载哨兵完成）。测试构建下用线程
+        // 局部注入替代真实 env，避免污染并行测试。
+        let _guard = pki_api::ExternalCaOverrideGuard::inject(Some((
+            PathBuf::from("Z:/definitely/missing/ca.crt"),
+            PathBuf::from("Z:/definitely/missing/ca.key"),
+        )));
+        let tmp = std::env::temp_dir().join(format!("cw-pki-rot-ext-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let err = rotate_ca_prepare(&tmp);
+        assert_eq!(err.unwrap_err().code, "E_PKI_ROTATE_EXTERNAL_CA");
+    }
 
     #[test]
     fn parse_endpoint_requires_https() {

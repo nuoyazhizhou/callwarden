@@ -123,8 +123,9 @@
 ```
 
 - 算法：ECDSA P-256（默认）；可选 RSA-3072。TLS 仅 AEAD 套件，TLS 1.2+（优先 1.3）。
-- CA：自签，`O=CallWarden Local CA`，有效期 10 年；可导入外部 CA（配置
-  `pki.external_ca_cert/key`，此时不再自签）。
+- CA：自签，`O=CallWarden Local CA`，有效期 10 年；可导入外部 CA（§9.36，2026-11-19：
+  环境变量 `CW_CA_CERT` + `CW_CA_KEY` **同时**指向外部 PEM 文件即启用，此时不再自签；
+  只设其一 fail-closed；详见 §4.3 外部 CA 细则）。
 - 服务端叶证书：`O=CallWarden Daemon`，EKU `serverAuth`，有效期 1 年；
   SAN 必须覆盖 `DNS:localhost`、`IP:127.0.0.1`、`IP:::1`、`IP:<LAN>`、`DNS:<hostname>`、
   `DNS:<fqdn>`；启动时若 SAN 不覆盖实际绑定地址 → `E_TLS_SAN_MISMATCH` fail-closed。
@@ -215,8 +216,26 @@ rotate-ca 落地细则（§9.34，2026-11-18）：
 - daemon 未运行时哨兵保留，下次启动 bind 时 reload 路径自愈（幂等）。
 - 输出语义：rotate 命令的 `restart_required: true` 废弃，改为
   `hot_reload: "requested"` + note。
-- 外部 CA（`CW_CA_CERT` 指向外部文件）：daemon 不改写外部文件，窗口期内
-  用户须自行替换文件内容为新 CA。
+
+外部 CA 导入细则（§9.36，2026-11-19，关闭 §14 #2）：
+
+- 配置面：`CW_CA_CERT` + `CW_CA_KEY` **同时**设置且非空 → 外部 CA 模式；
+  都未设置 → 内置自签 CA；**只设其一 → `E_PKI_CA_LOAD` fail-closed**
+  （半配置静默回退会造成"签发 CA 与预期不符"）。
+- 加载校验（全 fail-closed `E_PKI_CA_LOAD`）：文件可读、单张 CERTIFICATE 块、
+  BasicConstraints CA=true、KeyUsage 含 keyCertSign、有效期内、私钥公钥 =
+  证书 SPKI；`ca-previous/` 窗口未收敛 → 拒绝（先 commit）；磁盘存在指纹
+  不同的内置 `ca/` → 拒绝（内外切换须显式迁移，客户端重新 enroll）。
+- daemon 只读外部文件，绝不改写；外部 CA 模式下 `ensure_ca` 绝不自签生成
+  内置 CA（缺文件即 fail-closed，不兜底）。manifest `tls.ca_source` =
+  `external`（内置为 `internal`），`cw pki init` 同步输出 `ca_source`。
+- 轮换：外部 CA 模式拒绝 `cw pki rotate-ca`（`E_PKI_ROTATE_EXTERNAL_CA`）——
+  签发 CA 生命周期归外部系统，用户直接替换 `CW_CA_CERT`/`CW_CA_KEY` 指向的
+  文件内容 + 写热加载哨兵（§9.35）完成轮换。
+- 自愈：reload 时 `ensure_server_cert` 做 issuer 归属检查（服务端证书 AKI ≠
+  当前 CA SKI，或证书无 AKI）→ 自动以新 CA 重签服务端证书；客户端身份由
+  用户重新 enroll（daemon 不主动吊销旧身份，旧 CA 移除后握手自然拒绝）。
+- 服务端证书自 §9.36 起写 AKI 扩展（此前仅客户端证书写，§9.34）。
 
 ---
 
@@ -516,7 +535,11 @@ python scripts/check_e2e_matrix_closure.py
 1. ~~是否引入 `httpx` 替代 `urllib`~~ **已决（2026-11-04）：S1 保持 `urllib.request` +
    `ssl.SSLContext`，零新增运行时依赖**；仅当双向认证/证书链测试被 stdlib 阻塞时，
    再单独评估引入 `httpx` 并同步 `requirements.txt` 与打包声明。
-2. 外部 CA 导入的配置面与 UI。
+2. ~~外部 CA 导入的配置面与 UI~~ **已决（2026-11-19，§9.36）：配置面 =
+   环境变量 `CW_CA_CERT` + `CW_CA_KEY` 同时指向外部 PEM（只设其一 fail-closed
+   `E_PKI_CA_LOAD`）；加载期校验 CA=true/keyCertSign/有效期/cert-key 配对；
+   daemon 只读外部文件；外部模式拒绝 rotate-ca，轮换 = 用户换文件 +
+   热加载哨兵；reload 时按 AKI 归属检查自动重签服务端证书**。
 3. ~~证书热加载（不重启轮换服务端证书）~~ **已决（2026-11-19，§9.35）：
    哨兵文件 `pki/tls_reload.request` + daemon watcher 1s 扫描 + 6h 周期
    reload；`HotTls` 原子换入，新连接新证书、在途连接不受影响**。

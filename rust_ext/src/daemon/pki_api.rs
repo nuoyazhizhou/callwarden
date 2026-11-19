@@ -318,10 +318,15 @@ fn cert_not_after_rfc3339(der: &[u8]) -> String {
 // CA
 // ============================================
 
-/// 本地 CA（证书公开，私钥只在磁盘 0600 文件里，按需读入）。
+/// 本地 CA（证书公开，私钥只在磁盘 0600 文件或外部文件里，按需读入）。
 #[derive(Debug, Clone)]
 pub struct LocalCa {
     pub root: PathBuf,
+    /// CA 来源（§9.36）：内置 `ca/` 或外部 env 文件。
+    pub source: CaSource,
+    /// CA 私钥路径：内置模式为 `ca/ca.key`；外部模式为 `CW_CA_KEY` 指向的
+    /// 外部文件（daemon 只读，绝不改写）。
+    pub key_path: PathBuf,
     pub cert_pem: String,
     pub cert_der: CertificateDer<'static>,
     pub fingerprint_sha256: String,
@@ -334,15 +339,266 @@ impl LocalCa {
 
     /// 读入 CA 私钥并重建 `Issuer`（DN / key usage / key id method 从 CA 证书反解）。
     pub fn issuer(&self) -> Result<Issuer<'static, KeyPair>, PkiError> {
-        let key_path = self.ca_dir().join("ca.key");
-        let key_pem = read_text(&key_path)?;
+        let key_pem = read_text(&self.key_path)?;
         let key = KeyPair::from_pem(&key_pem).map_err(|e| PkiError::rcgen("ca key", e))?;
         Issuer::from_ca_cert_der(&self.cert_der, key).map_err(|e| PkiError::rcgen("ca issuer", e))
     }
 }
 
+/// CA 来源（§9.36）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaSource {
+    /// 内置自签 CA（`ca/` 目录，daemon 全权管理）。
+    Internal,
+    /// 外部导入 CA（`CW_CA_CERT`/`CW_CA_KEY` 指向的外部文件，daemon 只读）。
+    External,
+}
+
+/// 外部 CA 配置解析（§9.36）：纯逻辑——trim、空串视为未设置、
+/// **只设其一 → fail-closed**（半配置是典型误操作，静默回退内置 CA 会造成
+/// "签发 CA 与预期不符"）。env 读取与校验分离，便于免 env 测试。
+fn external_ca_from_values(
+    cert: Option<std::ffi::OsString>,
+    key: Option<std::ffi::OsString>,
+) -> Result<Option<(PathBuf, PathBuf)>, PkiError> {
+    let cert = cert.as_deref().map(|s| s.to_string_lossy().to_string());
+    let key = key.as_deref().map(|s| s.to_string_lossy().to_string());
+    let cert = cert.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let key = key.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    match (cert, key) {
+        (Some(c), Some(k)) => Ok(Some((PathBuf::from(c), PathBuf::from(k)))),
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(PkiError::new(
+            "E_PKI_CA_LOAD",
+            "CW_CA_CERT 与 CW_CA_KEY 必须同时设置（外部 CA 模式）；当前只设置了 CW_CA_CERT",
+        )),
+        (None, Some(_)) => Err(PkiError::new(
+            "E_PKI_CA_LOAD",
+            "CW_CA_CERT 与 CW_CA_KEY 必须同时设置（外部 CA 模式）；当前只设置了 CW_CA_KEY",
+        )),
+    }
+}
+
+thread_local! {
+    /// 测试构建专用：注入外部 CA 配置（`Some(None)` 强制内置、`Some(Some(paths))`
+    /// 强制外部）。线程局部 → 测试并行互不污染，且与宿主机真实 env 解耦。
+    static EXTERNAL_CA_TEST_OVERRIDE: std::cell::RefCell<Option<Option<(PathBuf, PathBuf)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 测试专用：注入外部 CA 配置，Drop 时自动清除（panic 安全）。
+#[cfg(test)]
+pub(crate) struct ExternalCaOverrideGuard;
+
+#[cfg(test)]
+impl ExternalCaOverrideGuard {
+    pub(crate) fn inject(injected: Option<(PathBuf, PathBuf)>) -> Self {
+        EXTERNAL_CA_TEST_OVERRIDE.with(|c| *c.borrow_mut() = Some(injected));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ExternalCaOverrideGuard {
+    fn drop(&mut self) {
+        EXTERNAL_CA_TEST_OVERRIDE.with(|c| *c.borrow_mut() = None);
+    }
+}
+
+/// 当前是否启用外部 CA 模式（测试构建走线程局部注入，生产构建读 env）。
+pub fn external_ca_paths() -> Result<Option<(PathBuf, PathBuf)>, PkiError> {
+    #[cfg(test)]
+    {
+        if let Some(injected) =
+            EXTERNAL_CA_TEST_OVERRIDE.with(|c| c.borrow().clone())
+        {
+            return Ok(injected);
+        }
+        // 测试构建未注入 → 视为未配置（内置 CA），保证测试与宿主机 env 解耦。
+        return Ok(None);
+    }
+    #[cfg(not(test))]
+    {
+        external_ca_from_values(
+            std::env::var_os("CW_CA_CERT"),
+            std::env::var_os("CW_CA_KEY"),
+        )
+    }
+}
+
+/// 证书 Subject Key Identifier（CA 身份比对基准，§9.36 ensure_server_cert
+/// issuer 归属检查复用；cli/pki.rs rotate-ca status 同源）。
+pub fn cert_subject_key_id(der: &[u8]) -> Option<Vec<u8>> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
+    for ext in cert.extensions() {
+        if let x509_parser::extensions::ParsedExtension::SubjectKeyIdentifier(kid) =
+            ext.parsed_extension()
+        {
+            return Some(kid.0.to_vec());
+        }
+    }
+    None
+}
+
+/// 证书 Authority Key Identifier（签发方身份比对基准）。
+pub fn cert_authority_key_id(der: &[u8]) -> Option<Vec<u8>> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
+    for ext in cert.extensions() {
+        if let x509_parser::extensions::ParsedExtension::AuthorityKeyIdentifier(aki) =
+            ext.parsed_extension()
+        {
+            return aki.key_identifier.as_ref().map(|k| k.0.to_vec());
+        }
+    }
+    None
+}
+
+/// 证书 SPKI 公钥原始字节（外部 CA 的 cert/key 匹配校验用）。
+fn spki_public_key_bytes(der: &[u8]) -> Option<Vec<u8>> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
+    Some(cert.public_key().subject_public_key.data.to_vec())
+}
+
+/// 校验外部 CA 证书可用于签发（§9.36 fail-closed）：
+/// 单张 CERTIFICATE 块、BasicConstraints CA=true、KeyUsage 含 keyCertSign、
+/// 在有效期内。任一不满足 → `E_PKI_CA_LOAD`。
+fn validate_external_ca_cert(der: &[u8], source: &Path) -> Result<(), PkiError> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).map_err(|e| {
+        PkiError::new(
+            "E_PKI_CA_LOAD",
+            format!("外部 CA {} 解析失败: {}", source.display(), e),
+        )
+    })?;
+    let is_ca = cert
+        .basic_constraints()
+        .ok()
+        .flatten()
+        .map(|bc| bc.value.ca)
+        .unwrap_or(false);
+    if !is_ca {
+        return Err(PkiError::new(
+            "E_PKI_CA_LOAD",
+            format!("外部 CA {} 不是 CA 证书（BasicConstraints CA=false）", source.display()),
+        ));
+    }
+    let key_cert_sign = cert
+        .key_usage()
+        .ok()
+        .flatten()
+        .map(|ku| ku.value.key_cert_sign())
+        .unwrap_or(false);
+    if !key_cert_sign {
+        return Err(PkiError::new(
+            "E_PKI_CA_LOAD",
+            format!("外部 CA {} 缺少 keyCertSign 用法，不能签发证书", source.display()),
+        ));
+    }
+    let now = now_unix();
+    if cert.validity().not_before.timestamp() > now {
+        return Err(PkiError::new(
+            "E_PKI_CA_LOAD",
+            format!("外部 CA {} 尚未生效（not_before 在未来）", source.display()),
+        ));
+    }
+    if cert.validity().not_after.timestamp() < now {
+        return Err(PkiError::new(
+            "E_PKI_CA_LOAD",
+            format!("外部 CA {} 已过期（not_after {}）", source.display(), cert.validity().not_after),
+        ));
+    }
+    Ok(())
+}
+
 /// 读取已有 CA（不存在返回 Ok(None)）。
+///
+/// §9.36 外部 CA 模式（`CW_CA_CERT`+`CW_CA_KEY` 同时设置）：env 优先——
+/// 外部文件即唯一签发 CA，`ca/` 目录被完全忽略；外部文件缺失/非法 →
+/// `E_PKI_CA_LOAD` fail-closed，**绝不自签兜底**（签发 CA 与预期不符比不可用
+/// 更危险）。外部模式下的磁盘共存检查：
+/// - `ca-previous/` 存在 → 拒绝（先 `rotate-ca --action commit` 收敛内置窗口）；
+/// - `ca/ca.crt` 存在且指纹 ≠ 外部证书 → 拒绝（内置→外部的模式切换须显式
+///   迁移：收敛窗口后移除/归档内置 `ca/`，客户端重新 enroll）。
 pub fn load_ca(root: &Path) -> Result<Option<LocalCa>, PkiError> {
+    load_ca_with_external(root, external_ca_paths()?)
+}
+
+/// `load_ca` 的参数化核心（外部 CA 路径由调用方注入；测试用它避免进程级
+/// env 污染，生产路径由 `load_ca` 读 env 后传入）。
+fn load_ca_with_external(
+    root: &Path,
+    external: Option<(PathBuf, PathBuf)>,
+) -> Result<Option<LocalCa>, PkiError> {
+    if let Some((cert_path, key_path)) = external {
+        if root.join("ca-previous").join("ca.crt").exists() {
+            return Err(PkiError::new(
+                "E_PKI_CA_LOAD",
+                "外部 CA 模式与 rotate-ca 双根窗口不兼容：先 `cw pki rotate-ca --action commit` 收敛内置 CA 窗口",
+            ));
+        }
+        let cert_pem = read_text(&cert_path).map_err(|e| {
+            PkiError::new("E_PKI_CA_LOAD", format!("外部 CA 证书不可读: {}", e))
+        })?;
+        let blocks = pem_decode_all(&cert_pem, "CERTIFICATE");
+        if blocks.len() != 1 {
+            return Err(PkiError::new(
+                "E_PKI_CA_LOAD",
+                format!(
+                    "外部 CA {} 须包含且仅包含 1 张 CERTIFICATE 块（实际 {} 张）",
+                    cert_path.display(),
+                    blocks.len()
+                ),
+            ));
+        }
+        let der = blocks.into_iter().next().expect("blocks 非空");
+        validate_external_ca_cert(&der, &cert_path)?;
+        // cert/key 匹配校验：私钥公钥必须等于证书 SPKI（误配对是典型运维错误，
+        // 不在加载期拦截就会在首次签发时才以费解的签名错误暴露）。
+        let key_pem = read_text(&key_path).map_err(|e| {
+            PkiError::new("E_PKI_CA_LOAD", format!("外部 CA 私钥不可读: {}", e))
+        })?;
+        let key = KeyPair::from_pem(&key_pem)
+            .map_err(|e| PkiError::new("E_PKI_CA_LOAD", format!("外部 CA 私钥 {} 解析失败: {}", key_path.display(), e)))?;
+        let spki = spki_public_key_bytes(&der).ok_or_else(|| {
+            PkiError::new("E_PKI_CA_LOAD", format!("外部 CA {} SPKI 解析失败", cert_path.display()))
+        })?;
+        if key.public_key_raw() != spki.as_slice() {
+            return Err(PkiError::new(
+                "E_PKI_CA_LOAD",
+                format!(
+                    "外部 CA 私钥 {} 与证书 {} 不匹配（公钥不一致）",
+                    key_path.display(),
+                    cert_path.display()
+                ),
+            ));
+        }
+        // 磁盘内置 CA 共存检查：指纹相同（如曾导出复制）→ 兼容放行；
+        // 不同 → 显式迁移，拒绝静默切换签发 CA。
+        let internal_crt = root.join("ca").join("ca.crt");
+        if internal_crt.exists() {
+            let internal_pem = read_text(&internal_crt)?;
+            if let Some(internal_der) = pem_decode(&internal_pem, "CERTIFICATE") {
+                if sha256_hex(&internal_der) != sha256_hex(&der) {
+                    return Err(PkiError::new(
+                        "E_PKI_CA_LOAD",
+                        format!(
+                            "外部 CA {} 与磁盘内置 CA {} 指纹不一致：切换签发 CA 须显式迁移（收敛 rotate-ca 窗口后移除/归档内置 ca/ 目录，客户端重新 enroll）",
+                            cert_path.display(),
+                            internal_crt.display()
+                        ),
+                    ));
+                }
+            }
+        }
+        return Ok(Some(LocalCa {
+            root: root.to_path_buf(),
+            source: CaSource::External,
+            key_path,
+            cert_pem,
+            cert_der: CertificateDer::from(der.clone()),
+            fingerprint_sha256: sha256_hex(&der),
+        }));
+    }
+
     let crt = root.join("ca").join("ca.crt");
     if !crt.exists() {
         return Ok(None);
@@ -356,6 +612,8 @@ pub fn load_ca(root: &Path) -> Result<Option<LocalCa>, PkiError> {
     };
     Ok(Some(LocalCa {
         root: root.to_path_buf(),
+        source: CaSource::Internal,
+        key_path: root.join("ca").join("ca.key"),
         cert_pem,
         cert_der: CertificateDer::from(der.clone()),
         fingerprint_sha256: sha256_hex(&der),
@@ -402,6 +660,10 @@ pub fn ensure_ca(root: &Path) -> Result<LocalCa, PkiError> {
 
 /// 已持有 `pki_write_lock` 的调用方（§9.34 rotate-ca prepare）使用此变体，
 /// 避免 `ensure_ca` 重入同一把非重入锁导致同线程死锁。
+///
+/// §9.36 外部 CA 模式：`load_ca` 的 env 分支要么成功要么 fail-closed，
+/// 永不走到自签分支——外部 CA 模式下 daemon 不得生成任何内置 CA（否则
+/// "导入外部 CA"会悄悄退化为内外并存）。
 pub fn ensure_ca_locked(root: &Path) -> Result<LocalCa, PkiError> {
     if let Some(ca) = load_ca(root)? {
         return Ok(ca);
@@ -463,6 +725,8 @@ pub fn ensure_ca_locked(root: &Path) -> Result<LocalCa, PkiError> {
 
     Ok(LocalCa {
         root: root.to_path_buf(),
+        source: CaSource::Internal,
+        key_path: root.join("ca").join("ca.key"),
         cert_pem,
         cert_der,
         fingerprint_sha256: fingerprint,
@@ -563,6 +827,21 @@ fn ensure_server_cert_locked(
             ));
         }
         let cert_der = CertificateDer::from(der.clone());
+        // §9.36 issuer 归属检查：服务端证书必须由当前 CA 签发（AKI == CA SKI）。
+        // CA 未含 SKI 时无法判定 → 跳过（避免无法判定导致每次 reload 重签churn）；
+        // 叶证书缺 AKI（含解析失败）→ 视为不归属，重签一次后新证书带 AKI 即稳定。
+        // 这支撑外部 CA 文件被用户整体替换后的热加载自愈：换 CA → reload →
+        // 旧 server 证书 AKI 不归属新 CA → 自动以新 CA 重签。
+        let ca_ski = cert_subject_key_id(ca.cert_der.as_ref());
+        if ca_ski.is_some() {
+            let server_aki = cert_authority_key_id(&der);
+            if server_aki.as_ref() != ca_ski.as_ref() {
+                eprintln!(
+                    "[cw_daemon][pki] server cert not issued by current CA (AKI mismatch), reissuing"
+                );
+                return ensure_server_cert_reissue(ca, bind, &required);
+            }
+        }
         if !server_cert_needs_renewal(&der, now_unix(), SERVER_CERT_RENEW_THRESHOLD_DAYS) {
             return Ok(ServerCertificate {
                 cert_pem,
@@ -582,6 +861,20 @@ fn ensure_server_cert_locked(
         );
     }
 
+    ensure_server_cert_reissue(ca, bind, &required)
+}
+
+/// 强制重签服务端叶证书（覆盖 `server/`，SAN 以 `required` 为准）。
+/// §9.36：临期重签、AKI 不归属重签共用此路径。
+fn ensure_server_cert_reissue(
+    ca: &LocalCa,
+    bind: &SocketAddr,
+    required: &[String],
+) -> Result<ServerCertificate, PkiError> {
+    let dir = ca.root.join("server");
+    let crt_path = dir.join("server.crt");
+    let key_path = dir.join("server.key");
+
     ensure_dir(&dir)?;
     let mut params = CertificateParams::new(Vec::<String>::new())
         .map_err(|e| PkiError::rcgen("server params", e))?;
@@ -599,6 +892,11 @@ fn ensure_server_cert_locked(
     ];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.subject_alt_names = required.iter().filter_map(|s| san_type_from_string(s)).collect();
+    // §9.36：写 AKI 扩展（签发方 SKI），供 issuer 归属检查判定服务端证书
+    // 是否由当前 CA 签发——外部 CA 文件被用户替换后 reload 自愈的依据。
+    // §9.36 前签发的服务端证书无 AKI，归属检查按"无法判定归属"重签一次，
+    // 新证书带 AKI 后即幂等稳定。
+    params.use_authority_key_identifier_extension = true;
     let now = now_unix();
     set_validity(&mut params, now - 3600, now + SERVER_VALIDITY_SECS);
 
@@ -1256,5 +1554,239 @@ mod tests {
             server_issuer, new_subject,
             "reissued server cert must be issued by the new CA"
         );
+    }
+
+    // ============================================
+    // §9.36：外部 CA 导入（CW_CA_CERT + CW_CA_KEY）
+    // ============================================
+
+    /// 在指定目录生成一个独立自签 CA（cert/key PEM 文件 + 指纹）。
+    fn make_standalone_ca(dir: &Path, cn: &str) -> (PathBuf, PathBuf, String) {
+        let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(DnType::OrganizationName, "CallWarden Test");
+        params.distinguished_name.push(DnType::CommonName, cn);
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let now = now_unix();
+        set_validity(&mut params, now - 3600, now + CA_VALIDITY_SECS);
+        let key = KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key).unwrap();
+        let cert_der = cert.der().clone();
+        let fp = sha256_hex(cert_der.as_ref());
+        let cert_path = dir.join(format!("{}.crt", cn));
+        let key_path = dir.join(format!("{}.key", cn));
+        std::fs::write(&cert_path, pem_encode("CERTIFICATE", cert_der.as_ref())).unwrap();
+        std::fs::write(&key_path, pem_encode("PRIVATE KEY", &key.serialize_der())).unwrap();
+        (cert_path, key_path, fp)
+    }
+
+    #[test]
+    fn test_external_ca_loads_and_issues() {
+        let ext_dir = tempfile::tempdir().unwrap();
+        let (cert_path, key_path, fp) = make_standalone_ca(ext_dir.path(), "External CA A");
+        let root = tempfile::tempdir().unwrap();
+        let ca = load_ca_with_external(root.path(), Some((cert_path, key_path)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(ca.source, CaSource::External);
+        assert_eq!(ca.fingerprint_sha256, fp);
+        assert!(
+            !root.path().join("ca").exists(),
+            "外部 CA 模式不得创建/生成内置 ca/ 目录"
+        );
+        // 签发路径可用：以外部 CA 签发客户端身份，SAN principal 正确。
+        let (cert_pem, _key_pem) = issue_local_client_identity(&ca, "pr_ext_test").unwrap();
+        let der = pem_decode(&cert_pem, "CERTIFICATE").unwrap();
+        assert_eq!(
+            principal_id_from_cert(&der).as_deref(),
+            Some("pr_ext_test")
+        );
+    }
+
+    #[test]
+    fn test_external_ca_missing_file_fail_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let err = load_ca_with_external(
+            root.path(),
+            Some((
+                PathBuf::from("Z:/definitely/missing/ca.crt"),
+                PathBuf::from("Z:/definitely/missing/ca.key"),
+            )),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD");
+        assert!(
+            !root.path().join("ca").exists(),
+            "外部 CA 缺失时绝不自签兜底（不得生成 ca/）"
+        );
+    }
+
+    #[test]
+    fn test_external_ca_key_mismatch_fail_closed() {
+        let ext_dir = tempfile::tempdir().unwrap();
+        let (cert1, _, _) = make_standalone_ca(ext_dir.path(), "CA M1");
+        let (_, key2, _) = make_standalone_ca(ext_dir.path(), "CA M2");
+        let root = tempfile::tempdir().unwrap();
+        let err =
+            load_ca_with_external(root.path(), Some((cert1, key2))).unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD", "cert/key 配对必须加载期拦截");
+    }
+
+    #[test]
+    fn test_external_ca_rejects_non_ca_cert() {
+        let ext_dir = tempfile::tempdir().unwrap();
+        let (ca_cert, ca_key, _) = make_standalone_ca(ext_dir.path(), "CA Leaf Test");
+        let scratch = tempfile::tempdir().unwrap();
+        let ca = load_ca_with_external(scratch.path(), Some((ca_cert, ca_key.clone())))
+            .unwrap()
+            .unwrap();
+        // 用 CA 签一张叶子证书（NoCa），再拿它冒充外部 CA。
+        let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.is_ca = IsCa::NoCa;
+        let now = now_unix();
+        set_validity(&mut params, now - 3600, now + 86_400);
+        let key = KeyPair::generate().unwrap();
+        let leaf = params.signed_by(&key, &ca.issuer().unwrap()).unwrap();
+        let leaf_path = ext_dir.path().join("leaf.crt");
+        std::fs::write(&leaf_path, pem_encode("CERTIFICATE", leaf.der())).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let err =
+            load_ca_with_external(root.path(), Some((leaf_path, ca_key))).unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD", "非 CA 证书不能当外部 CA");
+    }
+
+    #[test]
+    fn test_external_ca_rejects_expired_ca() {
+        let ext_dir = tempfile::tempdir().unwrap();
+        let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "Expired CA");
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+        let now = now_unix();
+        set_validity(&mut params, now - 10 * 86_400, now - 86_400);
+        let key = KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key).unwrap();
+        let cert_path = ext_dir.path().join("expired.crt");
+        let key_path = ext_dir.path().join("expired.key");
+        std::fs::write(&cert_path, pem_encode("CERTIFICATE", cert.der())).unwrap();
+        std::fs::write(&key_path, pem_encode("PRIVATE KEY", &key.serialize_der())).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let err =
+            load_ca_with_external(root.path(), Some((cert_path, key_path))).unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD", "过期外部 CA 必须 fail-closed");
+    }
+
+    #[test]
+    fn test_external_ca_conflicts_with_internal_ca() {
+        let root = tempfile::tempdir().unwrap();
+        let internal = ensure_ca(root.path()).unwrap();
+        let ext_dir = tempfile::tempdir().unwrap();
+        let (cert, key, _) = make_standalone_ca(ext_dir.path(), "External CA B");
+        let err = load_ca_with_external(root.path(), Some((cert, key))).unwrap_err();
+        assert_eq!(
+            err.code, "E_PKI_CA_LOAD",
+            "外部 CA 与磁盘内置 CA 指纹不一致必须拒绝静默切换"
+        );
+        // 指纹相同（外部文件 = 内置 CA 的副本）→ 兼容放行。
+        let ext2 = tempfile::tempdir().unwrap();
+        std::fs::write(ext2.path().join("copy.crt"), &internal.cert_pem).unwrap();
+        std::fs::copy(
+            root.path().join("ca").join("ca.key"),
+            ext2.path().join("copy.key"),
+        )
+        .unwrap();
+        let ca = load_ca_with_external(
+            root.path(),
+            Some((ext2.path().join("copy.crt"), ext2.path().join("copy.key"))),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(ca.source, CaSource::External);
+        assert_eq!(ca.fingerprint_sha256, internal.fingerprint_sha256);
+    }
+
+    #[test]
+    fn test_external_ca_rotation_window_conflict() {
+        // 内置 rotate-ca 双根窗口未收敛时进入外部 CA 模式 → 拒绝。
+        let root = tempfile::tempdir().unwrap();
+        ensure_ca(root.path()).unwrap();
+        std::fs::rename(root.path().join("ca"), root.path().join("ca-previous")).unwrap();
+        ensure_ca(root.path()).unwrap();
+        let ext_dir = tempfile::tempdir().unwrap();
+        let (cert, key, _) = make_standalone_ca(ext_dir.path(), "External CA C");
+        let err = load_ca_with_external(root.path(), Some((cert, key))).unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD");
+    }
+
+    #[test]
+    fn test_external_ca_env_semantics() {
+        // env 解析纯逻辑：都未设置 → 内置；只设其一 → fail-closed。
+        use std::ffi::OsString;
+        assert!(
+            external_ca_from_values(None, None).unwrap().is_none(),
+            "两个 env 都未设置 → 内置 CA 模式"
+        );
+        let err = external_ca_from_values(Some(OsString::from("a.crt")), None).unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD", "只设 CW_CA_CERT → fail-closed");
+        let err = external_ca_from_values(None, Some(OsString::from("a.key"))).unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD", "只设 CW_CA_KEY → fail-closed");
+        // 空串与空白等同未设置。
+        let err = external_ca_from_values(Some(OsString::from("")), Some(OsString::from("k")))
+            .unwrap_err();
+        assert_eq!(err.code, "E_PKI_CA_LOAD", "空 CW_CA_CERT 视为未设置 → 只设其一");
+        let (c, k) =
+            external_ca_from_values(Some(OsString::from(" a.crt ")), Some(OsString::from("k")))
+                .unwrap()
+                .unwrap();
+        assert_eq!(c, PathBuf::from("a.crt"), "trim 前后空白");
+        assert_eq!(k, PathBuf::from("k"));
+    }
+
+    #[test]
+    fn test_external_ca_ensure_ca_never_self_signs() {
+        // 注入"指向不存在文件"的外部 CA 配置 → ensure_ca 必须 fail-closed，
+        // 且绝不自签生成内置 ca/（生产构建下由 CW_CA_CERT/CW_CA_KEY env 触发）。
+        let _guard = ExternalCaOverrideGuard::inject(Some((
+            PathBuf::from("Z:/definitely/missing/ca.crt"),
+            PathBuf::from("Z:/definitely/missing/ca.key"),
+        )));
+        let root = tempfile::tempdir().unwrap();
+        let result = ensure_ca(root.path());
+        assert!(result.is_err(), "外部 CA 文件缺失 → ensure_ca fail-closed");
+        assert!(
+            !root.path().join("ca").exists(),
+            "外部 CA 模式下 ensure_ca 绝不自签生成内置 CA"
+        );
+    }
+
+    #[test]
+    fn test_server_cert_reissued_when_ca_swapped() {
+        // §9.36 issuer 归属检查：CA1 签发 server 证书后换成 CA2，
+        // ensure_server_cert 必须识别 AKI 不归属并重签（外部 CA 文件被用户
+        // 替换后的热加载自愈依赖此检查）。
+        let root = tempfile::tempdir().unwrap();
+        let ca1 = ensure_ca(root.path()).unwrap();
+        let bind: SocketAddr = "127.0.0.1:8464".parse().unwrap();
+        let old = ensure_server_cert(&ca1, &bind).unwrap();
+
+        std::fs::remove_dir_all(root.path().join("ca")).unwrap();
+        let ca2 = ensure_ca(root.path()).unwrap();
+        let fresh = ensure_server_cert(&ca2, &bind).unwrap();
+        assert_ne!(old.sha256, fresh.sha256, "换 CA 后 server 证书必须重签");
+        let server_der = pem_decode(&fresh.cert_pem, "CERTIFICATE").unwrap();
+        assert_eq!(
+            cert_authority_key_id(&server_der),
+            cert_subject_key_id(ca2.cert_der.as_ref()),
+            "重签证书的 AKI 必须归属当前 CA"
+        );
+        // 再跑一次：AKI 已归属 → 幂等不重签。
+        let again = ensure_server_cert(&ca2, &bind).unwrap();
+        assert_eq!(fresh.sha256, again.sha256, "issuer 归属时不得重签（churn 防护）");
     }
 }

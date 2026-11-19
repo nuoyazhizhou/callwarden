@@ -2353,6 +2353,10 @@ fn build_manifest(
     }
     let mut tls_block = json!({
         "min_version": "1.2",
+        "ca_source": match ca.source {
+            pki_api::CaSource::Internal => "internal",
+            pki_api::CaSource::External => "external",
+        },
         "ca_cert_pem": ca_pem_bundle,
         "ca_fingerprint_sha256": ca.fingerprint_sha256,
         "server_cert_sha256": server_cert.sha256,
