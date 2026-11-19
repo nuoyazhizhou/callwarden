@@ -13,7 +13,7 @@ handler：
   `workspace.register` + 空 codegraph `snapshot.publish`），并 seed 一个已绑定
   workspace 的探针任务，使 `lease status` / `assignment show` 能走通权威 resolver。
 
-覆盖清单（27 条，冻结于 `CASES`，`test_frozen_case_count_is_27` 锁定数量）：
+覆盖清单（28 条，冻结于 `CASES`，`test_frozen_case_count_is_28` 锁定数量）：
 
 | 主分类 | 命令 |
 | --- | --- |
@@ -30,6 +30,13 @@ handler：
 | Defect | `defect stats` |
 | Audit & Bootstrap | `audit verify` / `bootstrap status` |
 | Assignment & Lease | `lease status` / `assignment show` |
+| Collab（§9.41 治理写族第一批） | `collab publish` |
+
+§9.41（backlog §22.5 第二批）另补 4 条 collab 负例（不进 `CASES`）：
+verdict → daemon binding-attestation 门禁 `E_TASK_BINDING_ATTESTATION_REQUIRED`（rc=1，
+先于 lease 门禁）、reveal / gate-trigger → daemon 诚实 method_not_found（rc=1）、
+verdict 缺必填 → argparse rc=2。配套 `cli/main.py`
+`_handle_collab` 退出码按 §24 口径修复（daemon 拒绝/身份门禁=1，输入校验=2）。
 """
 
 from __future__ import annotations
@@ -99,6 +106,11 @@ CASES = [
     # Assignment & Lease
     ("lease status", ["lease", "status", PROBE_TASK], ["Lease Status", "status: none"]),
     ("assignment show", ["assignment", "show", PROBE_TASK], ["Active Assignment"]),
+    # Collab（§9.41 治理写族第一批）：publish 走 snapshot.publish 成功面。
+    # "{PROBE_ROOT}" 占位符在用例内替换为隔离 workspace 根（CASES 为模块级
+    # 常量，无法引用 fixture）。
+    ("collab publish", ["collab", "publish", "--workspace", "{PROBE_ROOT}"],
+     ["snapshot.publish 执行成功"]),
 ]
 
 CASE_IDS = [case[0] for case in CASES]
@@ -306,7 +318,9 @@ def _combined(result: subprocess.CompletedProcess) -> str:
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("label,argv,tokens", CASES, ids=CASE_IDS)
 def test_cli_leaf_end_to_end(cli_env, label, argv, tokens):
-    """27 个 handler：子进程真实调用成功、输出结构化、无 traceback / 失败标记。"""
+    """28 个 handler：子进程真实调用成功、输出结构化、无 traceback / 失败标记。"""
+    # "{PROBE_ROOT}" 占位符 → 隔离 workspace 根（仅 collab publish 需要）
+    argv = [cli_env["root"] if a == "{PROBE_ROOT}" else a for a in argv]
     result = _run(argv, cli_env["env"], cli_env["root"])
     combined = _combined(result)
 
@@ -318,9 +332,9 @@ def test_cli_leaf_end_to_end(cli_env, label, argv, tokens):
             f"{label} 缺少结构化输出 {token!r}\n{result.stdout[:1500]}")
 
 
-def test_frozen_case_count_is_27():
-    """清单冻结：保持 27 条，新增/删减须同步 backlog §22 与本表。"""
-    assert len(CASES) == 27
+def test_frozen_case_count_is_28():
+    """清单冻结：保持 28 条（§9.41 增 collab publish），新增/删减须同步 backlog §22 与本表。"""
+    assert len(CASES) == 28
     assert len(CASE_IDS) == len(set(CASE_IDS)), "用例 id 重复"
 
 
@@ -344,10 +358,97 @@ def test_daemon_business_rejection_exits_1(cli_env):
     assert "E_" in combined, f"应渲染 daemon 结构化错误码\n{combined[:800]}"
 
 
-def test_leaf_calls_are_read_only(cli_env):
-    """27 条叶子命令只读：跑完后 `tasks` / `task_workspace_bindings` 不变。
+# ---------------------------------------------------------------------------
+# §9.41 · collab 治理写族负例（backlog §22.5 第二批）
+# ---------------------------------------------------------------------------
+def _collab_verdict_argv() -> list:
+    """verdict.submit 全参数（除 lease 凭证）。
 
-    该用例依赖定义顺序（在全部 parametrize 用例之后执行）。
+    注意 --view-manifest-hash 必填：daemon 侧 required("view_manifest_hash")
+    校验先于 binding/lease 门禁，缺它会锁到 invalid_params 而非目标错误码。
+    probe task 为裸 INSERT 种入（无 canonical binding attestation），
+    实测首个 daemon 拒绝为 E_TASK_BINDING_ATTESTATION_REQUIRED。
+    """
+    return [
+        "collab", "verdict",
+        "--task-id", PROBE_TASK, "--step-id", "S-1",
+        "--contract-id", "C-1", "--contract-hash", "a" * 64,
+        "--contract-revision", "1",
+        "--role-contract-id", "RC-1", "--role-contract-hash", "b" * 64,
+        "--role-contract-revision", "1",
+        "--snapshot-id", "", "--request-id", "req-cli-e2e-verdict",
+        "--phase", "blind_first_pass", "--overall", "pass",
+        "--attestation", "cli-e2e blind first pass attestation",
+        "--view-manifest-hash", "c" * 64,
+        "--agent-id", "ag-cli-e2e", "--session-id", "sess-cli-e2e",
+        "--model-id", "model-cli-e2e", "--agent-instance-id", "inst-cli-e2e",
+        "--role", "reviewer",
+    ]
+
+
+def test_collab_verdict_rejected_without_lease_exits_1(cli_env):
+    """verdict.submit 全参数但 probe task 为裸 INSERT 种入（无 canonical workspace
+    binding attestation）→ daemon `E_TASK_BINDING_ATTESTATION_REQUIRED` 结构化拒绝，
+    CLI 渲染 E_RPC_FAILED 且 rc=1（§9.41 修复后不再是 rc=0 假成功）。
+
+    门禁顺序实测：canonical binding attestation 先于 reviewer lease 门禁
+    （E_LEASE_REQUIRED）；本用例锁定实际首个拒绝，二者均为 fail-closed 结构化门禁。
+    """
+    result = _run(_collab_verdict_argv(), cli_env["env"], cli_env["root"])
+    combined = _combined(result)
+    assert result.returncode == 1, f"rc={result.returncode}\n{combined[:1200]}"
+    assert "Traceback (most recent call last)" not in combined
+    assert "the following arguments are required" not in result.stderr
+    assert "E_" in combined, f"应渲染结构化错误码\n{combined[:800]}"
+    assert "E_TASK_BINDING_ATTESTATION_REQUIRED" in combined, (
+        f"首个 daemon 拒绝应为 binding attestation 门禁\n{combined[:800]}")
+    assert "verdict.submit" in combined
+
+
+def test_collab_reveal_method_not_found_exits_1(cli_env):
+    """reveal.submit：daemon handle_collab_rpc 尚无该分支 → 诚实 method_not_found
+    （fail-closed，非隐式 fallback），CLI 渲染结构化错误且 rc=1。"""
+    result = _run(
+        ["collab", "reveal", "--event-id", "rev-cli-e2e-1", "--task-id", PROBE_TASK],
+        cli_env["env"], cli_env["root"],
+    )
+    combined = _combined(result)
+    assert result.returncode == 1, f"rc={result.returncode}\n{combined[:1200]}"
+    assert "Traceback (most recent call last)" not in combined
+    assert "reveal.submit" in combined, f"错误详情应含 RPC 方法名\n{combined[:800]}"
+    assert "E_" in combined
+
+
+def test_collab_gate_trigger_method_not_found_exits_1(cli_env):
+    """gate.decide：daemon handle_collab_rpc 尚无该分支 → 诚实 method_not_found
+    （与 tests/acceptance/cli VERDICT_OVERRIDE['CLI:collab gate-trigger'] 的
+    前置不满足定性一致），CLI 渲染结构化错误且 rc=1。"""
+    result = _run(
+        ["collab", "gate-trigger", "--gate-id", "gate-cli-e2e",
+         "--clause", "clause-cli-e2e", "--value", "true"],
+        cli_env["env"], cli_env["root"],
+    )
+    combined = _combined(result)
+    assert result.returncode == 1, f"rc={result.returncode}\n{combined[:1200]}"
+    assert "Traceback (most recent call last)" not in combined
+    assert "gate.decide" in combined, f"错误详情应含 RPC 方法名\n{combined[:800]}"
+    assert "E_" in combined
+
+
+def test_collab_verdict_missing_required_arg_exits_2(cli_env):
+    """argparse 层：verdict 必填参数缺失 → rc=2 + usage，不经 daemon。"""
+    result = _run(["collab", "verdict", "--task-id", PROBE_TASK],
+                  cli_env["env"], cli_env["root"])
+    assert result.returncode == 2, f"rc={result.returncode}\n{_combined(result)[:800]}"
+    assert "the following arguments are required" in result.stderr
+
+
+def test_leaf_calls_are_read_only(cli_env):
+    """28 条叶子命令不触 task 治理面：跑完后 `tasks` / `task_workspace_bindings` 不变。
+
+    注：`collab publish`（§9.41）是快照面写操作（snapshot.publish），但只写
+    codegraph 快照库、不动 task DB 的 tasks/task_workspace_bindings 两张表，
+    只读断言语义保持成立。该用例依赖定义顺序（在全部 parametrize 用例之后执行）。
     """
     after = _task_rows(cli_env["task_db"])
     assert after == cli_env["before_rows"], "只读叶子命令不得改写 task DB"

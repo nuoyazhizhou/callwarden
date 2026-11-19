@@ -11,6 +11,11 @@ import time
 
 import pytest
 
+# §9.41 卡外修复：恢复被 69ed293（ruff --fix 误删）去掉的转发导入。
+# 该符号是 test_rust_cli_diff.py / test_prereq_guard.py 的消费面（转发自
+# _w3_harness，见模块 docstring），删除后全量 pytest 在收集期即 ImportError 中断。
+from _w3_harness import _prereq_unavailable_reason as prereq_unavailable_reason  # noqa: F401
+
 
 # native 构建前置缺失标记：保守白名单，只认链接器/原生库缺失。
 NATIVE_BUILD_PREREQ_MARKERS = (

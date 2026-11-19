@@ -15118,9 +15118,10 @@ def _handle_collab(args, db):
         if opts.envelope:
             envelope_path = os.path.abspath(opts.envelope)
             if not os.path.isfile(envelope_path):
+                # §9.41（§24 rc 口径）：Envelope 文件不存在属用户输入校验失败 → rc=2
                 _collab_error("E_FILE_NOT_FOUND", "cli.collab.file_not_found",
                               f"Envelope 文件不存在: {envelope_path}", use_json)
-                return True
+                raise SystemExit(2)
             with open(envelope_path, "r", encoding="utf-8") as f:
                 params["envelope"] = json.load(f)
 
@@ -15128,19 +15129,22 @@ def _handle_collab(args, db):
         method = "verdict.submit"
         identity, ireason = _collect_identity(opts)
         if not identity:
+            # §9.41（§24 rc 口径）：身份门禁拒绝属运行时失败 → rc=1
+            # （此前 return True 把 E_IDENTITY_REQUIRED 掩盖成 rc=0 假成功）
             _identity_reason_output(ireason or {
                 "code": "E_IDENTITY_REQUIRED",
                 "message_key": "daemon_errors.error.identity_required",
                 "detail": "verdict.submit 必须携带完整 Reviewer identity（agent_id/session_id/model_id/role + 可选 agent_instance_id）",
             }, use_json)
-            return True
+            raise SystemExit(1)
         try:
             clause_results = json.loads(opts.clause_results)
             findings = json.loads(opts.findings)
         except json.JSONDecodeError as e:
+            # §9.41（§24 rc 口径）：结构化入参非法属用户输入校验失败 → rc=2
             _collab_error("E_INVALID_JSON", "cli.collab.invalid_json",
                           f"clause_results/findings 非合法 JSON: {e}", use_json)
-            return True
+            raise SystemExit(2)
         params = {
             "task_id": opts.task_id,
             "step_id": opts.step_id,
@@ -15173,9 +15177,10 @@ def _handle_collab(args, db):
         if opts.notes:
             notes_path = os.path.abspath(opts.notes)
             if not os.path.isfile(notes_path):
+                # §9.41（§24 rc 口径）：Notes 文件不存在属用户输入校验失败 → rc=2
                 _collab_error("E_FILE_NOT_FOUND", "cli.collab.file_not_found",
                               f"Notes 文件不存在: {notes_path}", use_json)
-                return True
+                raise SystemExit(2)
             with open(notes_path, "r", encoding="utf-8") as f:
                 params["implementer_notes"] = f.read()
 
@@ -15207,9 +15212,12 @@ def _handle_collab(args, db):
         _collab_governance_rejection(method, str(e), use_json)
         raise SystemExit(1)
     except Exception as e:
+        # §9.41（§24 rc 口径统一）：daemon 业务拒绝（含 method_not_found）/
+        # RPC 失败属运行时失败 → rc=1。此前 return True 把结构化拒绝渲染成
+        # rc=0 假成功，agent/脚本会把被拒的治理写误读为已提交。
         _collab_error("E_RPC_FAILED", "cli.collab.rpc_failed",
                       f"RPC 调用失败 ({method}): {e}", use_json)
-        return True
+        raise SystemExit(1)
 
     # 成功路径（route_rpc 原样返回 daemon result，无降级信封）
     if use_json:

@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "72ce920b0188e8988a4e11e7cc1d36c008362cb2",
+  "supplied_source_revision": "0f47d81720c6bdc97b72b04616970d2fcab97226",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,7 +38,7 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7287,
+    "python_definitions": 7291,
     "python_source_files": 703,
     "convergence_definitions": 58,
     "skip_calls": {
@@ -1139,7 +1139,7 @@
     },
     {
       "path": "tests/_prereq_guard.py",
-      "sha256": "347b663eb030267fdf19ec3fb78e3ab6f88ecca2c07aab3c815d868e8f4c25bb"
+      "sha256": "e1c7896e910c6b7d6c3651fdcfacf8b236b839546e3c80fe53bf6b94b5bd1a4b"
     },
     {
       "path": "tests/_verify_p22.py",
@@ -1151,11 +1151,11 @@
     },
     {
       "path": "tests/acceptance/cli/cli_acceptance_harness.py",
-      "sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd"
+      "sha256": "7baf5a280f7a11b5a7572db1561c17cbac792f635380f40a87f7d2f7d9e94208"
     },
     {
       "path": "tests/acceptance/cli/test_cli_c1_semantics.py",
-      "sha256": "1afd56106efe456d56053d53953e88ef32d331229f3c04ca91c51fd6eaad5ceb"
+      "sha256": "c3ead43592e7601df9a9743799b3d7150bd867e8d30118a99448d44d4fe00cda"
     },
     {
       "path": "tests/acceptance/cli/test_cli_c2_params.py",
@@ -2131,7 +2131,7 @@
     },
     {
       "path": "tests/test_cli_subcommand_e2e.py",
-      "sha256": "30ebab986c2c8265261ba580b767e095b94e96c6f246c884fb47edee12508df3"
+      "sha256": "a359c5747c10699a5cee5d52d47a3a6264755fe4c996d663ad05e8cf31b96e71"
     },
     {
       "path": "tests/test_cli_subcommand_help_template.py",
@@ -3819,7 +3819,7 @@
     },
     {
       "path": "tests/test_task_verdict_cli.py",
-      "sha256": "ff84cb5f3e7a08676063542d6ffc0135930edeb6e7cbab085f2da3f8319e44cf"
+      "sha256": "43cb5ffa01f712a3ef6e3b19de09986f45fc064d42da3c7bc40e90a4dc61af95"
     },
     {
       "path": "tests/test_task_verdict_mcp.py",

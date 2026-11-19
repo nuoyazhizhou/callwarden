@@ -109,7 +109,10 @@ def test_task_bound_verdict_submits_complete_provenance(monkeypatch):
 def test_task_bound_verdict_rejects_malformed_structured_inputs(monkeypatch, flag, value):
     calls = _install_http_authority(monkeypatch)
 
-    assert cli_main._handle_collab(BASE_ARGS + [flag, value, "--json"], None) is True
+    # §9.41（§24 rc 口径）：结构化入参非法属用户输入校验失败 → SystemExit(2)
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main._handle_collab(BASE_ARGS + [flag, value, "--json"], None)
+    assert excinfo.value.code == 2
 
     assert calls == []
 

@@ -1697,12 +1697,35 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
   `experiment *`、`task contract-bootstrap/contract-revise`、`semgrep scan`、
   `coverage import` 等）多为写操作或需复杂前置，留待后续任务卡按族分批推进，
   扩表时同步更新 `CASES` 与本节。
+  **collab 治理写族已收口（§9.41，2026-11-19）**：`collab publish` 成功正例入
+  `CASES`（冻结 27→28）；`verdict`（实际首个门禁为 canonical binding
+  attestation → `E_TASK_BINDING_ATTESTATION_REQUIRED`，先于 lease 门禁）、
+  `reveal` / `gate-trigger`（daemon `handle_collab_rpc` 诚实 method_not_found）
+  以独立负例锁定 rc=1 + 结构化错误码；配套修复 `_handle_collab` 的 rc=0 假成功
+  （daemon 拒绝/身份门禁 → rc=1，Envelope/Notes 文件不存在、结构化入参非法等
+  输入校验 → rc=2，对齐 §24 口径）。残留未引用叶子缩减至 ~58
+  （`experiment *`、`task contract-bootstrap/contract-revise`、`semgrep scan`、
+  `coverage import` 等，仍留待按族分批）。
 - 隔离 daemon 依赖本机构建产物（`_w3_harness.find_daemon_binary`），CI 无二进制
   时整模块 skip，属既有 C7 前置守卫口径，不计入回归失败。
 - 退出码观测以真实行为为准：daemon 业务拒绝当前渲染为 `rc=2`，与
   `cli_reference.md` 四段式约定的「1=运行时失败」存在口径差；本卡只锁定
   argparse 层的 2 与成功态的 0，不锁业务失败码，该差异登记为文档残留（阶段 3
   「`--flag` 移除评估」之外的独立项；后由 §24 统一为 `rc=1` 闭合）。
+
+### 22.6 待专项卡：CLI 面既有失败三族（§9.41 归因登记）
+
+`pytest tests/test_cli_*.py`（645 条）实测 626 passed / 19 failed，19 条均为
+既有环境/鉴权失败，与 §9.41 改动无交集（详见 ledger §9.41 §5.1）：
+
+| 族 | 签名 | 待办 |
+|---|---|---|
+| A | `E_PRINCIPAL_WORKSPACE_FORBIDDEN`：`task create` 直连生产 daemon，principal 无 workspace 1 授权（`test_cli_task_claim_recover` / `test_cli_task_lease_parity` 各 9） | 子进程用例改隔离 daemon，或统一为测试 principal 种子授权 |
+| B | 单轨 HTTPS 后陈旧断言：`endpoint.startswith("http://…")`、期望 `E_HTTP_DAEMON_UNAVAILABLE` 实得 mTLS 缺证书（`test_c16/c17/c21_*_workspace_authority`、`test_cli_03_http_rpc`） | 断言改 `https://` + 按 PKI 门禁调预期 |
+| C | 源码字面量断言漂移：`daemon_client.py` 已无「不提供本地降级」字样（`test_legacy_write_jobs_baseline`） | 改结构化断言 |
+
+另：全量 `pytest tests/`（9532 条）在本机不可作门禁——失败项各自烧授权/连接
+超时且与执行顺序相关（模块单独跑多数通过），如需全量门禁须先修 A 族。
 
 ## 23. Orphan 卡清理（空投影恢复）· `T-1793500842034-88eecb60`
 

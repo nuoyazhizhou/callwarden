@@ -2,63 +2,63 @@
   "schema_version": "static-skip-sites/v1",
   "sites": [
     {
-      "site_id": "tests/_prereq_guard.py:39:8:pytest.skip",
+      "site_id": "tests/_prereq_guard.py:44:8:pytest.skip",
       "file": "tests/_prereq_guard.py",
-      "line": 39,
+      "line": 44,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "未找到 cargo，无法构建新鲜二进制",
       "reason_expression": "'未找到 cargo，无法构建新鲜二进制'",
       "condition_or_module": null,
-      "file_sha256": "347b663eb030267fdf19ec3fb78e3ab6f88ecca2c07aab3c815d868e8f4c25bb",
+      "file_sha256": "e1c7896e910c6b7d6c3651fdcfacf8b236b839546e3c80fe53bf6b94b5bd1a4b",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/_prereq_guard.py:46:8:pytest.skip",
+      "site_id": "tests/_prereq_guard.py:51:8:pytest.skip",
       "file": "tests/_prereq_guard.py",
-      "line": 46,
+      "line": 51,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "347b663eb030267fdf19ec3fb78e3ab6f88ecca2c07aab3c815d868e8f4c25bb",
+      "file_sha256": "e1c7896e910c6b7d6c3651fdcfacf8b236b839546e3c80fe53bf6b94b5bd1a4b",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/_prereq_guard.py:63:4:pytest.skip",
+      "site_id": "tests/_prereq_guard.py:68:4:pytest.skip",
       "file": "tests/_prereq_guard.py",
-      "line": 63,
+      "line": 68,
       "column": 4,
       "mechanism": "pytest.skip",
       "reason_literal": null,
       "reason_expression": "f'{context}（daemon 提前退出 returncode={rc}）\\nstderr={tail}'",
       "condition_or_module": null,
-      "file_sha256": "347b663eb030267fdf19ec3fb78e3ab6f88ecca2c07aab3c815d868e8f4c25bb",
+      "file_sha256": "e1c7896e910c6b7d6c3651fdcfacf8b236b839546e3c80fe53bf6b94b5bd1a4b",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/_prereq_guard.py:113:12:pytest.skip",
+      "site_id": "tests/_prereq_guard.py:118:12:pytest.skip",
       "file": "tests/_prereq_guard.py",
-      "line": 113,
+      "line": 118,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": null,
       "reason_expression": "f'{context}（daemon 已退出 returncode={proc.poll()}，命中 {marker}）；停止生产 daemon（cw daemon stop）后重跑\\n{stderr_text[-1500:]}'",
       "condition_or_module": null,
-      "file_sha256": "347b663eb030267fdf19ec3fb78e3ab6f88ecca2c07aab3c815d868e8f4c25bb",
+      "file_sha256": "e1c7896e910c6b7d6c3651fdcfacf8b236b839546e3c80fe53bf6b94b5bd1a4b",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/_prereq_guard.py:125:4:pytest.skip",
+      "site_id": "tests/_prereq_guard.py:130:4:pytest.skip",
       "file": "tests/_prereq_guard.py",
-      "line": 125,
+      "line": 130,
       "column": 4,
       "mechanism": "pytest.skip",
       "reason_literal": null,
       "reason_expression": "f'{reason}\\n{blob}'",
       "condition_or_module": null,
-      "file_sha256": "347b663eb030267fdf19ec3fb78e3ab6f88ecca2c07aab3c815d868e8f4c25bb",
+      "file_sha256": "e1c7896e910c6b7d6c3651fdcfacf8b236b839546e3c80fe53bf6b94b5bd1a4b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -70,7 +70,7 @@
       "reason_literal": null,
       "reason_expression": "f'TP-10C 需要 C:/Python314/python.exe（callwarden_core 为 cp314 PyO3 扩展），当前解释器为 {PYTHON}'",
       "condition_or_module": null,
-      "file_sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd",
+      "file_sha256": "7baf5a280f7a11b5a7572db1561c17cbac792f635380f40a87f7d2f7d9e94208",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -82,7 +82,7 @@
       "reason_literal": null,
       "reason_expression": "f'TP-10C 前置缺失：daemon 候选缺失 {src}'",
       "condition_or_module": null,
-      "file_sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd",
+      "file_sha256": "7baf5a280f7a11b5a7572db1561c17cbac792f635380f40a87f7d2f7d9e94208",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -94,7 +94,7 @@
       "reason_literal": null,
       "reason_expression": "f'TP-10C 前置缺失：daemon 候选 {src} 散列不匹配冻结基准 {KNOWN_DAEMON_SHA256_PREFIXES}，且无可信冻结副本可用；若确需换基准，设 CW_TP10C_ALLOW_OTHER_BINARY=1 并以 CW_TP10C_DAEMON_SHA256 钉新散列'",
       "condition_or_module": null,
-      "file_sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd",
+      "file_sha256": "7baf5a280f7a11b5a7572db1561c17cbac792f635380f40a87f7d2f7d9e94208",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -106,7 +106,7 @@
       "reason_literal": null,
       "reason_expression": "f'TP-10C 前置缺失：隔离 daemon 启动失败（{exc}）'",
       "condition_or_module": null,
-      "file_sha256": "8da49f93415b3abfc3b541bbc7fa6bbea868b2f1e694ba96b3b090bce40c30cd",
+      "file_sha256": "7baf5a280f7a11b5a7572db1561c17cbac792f635380f40a87f7d2f7d9e94208",
       "root_cause": "UNREVIEWED"
     },
     {

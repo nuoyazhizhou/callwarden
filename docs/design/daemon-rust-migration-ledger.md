@@ -3566,6 +3566,116 @@ DB grant 热路径与磁盘 grants.json 路径口径统一，整数/文本 id �
 §9.39 缺陷登记闭环；§9.39 fixture 的 grants.json 补丁仍可工作（磁盘路径
 本就正确），可选的 fixture 简化不在本章范围。
 
+## 9.41 collab 治理写族 E2E + `_handle_collab` rc 口径修复（2026-11-19）
+
+### 1. 立项与范围
+
+用户裁决选题：**CLI E2E 扩表第二批 · collab 治理写族**（backlog §22.5
+「按族分批推进」的第一族）。范围：`cw collab publish/verdict/reveal/gate-trigger`
+四条子命令的 argparse → dispatch → handler → route_rpc → daemon → 渲染全链路
+E2E 锁定 + 实跑中确认的 rc=0 假成功缺陷修复。纯 Python CLI + tests 面，
+无 rust_ext 改动，免 refresh。
+
+侦察结论（实现前静态核实）：
+- `snapshot.publish`：dispatch.rs:3268 真实 handler，隔离栈下可成功（正例）。
+- `verdict.submit`：daemon 门禁链 binding-attestation → lease；probe task 为
+  裸 INSERT 种入，首个确定性拒绝为 `E_TASK_BINDING_ATTESTATION_REQUIRED`。
+- `reveal.submit` / `gate.decide`：路由进 `handle_collab_rpc`
+  （dispatch.rs:2087-2156）**无分支 → 结构化 method_not_found**（诚实未实现，
+  有 Rust 测试锁定；属后续任务卡范围，本章不实现 handler）。
+- **缺陷⑤**：`_handle_collab` 仅对 `DaemonUnavailableError` 走 SystemExit(1)，
+  daemon 业务拒绝（`DaemonRemoteError`）落入 `except Exception →
+  _collab_error("E_RPC_FAILED") → return True`，dispatcher 把 True 映射为
+  rc=0 —— 治理写被拒却以成功退出码收场，违反 §24「运行时失败=1」口径；
+  CLI 侧身份不全分支（`_identity_reason_output → return True`）同病。
+
+### 2. 缺陷⑤修复（cli/main.py）
+
+`_handle_collab` 出口按 §24 口径统一：
+- daemon 业务拒绝 / RPC 失败（`except Exception`）→ 渲染 E_RPC_FAILED 后
+  `raise SystemExit(1)`（此前 `return True` = rc=0 假成功）；
+- verdict 身份不全（运行时身份门禁）→ `raise SystemExit(1)`；
+- Envelope / Notes 文件不存在、clause_results/findings 非合法 JSON
+  （用户输入校验）→ `raise SystemExit(2)`。
+- 配套同步 `tests/test_task_verdict_cli.py` malformed-JSON 用例
+  （`is True` → `pytest.raises(SystemExit)` + code==2）。
+
+### 3. E2E 扩表（tests/test_cli_subcommand_e2e.py）
+
+- `CASES` 冻结 27→28：新增 `collab publish --workspace <root>` 成功正例
+  （`{PROBE_ROOT}` 占位符在用例内替换为隔离 workspace 根），锁定
+  `[OK] snapshot.publish 执行成功`。
+- 新增 4 条负例（不进 CASES，独立断言 rc 与错误码）：
+  ① `collab verdict` 全参数（含 `--view-manifest-hash`——daemon
+  `required("view_manifest_hash")` 先于门禁校验）→ `E_TASK_BINDING_
+  ATTESTATION_REQUIRED` + rc=1（实测首个门禁为 canonical binding
+  attestation，先于 reviewer lease 门禁 E_LEASE_REQUIRED；按实际门禁顺序锁定）；
+  ② `collab reveal` → method_not_found 透传 + rc=1；
+  ③ `collab gate-trigger` → 同上；
+  ④ `collab verdict` 缺必填 → argparse rc=2。
+- `test_frozen_case_count_is_27` → `test_frozen_case_count_is_28`；
+  `test_leaf_calls_are_read_only` docstring 注明 publish 为快照面写操作、
+  不触 task DB 两张只读断言表。
+
+### 4. 卡外修复（全量回归收集期发现，均与本章改动无关、属既有损伤）
+
+- **`tests/_prereq_guard.py`**：`69ed293`（11-11 ruff --fix）把转发导入
+  `from _w3_harness import _prereq_unavailable_reason as prereq_unavailable_reason`
+  误判为未用导入删除，`test_rust_cli_diff.py` / `test_prereq_guard.py`
+  收集期即 ImportError → 全量 pytest 中断。恢复转发 + `# noqa: F401`。
+- **`tests/acceptance/cli/test_cli_c1_semantics.py`**：`6ebde03`（CLI 顶层
+  84→86 分类补齐）扩了 `inventory_frozen.json`，c1 的冻结数断言未同步
+  （264 vs 实际 266），收集期 AssertionError。264→266 全量替换
+  （c1 docstring/assert/suite 名 + harness docstring）。
+
+### 5. 回归与验收
+
+- 目标模块：`pytest tests/test_cli_subcommand_e2e.py -q` → **36 passed**
+  （28 CASES + 4 collab 负例 + 既有 4 条）。
+- collab 既有进程内面：`tests/test_task_verdict_cli.py` +
+  `tests/test_cli_collab_snapshot_publish.py` → **7 passed**。
+- rc 口径相关既有面：`test_cli_govfix07_daemon_error_rc.py` +
+  `test_cli_govfix08_error_dict_rc.py` + `test_cli_consistency.py` → **45 passed**。
+- CLI 受影响面（118 个 `tests/test_cli_*.py` + verdict/prereq 两模块，
+  共 **645** 条）：**626 passed / 19 failed**，19 条失败逐条定性为
+  **卡外既有环境/鉴权失败**（详见 §5.1），与本章 diff 无交集
+  （失败路径均为 `task` 子命令与 mTLS/principal 授权，本章只改 `collab`）。
+- 免 cargo / 免 refresh（无 rust_ext、无 daemon 二进制变更）。
+
+#### 5.1 卡外既有失败族（全量/CLI 面跑复现，本章不修，登记待专项卡）
+
+全量 `pytest tests/ -q`（9532 条）在本机**不能作为可用门禁**：失败项各自烧
+连接/授权超时（~150 项时单进程跑到 56% 已耗时 50+ 分钟，且失败与执行顺序相关
+——模块单独跑多数即通过）。按签名归为三族：
+
+| 族 | 签名 | 代表用例 | 定性 |
+|---|---|---|---|
+| A. 生产 daemon principal 未授权 | `E_PRINCIPAL_WORKSPACE_FORBIDDEN: principal pr_b4886… 未获 workspace 1 授权` | `test_cli_task_claim_recover.py`(9)、`test_cli_task_lease_parity.py`(9)、`test_lease_gate_empirical.py`(18) | 用例直连生产 daemon + 未种 principal 授权；与本章无关 |
+| B. 单轨 HTTPS 迁移后陈旧断言 | 断言 `endpoint.startswith("http://127.0.0.1:")`，实得 `https://…`；断言 `E_HTTP_DAEMON_UNAVAILABLE`，实得 mTLS 缺证书提示 | `test_c17/c21/c16_*_workspace_authority.py`、`test_cli_03_http_rpc.py` | ADR-002 单轨 HTTPS（6fb74aa 起）后断言未同步 |
+| C. 源码/文档字面断言漂移 | 断言 `daemon_client.py` 源码含「不提供本地降级」，实际措辞已改写 | `test_legacy_write_jobs_baseline.py` | 文本断言随文档改写失效（ef28ab9 前后） |
+
+上述三族在**本章改动前即存在**：涉及文件与 `§9.41` diff（`cli/main.py`
+`_handle_collab` 段、`tests/test_cli_subcommand_e2e.py`、
+`tests/test_task_verdict_cli.py`、`tests/_prereq_guard.py`、
+`tests/acceptance/cli/*`）无交集；A 族用例走 `cw task`（非 `collab`），
+B/C 族断言对象本章未触碰。留待专项卡修复（A：为 CLI 子进程用例建隔离
+daemon 或种 principal 授权；B：断言改 `https://` 并按 PKI 门禁调整预期；
+C：改为结构化断言而非源码字面量）。
+
+#### 5.2 本章顺带修复的两处卡外**收集期阻断**（已修，见 §4）
+
+`_prereq_guard` 转发导入 + `c1` 冻结数 264→266 —— 二者不修则全量
+pytest 在收集阶段即中断，任何门禁都跑不起来。
+
+### 6. 结论
+
+collab 治理写族 4 条全链路锁定：publish 成功面 + verdict/reveal/gate-trigger
+结构化拒绝面，rc 口径与 §24 对齐（0=成功 / 1=运行时拒绝 / 2=用法与输入校验）。
+`reveal.submit` / `gate.decide` 的 daemon handler 实现仍属后续任务卡
+（method_not_found 为当前冻结行为）；CLI 残留未引用叶子缩减至 ~58
+（experiment 族、task contract 族、semgrep scan、coverage import 等，
+留待按族分批）。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`
