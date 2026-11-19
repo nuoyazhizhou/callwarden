@@ -3051,6 +3051,120 @@ READ_ONLY 160 / PROTECTED_MUTATION 79 / GOVERNANCE_WRITE 5；
 结论：A 自动重签 / B 自动 renew 数据源 / C rotate-ca 双 CA 窗口
 prepare→renew→commit→旧证书拒止 全链路真机闭环。
 
+## 9.35 证书热加载：不重启轮换服务端证书与 CA 信任根（2026-11-19）
+
+### 1. 立项与范围
+
+ADR §14 未决问题 #3（证书热加载）正式立项，延续 §9.31→§9.34 PKI 生命周期
+弧线。目标：`cw pki rotate-server` / `rotate-ca prepare+commit` 后 daemon
+**不重启**换入新证书 / 新信任根；客户端零改动、零感知（验证走 CA 链 +
+hostname，无服务端证书指纹 pinning）。
+
+非目标：客户端证书轮换（走既有 renew）；外部 CA 文件的自动替换（窗口期
+用户自行替换，ADR §4.3）。
+
+### 2. 设计决策
+
+- **HotTls**：`Arc<std::sync::RwLock<Arc<rustls::ServerConfig>>>`（依赖
+  冻结 ADR §15.2，不引 arc_swap）。accept_loop 删除进程级一次性
+  `TlsAcceptor::from(tls)`，改逐连接 `get()` 构建（仅 Arc 包装，代价可
+  忽略）：
+  - **新连接**呈现换入后的证书；
+  - **在途连接**持有旧 Arc 不受影响，`max_conn_age`（300s）兜底断开重连。
+- **触发机制选哨兵文件**（弃 RPC 方案）：`pki/tls_reload.request`。
+  - 「磁盘即协议」先例（rotate-ca 目录 rename + window.json 同款）；
+  - CLI 侧三行写入覆盖全部 rotate 命令，无需新增 RPC 方法与 mTLS 客户端
+    扩展（RPC 方案需 `pki.reload_tls` + rpc_handler 特判 + CLI 客户端分支，
+    改动面大且 cw_daemon.rs unix/windows 镜像模块要动）；
+  - daemon 未运行时哨兵保留，下次启动 bind 路径自愈（幂等）。
+- **reload 路径幂等**（`load_tls_config_from_disk`）：`load_ca`（缺失/非法
+  → `E_PKI_CA_LOAD` fail-closed）→ `load_previous_ca`（§9.34 双根窗口）→
+  `ensure_server_cert`（缺失/过期/临期 ≤30 天自动重签——rotate-ca prepare
+  删 `server/` 后由此以新 CA 重签）→ `build_tls_config_with_roots` →
+  换入 → `build_manifest` + `publish_manifest_atomic` 重发布
+  （`manifest_hash` 重算供消费端感知）。
+- **watcher**：挂 serve_prebound（随 HTTP 线程生命周期），1s 扫描哨兵 +
+  6h 周期无条件 reload（吸收 §9.34 A 临期重签）；失败退避 30s 重试、
+  绝不因 reload 失败中断 serve；**成功才删哨兵**（crash 安全：崩溃后重启
+  首轮重处理，幂等）。
+- **cw_daemon.rs 零改动**：unix/windows 镜像模块不用动。
+
+### 3. 实现清单
+
+| 文件 | 内容 |
+| --- | --- |
+| `pki_api.rs` | `TLS_RELOAD_REQUEST_FILE` 常量 + `load_tls_config_from_disk`（从盘上材料幂等重建 TLS 配置）+ 3 单测 |
+| `http_server.rs` | `HotTls`（new/get/swap）+ `BoundHttp.tls` 替换 + accept_loop 逐连接 acceptor + `reload_tls_now`（换入 + manifest 重发布）+ `process_tls_reload`（哨兵语义：有则加载、成功删哨兵）+ `tls_reload_watcher`/`watcher_loop`（1s 扫描 / 6h 周期 / 30s 退避）+ `TlsReloadOutcome`；serve_prebound Arc 化 config 并派生 watcher |
+| `cli/pki.rs` | `request_tls_reload`（best-effort 写哨兵，失败仅 eprintln 不阻断 rotate 主流程）+ rotate-server / rotate-ca prepare+commit 收尾调用；输出 `restart_required: true` → `hot_reload: "requested"` + note；模块 docstring 同步 |
+| ADR | §4.3 表格 + rotate-ca 细则改热加载语义；新增「证书热加载落地细则」小节；§14 #3 关闭（已决 2026-11-19） |
+
+### 4. 缺陷与修正
+
+（本章节实现期无缺陷暴露；单测一次通过，见 §5。）
+
+### 5. 测试与验收
+
+- Rust 新增 7 例：
+  - pki_api 3：幂等重建（两次 load 同 sha256、无窗口）；无 CA fail-closed
+    （`E_PKI_CA_LOAD`）；模拟 rotate-ca prepare（rename ca→ca-previous +
+    ensure_ca + 删 server/）后 reload 以新 CA 重签、previous 指纹 = 旧 CA、
+    新证书 issuer DN == 新 CA subject DN（§9.34 代际区分不变量）；
+  - http_server 3：热切换语义（swap 后新连接呈现新证书 + **在途连接继续
+    服务不受影响**）；哨兵流程（无哨兵 Ok(None) / 有哨兵 → 加载 + 删哨兵 +
+    manifest 重发布 + 新证书 / CA 损坏 → Err 且 fail-closed 沿用旧配置、
+    哨兵保留待重试）；watcher 短间隔驱动（哨兵写入后 10s 内热加载 + 删哨兵
+    + stop 置位退出）；
+  - cli::pki 1：rotate-server 写哨兵 + `hot_reload` 输出；既有
+    `rotate_ca_prepare_commit_status_roundtrip` 断言更新（restart_required
+    → hot_reload + prepare/commit 后哨兵存在性）。
+- 全量回归：`cargo test --lib` **2032 passed / 0 failed**（1458.02s，
+  HEAD `85f05ec`）。较 §9.34 基线 2024 净增 8：本章 7 例 +
+  2a40898 补记的 `default_principal_resolves_owner_identity` 1 例。
+  新 7 例按名过滤单独复跑全绿（tls_reload ×3 / load_tls_config_from_disk
+  ×3 / rotate_server_writes ×1）。
+- `rust_ext/**` 属 RUNTIME_AFFECTING_PATH_PREFIXES → refresh（evidence
+  见 §6）。
+
+### 6. 真机验证链（2026-11-19，全绿）
+
+- **refresh**：`20261119-093035-85f05ecb410b-398ed9e4.json`，passed，
+  5m50s；`cw-daemon.exe` sha256
+  `7bd87b8e3a1b3092489e425db51197f7410e670cff1095db442b3547e0127151`，
+  装入 `runtime\current`。`cw.py daemon start` 启动：**PID 36152**、
+  endpoint `https://127.0.0.1:7055`、git_commit `85f05ec`、schema 61、
+  manifest `daemon_binary_sha256` 与 refresh 产物一致。
+- **基线**（探针 = 直连 TLS 端口取对端叶证书 DER 算 SHA-256）：线上证书
+  `b64c65e6…8115a5`（与 manifest `tls.server_cert_sha256` 一致）、CA
+  `ea124f0d…6df0`、manifest_hash `de324447…3df9e`。
+- **① rotate-server**：输出 `hot_reload: "requested"` + 新证书
+  `ad3674dc…9265`；≈3s 后探针呈现新证书（旧 `b64c65e6…` 不再出现），
+  manifest 重发布（`manifest_hash` → `4e26f6b7…`、
+  `server_cert_sha256` 同步），**PID 36152 不变**。
+- **② rotate-ca --action prepare**：新 CA `32b8952e…f423`、previous
+  `ea124f0d…`、deadline `2026-11-20T01:45:59Z`；≈3s 后探针呈现新 CA
+  重签证书 `6c143504…deb4`（issuer DN = 新 CA subject，§9.34 代际区分
+  不变量），manifest 双根（`ca_fingerprint_sha256`=新 CA + 
+  `previous_ca_fingerprint_sha256`=旧 CA），manifest_hash → `aff25392…`，
+  **PID 36152 不变**。
+- **③ 新 CA 下客户端证书生命周期**：`token issue`（principal
+  `pr_b4886…`）→ `enroll`（serial `1C9E7121…`，/v1/enroll 仅服务端认证
+  TLS）→ `renew`（serial `65F3E4E2…`，mTLS 握手走新 CA 信任根）全部
+  成功。
+- **④ rotate-ca --action commit**：`committed_at 2026-11-19T01:46:45Z`；
+  ≈3s 后 manifest 单根化（`previous_ca_fingerprint_sha256` 消失、CA =
+  `32b8952e…`）、服务端证书不变（`6c143504…`，本就不需重签）、
+  manifest_hash → `d7ed6d3f…`，**PID 36152 不变**。
+- **⑤ 旧根拒止（负向）**：持旧 CA 证书的 `pr_owner` 执行 `renew` →
+  `E_TLS_HANDSHAKE_FAILED: received fatal alert: UnknownCA`——旧信任根
+  移除即在握手期拒止，与 ADR「commit 即整体吊销」语义一致。
+- **⑥ 环境修复与收尾**：`pr_owner` 重新 token issue + enroll（新 CA
+  serial `6543356E…`）→ renew（serial `414D5264…`）成功；`cw.py daemon
+  ping` mTLS RPC round-trip OK（https transport、PID 36152）。
+
+结论：rotate-server 热加载、rotate-ca prepare 双根热加载、新 CA
+签发/renew、commit 单根收敛、旧证书握手期拒止——**全程 PID 36152
+不变（零重启）**，§9.35 验收闭合。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`
