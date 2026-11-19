@@ -87,6 +87,9 @@ def _spawn_isolated_daemon(bin_path: str, data_root: str) -> subprocess.Popen:
     home_dir = os.path.join(data_root, "userhome")
     os.makedirs(os.path.join(home_dir, ".callwarden"), exist_ok=True)
     env = os.environ.copy()
+    # §9.43：daemon 是服务端，不继承客户端证书 env（否则被误判为外部 CA 模式）
+    for _k in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT"):
+        env.pop(_k, None)
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
@@ -208,6 +211,7 @@ def c16_daemon(tmp_path_factory):
     _seed(task_db)
 
     proc = _spawn_isolated_daemon(bin_path, data_root)
+    _saved_mtls = {}
     try:
         manifest = _wait_manifest(data_root, proc)
         if manifest is None:
@@ -227,7 +231,22 @@ def c16_daemon(tmp_path_factory):
             )
         endpoint = manifest["endpoint"]
         skip_if_isolated_daemon_pipe_conflict(proc)
-        assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+        assert endpoint.startswith("https://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+
+        # ADR-002 单轨 mTLS：daemon 信任根为隔离 USERPROFILE 下的 LocalCa，
+        # 客户端必须注入同源 owner 身份（pki init 幂等补齐）才能完成握手。
+        import test_mtls_control_plane as _mtls  # noqa: PLC0415
+
+        _mtls.pki_init(data_root)
+        cert, key = _mtls.identity_paths(data_root)
+        for _k in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT", "CW_PKI_DIR"):
+            _saved_mtls[_k] = os.environ.get(_k)
+        os.environ["CW_CLIENT_CERT"] = cert
+        os.environ["CW_CLIENT_KEY"] = key
+        os.environ["CW_CA_CERT"] = os.path.join(
+            _mtls.pki_dir_of(data_root), "ca", "ca.crt"
+        )
+        os.environ.pop("CW_PKI_DIR", None)
 
         # 夹具记录（写进 stdout 供证据引用，避免「用了哪个二进制」不可考）
         print(f"[C-16 harness] bin={bin_path}")
@@ -242,6 +261,11 @@ def c16_daemon(tmp_path_factory):
         yield client, task_db, bin_path, bin_sha
     finally:
         _terminate(proc)
+        for _k, _v in _saved_mtls.items():
+            if _v is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _v
 
 
 def _show(client, params: dict):

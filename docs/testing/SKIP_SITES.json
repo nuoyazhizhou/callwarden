@@ -982,19 +982,19 @@
       "reason_literal": "隔离 daemon harness 依赖 Windows 进程/HTTP 传输",
       "reason_expression": "'隔离 daemon harness 依赖 Windows 进程/HTTP 传输'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "5250dfd1b63f1c878923cf7a98056ff93d6b780d9bf2905099c090a005654b9b",
+      "file_sha256": "7f51c235954fd94d6e11370e441c5eaa8d32c82f37623ad65a8744dd5ad46d8c",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_c16_assignment_show_workspace_authority.py:199:8:pytest.skip",
+      "site_id": "tests/test_c16_assignment_show_workspace_authority.py:202:8:pytest.skip",
       "file": "tests/test_c16_assignment_show_workspace_authority.py",
-      "line": 199,
+      "line": 202,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "5250dfd1b63f1c878923cf7a98056ff93d6b780d9bf2905099c090a005654b9b",
+      "file_sha256": "7f51c235954fd94d6e11370e441c5eaa8d32c82f37623ad65a8744dd5ad46d8c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1006,19 +1006,19 @@
       "reason_literal": "隔离 daemon harness 依赖 Windows 进程/HTTP 传输",
       "reason_expression": "'隔离 daemon harness 依赖 Windows 进程/HTTP 传输'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "68b054fa798cabef1a89d19690f116a5bf3816e52719505655f8bec48893b249",
+      "file_sha256": "5d08cdeba2fcb60cea3f56f4c2a681d0bf60174ce6e94e726debf59045727a57",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_c17_admin_route_workspace_authority.py:334:8:pytest.skip",
+      "site_id": "tests/test_c17_admin_route_workspace_authority.py:337:8:pytest.skip",
       "file": "tests/test_c17_admin_route_workspace_authority.py",
-      "line": 334,
+      "line": 337,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "68b054fa798cabef1a89d19690f116a5bf3816e52719505655f8bec48893b249",
+      "file_sha256": "5d08cdeba2fcb60cea3f56f4c2a681d0bf60174ce6e94e726debf59045727a57",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1030,19 +1030,19 @@
       "reason_literal": "隔离 daemon harness 依赖 Windows 进程/HTTP 传输",
       "reason_expression": "'隔离 daemon harness 依赖 Windows 进程/HTTP 传输'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "95867d1de001e4daefaf59e8783971b741ed9dc591d2d0757ea59ec8a53f667e",
+      "file_sha256": "cfdb51a2ebdb0decd6818f6e326134848955a74526f46a97b717d3526e9836da",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_c21_edit_rule_route_workspace_authority.py:372:8:pytest.skip",
+      "site_id": "tests/test_c21_edit_rule_route_workspace_authority.py:375:8:pytest.skip",
       "file": "tests/test_c21_edit_rule_route_workspace_authority.py",
-      "line": 372,
+      "line": 375,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "95867d1de001e4daefaf59e8783971b741ed9dc591d2d0757ea59ec8a53f667e",
+      "file_sha256": "cfdb51a2ebdb0decd6818f6e326134848955a74526f46a97b717d3526e9836da",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1150,7 +1150,7 @@
       "reason_literal": "daemon 未运行，跳过 HTTP RPC round-trip 用例",
       "reason_expression": "'daemon 未运行，跳过 HTTP RPC round-trip 用例'",
       "condition_or_module": null,
-      "file_sha256": "e0afeb7ca2a0e47a58e08085569801633bfd59e219e8a93a83a74ab14bfdee91",
+      "file_sha256": "bbc3a96e01b1c8c33eef75a3d0642cd4c19f783da2973a0ccb5e30e63e7b7cd8",
       "root_cause": "UNREVIEWED"
     },
     {

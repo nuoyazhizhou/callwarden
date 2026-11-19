@@ -150,6 +150,9 @@ def _find_daemon_binary():
 
 def _spawn_isolated_daemon(bin_path: str, data_root: str, home_dir: str) -> subprocess.Popen:
     env = os.environ.copy()
+    # §9.43：daemon 是服务端，不继承客户端证书 env（否则被误判为外部 CA 模式）
+    for _k in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT"):
+        env.pop(_k, None)
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
@@ -347,6 +350,7 @@ def c17_daemon(tmp_path_factory):
     _seed_codegraph(codegraph_db)
 
     proc = _spawn_isolated_daemon(bin_path, data_root, home_dir)
+    _saved_mtls = {}
     try:
         manifest = _wait_manifest(data_root, proc)
         if manifest is None:
@@ -366,7 +370,21 @@ def c17_daemon(tmp_path_factory):
             )
         endpoint = manifest["endpoint"]
         skip_if_isolated_daemon_pipe_conflict(proc)
-        assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+        assert endpoint.startswith("https://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
+
+        # ADR-002 单轨 mTLS：注入与隔离 daemon 同源的 owner 身份
+        import test_mtls_control_plane as _mtls  # noqa: PLC0415
+
+        _mtls.pki_init(data_root)
+        cert, key = _mtls.identity_paths(data_root)
+        for _k in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT", "CW_PKI_DIR"):
+            _saved_mtls[_k] = os.environ.get(_k)
+        os.environ["CW_CLIENT_CERT"] = cert
+        os.environ["CW_CLIENT_KEY"] = key
+        os.environ["CW_CA_CERT"] = os.path.join(
+            _mtls.pki_dir_of(data_root), "ca", "ca.crt"
+        )
+        os.environ.pop("CW_PKI_DIR", None)
 
         print(f"[C-17 harness] bin={bin_path}")
         print(f"[C-17 harness] bin_sha256={bin_sha}")
@@ -379,6 +397,11 @@ def c17_daemon(tmp_path_factory):
         yield client, codegraph_db, bin_path, bin_sha
     finally:
         _terminate(proc)
+        for _k, _v in _saved_mtls.items():
+            if _v is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _v
 
 
 def _admin(client, method: str, params: dict):

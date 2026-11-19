@@ -3761,6 +3761,54 @@ Tls("E_PKI_CA_LOAD: CW_CA_CERT 与 CW_CA_KEY 必须同时设置（外部 CA 模�
 - 全量 `pytest tests/` 仍不建议作为本机门禁（9532 条、失败项各自烧授权/
   连接超时）；A 族清零后，如需全量门禁应以**分段 + 模块级超时**执行。
 
+## 9.43 B 族陈旧断言清零：单轨 HTTPS 后的 loopback/身份装配（2026-11-19）
+
+### 1. 立项与范围
+
+用户裁决选题：**B 族——单轨 HTTPS 迁移后的陈旧断言**（承接 §9.41 §5.1 /
+§9.42 残留）。范围：`tests/test_c16_assignment_show_workspace_authority.py`
+（10 条）、`tests/test_c17_admin_route_workspace_authority.py`（22 条）、
+`tests/test_c21_edit_rule_route_workspace_authority.py`（22 条）与
+`tests/test_cli_03_http_rpc.py::test_http_rpc_task_daemon_unavailable_fail_closed`。
+纯 tests 面，无 rust_ext 改动，免 refresh。
+
+### 2. 根因（两层，缺一不可）
+
+1. **断言层**：ADR-002 单轨 HTTPS（`6fb74aa` 起）后隔离 daemon manifest 的
+   endpoint 变为 `https://127.0.0.1:<port>`，三个 c 系 fixture 仍断言
+   `http://127.0.0.1:`。该断言位于 **fixture 内**，因此表现为整模块
+   setup ERROR（实测 56 条 ERROR + 1 条 FAILED）。
+2. **身份层**：三个 fixture 从未装配 mTLS 客户端身份（daemon 用隔离
+   USERPROFILE 下的 LocalCa，客户端解析真实 HOME/环境证书）。仅把断言改成
+   `https://` 会让调用阶段转为跨 CA `BadSignature`，必须同时注入同源身份。
+
+### 3. 修复
+
+- 三个 c 系 fixture：`http://` → `https://127.0.0.1:`；manifest 就绪后执行
+  `test_mtls_control_plane.pki_init(data_root)`（幂等补 owner 身份）+ 注入
+  `CW_CLIENT_CERT` / `CW_CLIENT_KEY` / `CW_CA_CERT` 并 `pop CW_PKI_DIR`，
+  teardown 逐键还原（module 级 fixture 无法用 monkeypatch，沿用
+  `test_cli_subcommand_e2e` 的 save/restore 配方）。
+- 三个 c 系文件内的本地 `_spawn_isolated_daemon`：构造子进程 env 时剔除
+  `CW_CLIENT_CERT` / `CW_CLIENT_KEY` / `CW_CA_CERT`——daemon 是服务端，
+  继承客户端凭据 env 会被判为「外部 CA 模式」（`E_PKI_CA_LOAD`）。
+- `test_cli_03_http_rpc`：用 `make_fake_tls_material` 显式提供一套自签测试
+  材料后断言 `E_HTTP_DAEMON_UNAVAILABLE`。否则在无真实 PKI 的机器上，客户端
+  在身份解析阶段就 fail-closed（「mTLS 客户端证书缺失」），传输层断言永不可达。
+
+### 4. 验证
+
+- 四模块合计 **59** 条：**55 passed / 4 skipped / 0 failed**（skip 为既有
+  「生产 daemon 未运行」条件跳过，与本章无关）。
+- 未触碰 `_w3_harness.py` 与 §9.42 已修 10 模块；CLI 面其余 115 个文件在
+  §9.42 已全量复跑，本章仅改其中 `test_cli_03_http_rpc.py` 并在本章内验证。
+- 免 cargo / 免 refresh。
+
+### 5. 口径
+
+至此 §9.41 登记的三族只剩 **C 族**（`test_legacy_write_jobs_baseline` 源码
+字面量断言漂移），待专项卡。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

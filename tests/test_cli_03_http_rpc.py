@@ -65,7 +65,21 @@ def test_http_rpc_task_authority_failure(live_daemon):
     assert tasks == []
 
 
-def test_http_rpc_task_daemon_unavailable_fail_closed():
+def test_http_rpc_task_daemon_unavailable_fail_closed(tmp_path, monkeypatch):
+    """端点不可达 → fail-closed E_HTTP_DAEMON_UNAVAILABLE（禁止回落本地 SQLite）。
+
+    ADR-002 单轨 mTLS 后客户端会先解析身份；本机无真实 PKI 时该步会以
+    「mTLS 客户端证书缺失」提前 fail-closed，掩盖传输层用例。故显式提供
+    一套自签测试材料，使断言落在真正的「TCP 连接被拒绝」路径上。
+    """
+    import test_mtls_control_plane as _mtls  # noqa: PLC0415
+
+    tls = _mtls.make_fake_tls_material(str(tmp_path / "tls"))
+    monkeypatch.setenv("CW_CLIENT_CERT", tls["client_cert"])
+    monkeypatch.setenv("CW_CLIENT_KEY", tls["client_key"])
+    monkeypatch.setenv("CW_CA_CERT", tls["ca_cert"])
+    monkeypatch.delenv("CW_PKI_DIR", raising=False)
+
     from callwarden.config import get_http_authority_id
     c = HttpDaemonRpcClient(
         endpoint="https://127.0.0.1:9", authority_id=get_http_authority_id()
