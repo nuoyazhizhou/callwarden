@@ -3861,6 +3861,45 @@ Tls("E_PKI_CA_LOAD: CW_CA_CERT 与 CW_CA_KEY 必须同时设置（外部 CA 模�
 
 §9.41 登记的三族（A/B/C）**全部清零**；CLI 面既有失败归因闭环。
 
+## 9.45 CLI 面全量回归验收：A/B/C 清零确认（2026-11-19）
+
+### 1. 立项与范围
+
+回答终验问题「回归完成了吗」：在 §9.42（A 族）、§9.43（B 族）、§9.44（C 族）
+三章修复后，**首次整体复跑** CLI 面全量。范围：116 个 `tests/test_cli_*.py`
+（§9.42 登记口径 622 条）。纯验证章，无源码/测试改动。
+
+### 2. 执行
+
+- PowerShell 不展开 `tests/test_cli_*.py` 通配符：先 `Get-ChildItem` 展开为绝对
+  路径再传给 pytest；`-p no:randomly` 固定执行顺序，避免随机排序引入顺序依赖。
+- 复跑两次（一次统计通过/跳过，一次 `-rs` 抓跳过原因），结果一致。
+
+### 3. 结果
+
+| 指标 | 数值 |
+| --- | --- |
+| 文件数 / 收集条数 | 116 / **622** |
+| passed | **618** |
+| skipped | **4** |
+| failed | **0** |
+
+- **0 failed**：A/B/C 三族在 CLI 面已无残留（§9.42 后唯一 B 族失败、§9.44 的
+  C 族模块均已修复）。
+- **4 skipped**：全部为 `tests/test_cli_03_http_rpc.py` 的 live round-trip
+  用例（`live_daemon` fixture 中 `HttpDaemonRpcClient().health()` 失败即 skip）。
+  本机测试进程未发现可用的生产 daemon endpoint（MCP 宿主的 daemon 不在该进程的
+  env / manifest 发现面内），属**环境条件跳过**，非失败、非回归。
+
+### 4. 口径与后续
+
+- CLI 面回归判定：**通过**（0 failed）。
+- 4 条 live 用例长期只 skip、未产生真实 round-trip 覆盖。若需纳入常规门禁，应
+  改为隔离 daemon 夹具（参照 §9.42 `_w3_harness`）或 env-gated 显式地址——
+  登记为后续候选，不在本章扩大。
+- 全量 `pytest tests/`（9532 条）仍不可作单次门禁（§22.6：失败项与执行顺序相关
+  且各自烧授权/连接超时），分段 + 模块级超时门禁另卡处理。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

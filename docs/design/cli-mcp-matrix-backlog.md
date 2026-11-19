@@ -1727,7 +1727,10 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
 §9.42 复跑（116 个 `test_cli_*.py`，622 条）：617 passed / 4 skipped / 1 failed
 （唯一失败即上表 B 族，§9.43 已清零）。§9.43 B 族四模块复跑：59 条
 55 passed / 4 skipped / 0 failed。§9.44 C 族单模块：30 passed / 0 failed
-（连带 `test_legacy_query_baseline` 共 101 passed）。全量 `pytest tests/`（9532 条）
+（连带 `test_legacy_query_baseline` 共 101 passed）。§9.45 三族清零后 CLI 面
+终验复跑（116 文件 / 622 条）：**618 passed / 4 skipped / 0 failed**；4 条 skip
+均为 `test_cli_03_http_rpc.py` live round-trip 的环境条件跳过（测试进程未发现
+生产 daemon endpoint），非回归。全量 `pytest tests/`（9532 条）
 在本机仍不可作门禁——失败项各自烧授权/连接超时且与执行顺序相关，如需全量门禁须
 分段 + 模块级超时。
 
