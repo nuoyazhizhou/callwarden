@@ -3165,6 +3165,134 @@ hostname，无服务端证书指纹 pinning）。
 签发/renew、commit 单根收敛、旧证书握手期拒止——**全程 PID 36152
 不变（零重启）**，§9.35 验收闭合。
 
+## 9.36 外部 CA 导入：CW_CA_CERT + CW_CA_KEY 配置面与 fail-closed 生命周期（2026-11-19）
+
+### 1. 立项与范围
+
+ADR §14 未决问题 #2（外部 CA 导入的配置面与 UI）正式立项，延续
+§9.31→§9.35 PKI 生命周期弧线。此前 `CW_CA_CERT` 仅存在于 ADR 文字
+（§4.1 旧口径 `pki.external_ca_cert/key`）与客户端信任 pin（config.py），
+Rust daemon **零实现**。目标：env 配置面（`CW_CA_CERT` + `CW_CA_KEY`
+同时指向外部 PEM）→ daemon 以外部 CA 为唯一签发/信任根，全 fail-closed，
+不自签兜底，不改写外部文件。
+
+非目标：外部 CA 文件的自动替换（用户自行替换 + §9.35 热加载哨兵）；
+多租户 CA 分层（ADR §14 #4 明确不做）。
+
+### 2. 设计决策
+
+- **配置面语义**：`CW_CA_CERT` + `CW_CA_KEY` **同时**设置且非空 → 外部
+  CA 模式；都未设置 → 内置自签；**只设其一 → `E_PKI_CA_LOAD`
+  fail-closed**（半配置静默回退内置 CA 会造成"签发 CA 与预期不符"）。
+- **env 优先**：`load_ca` 外部分支完全忽略磁盘 `ca/`；`LocalCa.key_path`
+  指向外部私钥文件，`issuer()` 按路径读入——签发路径
+  （enroll/renew/ensure_server_cert）零改动。
+- **加载期校验**（全 `E_PKI_CA_LOAD` fail-closed）：文件可读、单张
+  CERTIFICATE 块、BasicConstraints CA=true、KeyUsage 含 keyCertSign、
+  有效期内、**私钥公钥 = 证书 SPKI 配对**（误配对在首次签发时才以费解
+  签名错误暴露，必须在加载期拦截）；`ca-previous/` 窗口未收敛 → 拒绝
+  （先 commit）；磁盘存在指纹不同的内置 `ca/` → 拒绝（内外切换须显式
+  迁移）。
+- **rotate-ca 裁决**：外部模式拒绝（`E_PKI_ROTATE_EXTERNAL_CA`）——签发
+  CA 生命周期归外部系统，轮换 = 用户替换外部文件 + §9.35 热加载哨兵。
+- **issuer 归属检查（自愈核心）**：`ensure_server_cert` 幂等条件新增
+  "服务端证书 AKI == 当前 CA SKI"（CA 无 SKI 时跳过；叶证书无 AKI 或
+  不匹配 → 重签一次）。外部 CA 文件被整体替换后 reload → 旧 server
+  证书不归属新 CA → 自动以新 CA 重签。
+- **测试隔离**：env 是进程级全局，并行测试下 set/remove 污染其他用例
+  （本轮实测暴露）→ 拆两层：`external_ca_from_values`（纯函数，免 env
+  测语义）+ 线程局部注入 `EXTERNAL_CA_TEST_OVERRIDE` /
+  `ExternalCaOverrideGuard`（测试构建下 `external_ca_paths()` 走注入、
+  与宿主机真实 env 完全解耦；生产构建读 env）。
+
+### 3. 实现清单
+
+| 文件 | 内容 |
+| --- | --- |
+| `pki_api.rs` | `CaSource` + `external_ca_from_values`/`external_ca_paths`（注入分支）+ `load_ca` env 优先分支（校验链 + SPKI 配对 + 内置冲突检查）+ `load_ca_with_external`（参数化核心）+ `cert_subject_key_id`/`cert_authority_key_id`（上移自 cli）+ `ensure_server_cert` 归属检查 + 服务端证书补写 AKI（`use_authority_key_identifier_extension`，§9.34 仅客户端写）+ 10 单测 |
+| `http_server.rs` | manifest `tls.ca_source`（internal/external） |
+| `cli/pki.rs` | `rotate_ca_prepare` 外部模式拒止 + `init` 输出 `ca_source` + AKI helper 去重 + 1 单测 |
+| ADR | §4.1 配置面统一 env 口径；§4.3 新增「外部 CA 导入细则」；§14 #2 关闭（已决 2026-11-19） |
+
+### 4. 缺陷与修正
+
+1. **服务端证书缺 AKI（设计缺陷）**：§9.34 只给客户端证书写了 AKI，
+   服务端签发漏配 `use_authority_key_identifier_extension = true`
+   （rcgen 0.14 默认不写）→ 归属检查每轮 reload 都判"不归属"→ 重签
+   churn（`test_ensure_server_cert_fresh_cert_idempotent` 等 6 例失败
+   暴露）。修复：服务端签发补写 AKI；旧证书（无 AKI）触发一次性重签
+   后即幂等稳定。真机验证 ⑧ 收尾时确认了该一次性重签（生产 server
+   证书 `32b8952e` 信任根不变、sha 变化一次）。
+2. **外部 CA 文件读错误码穿透**：缺文件/不可读最初透出 `E_PKI_IO`
+   （`read_text` 直传）→ 外部分支显式映射为 `E_PKI_CA_LOAD`（ADR 语义
+   统一：外部 CA 加载失败一律 fail-closed 同码）。
+3. **测试 env 污染**：初版用进程级 set/remove + 互斥锁，并行下其他
+   用例（`init_is_idempotent`、rotate roundtrip 等）被污染失败 →
+   改为纯函数 + 线程局部注入（见 §2 设计决策），零 env 变更。
+
+### 5. 测试与验收
+
+- Rust 新增 11 例：
+  - pki_api 10：外部 CA 加载 + 签发（SAN principal 正确、不建 `ca/`）；
+    缺文件 fail-closed；cert/key 误配对拦截；非 CA 证书（NoCa 叶证书）
+    拒绝；过期 CA 拒绝；与内置 CA 指纹冲突拒绝 + 指纹相同（副本）兼容
+    放行；`ca-previous/` 窗口冲突拒绝；env 语义纯函数（都未设/只设其
+    一/空串/trim）；`ensure_ca` 外部模式绝不自签；换 CA 后 server 重签
+    （AKI 归属新 CA）+ 归属后幂等（churn 防护）；
+  - cli::pki 1：`rotate_ca_prepare` 外部模式 `E_PKI_ROTATE_EXTERNAL_CA`。
+- 全量回归：`cargo test --lib` **2043 passed / 0 failed**（1239s，
+  HEAD `3ce9fe5`）。较 §9.35 基线 2032 净增 11。
+- `rust_ext/**` 属 RUNTIME_AFFECTING_PATH_PREFIXES → refresh（见 §6）。
+
+### 6. 真机验证链（2026-11-19，全绿）
+
+- **refresh**：`20261119-120528-3ce9fe546c7f-843aa949.json`，passed，
+  10m05s；`cw-daemon.exe` sha256 `5379488d…26149`，装入
+  `runtime\current`（daemon 自动重启至新二进制）。
+- **外部 CA 资产**：以 runtime `cw pki init`（`CW_PKI_DIR` mint 沙箱）
+  铸独立自签 CA，导出 `ext-ca.crt`/`ext-ca.key`（指纹 `eaf0305c…08f`）
+  至 `~/.callwarden/pki-external\`；CA#2 同法铸造（指纹 `6821e5d0…8f4`）。
+- **① 外部模式启动**：沙箱 `CW_PKI_DIR`（空目录）+ `CW_CA_CERT`/`CW_CA_KEY`
+  启动 daemon：manifest `tls.ca_source=external`、CA `eaf0305c…`、
+  server `7d56648c…`，**PID 4888**、endpoint `https://127.0.0.1:2116`；
+  沙箱内零 `ca/` 目录（不自签兜底实证）。
+  验证脚手架观察（非产品缺陷）：`cw.py daemon start` 就绪探针与
+  `daemon health` 在未设沙箱 env 时握手被重置（`WinError 10054`）——
+  Python 客户端用生产 `pr_owner`（内部 CA 签发）连外部信任根，
+  UnknownCA 拒止，语义正确；裸 TLS 探测（无客户端证书，
+  allow_unauthenticated /health 路径）确认服务端握手 TLSv1.3 正常。
+- **② `cw pki init`**（沙箱 env）：`ca_source: "external"`、指纹
+  `eaf0305c…`、幂等（server sha 与 manifest 一致）+ owner 身份签发至
+  沙箱；随后 `daemon health` OK + `daemon ping` mTLS round-trip OK
+  （pr_owner 经外部 CA 信任根）。
+- **③ 外部 CA 签发路径**：`token issue`（workspace `ws_ext936`，
+  principal `pr_2538a826…`）→ `enroll`（serial `03CF8CF0…`）→
+  `renew`（serial `36772333…`）全部成功（mTLS 信任根 = 外部 CA）。
+- **④ rotate-ca 拒止**：`rotate-ca --action prepare` →
+  `E_PKI_ROTATE_EXTERNAL_CA`（"替换 CW_CA_CERT/CW_CA_KEY 指向的文件并
+  触发 TLS 热加载完成轮换"）。
+- **⑤ 热加载轮换（外部 CA 换文件）**：CA#2（`6821e5d0…`）覆盖外部
+  cert/key 文件 + 写哨兵 → watcher 消费哨兵 → manifest
+  `ca_fingerprint_sha256` `eaf0305c…→6821e5d0…`、`server_cert_sha256`
+  `7d56648c…→f5d8b04f…`（归属检查触发重签）、无
+  `previous_ca_fingerprint_sha256`（外部模式无双根窗口），**PID 4888
+  不变（零重启）**。
+- **⑥ fail-closed reload（负向）**：外部证书文件改名隐藏 + 哨兵 →
+  reload 失败：哨兵保留（成功才删）、daemon 存活（TLSv1.3 握手 OK）、
+  manifest 沿用旧配置（CA `6821e5d0…` / server `f5d8b04f…` 不变）；
+  恢复文件后经 30s 退避重试自愈（哨兵消费、PID 不变）。
+- **⑦ 收尾（生产恢复）**：停沙箱 daemon（stop 探针受跨信任根
+  客户端证书影响报 `E_HTTP_DAEMON_UNAVAILABLE`，进程未及 kill——
+  强杀 4888 后干净启动，属验证环境操作，非产品缺陷）；生产模式
+  启动：`ca_source=internal`、CA 恢复 `32b8952e…`（PID 30164）；
+  server 证书 sha 变化一次（`b7eeceaf…`）——缺陷 1 修复后归属检查对
+  无 AKI 旧证书的一次性重签自愈，随后幂等；`daemon ping` OK
+  （pr_b488…，mTLS）。
+
+结论：外部 CA 加载/签发（enroll/renew）、rotate-ca 拒止、换文件
+热加载轮换（AKI 归属自愈重签）、fail-closed reload 与退避自愈——
+外部 CA 生命周期全链路真机闭合，生产环境已恢复内置 CA 基线。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

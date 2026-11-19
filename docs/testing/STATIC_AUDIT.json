@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "84f93ace474dda710570ec4a532501e5d497406e",
+  "supplied_source_revision": "3ce9fe546c7fd4da32a6e4a1abbedbeb20927e4c",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -57,7 +57,7 @@
     "reason_absent_sites": 23,
     "reason_nonliteral_or_absent_sites": 190,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2150,
+    "rust_src_attributes": 2161,
     "rust_src_cfg_test_files": 122
   },
   "inputs": [
@@ -179,7 +179,7 @@
     },
     {
       "path": "rust_ext/src/cli/pki.rs",
-      "sha256": "2406ba5359841eed7d974b8807efa2bc764fae18150be00c4af0e262fca3f8f5"
+      "sha256": "8ce19bce0d6486f99b30252af545e375bbcec0fff53b8493928448957ee3f4b0"
     },
     {
       "path": "rust_ext/src/cli/readonly.rs",
@@ -359,7 +359,7 @@
     },
     {
       "path": "rust_ext/src/daemon/http_server.rs",
-      "sha256": "d60abcc31833c77a6e538fb829f29ac34edfae0dedfed95ee50695f3e4d17d5e"
+      "sha256": "7fb418d4d22bcca3223570119dc3c7607a5a9a2ee6124978b95d1acd82c08e9d"
     },
     {
       "path": "rust_ext/src/daemon/job_executor_handlers.rs",
@@ -391,7 +391,7 @@
     },
     {
       "path": "rust_ext/src/daemon/pki_api.rs",
-      "sha256": "cab44a8ea87bd1e0a329045732b6e7ad2d44acf0c917c0ae6f9055d894450760"
+      "sha256": "57c8b13fc2d3317ca25835f5f3dae69f510dadef8e34dca679ee7331f1449091"
     },
     {
       "path": "rust_ext/src/daemon/pki_handlers.rs",
