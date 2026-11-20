@@ -130,7 +130,27 @@ GC 分两类：
 cw gc policy show
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 策略保存在当前 workspace 的数据库中，作为 `gc retention` 未传参数时的默认值。
+
+**示例**
+
+```bash
+cw gc policy show
+```
 
 ### `gc policy set`：修改 retention 策略
 
@@ -138,14 +158,31 @@ cw gc policy show
 cw gc policy set --older-than 730 --keep-versions 200 --no-include-external --backup --no-vacuum
 ```
 
-常用参数：
+**参数**
 
-- `--older-than <DAYS>`：文件版本超过多少天才进入候选。
-- `--keep-versions <N>`：每个文件至少保留最近 N 个版本。
-- `--include-external / --no-include-external`：是否清理长期未 seen/used 的外部包符号。
-- `--external-stale-days <DAYS>`：外部包冷数据阈值。
-- `--backup / --no-backup`：执行前是否压缩备份完整数据库。
-- `--vacuum / --no-vacuum`：执行后是否运行 VACUUM 释放磁盘空间。
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--older-than <DAYS>` | 否 | 文件版本超过多少天才进入候选（不传则使用数据库策略） |
+| `--keep-versions <N>` | 否 | 每个文件至少保留最近 N 个版本（不传则使用数据库策略） |
+| `--include-external` / `--no-include-external` | 否 | 是否清理长期未 seen/used 的外部包符号 |
+| `--external-stale-days <DAYS>` | 否 | 外部包冷数据阈值天数（不传则使用数据库策略） |
+| `--backup` / `--no-backup` | 否 | 执行前是否压缩备份完整数据库 |
+| `--vacuum` / `--no-vacuum` | 否 | 执行后是否运行 VACUUM 释放磁盘空间 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw gc policy set --older-than 730 --keep-versions 200 --no-include-external --backup --no-vacuum
+cw gc policy set --vacuum
+```
 
 ### `gc retention`：按策略预演或执行清理
 
@@ -155,6 +192,27 @@ cw gc retention --apply
 cw gc retention --apply --older-than 730 --keep-versions 200
 cw gc retention --apply --older-than 730 --keep-versions 200 --save-policy
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--older-than <DAYS>` | 否 | 清理早于多少天的文件版本（不传则使用数据库策略） |
+| `--keep-versions <N>` | 否 | 每个文件至少保留最近多少个版本（不传则使用数据库策略） |
+| `--include-external` / `--no-include-external` | 否 | 同时清理长期未 seen/used 的外部包符号 |
+| `--external-stale-days <DAYS>` | 否 | 外部包冷数据阈值天数（不传则使用数据库策略） |
+| `--backup` / `--no-backup` | 否 | 清理前创建压缩数据库备份 |
+| `--vacuum` / `--no-vacuum` | 否 | 清理后运行 VACUUM 释放磁盘空间 |
+| `--dry-run` / `--apply` | 否 | 预演（默认）或执行清理 |
+| `--save-policy` | 否 | 将本次传入的策略参数保存到数据库 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约）；`--apply` 写面操作受 PROTECTED_MUTATION 保护 |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 语义规则：
 
@@ -175,43 +233,100 @@ dry-run 与 apply 输出末尾会附 **Top N 收益预估**（v20 新增）：
 
 > 所有数量均为估算（基于候选 ID 集合预统计），不承诺精确磁盘节省。
 
-### `gc archive list`：列出 GC 备份文件
+**示例**
 
 ```bash
-cw gc archive list
-cw gc archive list --limit 50
+cw gc retention --dry-run
+cw gc retention --apply --older-than 730 --keep-versions 200 --save-policy
 ```
+
+### `gc archive-list`：列出 GC 备份文件
+
+```bash
+cw gc archive-list
+cw gc archive-list --limit 50
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--limit <N>` | 否 | 最多显示多少条（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 列出 `gc_archives/*.db.gz` 备份文件，按修改时间倒序，默认最多 20 条。每条输出含序号、文件名、大小、归档原因（从文件名 `{YYYYMMDD-HHMMSS}-{reason}.db.gz` 解析）。
 
-### `gc archive inspect`：检查备份内容
+**示例**
 
 ```bash
-cw gc archive inspect <path-or-name>
-cw gc archive inspect 20260705-1030-retention
+cw gc archive-list
+cw gc archive-list --limit 50
 ```
+
+### `gc archive-inspect`：检查备份内容
+
+```bash
+cw gc archive-inspect <path-or-name>
+cw gc archive-inspect 20260705-1030-retention
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<path-or-name>` | 是 | 备份文件路径（`.db.gz`，支持相对 `gc_archives` 目录的简写） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 以只读模式打开 `.db.gz` 备份，输出 Schema 版本、各表行数、关键摘要（workspaces / file_instances / file_versions / symbols / archived_files / external_symbols / gc_runs）。`<path-or-name>` 既可以是完整路径，也可以是文件名简写（自动在 `gc_archives/` 下查找）。
 
-### `gc archive import`：从备份恢复数据
+**示例**
+
+```bash
+cw gc archive-inspect 20260705-1030-retention
+```
+
+### `gc archive-import`：从备份恢复数据
 
 ```bash
 # 预演：仅打印将要恢复什么，不写入
-cw gc archive import <path> --file src/a.py
-cw gc archive import <path> --package ext-python-oldpkg
+cw gc archive-import <path> --file src/a.py
+cw gc archive-import <path> --package ext-python-oldpkg
 
 # 执行：实际写入当前数据库（INSERT OR IGNORE，幂等）
-cw gc archive import <path> --file src/a.py --apply
-cw gc archive import <path> --package ext-python-oldpkg --apply
+cw gc archive-import <path> --file src/a.py --apply
+cw gc archive-import <path> --package ext-python-oldpkg --apply
 ```
 
-参数：
+**参数**
 
-- `<path>`：备份文件路径或简写文件名。
-- `--file <REL_PATH>`：要恢复的文件相对路径；与 `--package` 二选一。
-- `--package <NAME>`：要恢复的外部包名；与 `--file` 二选一。
-- `--dry-run`（默认）：只预演，不写入。
-- `--apply`：实际写入；以 INSERT OR IGNORE 方式恢复，已存在的行不会被覆盖（当前库优先）。
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<path>` | 是 | 备份文件路径（`.db.gz`，支持相对 `gc_archives` 目录的简写） |
+| `--file <REL_PATH>` | 否 | 要导入的文件相对路径（如 `src/a.py`）；与 `--package` 二选一 |
+| `--package <NAME>` | 否 | 要导入的外部包名；与 `--file` 二选一 |
+| `--dry-run` / `--apply` | 否 | 预演（默认）：只统计不修改数据库；`--apply` 实际写入 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约）；`--apply` 写面操作受 PROTECTED_MUTATION 保护 |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 恢复语义：
 
@@ -219,22 +334,70 @@ cw gc archive import <path> --package ext-python-oldpkg --apply
 - package 模式：恢复指定包的 `external_symbols / package_versions`。
 - 每次执行都会写入 `gc_runs` 审计记录（operation=`archive_import`），便于追踪谁在何时恢复了什么。
 
-### `gc audit list`：列出 GC 审计记录
+**示例**
 
 ```bash
-cw gc audit list
-cw gc audit list --limit 50
+cw gc archive-import 20260705-1030-retention --file src/a.py --apply
+cw gc archive-import 20260705-1030-retention --package ext-python-oldpkg
 ```
+
+### `gc audit-list`：列出 GC 审计记录
+
+```bash
+cw gc audit-list
+cw gc audit-list --limit 50
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--limit <N>` | 否 | 最多显示多少条（默认 20） |
+| `--operation <TYPE>` | 否 | 按操作类型过滤（retention/archive/purge） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 列出 `gc_runs` 表中的审计记录，按时间倒序，默认最多 20 条。每条含 audit_id、operation、status、dry_run、started_at、completed_at。operation 取值：`archive / restore / purge / retention / archive_import`，status 取值：`running / completed / failed`。
 
-### `gc audit show`：查看审计详情
+**示例**
 
 ```bash
-cw gc audit show <AUDIT_ID>
+cw gc audit-list --limit 50 --operation retention
 ```
 
+### `gc audit-show`：查看审计详情
+
+```bash
+cw gc audit-show <AUDIT_ID>
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<AUDIT_ID>` | 是 | 审计记录 ID（整数） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 输出指定审计记录的完整详情：策略参数（policy_json）、候选数量（candidate_counts）、实删数量（deleted_counts）、备份路径、备份大小、operator、起止时间、错误信息（仅 failed 时）。
+
+**示例**
+
+```bash
+cw gc audit-show 42
+```
 
 ### `gc db-cleanup`：清理孤儿数据库
 
@@ -244,6 +407,28 @@ cw gc audit show <AUDIT_ID>
 cw gc db-cleanup                      # 预览（默认，不删除）
 cw gc db-cleanup --apply              # 实际删除孤儿数据库
 cw gc db-cleanup --all-but-current    # 除当前 workspace 外全部标记为孤儿
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--dry-run` / `--apply` | 否 | 仅预览（默认）；`--apply` 实际删除孤儿数据库 |
+| `--all-but-current` | 否 | 将除当前 workspace 外的所有数据库标记为孤儿 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约）；`--apply` 写面操作受 PROTECTED_MUTATION 保护 |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw gc db-cleanup
+cw gc db-cleanup --apply --all-but-current
 ```
 
 ### 旧版多库迁移（`gc db-migrate-single` 已退役）
@@ -940,77 +1125,185 @@ cw orphan-symbols --module "src/legacy"
 ### `vuln-blast`：漏洞爆炸半径（子命令）
 
 ```bash
+cw vuln-blast --finding-id 42
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--finding-id <N>` | 否 | 指定 Semgrep finding ID（默认扫描全部） |
+| `--severity <SEV>` | 否 | 严重度过滤：ERROR/WARN/INFO |
+| `--depth <N>` | 否 | 调用图反向遍历深度（默认 3） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+将 Semgrep findings 与调用图结合，分析漏洞能影响多少下游调用方。返回风险等级 + 每个漏洞的影响树。
+
+> 注：命令自带 epilog 中的「2 = Database locked」为退役口径；锁定等运行时失败按全局退出码契约归 1。
+
+**示例**
+
+```bash
 cw vuln-blast
 cw vuln-blast --finding-id 42
 cw vuln-blast --severity ERROR --depth 5
 ```
 
-| 参数               | 说明                                    |
-| ------------------ | --------------------------------------- |
-| `--finding-id <N>` | 指定 Semgrep finding ID（默认扫描全部） |
-| `--severity <SEV>` | 严重度过滤：ERROR/WARN/INFO             |
-| `--depth <N>`      | 调用图反向遍历深度（默认 3）            |
-
-将 Semgrep findings 与调用图结合，分析漏洞能影响多少下游调用方。返回风险等级 + 每个漏洞的影响树。
-
-### `guardrail`：安全护栏（子命令）
+### `guardrail scan`：安全护栏扫描
 
 ```bash
-# 扫描违规
 cw guardrail scan
-cw guardrail scan --file src/db/
-cw guardrail scan --category db_safety
-
-# 列出规则
-cw guardrail rules
-cw guardrail rules --category api_compat
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--file <PREFIX>` | 否 | 文件路径前缀过滤 |
+| `--category <CAT>` | 否 | 按类别过滤（db_safety/api_compat/incident） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 扫描 DB/API/Incident 三类可阻断规则。
+
+**示例**
+
+```bash
+cw guardrail scan --file src/db/
+cw guardrail scan --category db_safety
+```
+
+### `guardrail rules`：列出护栏规则
+
+```bash
+cw guardrail rules
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--category <CAT>` | 否 | 按类别过滤 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw guardrail rules --category api_compat
+```
 
 ### `semgrep scan [PATH...]`：Semgrep 扫描
 
 ```bash
-# 详细扫描
-cw semgrep scan
 cw semgrep scan src/payment/ src/api/
+```
 
-# 快速汇总
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[PATH...]` | 否 | 扫描路径（为空则扫描整个工作区） |
+| `--config <CONFIG>` | 否 | 规则配置（默认 `p/default`） |
+| `--lang <LANG...>` | 否 | 限制语言 |
+| `--timeout <N>` | 否 | 超时秒数（默认 180） |
+| `--quick` | 否 | 快速汇总模式 |
+| `--save` | 否 | 扫描结果存入数据库 |
+| `--incremental` | 否 | 增量扫描模式：只扫 git diff 变更文件，scan_type='incremental'，清理 stale findings（A14） |
+| `--base <BRANCH>` | 否 | 增量扫描基准分支（默认 `main`，A14） |
+| `--head <REF>` | 否 | 增量扫描目标提交（默认 `HEAD`，A14） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw semgrep scan
 cw semgrep scan --quick
-
-# 扫描并存入数据库
 cw semgrep scan --save
-
-# 自定义规则配置
-cw semgrep scan --config p/security
 cw semgrep scan --config p/security --lang rust typescript
-
-# 增量扫描（A14 修复 2026-07-20）：只扫 git diff 变更文件并清理旧 findings
 cw semgrep scan --incremental
 cw semgrep scan --incremental --base develop --head HEAD
 cw semgrep scan --incremental --config p/security
 ```
 
-| 参数                | 说明                                                                                      |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `[PATH...]`         | 扫描路径（为空则扫描整个工作区）                                                          |
-| `--config <CONFIG>` | 规则配置（默认 `p/default`）                                                              |
-| `--lang <LANG...>`  | 限制语言                                                                                  |
-| `--timeout <N>`     | 超时秒数（默认 180）                                                                      |
-| `--quick`           | 快速汇总模式                                                                              |
-| `--save`            | 扫描结果存入数据库                                                                        |
-| `--incremental`     | 增量扫描模式：只扫 git diff 变更文件，scan_type='incremental'，清理 stale findings（A14） |
-| `--base <BRANCH>`   | 增量扫描基准分支（默认 `main`，A14）                                                      |
-| `--head <REF>`      | 增量扫描目标提交（默认 `HEAD`，A14）                                                      |
-
-### `semgrep stats` / `semgrep list`
+### `semgrep stats`：Semgrep 统计
 
 ```bash
-# 统计
 cw semgrep stats
+```
 
-# 列表
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw semgrep stats
+```
+
+### `semgrep list [FILTER]`：Semgrep findings 列表
+
+```bash
 cw semgrep list
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[FILTER]` | 否 | 规则 ID 过滤 |
+| `--severity <SEV>` | 否 | 按严重程度过滤 |
+| `--lang <LANG>` | 否 | 按语言过滤 |
+| `--limit <N>` | 否 | 最大结果数（默认 50） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
 cw semgrep list --severity ERROR
 cw semgrep list --lang rust
 ```
@@ -2609,12 +2902,6 @@ cw comment-coverage
 cw comment-coverage --by module   # 按 module/file/kind
 ```
 
-### `coverage test`：测试覆盖率
-
-```bash
-cw coverage test
-```
-
 ### `health-report`：项目整体健康报告
 
 聚合基础统计 + 演化热点（Top 5）+ 问题统计（Semgrep findings 按 severity）+ Token 节省，一眼看清项目健康状态。只读。
@@ -2826,11 +3113,53 @@ cw review a1b2c3d4e5f6...
 
 ```bash
 cw defect search
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--category <CAT>` | 否 | 按类别过滤 |
+| `--severity <SEV>` | 否 | 按严重度过滤 |
+| `--limit <N>` | 否 | 最大结果数（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
 cw defect search --category security
 cw defect search --severity error --limit 30
 ```
 
 ### `defect suggest`：推荐修复方案
+
+```bash
+cw defect suggest <SYMBOL_HASH>
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<SYMBOL_HASH>` | 是 | 缺陷符号哈希 |
+| `--finding <N>` | 否 | 指定 Semgrep finding ID |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
 
 ```bash
 cw defect suggest a1b2c3d4e5f6...
@@ -2840,14 +3169,79 @@ cw defect suggest a1b2c3d4e5f6... --finding 42
 ### `defect learn`：从修复 commit 学习
 
 ```bash
+cw defect learn <COMMIT_HASH>
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<COMMIT_HASH>` | 是 | 修复 commit 哈希 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
 cw defect learn abc123def456
 ```
 
-### `defect stats` / `defect build`
+### `defect stats`：缺陷知识库统计
 
 ```bash
-cw defect stats     # 统计
-cw defect build     # 构建知识库
+cw defect stats
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw defect stats
+```
+
+### `defect build`：构建缺陷知识库
+
+```bash
+cw defect build
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw defect build
 ```
 
 ### `function-issues [FN]`：函数缺陷检测
@@ -3308,6 +3702,29 @@ cw export-module-graph --format dot --output deps.dot
 
 ```bash
 cw coverage import coverage.lcov --format lcov
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<FILE>` | 是 | 覆盖率报告文件路径 |
+| `--format <FORMAT>` | 否 | 报告格式：`lcov`（默认）/ `cobertura` |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约）；报告文件缺失或解析失败由 daemon 侧判定，属此列 |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+导入结果输出文件总数、匹配文件数、导入行数、匹配符号数。
+
+**示例**
+
+```bash
+cw coverage import coverage.lcov
 cw coverage import coverage.xml --format cobertura
 ```
 
@@ -3317,10 +3734,78 @@ cw coverage import coverage.xml --format cobertura
 cw coverage fn "my_project::payment::process_payment"
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<NAME>` | 是 | 函数全限定名 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功（含「无覆盖数据」查询结果，输出提示与搜索建议） |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw coverage fn "my_project::payment::process_payment"
+```
+
 ### `coverage uncovered`：未覆盖函数
 
 ```bash
 cw coverage uncovered
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw coverage uncovered
+```
+
+### `coverage test`：测试覆盖率统计
+
+```bash
+cw coverage test
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+统计测试函数与模块分布（原 `--test-coverage` flag 并入本子命令，T10 阶段 2.5）。
+
+**示例**
+
+```bash
+cw coverage test
 ```
 
 ---

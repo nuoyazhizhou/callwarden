@@ -3172,3 +3172,45 @@ review / apply，只能手工 `supersede` 收编。
 | 非目标 | A 类公开入口 / daemon 动态 key 的数据流分析；`t()` 失败语义升级为抛错 |
 | 语义 | 门禁为冻结式：调用点、key 数量、占位符契约任一漂移都会失败 |
 | 回滚 | 回退单文件提交即可 |
+
+## 40. cli_reference 四段式第二批 + 文档命令漂移收口（2026-11-20）
+
+### 40.1 侦察结论
+
+architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口（§21）。对剩余
+113 个章节实跑 `--help` 核对，发现两类漂移：
+
+1. **标题漂移**：`gc archive list / gc archive inspect / gc archive import /
+   gc audit list / gc audit show` 空格形章节标题对应的 argparse 形态不存在，
+   实际子命令为连字符形（`gc archive-list` 等），照文档执行 rc=2 invalid choice。
+2. **组合章节 / 缺章节**：`semgrep stats / semgrep list`、`defect stats /
+   defect build` 各挤在一个章节；`coverage test` 在度量区只有裸章节（无四段式），
+   覆盖率分类下无章节；`guardrail` 裸命令不可运行（argparse 必选 action）。
+3. **rc 残差**：`coverage import` 报告文件缺失 / 解析失败分支 `return True`
+   （rc=0），违反 §24.5 全局退出码契约（经 daemon `import_lcov`
+   PROTECTED_MUTATION 判定 → daemon 拒绝/运行时失败 → rc=1）。
+
+### 40.2 处置
+
+| 项 | 内容 |
+| --- | --- |
+| 四段式补齐 | 第二批 6 前缀 24 命令：gc(9) / coverage(4) / defect(5) / semgrep(3) / guardrail(2) / vuln-blast(1)；参数表均按 `--help` 实跑真值核对 |
+| 标题收敛 | 5 个 gc 空格形标题改连字符形；`guardrail` 拆 `guardrail scan` / `guardrail rules`；`semgrep stats / list`、`defect stats / build` 拆为独立章节；度量区裸 `coverage test` 存根删除（与覆盖率分类新章节合并） |
+| rc 残差修复 | `cli/main.py::_handle_coverage` import 失败分支（FileNotFoundError / 解析异常）`raise SystemExit(1)`，对齐全局契约 |
+| 门禁扩展 | `tests/test_cli_reference_sections.py`：新增 `SECOND_BATCH_PREFIXES` + `EXPECTED_COMMANDS_SECOND`（24 命令），canon 剥离方括号 metavar（`semgrep scan [PATH...]` → `semgrep scan`），全部完整性检查改按 `COVERED_PREFIXES` 并集 |
+
+### 40.3 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `pytest tests/test_cli_reference_sections.py` | **8 passed**（门禁含 68 命令四段式 + 无未登记章节） |
+| `pytest tests/test_cli_026_http_rpc.py tests/test_cli_c9_coverage_help.py tests/test_cli_exit_code_local_input.py` | **43 passed**（coverage 成功路径 rc 不变；help 注册面不变；§24.5 口径无回归） |
+| 全库 `*.md` 旧空格形引用扫描 | 0 处残留 |
+
+### 40.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 非目标 | 其余 89 个章节（git / rule / rollback / 图谱查询 / 度量 / git-import 等）留后续批次；`gc archive/restore/status/purge` 四个动作章节化也留后续 |
+| 已知残留 | `vuln-blast` 自带 epilog 仍写「2 = Database locked」，与全局契约（2=输入/用法）不符，属运行时 help 文案残差，待口径统一批次处理（文档侧已加注） |
+| 回滚 | 回退本次提交即可；门禁与文档同文件域，无迁移状态 |

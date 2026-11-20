@@ -1,17 +1,23 @@
-"""文档门禁：docs/cli_reference.md 首批命令章节四段式完整性。
+"""文档门禁：docs/cli_reference.md 已收口批次命令章节四段式完整性。
 
 背景（architecture.md 阶段 3「文档深度完善」）：命令参考章节长期只写用法与
 散文式说明，缺少统一参数表/退出码/可复制示例，容易与实际 argparse 选项漂移。
-本测试锁定首批 8 个前缀分类（task / build-context / workspace / query /
-search / file / status / stats）的每个 ``### `...` `` 章节必须具备四段式：
+本测试锁定已收口批次的每个 ``### `...` `` 章节必须具备四段式：
 
 1. 用法：``bash`` 代码块；
 2. 参数：``**参数**`` 标题 + 紧随其后的参数表（``| 参数 | 必填 | 说明 |``）；
 3. 退出码：``**退出码**`` 标题 + 含 0/1/2 三行的表格；
 4. 示例：``**示例**`` 标题 + ``bash`` 代码块。
 
-同时校验首批 44 个 canonical 命令一个不少、四段各只出现一次（防重复补段）。
-其余分类由后续任务卡扩展 ``EXPECTED_COMMANDS`` 与 ``FIRST_BATCH_PREFIXES``。
+同时校验每批 canonical 命令一个不少、四段各只出现一次（防重复补段）。
+其余分类由后续任务卡扩展 ``EXPECTED_COMMANDS_*`` 与 ``COVERED_PREFIXES``。
+
+批次（§9.51）：
+- 首批 8 前缀 44 命令：task / build-context / workspace / query / search /
+  file / status / stats；
+- 第二批 6 前缀 24 命令：gc / coverage / defect / semgrep / guardrail /
+  vuln-blast（同时收口 gc 连字符形标题漂移：``gc archive list`` 等空格形
+  实际 argparse 不存在，真实子命令为 ``gc archive-list`` 等）。
 """
 
 import os
@@ -37,6 +43,19 @@ FIRST_BATCH_PREFIXES = frozenset({
     "status",
     "stats",
 })
+
+# 第二批覆盖的命令前缀（§9.51）
+SECOND_BATCH_PREFIXES = frozenset({
+    "gc",
+    "coverage",
+    "defect",
+    "semgrep",
+    "guardrail",
+    "vuln-blast",
+})
+
+# 已收口批次并集：所有章节完整性检查按此过滤
+COVERED_PREFIXES = FIRST_BATCH_PREFIXES | SECOND_BATCH_PREFIXES
 
 # 首批 canonical 命令（去掉 ``<METAVAR>`` 后的章节标题；44 个）
 EXPECTED_COMMANDS = frozenset({
@@ -90,14 +109,51 @@ EXPECTED_COMMANDS = frozenset({
     "stats",
 })
 
+# 第二批 canonical 命令（§9.51；24 个）
+EXPECTED_COMMANDS_SECOND = frozenset({
+    # gc（9）
+    "gc policy show",
+    "gc policy set",
+    "gc retention",
+    "gc archive-list",
+    "gc archive-inspect",
+    "gc archive-import",
+    "gc audit-list",
+    "gc audit-show",
+    "gc db-cleanup",
+    # coverage（4）
+    "coverage import",
+    "coverage fn",
+    "coverage uncovered",
+    "coverage test",
+    # defect（5）
+    "defect search",
+    "defect suggest",
+    "defect learn",
+    "defect stats",
+    "defect build",
+    # semgrep（3）
+    "semgrep scan",
+    "semgrep stats",
+    "semgrep list",
+    # guardrail（2）
+    "guardrail scan",
+    "guardrail rules",
+    # vuln-blast（1）
+    "vuln-blast",
+})
+
 _HEADING_RE = re.compile(r"^### `([^`]+)`")
 _METAVAR_RE = re.compile(r"<[^>]+>")
+_OPTIONAL_METAVAR_RE = re.compile(r"\[[^\]]+\]")
 _EXIT_CODE_RE = re.compile(r"^\d+$")
 
 
 def _canonical(key):
-    """``search <QUERY>`` → ``search``；``build-context register <ID> <NAME>`` → ``build-context register``"""
+    """``search <QUERY>`` → ``search``；``build-context register <ID> <NAME>`` → ``build-context register``；
+    ``semgrep scan [PATH...]`` → ``semgrep scan``（可选位置参数用方括号 metavar 同样剥离）"""
     stripped = _METAVAR_RE.sub("", key)
+    stripped = _OPTIONAL_METAVAR_RE.sub("", stripped)
     return re.sub(r"\s+", " ", stripped).strip()
 
 
@@ -208,18 +264,19 @@ class TestCliReferenceSections:
         assert os.path.isfile(CLI_REF), f"缺少文件: {CLI_REF}"
 
     def test_all_first_batch_commands_have_sections(self):
-        """首批 44 个 canonical 命令均有章节（章节不丢失）。"""
+        """已收口批次的 canonical 命令均有章节（章节不丢失）。"""
         text = _read_doc()
         present = {key for key, _ in _iter_sections(text)}
-        missing = sorted(EXPECTED_COMMANDS - present)
-        assert not missing, f"cli_reference.md 缺少首批命令章节: {missing}"
+        expected = EXPECTED_COMMANDS | EXPECTED_COMMANDS_SECOND
+        missing = sorted(expected - present)
+        assert not missing, f"cli_reference.md 缺少已收口命令章节: {missing}"
 
     def test_every_section_has_usage_fence(self):
         """每个首批章节都有 bash 用法块（位于 ``**参数**`` 之前）。"""
         text = _read_doc()
         bad = []
         for key, segment in _iter_sections(text):
-            if key.split()[0] not in FIRST_BATCH_PREFIXES:
+            if key.split()[0] not in COVERED_PREFIXES:
                 continue
             param_idx = _find_line(segment, "**参数**")
             if param_idx < 0 or not _first_fence_before(segment, param_idx):
@@ -231,7 +288,7 @@ class TestCliReferenceSections:
         text = _read_doc()
         bad = []
         for key, segment in _iter_sections(text):
-            if key.split()[0] not in FIRST_BATCH_PREFIXES:
+            if key.split()[0] not in COVERED_PREFIXES:
                 continue
             param_idx = _find_line(segment, "**参数**")
             if param_idx < 0 or _count_marker(segment, "**参数**") != 1:
@@ -263,7 +320,7 @@ class TestCliReferenceSections:
         text = _read_doc()
         bad = []
         for key, segment in _iter_sections(text):
-            if key.split()[0] not in FIRST_BATCH_PREFIXES:
+            if key.split()[0] not in COVERED_PREFIXES:
                 continue
             exit_idx = _find_line(segment, "**退出码**")
             if exit_idx < 0 or _count_marker(segment, "**退出码**") != 1:
@@ -287,7 +344,7 @@ class TestCliReferenceSections:
         text = _read_doc()
         bad = []
         for key, segment in _iter_sections(text):
-            if key.split()[0] not in FIRST_BATCH_PREFIXES:
+            if key.split()[0] not in COVERED_PREFIXES:
                 continue
             example_idx = _find_line(segment, "**示例**")
             if example_idx < 0 or _count_marker(segment, "**示例**") != 1:
@@ -303,7 +360,7 @@ class TestCliReferenceSections:
         text = _read_doc()
         bad = []
         for key, segment in _iter_sections(text):
-            if key.split()[0] not in FIRST_BATCH_PREFIXES:
+            if key.split()[0] not in COVERED_PREFIXES:
                 continue
             param_idx = _find_line(segment, "**参数**")
             exit_idx = _find_line(segment, "**退出码**")
@@ -313,11 +370,12 @@ class TestCliReferenceSections:
         assert not bad, f"四段式顺序不符: {sorted(bad)}"
 
     def test_no_unknown_first_batch_commands(self):
-        """首批前缀下不得出现未登记命令章节（新增章节须同步 EXPECTED_COMMANDS）。"""
+        """已收口前缀下不得出现未登记命令章节（新增章节须同步 EXPECTED_COMMANDS_*）。"""
         text = _read_doc()
-        present = {key for key, _ in _iter_sections(text) if key.split()[0] in FIRST_BATCH_PREFIXES}
-        unexpected = sorted(present - EXPECTED_COMMANDS)
+        present = {key for key, _ in _iter_sections(text)
+                   if key.split()[0] in COVERED_PREFIXES}
+        unexpected = sorted(present - EXPECTED_COMMANDS - EXPECTED_COMMANDS_SECOND)
         assert not unexpected, (
-            "cli_reference.md 出现未登记的首批命令章节，请补齐四段式后"
-            f"同步 EXPECTED_COMMANDS: {unexpected}"
+            "cli_reference.md 出现未登记的已收口命令章节，请补齐四段式后"
+            f"同步 EXPECTED_COMMANDS/EXPECTED_COMMANDS_SECOND: {unexpected}"
         )

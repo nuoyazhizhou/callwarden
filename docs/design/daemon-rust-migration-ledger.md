@@ -4156,6 +4156,50 @@ setup 同时命中该窗口。旧实现把任何 `OSError` 直接映射为 `E_HT
 - 不改 daemon 侧发布语义（仍为原子替换）；重试只在客户端读取侧、且有界。
 - 仍待办：无。
 
+## 9.51 cli_reference 四段式第二批 + 命令漂移/rc 残差收口（2026-11-20）
+
+### 1. 装置与侦察
+
+选题经历一次改道：原定「i18n 双语补译」经全量扫描（2258 个字面量 key 引用 +
+catalog 双向对账）证实为**陈旧残留**——§26 已把缺翻译方向收口且门禁不豁免
+`default=`，零缺口。改选 backlog §21 后续卡「cli_reference 四段式剩余分类」。
+
+对剩余 113 个章节实跑 `--help` 核对（临时脚本 `%TEMP%\cw_cli_ref_scan.py` +
+批量 help 采集），发现三类漂移：gc 五个章节标题空格形（实际 argparse 为连字符形
+`gc archive-list` 等，照文档执行 rc=2）；`semgrep stats / semgrep list`、
+`defect stats / defect build` 组合章节、`guardrail` 裸命令不可运行、
+`coverage test` 只有度量区裸存根；`coverage import` 失败分支 `return True`
+（rc=0）违反 §24.5 全局退出码契约。
+
+### 2. 处置
+
+- **文档**（[cli_reference.md](../../docs/cli_reference.md)）：第二批 6 前缀
+  24 命令补齐四段式（用法/参数表/退出码/示例），参数表按 `--help` 实跑真值；
+  gc 标题收敛连字符形；`guardrail` 拆 `scan`/`rules`；`semgrep`、`defect`
+  组合章节拆分；度量区裸 `coverage test` 存根删除并入覆盖率分类。
+- **rc 残差**（[cli/main.py](../../cli/main.py)）：`_handle_coverage` import
+  的 `FileNotFoundError` / 解析异常分支改 `raise SystemExit(1)`（报告文件由
+  daemon 侧 `import_lcov` PROTECTED_MUTATION 判定 → daemon 拒绝/运行时失败 → 1）。
+- **门禁**（[test_cli_reference_sections.py](../../tests/test_cli_reference_sections.py)）：
+  新增 `SECOND_BATCH_PREFIXES` + `EXPECTED_COMMANDS_SECOND`（24 命令），
+  `_canonical` 剥离方括号 metavar，完整性检查改按 `COVERED_PREFIXES` 并集
+  （68 命令）。
+
+### 3. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `test_cli_reference_sections.py` | **8 passed** |
+| `test_cli_026_http_rpc` + `test_cli_c9_coverage_help` + `test_cli_exit_code_local_input` | **43 passed** |
+| 全库 `*.md` 旧空格形引用扫描 | 0 残留 |
+
+### 4. 边界与残留
+
+- 其余 89 章节四段式留后续批次；`gc archive/restore/status/purge` 动作章节化同批。
+- `vuln-blast` epilog「2 = Database locked」为退役口径（文档侧已加注，运行时
+  help 文案待口径统一批次处理）。
+- i18n 双语补译残留确认已由 §26 收口，backlog §40 登记改道过程。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

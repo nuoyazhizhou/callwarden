@@ -12330,10 +12330,14 @@ def _handle_coverage(args, db):
                   count=stats['lines_imported']))
             print(t("cli.messages.coverage_import_symbols",
                   count=stats['symbols_matched']))
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
+            # 全局退出码契约：报告文件缺失/解析失败由 daemon 侧执行判定
+            # （import_lcov 为 PROTECTED_MUTATION RPC）→ daemon 拒绝/运行时失败 → rc=1
             print(t("cli.messages.coverage_import_file_not_found", file=opts.file))
+            raise SystemExit(1) from exc
         except Exception as e:
             print(t("cli.messages.coverage_import_parse_error", error=e))
+            raise SystemExit(1) from e
         print()
         return True
 
