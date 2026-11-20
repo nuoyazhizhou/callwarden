@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "4896a7f2597ab1f600441edb0b72ca3d77b5f56b",
+  "supplied_source_revision": "98ef3a85caa9f112ba65d23ab920002800436e78",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -2127,7 +2127,7 @@
     },
     {
       "path": "tests/test_cli_reference_sections.py",
-      "sha256": "c4d819cc6ee5208e4bfe56c3c28f4a80c7993e36d67e2da491c43440d494da0a"
+      "sha256": "d95e56aada3e7d10d91ab47d8a72f90c96bfc18081ffbc633d9314c24620a614"
     },
     {
       "path": "tests/test_cli_refresh_multi_path.py",

@@ -12,12 +12,24 @@
 同时校验每批 canonical 命令一个不少、四段各只出现一次（防重复补段）。
 其余分类由后续任务卡扩展 ``EXPECTED_COMMANDS_*`` 与 ``COVERED_PREFIXES``。
 
-批次（§9.51）：
+批次（§9.51/§9.52）：
 - 首批 8 前缀 44 命令：task / build-context / workspace / query / search /
   file / status / stats；
 - 第二批 6 前缀 24 命令：gc / coverage / defect / semgrep / guardrail /
   vuln-blast（同时收口 gc 连字符形标题漂移：``gc archive list`` 等空格形
-  实际 argparse 不存在，真实子命令为 ``gc archive-list`` 等）。
+  实际 argparse 不存在，真实子命令为 ``gc archive-list`` 等）；
+- 第三批 62 前缀 86 命令（§9.52）：生命周期（install/setup/refresh/fts/
+  bootstrap/daemon/cw-agent/config/toolchain/test）、图谱查询（grep/symbol/
+  callers/callees/topo/impact/call-chain/top-callers/deepest/detect-cycles/
+  module-calls/call-heatmap/orphan-symbols/symbol-history/diff/changes/
+  evolution/hotspot/churn/test-impact）、度量（metrics/complexity/coupling/
+  largest-fns/coupled-fns/fn-metrics/comment-coverage/health-report/
+  dashboard）、审计与克隆治理（audit */restore-comment/restore-all-comments/
+  check-gate/issues/tests/clone/review/function-issues）、rule(11)/rollback(5)、
+  git(8)、语义检索（semantic-search/embed/similar/brief/map/
+  export-module-graph/who/ownership-map）。第三批同时收口多节文档↔CLI 漂移
+  （``refresh --watch`` 已退役、``impact`` 实为 hash 形、clone 默认值漂移、
+  rollback config ``--flag`` 取值域等）。
 """
 
 import os
@@ -54,8 +66,25 @@ SECOND_BATCH_PREFIXES = frozenset({
     "vuln-blast",
 })
 
+# 第三批覆盖的命令前缀（§9.52）：install/setup/refresh 生命周期、图谱查询、
+# 度量、审计/克隆治理、rule/rollback、git、语义检索、杂项入口
+THIRD_BATCH_PREFIXES = frozenset({
+    "audit", "bootstrap", "brief", "call-chain", "call-heatmap", "callees",
+    "callers", "changes", "check-gate", "churn", "clone", "comment-coverage",
+    "complexity", "config", "coupled-fns", "coupling", "cw-agent", "daemon",
+    "dashboard", "deepest", "detect-cycles", "diff", "embed", "evolution",
+    "export-module-graph", "fn-metrics", "fts", "function-issues", "git",
+    "graph", "grep", "health-report", "hotspot", "impact", "install",
+    "install-agent", "install-hook", "issues", "largest-fns", "map",
+    "metrics", "module-calls", "orphan-symbols", "ownership-map", "refresh",
+    "restore-all-comments", "restore-comment", "review", "rollback", "rule",
+    "semantic-search", "setup", "similar", "symbol", "symbol-history",
+    "test", "test-impact", "tests", "toolchain", "top-callers", "topo",
+    "who",
+})
+
 # 已收口批次并集：所有章节完整性检查按此过滤
-COVERED_PREFIXES = FIRST_BATCH_PREFIXES | SECOND_BATCH_PREFIXES
+COVERED_PREFIXES = FIRST_BATCH_PREFIXES | SECOND_BATCH_PREFIXES | THIRD_BATCH_PREFIXES
 
 # 首批 canonical 命令（去掉 ``<METAVAR>`` 后的章节标题；44 个）
 EXPECTED_COMMANDS = frozenset({
@@ -141,6 +170,96 @@ EXPECTED_COMMANDS_SECOND = frozenset({
     "guardrail rules",
     # vuln-blast（1）
     "vuln-blast",
+})
+
+# 第三批 canonical 命令（§9.52；86 个）
+EXPECTED_COMMANDS_THIRD = frozenset({
+    "audit keys",
+    "audit rotate-key",
+    "audit verify",
+    "bootstrap status",
+    "brief",
+    "call-chain",
+    "call-heatmap",
+    "callees",
+    "callers",
+    "changes",
+    "check-gate",
+    "churn",
+    "clone",
+    "comment-coverage",
+    "complexity",
+    "config check-role",
+    "coupled-fns",
+    "coupling",
+    "cw-agent",
+    "daemon metrics",
+    "dashboard",
+    "deepest",
+    "detect-cycles",
+    "diff",
+    "embed",
+    "evolution",
+    "export-module-graph",
+    "fn-metrics",
+    "fts rebuild",
+    "fts status",
+    "function-issues",
+    "git check-push",
+    "git check-ref-transaction",
+    "git check-task",
+    "git destructive-log",
+    "git import",
+    "git log",
+    "git show",
+    "git stats",
+    "graph build-from-c",
+    "grep",
+    "health-report",
+    "hotspot",
+    "impact",
+    "install",
+    "install-agent",
+    "install-hook",
+    "issues",
+    "largest-fns",
+    "map",
+    "metrics",
+    "module-calls",
+    "orphan-symbols",
+    "ownership-map",
+    "refresh",
+    "restore-all-comments",
+    "restore-comment",
+    "review",
+    "rollback config",
+    "rollback is-rolled-back",
+    "rollback register",
+    "rollback set",
+    "rollback show",
+    "rule applicable",
+    "rule candidate accept",
+    "rule candidate create",
+    "rule candidate list",
+    "rule candidate reject",
+    "rule cleanup-sync-log",
+    "rule extract",
+    "rule insert-block",
+    "rule list",
+    "rule seed-bootstrap",
+    "rule sync",
+    "semantic-search",
+    "setup",
+    "similar",
+    "symbol",
+    "symbol-history",
+    "test",
+    "test-impact",
+    "tests",
+    "toolchain list-bound",
+    "top-callers",
+    "topo",
+    "who",
 })
 
 _HEADING_RE = re.compile(r"^### `([^`]+)`")
@@ -267,7 +386,7 @@ class TestCliReferenceSections:
         """已收口批次的 canonical 命令均有章节（章节不丢失）。"""
         text = _read_doc()
         present = {key for key, _ in _iter_sections(text)}
-        expected = EXPECTED_COMMANDS | EXPECTED_COMMANDS_SECOND
+        expected = EXPECTED_COMMANDS | EXPECTED_COMMANDS_SECOND | EXPECTED_COMMANDS_THIRD
         missing = sorted(expected - present)
         assert not missing, f"cli_reference.md 缺少已收口命令章节: {missing}"
 
@@ -374,7 +493,7 @@ class TestCliReferenceSections:
         text = _read_doc()
         present = {key for key, _ in _iter_sections(text)
                    if key.split()[0] in COVERED_PREFIXES}
-        unexpected = sorted(present - EXPECTED_COMMANDS - EXPECTED_COMMANDS_SECOND)
+        unexpected = sorted(present - EXPECTED_COMMANDS - EXPECTED_COMMANDS_SECOND - EXPECTED_COMMANDS_THIRD)
         assert not unexpected, (
             "cli_reference.md 出现未登记的已收口命令章节，请补齐四段式后"
             f"同步 EXPECTED_COMMANDS/EXPECTED_COMMANDS_SECOND: {unexpected}"

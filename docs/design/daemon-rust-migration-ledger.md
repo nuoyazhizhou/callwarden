@@ -4200,6 +4200,45 @@ catalog 双向对账）证实为**陈旧残留**——§26 已把缺翻译方向
   help 文案待口径统一批次处理）。
 - i18n 双语补译残留确认已由 §26 收口，backlog §40 登记改道过程。
 
+## 9.52 cli_reference 四段式第三批全收口（2026-11-21）
+
+### 1. 装置与侦察
+
+§9.51 后剩余 92 个章节标题。按大类派 5 个批次子代理（工程/生命周期 17 标题、
+图谱/度量 27 标题、审计/克隆治理 15 标题、rule+rollback 16 节、git+语义 16 节）
+逐命令 `--help` 实跑核对，文档收敛为 **155 个章节 / 三批 154 命令全部四段式**。
+
+### 2. 处置
+
+- **文档**（[cli_reference.md](../../docs/cli_reference.md)）：第三批 62 前缀
+  86 命令补齐四段式；漂移修正：`impact` 改 `<SYMBOL_HASH>` 实参形、
+  `rollback config --flag` 改 `<-1\|0\|1>`（表格管道转义）、`--phase` 0=全部、
+  `export-module-graph` FORMAT 实为 `--format {mermaid,dot}` 选项、`clone`
+  默认值 3/0.7→5/0.8；入口澄清：`refresh --watch` 已退役（独立入口
+  `cw-agent`）、`cw-agent` 为独立角色入口非 argparse 子命令、`test` 为
+  cw.py 内置直通命令；`callers`/`callees`、`largest-fns`/`coupled-fns`
+  拆分、audit 族变体合并（净 5 节）。
+- **门禁**（[test_cli_reference_sections.py](../../tests/test_cli_reference_sections.py)）：
+  新增 `THIRD_BATCH_PREFIXES`（62）+ `EXPECTED_COMMANDS_THIRD`（86），
+  `_canonical` 同时剥离尖括号与方括号 metavar，完整性检查按三批并集
+  （154 命令）。
+
+### 3. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `test_cli_reference_sections.py` | **8 passed** |
+| `test_cli_026_http_rpc` + `test_cli_c9_coverage_help` + `test_cli_exit_code_local_input` | **43 passed** |
+| `%TEMP%\cw_third_batch.py` 扫描 | third_unique=86、dupes=[]、P=E=X=1 |
+
+### 4. 边界与残留
+
+- rc 残差台账（只报告未改码）见 backlog §41.4：多命令 epilog「2 = Database
+  locked」退役口径、`config check-role agent` / `git import` / `embed`
+  失败分支 rc=0、`git check-*` 软门禁恒 0（设计使然）、`git_arg_limit`
+  i18n 键共用文案漂移。
+- `gc archive/restore/status/purge` 动作章节化仍在 §40.4 挂账。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

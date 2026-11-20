@@ -3214,3 +3214,48 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 | 非目标 | 其余 89 个章节（git / rule / rollback / 图谱查询 / 度量 / git-import 等）留后续批次；`gc archive/restore/status/purge` 四个动作章节化也留后续 |
 | 已知残留 | `vuln-blast` 自带 epilog 仍写「2 = Database locked」，与全局契约（2=输入/用法）不符，属运行时 help 文案残差，待口径统一批次处理（文档侧已加注） |
 | 回滚 | 回退本次提交即可；门禁与文档同文件域，无迁移状态 |
+
+## 41. cli_reference 四段式第三批全收口 + 全量漂移/rc 残差台账（2026-11-21）
+
+### 41.1 侦察结论
+
+§40 收口后剩余 92 个章节标题（口径按 `### ` 标题清点）。按大类派 5 个批次
+（工程/生命周期、图谱/度量、审计/克隆治理、rule+rollback、git+语义）逐命令
+`--help` 实跑核对，最终文档收敛为 **155 个章节 / 三批 154 命令全部四段式**
+（首批 44 + 第二批 24 + 第三批 86；合并/拆分后章节-命令非严格一一对应）。
+
+### 41.2 处置
+
+| 项 | 内容 |
+| --- | --- |
+| 四段式补齐 | 第三批 62 前缀 86 命令：生命周期（install/setup/refresh/fts/bootstrap/daemon/cw-agent/config/toolchain/test）、图谱查询（grep/symbol/callers/callees/topo/impact/call-chain/top-callers/deepest/detect-cycles/module-calls/call-heatmap/orphan-symbols/symbol-history/diff/changes/evolution/hotspot/churn/test-impact）、度量（metrics/complexity/coupling/largest-fns/coupled-fns/fn-metrics/comment-coverage/health-report/dashboard）、审计与克隆治理（audit 族/restore-comment/restore-all-comments/check-gate/issues/tests/clone/review/function-issues）、rule(11)/rollback(5)、git(8)、语义检索（semantic-search/embed/similar/brief/export-module-graph/graph/map/fts） |
+| 标题/形态漂移修正 | `impact` 标题改 `<SYMBOL_HASH>` 实参形；`rollback config --flag` 取值改 `<-1\|0\|1>`（表格内管道转义）、`--phase` 0=全部；`export-module-graph` 的 FORMAT 实为 `--format {mermaid,dot}` 选项而非位置参数；`clone` 默认值按 `--help` 真值改 5/0.8（旧文档 3/0.7）；`semantic-search --top-k` 等选项按实跑收敛 |
+| 入口澄清 | `refresh --watch` 已退役（文件监控由独立入口 `cw-agent` 承担）；`cw-agent` 非 argparse 子命令而是独立角色入口；`test` 为 cw.py 内置直通命令——三处均按实际形态写章节 |
+| 组合/变体章节治理 | `callers`/`callees`、`largest-fns`/`coupled-fns` 组合章节拆分；audit 族变体章节合并去重（净 5 节） |
+| 门禁扩展 | `tests/test_cli_reference_sections.py`：新增 `THIRD_BATCH_PREFIXES`（62）+ `EXPECTED_COMMANDS_THIRD`（86），canon 同时剥离尖括号 metavar（`<[^>]+>`）与方括号 metavar（`\[[^\]]+\]`），完整性检查按三批并集（154 命令） |
+
+### 41.3 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `pytest tests/test_cli_reference_sections.py` | **8 passed**（154 命令四段式 + 无未登记章节） |
+| `pytest tests/test_cli_026_http_rpc.py tests/test_cli_c9_coverage_help.py tests/test_cli_exit_code_local_input.py` | **43 passed**（无回归） |
+| 扫描脚本 `%TEMP%\cw_third_batch.py` | third_unique=86、dupes=[]、全部 P=E=X=1（零未收口） |
+
+### 41.4 rc 残差台账（只报告未改码，待口径统一批次）
+
+| 项 | 现象 | 建议 |
+| --- | --- | --- |
+| 多命令 `--help` epilog | audit verify/rotate-key/keys、check-gate、impact、review、evolution、symbol-history、vuln-blast 的 epilog 自述「2 = Database locked」，与全局契约（2=输入/用法错误）冲突 | epilog 文案统一改引全局退出码契约 |
+| `config check-role agent` | 校验失败分支 rc=0 | 失败分支改 `SystemExit(1)` |
+| `git import` | 业务失败 rc=0 | 失败分支改 `SystemExit(1)` |
+| `git check-*` | 软门禁恒 rc=0（设计使然） | 如需区分需新退出码语义，非本批范围 |
+| `embed` | 全失败路径 rc=0 | 失败分支改 `SystemExit(1)` |
+| i18n `git_arg_limit` 键共用 | destructive-log 文案默认值显示漂移（实际 `default=20`） | 拆分共用 i18n 键或补占位参数 |
+
+### 41.5 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 非目标 | 上表 rc 残差修复留口径统一批次；`gc archive/restore/status/purge` 动作章节化仍在 §40.4 挂账 |
+| 回滚 | 回退本次提交即可；无迁移状态 |

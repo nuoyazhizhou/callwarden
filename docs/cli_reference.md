@@ -75,17 +75,37 @@ cw server --help
 ### `test <MODULE>`：运行测试模块
 
 运行 `callwarden/tests/` 下的某个测试模块（pytest 风格），额外参数透传给 pytest。
+注意区分：`cw test` 运行开发者 pytest 模块；`cw tests <符号>` 查询某符号的测试用例/覆盖。
+
+```bash
+cw test <MODULE> [pytest 参数...]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<MODULE>` | 是 | `callwarden/tests/` 下的测试模块名（不含 `.py`，如 `test_p0_bugfixes`） |
+| 其余参数 | 否 | 原样透传给 `pytest`（如 `-k`、`-v`、`-x`） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> `test` 为 `cw.py` 内置直通命令（非 argparse 子命令，无 `--help`）：
+> 不带 `<MODULE>` 时打印用法并退出（rc=1）；模块不存在时导入失败（rc=1）；
+> 正常路径透传 pytest 退出码（0=全部通过，1=存在失败用例）。
+
+**示例**
 
 ```bash
 cw test test_p0_bugfixes                 # 运行 tests/test_p0_bugfixes.py
 cw test test_p0_bugfixes -k some_case    # 透传 pytest 参数
-cw test                                  # 不带 <MODULE> 时打印用法并退出（rc=1）
 ```
-
-| 参数       | 说明                                             |
-| ---------- | ------------------------------------------------ |
-| `<MODULE>` | `callwarden/tests/` 下的测试模块名（不含 `.py`） |
-| 其余参数   | 原样透传给 `pytest`（如 `-k`、`-v`、`-x`）       |
 
 ---
 
@@ -460,11 +480,43 @@ cw refresh --all
 
 ## 安装命令
 
-### `install`：一键级联安装依赖
+### `install`：一键级联安装依赖与 Git Hooks
 
-Call Warden 提供独立的安装器脚本，级联安装核心依赖 + 各语言 tree-sitter grammar + 可选依赖。
+Call Warden 提供独立的安装器脚本，级联安装核心依赖 + 各语言 tree-sitter grammar + 可选依赖，
+并可通过 `--hooks` 一条命令装齐三种 Git hook（推荐的开箱即用方式）。
 
-**调用方式**：`cw install [options]`
+```bash
+cw install [options]
+cw install --hooks [--force-hooks] [--no-post-commit]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--all` | 否 | 安装全部依赖（含可选依赖：semgrep / sentence-transformers / numpy；sqlite-vec 当前未接入生产代码） |
+| `--lang <LANG...>` | 否 | 仅安装指定语言的 grammar（空格分隔多个语言名） |
+| `--check` | 否 | 仅检查依赖状态，不安装 |
+| `--hooks` | 否 | 安装 Git hooks 到 `.git/hooks`（pre-commit + pre-push + post-commit 三种） |
+| `--force-hooks` | 否 | 强制覆盖已存在的非 Call Warden hooks |
+| `--no-post-commit` | 否 | 跳过安装 post-commit hook（仅装 pre-commit + pre-push） |
+| `--no-optional` | 否 | 显式跳过可选依赖（默认行为） |
+| `--verbose` | 否 | 显示详细安装日志（pip 输出） |
+| `--agent` | 否 | 自动检测已安装的 AI 工具并安装 Call Warden MCP 集成 |
+| `--detect-agents` | 否 | 仅检测已安装的 AI 工具，不执行安装 |
+| `--force-agent` | 否 | 强制覆盖已有的 AI 工具 MCP 配置 |
+| `--agent-project` | 否 | 在项目级安装 AI 工具集成，而非全局安装 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> `install` 为本地安装器，不经 daemon：0=全部成功；1=部分失败
+> （查看输出中的 `[失败]` 行）；2=pip 不可用或网络错误。
 
 #### 默认安装
 
@@ -515,27 +567,6 @@ cw install --check
   [OK]   tree-sitter-ruby                 Ruby grammar（Semgrep 40+ Pro 规则） (ruby)
 ```
 
-#### 命令行参数
-
-| 参数               | 说明                                                                                               |
-| ------------------ | -------------------------------------------------------------------------------------------------- |
-| `--all`            | 安装全部依赖（含可选依赖：semgrep / sentence-transformers / numpy；sqlite-vec 当前未接入生产代码） |
-| `--lang <LANG...>` | 仅安装指定语言的 grammar（空格分隔多个语言名）                                                     |
-| `--check`          | 仅检查依赖状态，不安装                                                                             |
-| `--hooks`          | 安装 Git hooks 到 `.git/hooks`（pre-commit + pre-push + post-commit 三种）                         |
-| `--force-hooks`    | 强制覆盖已存在的非 Call Warden hooks                                                               |
-| `--no-post-commit` | 跳过安装 post-commit hook（仅装 pre-commit + pre-push）                                            |
-| `--no-optional`    | 显式跳过可选依赖（默认行为）                                                                       |
-| `--verbose`        | 显示详细安装日志（pip 输出）                                                                       |
-
-#### 退出码
-
-| 退出码 | 含义                                 |
-| ------ | ------------------------------------ |
-| 0      | 全部成功                             |
-| 1      | 部分失败（查看输出中的 `[失败]` 行） |
-| 2      | pip 不可用或网络错误                 |
-
 #### 设计原则
 
 1. **级联安装**：核心 → 已支持语言 → 扩展语言 → 可选依赖
@@ -543,9 +574,7 @@ cw install --check
 3. **状态可见**：每个包安装前后打印状态（已安装 / 安装中 / 成功 / 失败）
 4. **幂等**：重复运行不会出错，已安装的包会跳过
 
-### `install --hooks`：统一安装 Git Hooks（推荐）
-
-**调用方式**：`cw install --hooks [options]`
+#### Git hooks 安装（--hooks）
 
 一条命令装齐三种 Git hook，开箱即用：
 
@@ -554,15 +583,13 @@ cw install --hooks
 # 已安装：pre-commit + pre-push + post-commit
 ```
 
-#### 三种 hook 的职责
+三种 hook 的职责：
 
 | Hook          | 触发时机        | 作用                                                            | 依赖                                                |
 | ------------- | --------------- | --------------------------------------------------------------- | --------------------------------------------------- |
 | `pre-commit`  | `git commit` 前 | 刷新代码图谱（`cw refresh --all`），确保数据库与代码同步        | 无                                                  |
 | `pre-push`    | `git push` 前   | 运行 check-gate 门禁（需 `export CALLWARDEN_TASK_ID=<T-xxx>`）  | 可选（未设置则跳过）                                |
 | `post-commit` | `git commit` 后 | 自动捕获变更到 task/audit 闭环（`cw task capture-diff --auto`） | active_task 持久化字段（Schema v30+，无需环境变量） |
-
-#### --auto 模式说明
 
 `post-commit` hook 默认使用 `--auto` 模式：
 - 通过 `workspaces.active_task_id` 字段自动检测当前 `in_progress` 状态的任务（P1 引入，替代 `CALLWARDEN_TASK_ID` 环境变量）
@@ -591,17 +618,49 @@ cw install --hooks --force-hooks
 - 重复运行 `cw install --hooks` 不报错，已安装的 hook 会覆盖更新
 - 非 Call Warden 生成的 hook（无 marker）默认保留，需 `--force-hooks` 才覆盖
 
+**示例**
+
+```bash
+cw install
+cw install --all
+cw install --lang csharp ruby
+cw install --check
+cw install --hooks
+cw install --hooks --no-post-commit
+cw install --hooks --force-hooks
+```
+
 ---
 
 ### `install-hook`：单独管理单个 Git Hook
 
 Call Warden 也提供独立的 Git Hook 安装命令，用于单独安装/卸载 `post-commit` hook。
 
-**调用方式**：`cw install-hook post-commit [options]`
-
 > **注意**：`cw install --hooks` 已默认包含 post-commit（--auto 模式），
 > 通常无需单独执行此命令。此接口保留用于单独卸载 post-commit 或
 > 安装硬编码 task_id 的 post-commit（如 CI 流水线场景）。
+
+```bash
+cw install-hook post-commit [--task-id <TASK_ID>] [--uninstall]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `hook` | 是 | Hook 名称（目前仅支持 `post-commit`：commit 后自动捕获变更） |
+| `--task-id <ID>` | 否 | 硬编码 task_id 到 hook（不指定时使用 `--auto` 模式自动检测 in_progress 任务） |
+| `--uninstall` | 否 | 卸载 hook（仅删除 Call Warden 生成的 hook，保护用户自定义 hook） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 本地 git hook 操作，不经 daemon：1=安装/卸载失败（如不在 git 仓库内）。
 
 #### 安装（--auto 模式，推荐）
 
@@ -627,26 +686,20 @@ cw install-hook post-commit --task-id T-1783349079762-8246
 cw install-hook post-commit --uninstall
 ```
 
-#### 命令行参数
-
-| 参数             | 说明                                                                          |
-| ---------------- | ----------------------------------------------------------------------------- |
-| `hook`           | Hook 类型（目前仅支持 `post-commit`）                                         |
-| `--task-id <ID>` | 硬编码 task_id 到 hook（不指定时使用 `--auto` 模式自动检测 in_progress 任务） |
-| `--uninstall`    | 卸载 hook（仅删除 Call Warden 生成的 hook，保护用户自定义 hook）              |
-
-#### 退出码
-
-| 退出码 | 含义                               |
-| ------ | ---------------------------------- |
-| 0      | 安装/卸载成功                      |
-| 1      | 安装/卸载失败（如不在 git 仓库内） |
-
 #### fail-soft 设计
 
 - `--auto` 模式下没有 in_progress 任务时静默跳过，不影响 commit
 - 数据库锁或异常时打印提示但用 `|| true` 兜底退出码
 - 双层 fail-soft（DB 层 + CLI 层）确保不影响 git commit
+
+**示例**
+
+```bash
+cw install-hook post-commit
+git commit -m "feat: xxx"          # hook 自动检测 in_progress 任务并捕获变更
+cw install-hook post-commit --task-id T-1783349079762-8246
+cw install-hook post-commit --uninstall
+```
 
 ---
 
@@ -655,21 +708,29 @@ cw install-hook post-commit --uninstall
 为 23 种主流 AI Agent 生成 Call Warden 集成文件（MCP 配置 + rules/skill + hooks）。
 
 ```bash
-# 生成单个 agent 的项目级集成模板
-cw install-agent claude-code
-
-# 生成所有 agent 的项目级集成模板
-cw install-agent all
-
-# 写入用户全局 MCP 配置（安全合并，不覆盖已有配置）
-cw install-agent claude-code --global
-
-# 指定输出目录
-cw install-agent cursor --output-dir /path/to/output
-
-# 覆盖已有文件
-cw install-agent all --force
+cw install-agent <AGENT|all> [--output-dir <DIR>] [--force] [--global] [--auto-detect] [--registry <JSON>]
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<AGENT\|all>` | 是 | 目标 Agent（23 个受支持 Agent 之一）或 `all`（全部 Agent） |
+| `--output-dir <DIR>` | 否 | 输出目录，默认 `.callwarden/agent-integrations` |
+| `--force` | 否 | 覆盖已存在的集成文件 |
+| `--global` | 否 | 写入用户全局 MCP 配置而非项目级 bundle |
+| `--auto-detect` | 否 | 自动检测已安装的 AI 工具并为所有检测到的工具安装 |
+| `--registry <JSON>` | 否 | 自定义 AI 工具注册表 JSON 路径（扩展内置工具列表） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 本地文件生成操作，不经 daemon：1=失败（无效 agent 名 / 写入错误）。
 
 **支持的 Agent（23 个）**：
 
@@ -712,6 +773,16 @@ cw install-agent all --force
 
 **自动检测**：`cw install --detect-agents` 通过三层策略（CLI 命令 → `~/` 配置目录 → Windows `%APPDATA%`/`%LOCALAPPDATA%` 路径）发现已安装 Agent，配合 `cw install --agent` 自动写入对应 MCP 配置。
 
+**示例**
+
+```bash
+cw install-agent claude-code              # 单个 agent 的项目级集成模板
+cw install-agent all                      # 所有 agent 的项目级集成模板
+cw install-agent claude-code --global     # 写入用户全局 MCP 配置（安全合并，不覆盖已有配置）
+cw install-agent cursor --output-dir /path/to/output
+cw install-agent all --force              # 覆盖已有文件
+```
+
 ---
 
 ### `setup`：自动配置已安装 AI 工具的 MCP 集成
@@ -719,24 +790,25 @@ cw install-agent all --force
 探测本机已安装的 AI 编码工具（通过 CLI 命令、配置目录、Windows 注册表三层策略），自动将 Call Warden MCP Server 配置写入对应的 MCP 配置文件。
 
 ```bash
-# 探测并配置（首次运行会写入配置，后续运行跳过）
-cw setup
-
-# 仅探测不写入（查看已安装的 AI 工具）
-cw setup --dry-run
-
-# 强制重新配置（忽略已完成标记）
-cw setup --force
+cw setup [--force] [--dry-run]
 ```
 
-**参数**：
+**参数**
 
-| 参数        | 说明                                             |
-| ----------- | ------------------------------------------------ |
-| `--force`   | 强制重新配置（删除已完成标记文件，重新写入配置） |
-| `--dry-run` | 仅探测不写入（显示检测结果但不修改任何配置文件） |
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--force` | 否 | 强制重新配置（删除已完成标记文件，重新写入配置） |
+| `--dry-run` | 否 | 仅探测不写入（显示检测结果但不修改任何配置文件） |
 
-**输出示例**：
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 本地配置写入操作，不经 daemon。**输出示例**：
 
 ```
 检测到 3 个 AI 工具：
@@ -759,11 +831,51 @@ cw setup --force
 
 > **提示**：`cw setup` 在首次运行 `cw` 时也会自动触发（Lazy Auto-Setup），可通过 `--no-auto-setup` 全局参数禁用。
 
+**示例**
+
+```bash
+cw setup              # 探测并配置（首次运行会写入配置，后续运行跳过）
+cw setup --dry-run    # 仅探测不写入（查看已安装的 AI 工具）
+cw setup --force      # 强制重新配置（忽略已完成标记）
+```
+
 ---
 
 ## 构建命令
 
-### `refresh --all`：构建/增量刷新代码图谱
+### `refresh [PATH...]`：构建/增量刷新代码图谱
+
+刷新代码图谱：`--all` 全量/增量刷新工作区，或指定文件路径增量刷新（支持多路径，C8 Step #5）。
+`refresh` 始终是写操作（`build_full_graph` / `refresh_file`），需要已激活 workspace；
+文件监控（watch）模式由独立入口 `cw-agent` 提供，`refresh` 的 argparse 已无 `--watch` 参数。
+
+```bash
+cw refresh --all [--force]
+cw refresh <PATH...>
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[PATH...]` | 否 | 待刷新的文件路径（支持多路径；不传 PATH 时须给 `--all`） |
+| `--all` | 否 | 刷新工作区内的所有文件 |
+| `--force` | 否 | 强制全量重新解析（仅配合 `--all`） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写面命令：refresh 经 PROTECTED_MUTATION 保护。`--all` 增量刷新仅解析变更文件，
+> 不会清空数据；`--force` 强制全量重建。刷新后自动同步 AGENTS.md（fail-soft，
+> 不阻断 refresh）。指定文件增量更新时重新解析符号和调用关系，多文件输出汇总
+> （成功数/失败数/总耗时），失败文件单独列出。
+
+**示例**
 
 ```bash
 # 增量刷新（默认，仅解析变更文件，不会清空数据）
@@ -774,11 +886,7 @@ cw refresh --all --force
 
 # 指定工作区
 cw --workspace /path/to/project refresh --all
-```
 
-### `refresh <PATH [...]>`：刷新文件（支持多路径，C8 Step #5）
-
-```bash
 # 刷新单个文件
 cw refresh src/payment/mod.rs
 
@@ -786,9 +894,7 @@ cw refresh src/payment/mod.rs
 cw refresh src/payment/mod.rs src/auth/login.py src/db/query.rs
 ```
 
-增量更新指定文件，重新解析符号和调用关系。多文件时会输出汇总（成功数/失败数/总耗时）。
-
-#### 示例输出（多文件刷新）
+多文件刷新输出示例：
 
 ```
 Refresh: src/payment/mod.rs (rust)
@@ -797,32 +903,6 @@ Refresh: src/auth/login.py (python)
 Refreshed: src/auth/login.py
 Refresh summary: success 2 / failure 0 / total 2, elapsed 0.04s
 ```
-
-#### `cw refresh` subcommand（推荐用法）
-
-```bash
-# 全量刷新
-cw refresh --all
-
-# 强制全量重新解析
-cw refresh --all --force
-
-# 刷新指定文件（支持多路径）
-cw refresh src/payment/mod.rs src/auth/login.py
-
-# 启动文件监控
-cw refresh --watch
-```
-
-`cw refresh` 支持 `--all` / `--watch` / `<paths>` 多种刷新模式。多文件时会输出汇总，失败文件会被单独列出。
-
-### `refresh --watch`：文件监控
-
-```bash
-cw refresh --watch
-```
-
-启动文件监控守护进程，文件变化时自动增量更新。按 `Ctrl+C` 停止。
 
 ### `status`：查看状态
 
@@ -882,16 +962,41 @@ cw stats
 ```
 
 
-### `graph build-from-c`：Rust 并行构建 GraphStore（F11）
+### `graph build-from-c <DIRECTORY>`：Rust 并行构建 GraphStore（F11）
 
-从 C 文件列表用 rayon 并行构建内存 GraphStore（CSR），供后续调用链查询。只读实验命令（仅解析 + 内存构 CSR，不写数据库）。
+从 C 文件列表用 rayon 并行构建内存 GraphStore（CSR），供后续调用链查询。
+只读实验命令（仅解析 + 内存构 CSR，不写数据库；可选 dump 到 `.cwsnap` 文件不算写 DB）。
 
 ```bash
-cw graph build-from-c <directory>                  # 递归扫描 .c 文件构建 CSR
-cw graph build-from-c <dir> --threads 8            # 指定 rayon 线程数（默认自动）
-cw graph build-from-c <dir> --dump out.cwsnap      # 构建后 dump 到 .cwsnap 快照
-cw graph build-from-c <dir> --max-files 5000       # 限制最大文件数（默认 10000）
-cw graph build-from-c <dir> --query <QN>           # 构建后查询指定符号 callers（自检）
+cw graph build-from-c <DIRECTORY> [--threads <N>] [--dump <FILE>] [--max-files <N>] [--query <QN>]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<DIRECTORY>` | 是 | 目标目录（递归扫描 .c 文件） |
+| `--threads <N>` | 否 | rayon 线程数（默认 None=自动） |
+| `--dump <FILE>` | 否 | 将 GraphStore dump 到 `.cwsnap` 文件（可选） |
+| `--max-files <N>` | 否 | 最大文件数（避免误扫描超大目录，默认 10000） |
+| `--query <QN>` | 否 | 构建后查询指定符号的 callers（可选，用于自检） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw graph build-from-c examples/c_project                   # 递归扫描 .c 文件构建 CSR
+cw graph build-from-c examples/c_project --threads 8       # 指定 rayon 线程数（默认自动）
+cw graph build-from-c examples/c_project --dump out.cwsnap # 构建后 dump 到 .cwsnap 快照
+cw graph build-from-c examples/c_project --max-files 5000  # 限制最大文件数
+cw graph build-from-c examples/c_project --query <QN>      # 构建后查询指定符号 callers（自检）
 ```
 
 ---
@@ -931,10 +1036,6 @@ cw search process_payment --kind function --limit 10
 
 ### `grep <PATTERN...>`：带符号上下文的文本搜索
 
-在工作区内做文本搜索，并为每个命中行附加符号上下文（`file:line [in fn xxx] content`）。
-底层是 ripgrep + `find_symbols_at_lines` 组合，能回答"这行代码在哪个函数里"，是 `grep`/`rg`
-做不到的。默认只显示落在符号内部的命中（过滤掉 import/注释等无符号行）。
-
 ```bash
 cw grep "parse_file"
 cw grep parse_file MP_THRESHOLD          # 多关键词 = AND（同一行都命中）
@@ -944,14 +1045,35 @@ cw grep "handle" --kind fn --limit 50    # 仅 fn 内命中，最多 50 条
 cw grep "config" --path src/             # 限定搜索路径
 ```
 
-| 参数            | 说明                                                                     |
-| --------------- | ------------------------------------------------------------------------ |
-| `patterns`      | 一个或多个搜索模式；多个 = AND（须在同一行全部命中）；加引号视为单个模式 |
-| `--fixed`       | 按固定字符串处理（等价 `rg -F`），不解析为正则                           |
-| `--limit <N>`   | 最大命中数（默认 200，在符号过滤后应用）                                 |
-| `--path <PATH>` | 搜索路径（默认工作区根）                                                 |
-| `--include-all` | 包含符号外命中（imports/docs/comments）；默认只显示符号内命中            |
-| `--kind <KIND>` | 仅显示该类型符号内的命中（fn/class/...）                                 |
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<PATTERN>...` | 是 | 一个或多个搜索模式；多个 = AND（须在同一行全部命中）；加引号视为单个模式 |
+| `--fixed` | 否 | 按固定字符串处理（等价 `rg -F`），不解析为正则 |
+| `--limit <N>` | 否 | 最大命中数（默认 200，在符号过滤后应用） |
+| `--path <PATH>` | 否 | 搜索路径（默认工作区根） |
+| `--include-all` | 否 | 包含符号外命中（imports/docs/comments）；默认只显示符号内命中 |
+| `--kind <KIND>` | 否 | 仅显示该类型符号内的命中（fn/class/...） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+在工作区内做文本搜索，并为每个命中行附加符号上下文（`file:line [in fn xxx] content`）。
+底层是 ripgrep + `find_symbols_at_lines` 组合，能回答"这行代码在哪个函数里"，是 `grep`/`rg`
+做不到的。默认只显示落在符号内部的命中（过滤掉 import/注释等无符号行）。
+
+**示例**
+
+```bash
+cw grep "parse_file" --kind fn --limit 50
+cw grep "TODO" --include-all
+```
 
 ### `symbol <QN>`：符号详情
 
@@ -959,7 +1081,27 @@ cw grep "config" --path src/             # 限定搜索路径
 cw symbol "my_project::payment::process_payment"
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<QN>` | 是 | 限定符号名 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 显示符号的类型、深度、文件位置、签名、注释、调用关系（调用的函数 + 被谁调用）。
+
+**示例**
+
+```bash
+cw symbol "my_project::payment::process_payment"
+```
 
 ### `file <PATH>`：文件内符号
 
@@ -1016,14 +1158,60 @@ cw query process_payment src/payment/mod.rs
 ```
 
 
-### `callers <NAME>` / `callees <NAME>`
+### `callers <NAME>`：查询谁调用这个函数
 
 ```bash
-# 谁调用了我
 cw callers process_payment
+```
 
-# 我调用了谁
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<NAME>` | 是 | 符号名 |
+| `--qualified <QUALIFIED>` | 否 | 完整限定名（如 module::Class::method），精确匹配避免跨模块误匹配 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw callers process_payment
+cw callers handle_click --qualified "ui::Button::handle_click"
+```
+
+### `callees <NAME>`：查询这个函数调用了谁
+
+```bash
 cw callees process_payment
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<NAME>` | 是 | 符号名 |
+| `--qualified <QUALIFIED>` | 否 | 完整限定名（如 module::Class::method），精确匹配避免跨模块误匹配 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw callees process_payment
+cw callees main --qualified "app::main"
 ```
 
 ### `topo`：拓扑排序
@@ -1033,7 +1221,27 @@ cw topo
 cw topo --limit 100
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--limit <N>` | 否 | 最大结果数（默认 50） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 按依赖深度排序，底层（被调用最多）在前。
+
+**示例**
+
+```bash
+cw topo --limit 100
+```
 
 ### `fts rebuild`：重建 FTS5 全文索引
 
@@ -1043,33 +1251,118 @@ cw topo --limit 100
 cw fts rebuild
 ```
 
-输出：`symbols_count` / `fts_rows` / `triggers_recreated` / `elapsed`；若 `fts_rows != symbols_count` 打印 mismatch 警告。
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写面命令：`fts rebuild` 走 PROTECTED_MUTATION 保护（`rebuild_fts_index`），
+> 需已激活 workspace。输出：`symbols_count` / `fts_rows` / `triggers_recreated` /
+> `elapsed`；若 `fts_rows != symbols_count` 打印 mismatch 警告。
+
+**示例**
+
+```bash
+cw fts rebuild
+```
 
 ### `fts status`：查看 FTS5 索引状态
+
+查看 FTS5 索引状态（行数、triggers、一致性）。只读命令（不写数据库，不触发 workspace 激活）。
 
 ```bash
 cw fts status
 ```
 
-输出 FTS5 索引状态（行数、triggers、一致性）。
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw fts status
+```
 
 ---
 
 ## 调用链分析命令
 
-### `impact <QN>`：影响面分析（向上）
+### `impact <SYMBOL_HASH>`：变更影响半径分析（向上）
 
 ```bash
-cw impact "my_project::payment::process_payment"
-cw impact "my_project::payment::process_payment" --depth 5
+cw impact <symbol_hash>
+cw impact <symbol_hash> --depth 5
 ```
 
-向上追踪所有调用该函数的上游函数，按层级显示。
+**参数**
 
-### `call-chain <QN>`：调用链向下
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<symbol_hash>` | 是 | 源符号内容 hash |
+| `--depth <N>` | 否 | BFS 遍历最大深度（默认 3） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+以符号为起点，沿反向调用图向上 BFS 扩散，按层级显示所有调用该符号的上游函数与受影响范围，并输出受影响调用者的跨层分布（代码/DB/API/配置）。入参为符号内容 hash（可先用 `cw symbol <QN>` 查得），不是限定名。
+
+**示例**
+
+```bash
+cw impact abc123def456
+cw impact abc123def456 --depth 5
+```
+
+### `call-chain <NAME>`：向下调用链
 
 ```bash
 cw call-chain "my_project::payment::process_payment"
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<NAME>` | 是 | 符号名 |
+| `--depth <N>` | 否 | 最大深度（默认 10） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw call-chain "my_project::payment::process_payment" --depth 5
 ```
 
 ### `top-callers [N]`：被调用最多排行
@@ -1080,11 +1373,53 @@ cw top-callers 50
 cw top-callers --module "src/api"
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[limit]` | 否 | 最大结果数（默认 20） |
+| `--module <MODULE>` | 否 | 模块过滤（前缀） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw top-callers 50 --module "src/api"
+```
+
 ### `deepest [N]`：调用深度最深
 
 ```bash
 cw deepest
 cw deepest 50
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[limit]` | 否 | 最大结果数（默认 20） |
+| `--module <MODULE>` | 否 | 模块过滤（前缀） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw deepest 50 --module "src/core"
 ```
 
 ### `detect-cycles`：循环调用检测
@@ -1094,18 +1429,79 @@ cw detect-cycles
 cw detect-cycles --depth 15
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--depth <N>` | 否 | 循环检测最大深度（默认 10） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw detect-cycles --depth 15
+```
+
 ### `module-calls [N]`：模块间调用统计
 
 ```bash
 cw module-calls
 ```
 
-### `call-heatmap [GROUP]`：调用频率热力图
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[limit]` | 否 | 最大结果数（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw module-calls 50
+```
+
+### `call-heatmap`：调用频率热力图
 
 ```bash
 cw call-heatmap              # 默认按 module
-cw call-heatmap --by file      # 按 file
+cw call-heatmap --by file    # 按 file
 cw call-heatmap --limit 30
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--by {module,file}` | 否 | 按模块或文件分组（默认 module） |
+| `--limit <N>` | 否 | 前 N 条结果（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw call-heatmap --by file --limit 30
 ```
 
 ### `orphan-symbols [KIND]`：孤立符号
@@ -1116,7 +1512,29 @@ cw orphan-symbols struct
 cw orphan-symbols --module "src/legacy"
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[kind]` | 否 | 符号类型（默认 fn） |
+| `--module <MODULE>` | 否 | 模块过滤（前缀） |
+| `--limit <N>` | 否 | 最大结果数（默认 50） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 查找未被调用的孤立函数/结构体，适合清理死代码。
+
+**示例**
+
+```bash
+cw orphan-symbols struct --module "src/legacy" --limit 20
+```
 
 ---
 
@@ -1315,6 +1733,29 @@ cw semgrep list --lang rust
 ### `restore-comment <SPEC>`：恢复函数注释
 
 ```bash
+cw restore-comment <SPEC> [--preview]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<SPEC>` | 是 | 恢复规格：`file:symbol@version` 或 `file:line` |
+| `--preview` | 否 | 仅预览，不写入 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+SPEC 格式：`文件路径:符号名@版本号` 或 `文件路径:行号`。写入前先用 `--preview` 确认将要恢复的目标版本。
+
+**示例**
+
+```bash
 # 预览
 cw restore-comment "src/payment/mod.rs:process_payment@3" --preview
 
@@ -1322,9 +1763,28 @@ cw restore-comment "src/payment/mod.rs:process_payment@3" --preview
 cw restore-comment "src/payment/mod.rs:process_payment@3"
 ```
 
-SPEC 格式：`文件路径:符号名@版本号` 或 `文件路径:行号`
-
 ### `restore-all-comments`：批量恢复
+
+```bash
+cw restore-all-comments [--preview] [--file-filter <PREFIX>]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--preview` | 否 | 仅预览，不写入 |
+| `--file-filter <PREFIX>` | 否 | 仅恢复匹配此前缀的文件 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
 
 ```bash
 # 预览全部
@@ -1334,23 +1794,67 @@ cw restore-all-comments --preview
 cw restore-all-comments --file-filter src/payment/
 ```
 
-### `symbol-history <NAME>`：函数历史版本
+### `symbol-history <SYMBOL_HASH>`：符号 Git 变更历史
 
 ```bash
-cw symbol-history process_payment
-cw symbol-history process_payment --show-content
+cw symbol-history <symbol_hash>
+cw symbol-history <symbol_hash> --limit 50
 ```
 
-### `diff <H1> <H2>`：对比版本
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<symbol_hash>` | 是 | 符号内容 hash（先用 `cw symbol <QN>` / `cw search` 查得；命令不解析符号名） |
+| `--limit <N>` | 否 | 返回数量限制（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+按内容 hash 精确匹配 `git_symbol_changes`，列出改动过该符号的 commit（变更类型/作者/时间/message）；输出末尾追加 symbol → task 三角关联段（schema v35+），列出该符号被哪些任务改变过、对应的 `source_commit_hash` 与 `change_type`（对应 MCP 工具 `get_symbol_change_tasks`）。
+
+> 注：argparse 只接受单一位置参数 hash；早期文档示例 `cw symbol-history process_payment --show-content` 的「符号名 + `--show-content`」形态不存在（`--show-content` 不是合法 flag）。
+
+**示例**
+
+```bash
+cw symbol-history abc123def456
+cw symbol-history abc123def456 --limit 50
+```
+
+### `diff <H1> <H2>`：按 hash 对比两个符号内容版本
+
+```bash
+cw diff <hash1> <hash2>
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<hash1>` | 是 | 第一个内容哈希 |
+| `<hash2>` | 是 | 第二个内容哈希 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
 
 ```bash
 cw diff a1b2c3d4e5f6... d4e5f6a1b2c3...
 ```
 
 ### `changes [SINCE]`：最近变更的文件与函数
-
-[2] Query & Search 分类下的顶层命令（只读查询）：按时间窗口列出近期变更的
-多版本文件与函数，常用于在 `symbol-history` / `diff` 之前先定位"最近改了什么"。
 
 ```bash
 cw changes               # 最近 1 小时（默认）
@@ -1359,14 +1863,33 @@ cw changes 2h30m         # 支持 h/d/m/s 组合窗口
 cw changes 6h --detail   # 附带变更函数的 prev/curr hash
 ```
 
-| 参数         | 说明                                                          |
-| ------------ | ------------------------------------------------------------- |
-| `[SINCE]`    | 时间窗口（`1h`/`30m`/`1d`/`2h30m` 等 h/d/m/s 组合，默认 `1h`） |
-| `--detail`   | 显示每个变更函数的 prev/curr 内容 hash                        |
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[SINCE]` | 否 | 时间窗口（`30m`/`1h`/`1d`/`2h30m` 等 h/d/m/s 组合，默认 `1h`） |
+| `--detail` | 否 | 显示每个变更函数的 prev/curr 内容 hash |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+[2] Query & Search 分类下的顶层命令（只读查询）：按时间窗口列出近期变更的
+多版本文件与函数，常用于在 `symbol-history` / `diff` 之前先定位"最近改了什么"。
 
 输出：变更文件总数、多版本文件数、变更函数数，随后列出多版本文件
 （`v<版本号> | 解析时间 | 路径`）与变更函数（`[变更类型] 限定名` +
 `文件:行 | 时间`）。数据来自 `file_versions`，多版本即 `version_num > 1`。
+
+**示例**
+
+```bash
+cw changes 1d --detail
+```
 
 ---
 
@@ -2699,18 +3222,23 @@ cw task superseded T-old
 ### `audit verify`：验证审计链完整性
 
 ```bash
-# 验证全部审计链
-cw audit verify
-
-# 仅验证指定表的审计链
-cw audit verify --table change_audit
-cw audit verify --table file_edit_audit
-cw audit verify --table task_symbol_changes
-cw audit verify --table task_quality_findings
-
-# 限制验证记录数
-cw audit verify --limit 500
+cw audit verify [--table <TABLE>] [--limit <N>]
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--table <TABLE>` | 否 | 按表名过滤（空串 = 全部表） |
+| `--limit <N>` | 否 | 最大验证记录数（默认 1000） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 验证 `audit_chain` 表中签名链的连续性与签名匹配。每条 `audit_chain` 记录包含
 `payload_hash` + `prev_signature` + `record_signature`，形成链式结构。
@@ -2736,27 +3264,49 @@ cw audit verify --limit 500
 - `chain_broken`：`prev_signature` 与上一条的 `record_signature` 不匹配（链断裂）
 - `first_prev_not_empty`：首条记录 `prev_signature` 应为空串但非空
 
+**示例**
+
+```bash
+# 验证全部审计链
+cw audit verify
+
+# 仅验证指定表的审计链
+cw audit verify --table change_audit
+cw audit verify --table file_edit_audit
+cw audit verify --table task_symbol_changes
+cw audit verify --table task_quality_findings
+
+# 限制验证记录数
+cw audit verify --limit 500
+```
+
 ### `audit rotate-key`：轮换审计签名密钥（C7）
 
 ```bash
-# 轮换到新密钥（自动生成 32 字节随机密钥）
-cw audit rotate-key --key-id key-2026-07
-
-# 指定密钥内容
-cw audit rotate-key --key-id key-2026-07 --secret "my-secret-string"
+cw audit rotate-key --key-id <KEY_ID> [--secret <SECRET>]
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--key-id <KEY_ID>` | 是 | 新密钥标识（唯一，如 `key-2026-07`） |
+| `--secret <SECRET>` | 否 | 新密钥内容；省略时自动生成 32 字节随机密钥（hex 编码，64 字符） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> **PROTECTED_MUTATION 写操作**：此命令路由为 `admin.audit_rotate_key`（PROTECTED_MUTATION 保护，无本地 SQLite fallback），会 INSERT/UPDATE `audit_key_rotations` 表，需激活 workspace。
 
 轮换审计签名密钥。轮换后：
 - **新记录**用新密钥签名（`signing_key_id = <new_key_id>`）
 - **旧记录保持原签名不变**（`signing_key_id` 不变）
 - `verify_audit_chain` 按 `signing_key_id` 从 `audit_key_rotations` 表查找对应密钥验证
-
-**参数**：
-
-| 参数       | 必填 | 默认     | 说明                                                            |
-| ---------- | ---- | -------- | --------------------------------------------------------------- |
-| `--key-id` | 是   | -        | 新密钥标识（唯一，如 `key-2026-07`）                            |
-| `--secret` | 否   | 自动生成 | 新密钥内容；省略时自动生成 32 字节随机密钥（hex 编码，64 字符） |
 
 **输出**：
 - 新密钥 ID
@@ -2766,22 +3316,7 @@ cw audit rotate-key --key-id key-2026-07 --secret "my-secret-string"
 
 **幂等性**：相同 `key_id` 再次轮换会更新 `key_secret` 并保持 `is_active=1`。
 
-> **写操作**：此命令会 INSERT/UPDATE `audit_key_rotations` 表，需激活 workspace。
-
-### `audit keys`：列出签名密钥轮换记录
-
-```bash
-cw audit keys
-```
-
-列出所有签名密钥轮换记录，按 `rotated_at` 倒序。每项含 `key_id` / `rotated_at` / `is_active`，
-**不返回 `key_secret`** 以避免泄露密钥内容。
-
-> **只读**：此命令仅查询 `audit_key_rotations` 表，不修改数据库。
-
-### `audit_chain` 签名密钥轮换机制（C7）
-
-**Schema v29** 新增 `audit_key_rotations` 表，记录每次密钥轮换：
+**密钥轮换存储机制（Schema v29）**：`audit_key_rotations` 表记录每次密钥轮换：
 
 | 字段         | 类型        | 说明                         |
 | ------------ | ----------- | ---------------------------- |
@@ -2791,7 +3326,7 @@ cw audit keys
 | `rotated_at` | REAL        | 轮换时间戳                   |
 | `is_active`  | INTEGER     | 1=当前活跃，0=已停用         |
 
-**密钥查找优先级**（`_get_active_signing_key`）：
+**密钥查找优先级**（签名时 `_get_active_signing_key`）：
 1. `audit_key_rotations` 表中 `is_active=1` 的记录
 2. 环境变量 `CALLWARDEN_AUDIT_HMAC_KEY` / 文件 `~/.callwarden/audit.key`
 3. 回落到 SHA-256 链（`signing_key_id='local'`）
@@ -2806,15 +3341,68 @@ cw audit keys
 - legacy `signing_key_id="hmac"` 记录（无轮换表时签发）仍能用当前环境变量/文件密钥验证
 - legacy `signing_key_id="local"` 记录（SHA-256 链）无需密钥即可验证
 
+**示例**
+
+```bash
+# 轮换到新密钥（自动生成 32 字节随机密钥）
+cw audit rotate-key --key-id key-2026-07
+
+# 指定密钥内容
+cw audit rotate-key --key-id key-2026-07 --secret "my-secret-string"
+```
+
+### `audit keys`：列出签名密钥轮换记录
+
+```bash
+cw audit keys
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> **只读**：此命令仅查询 `audit_key_rotations` 表，不修改数据库。
+
+列出所有签名密钥轮换记录，按 `rotated_at` 倒序。每项含 `key_id` / `rotated_at` / `is_active`，
+**不返回 `key_secret`** 以避免泄露密钥内容。
+
+**示例**
+
+```bash
+cw audit keys
+```
+
 ### `check-gate`：检查门禁
 
 ```bash
-# 检查
-cw check-gate <task_id>
-
-# 标记门禁发现已解决
-cw check-gate <task_id> --resolve
+cw check-gate <TASK_ID> [--resolve] [--step-id <STEP_ID>]
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<TASK_ID>` | 是 | 任务 ID |
+| `--resolve` | 否 | 标记该任务的门禁发现为已解决（Agent 修复后调用） |
+| `--step-id <STEP_ID>` | 否 | 关联步骤 ID |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 对变更文件运行语法检查 + Semgrep 扫描。失败会自动插入 `fix_gate_failure` 步骤。
 
@@ -2822,6 +3410,16 @@ cw check-gate <task_id> --resolve
 > `task_quality_findings`；`task findings` 是查询已写入的发现。
 > `task_completion_review`（MCP 工具）会自动调用 `check-gate` 并叠加
 > 5 个扩展检查器（scope / symbol_attribution / file_health / i18n / signature）。
+
+**示例**
+
+```bash
+# 检查
+cw check-gate T-1783350489327
+
+# 标记门禁发现已解决
+cw check-gate T-1783350489327 --resolve
+```
 
 ### `task list` / `task show`：任务列表与详情
 
@@ -2864,6 +3462,26 @@ cw task list --status in_progress --limit 20
 cw metrics
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw metrics
+```
+
 ### `complexity [N]`：圈复杂度热点
 
 ```bash
@@ -2872,7 +3490,28 @@ cw complexity 50
 cw complexity --module "src/payment"
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[limit]` | 否 | 最大结果数（默认 20） |
+| `--module <MODULE>` | 否 | 按模块过滤 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 复杂度 >10 的函数建议重构（标记 `!`）。
+
+**示例**
+
+```bash
+cw complexity 50 --module "src/payment"
+```
 
 ### `coupling`：模块耦合度
 
@@ -2880,16 +3519,107 @@ cw complexity --module "src/payment"
 cw coupling
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 计算每个模块的传入/传出耦合度和不稳定性（instability）。
 
-### `largest-fns [N]` / `coupled-fns [N]`
+**示例**
 
 ```bash
-cw largest-fns          # 代码行数最多
-cw coupled-fns          # 耦合度最高（扇入+扇出）
+cw coupling
+```
+
+### `largest-fns [N]`：最大函数排行
+
+```bash
+cw largest-fns
+cw largest-fns 50
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[limit]` | 否 | 最大结果数（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+按代码行数排序，列出最大的函数。
+
+**示例**
+
+```bash
+cw largest-fns 50
+```
+
+### `coupled-fns [N]`：耦合度最高函数排行
+
+```bash
+cw coupled-fns
+cw coupled-fns 50
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[limit]` | 否 | 最大结果数（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+按耦合度（扇入+扇出）排序。
+
+**示例**
+
+```bash
+cw coupled-fns 50
 ```
 
 ### `fn-metrics <NAME>`：单函数度量
+
+```bash
+cw fn-metrics "my_project::payment::process_payment"
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<NAME>` | 是 | 函数名 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
 
 ```bash
 cw fn-metrics "my_project::payment::process_payment"
@@ -2902,18 +3632,56 @@ cw comment-coverage
 cw comment-coverage --by module   # 按 module/file/kind
 ```
 
-### `health-report`：项目整体健康报告
+**参数**
 
-聚合基础统计 + 演化热点（Top 5）+ 问题统计（Semgrep findings 按 severity）+ Token 节省，一眼看清项目健康状态。只读。
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--by <GROUP_BY>` | 否 | 分组方式（默认 module） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw comment-coverage --by file
+```
+
+### `health-report`：项目整体健康报告
 
 ```bash
 cw health-report          # 文本报告
 cw health-report --json   # JSON 输出
 ```
 
-### `dashboard`：项目综合状态驾驶舱
+**参数**
 
-聚合 7 个 section（overview / code_scale / code_quality / call_graph / task_risk / audit / evolution）+ 风险预警列表。默认 quick 模式（100K 符号约 280ms）。只读。
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--json` | 否 | 以 JSON 输出（默认文本报告） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+聚合基础统计 + 演化热点（Top 5）+ 问题统计（Semgrep findings 按 severity）+ Token 节省，一眼看清项目健康状态。只读。
+
+**示例**
+
+```bash
+cw health-report --json
+```
+
+### `dashboard`：项目综合状态驾驶舱
 
 ```bash
 cw dashboard                               # quick 模式（默认）
@@ -2922,6 +3690,33 @@ cw dashboard --with-cycles                 # 启用调用循环检测
 cw dashboard --with-evolution              # 演化趋势（需先导入 git history）
 cw dashboard --risks --top 10              # 风险预警 Top 10（默认 5）
 cw dashboard --json                        # JSON 输出
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--full` | 否 | 完整模式（计算圈复杂度，大仓库较慢） |
+| `--with-cycles` | 否 | 启用调用循环检测（无 Rust GraphStore 时可能较慢） |
+| `--with-evolution` | 否 | 演化趋势（需先导入 git history） |
+| `--risks` | 否 | 显示项目风险预警（高复杂度 / 超大文件 / 阻塞 findings） |
+| `--top <N>` | 否 | 风险列表 Top N（默认 5） |
+| `--json` | 否 | JSON 输出 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+聚合 7 个 section（overview / code_scale / code_quality / call_graph / task_risk / audit / evolution）+ 风险预警列表。默认 quick 模式（100K 符号约 280ms）。只读。
+
+**示例**
+
+```bash
+cw dashboard --full --with-cycles --json
 ```
 
 ---
@@ -2935,7 +3730,32 @@ cw evolution "my_project::payment::process_payment"
 cw evolution "my_project::payment::process_payment" --window 30d
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<QN>` | 是 | 函数限定名 |
+| `--window <WINDOW>` | 否 | 时间窗口（如 30d/90d/1y；不传 = 全部历史） |
+| `--defects` | 否 | 启用变更-缺陷关联模式（不加则只返回变更频率） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 显示变更次数、变更者、变更时间线、变更分布。
+
+`--defects` 启用变更-缺陷关联模式，分析符号的变更频率与缺陷（Semgrep findings）的时间关联性，回答"这个函数改得多不多？改完之后容易引入缺陷吗？"：返回 `change_count`（变更次数）/ `defect_count`（关联缺陷数）/ `defect_rate`（defect_count / change_count）/ `defect_types`（缺陷类型）/ `recent_defects`（最近的关联缺陷列表）。变更-缺陷关联窗口固定为默认 5 次提交内（CLI 无窗口覆盖入口）；`--window` 仅作用于非 `--defects` 的变更频率模式（如 `30d/90d/1y`）。对应 MCP 工具：`get_defect_correlation`。
+
+**示例**
+
+```bash
+cw evolution "my_project::payment::process_payment" --window 90d
+cw evolution "module::fn" --defects
+```
 
 ### `hotspot`：热点函数排名
 
@@ -2944,7 +3764,28 @@ cw hotspot
 cw hotspot --module src/payment --limit 50
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--module <MODULE>` | 否 | 模块路径前缀过滤 |
+| `--limit <N>` | 否 | 显示数量（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 按热点分（变更次数 + 缺陷数 + 复杂度）排序。
+
+**示例**
+
+```bash
+cw hotspot --module src/payment --limit 50
+```
 
 ### `churn`：代码流失分析
 
@@ -2954,14 +3795,26 @@ cw churn --window 90d
 cw churn --module src/api
 ```
 
-### `symbol-history <HASH>`：符号 Git 历史
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--module <MODULE>` | 否 | 模块路径前缀过滤 |
+| `--window <WINDOW>` | 否 | 时间窗口（默认 90d） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
 
 ```bash
-cw symbol-history a1b2c3d4e5f6...
-cw symbol-history a1b2c3d4e5f6... --limit 50
+cw churn --window 90d --module src/api
 ```
-
-输出末尾会追加 **三角关联段：symbol → task**（schema v35+），列出该符号被哪些任务改变过、对应的 `source_commit_hash` 与 `change_type`。对应 MCP 工具 `get_symbol_change_tasks`。
 
 ### `test-impact <QN>`：测试影响选择
 
@@ -2969,24 +3822,27 @@ cw symbol-history a1b2c3d4e5f6... --limit 50
 cw test-impact "my_project::payment::process_payment"
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<QN>` | 是 | 被修改函数的限定名 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 返回改了该函数后需要运行的测试列表（通过反向调用链 BFS）。
 
-### `evolution <QN> --defects`：变更-缺陷关联
+**示例**
 
 ```bash
-cw evolution "module::fn" --defects
+cw test-impact "my_project::payment::process_payment"
 ```
-
-分析符号的变更频率与缺陷（Semgrep findings）的时间关联性，回答"这个函数改得多不多？改完之后容易引入缺陷吗？"
-
-参数：
-- `<QN>`：符号限定名
-- `--defects`：启用变更-缺陷关联模式（不加则只返回变更频率）
-- 变更-缺陷关联窗口固定为默认 5 次提交内（CLI 无窗口覆盖入口）；`--window` 仅作用于非 `--defects` 的变更频率模式（如 `30d/90d/1y`）
-
-返回字段：`change_count`（变更次数）/ `defect_count`（关联缺陷数）/ `defect_rate`（defect_count / change_count）/ `recent_defects`（最近的关联缺陷列表）
-
-对应 MCP 工具：`get_defect_correlation`
 
 ---
 
@@ -2999,9 +3855,23 @@ Call Warden 静态检查整合了 4 类能力：符号静态检查（issues）/ 
 ### `issues <QN>`：符号静态检查
 
 ```bash
-cw issues "module::fn"
-cw issues "module::fn" --include-info
+cw issues <QN> [--include-info]
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<QN>` | 是 | 符号限定名 |
+| `--include-info` | 否 | 包含 INFO 级别（默认只 WARNING+，避免噪音） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 整合 Semgrep + Guardrail findings，按符号聚合。返回符号相关的所有静态检查问题。
 
@@ -3009,17 +3879,64 @@ cw issues "module::fn" --include-info
 1. **Semgrep findings**：按 `symbol_qualified` 精确匹配（首选）；无精确匹配时按 `file_instance_id + line 范围交集` 兜底
 2. **Guardrail findings**：按 `file_path + symbol_hash` 匹配
 
-参数：
-- `<QN>`：符号限定名
-- `--include-info`：包含 INFO 级别（默认只 WARNING+，避免噪音）
-
 返回：issues 列表，按 severity 降序（ERROR > WARNING > INFO），每条含 source/rule_id/severity/message/start_line/end_line/snippet/fix。
 
 对应 MCP 工具：`get_symbol_issues`
 
+**示例**
+
+```bash
+cw issues "module::fn"
+cw issues "module::fn" --include-info
+```
+
 ### `tests <QN>`：符号测试 case 查询
 
+```bash
+cw tests <QN> [--reverse] [--history] [--limit <N>]
+cw tests --build [--force]
+cw tests --import <FILE> [--ci-run-id <ID>] [--ci-url <URL>]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<QN>` | 否 | 被测函数限定名（`--reverse` 时为 test_fn 限定名）；`--build` / `--import` 模式下可省略 |
+| `--reverse` | 否 | 反向查询：test_fn 测了哪些函数 |
+| `--history` | 否 | 基于 `test_runs` 表的运行历史，返回 `pass_rate` / `recent_failures` / `by_test` |
+| `--limit <N>` | 否 | `--history` 模式最多显示的运行记录数（默认 50） |
+| `--build` | 否 | 重建/重算 test_case_relations（写操作，refresh 测试文件后调用） |
+| `--force` | 否 | 与 `--build` 配合，强制清空已有关联后重建 |
+| `--import <FILE>` | 否 | 导入 JUnit XML 测试运行结果（写操作；文件路径或 XML 内容） |
+| `--ci-run-id <ID>` | 否 | 与 `--import` 配合，关联 CI 运行 ID |
+| `--ci-url <URL>` | 否 | 与 `--import` 配合，关联 CI 运行 URL |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 回答 agent 高频问题："foo() 有哪些 test 在测它？"
+
+#### 三阶推断算法
+
+test_fn ↔ tested_fn 的关联分 3 个置信度等级：
+
+1. **direct_call（high）**：test_fn 直接调用了 tested_fn（基于调用图）
+2. **name_convention（mid）**：test_fn 名字能推断出 tested_fn（`testFoo` → `foo`，`foo_test` → `foo`）
+3. **indirect（low）**：test_fn 调用了 tested_fn 的调用方（间接测试）
+
+> 测试覆盖摘要（`has_tests` / `test_count` / `high_confidence_count` / `tests`）为 MCP 专属 `get_test_coverage_summary`，CLI 无对应 flag。
+
+对应 MCP 工具（只读）：`get_test_cases` / `get_tested_functions` / `get_test_coverage_summary` / `get_test_stability`
+
+> **注**：写操作（`--build` / `--import`）不暴露 MCP，遵循 AGENTS.md 规则 2（写操作走 CLI）。
+
+**示例**
 
 ```bash
 cw tests "module::fn"                      # 查测试 case 列表（按 confidence 降序）
@@ -3031,42 +3948,37 @@ cw tests --import <junit.xml>              # 导入 JUnit XML 测试运行结果
 cw tests --import <file> --ci-run-id ID --ci-url URL  # 关联 CI 运行信息
 ```
 
-#### 三阶推断算法
-
-test_fn ↔ tested_fn 的关联分 3 个置信度等级：
-
-1. **direct_call（high）**：test_fn 直接调用了 tested_fn（基于调用图）
-2. **name_convention（mid）**：test_fn 名字能推断出 tested_fn（`testFoo` → `foo`，`foo_test` → `foo`）
-3. **indirect（low）**：test_fn 调用了 tested_fn 的调用方（间接测试）
-
-参数：
-- `<QN>`：被测函数限定名（`--reverse` 时为 test_fn 限定名）
-- `--reverse`：反向查询
-- （测试覆盖摘要 `has_tests` / `test_count` / `high_confidence_count` / `tests` 为 MCP 专属 `get_test_coverage_summary`，CLI 无对应 flag）
-- `--history`：基于 `test_runs` 表的运行历史，返回 `pass_rate` / `recent_failures` / `by_test`
-- `--build`：重建关联（写操作，refresh 测试文件后调用）
-- `--force`：与 `--build` 配合，强制清空已有关联后重建
-- `--import <file>`：导入 JUnit XML（写操作）
-- `--ci-run-id` / `--ci-url`：与 `--import` 配合，关联 CI 运行信息
-
-对应 MCP 工具（只读）：`get_test_cases` / `get_tested_functions` / `get_test_coverage_summary` / `get_test_stability`
-
-> **注**：写操作（`--build` / `--import`）不暴露 MCP，遵循 AGENTS.md 规则 2（写操作走 CLI）。
-
 ### `clone`：代码重复检测
 
-子命令组，检测和查询 Type-1/2/3 克隆。
-
 ```bash
-cw clone detect                              # 检测克隆（默认 min_lines=3, similarity=0.7）
-cw clone detect --min-lines 10 --similarity 0.8  # 自定义阈值
-cw clone list                               # 列出所有克隆对
-cw clone list --type 1                      # 只列 Type-1（完全相同）
-cw clone list --type 2 --limit 20           # Type-2 + 限制数量
-cw clone list --symbol <QN>                  # 按符号查重复代码
-cw clone stats                              # 克隆统计
-cw clone clear                              # 清空检测结果
+cw clone detect [--file-filter <PREFIX>] [--min-lines <N>] [--similarity <F>]
+cw clone list [--type <N>] [--min-similarity <F>] [--limit <N>] [--symbol <QN>]
+cw clone stats
+cw clone clear
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `detect --file-filter <PREFIX>` | 否 | 文件路径前缀过滤（如 `src/core/`），留空扫描全部 |
+| `detect --min-lines <N>` | 否 | 最小符号行数（默认 5，跳过更短的符号） |
+| `detect --similarity <F>` | 否 | Type-3 相似度阈值 [0,1]（默认 0.8） |
+| `list --type <N>` | 否 | 克隆类型过滤（N=0 全部，1/2/3=Type-N） |
+| `list --min-similarity <F>` | 否 | 最低相似度过滤（默认 0.0） |
+| `list --limit <N>` | 否 | 返回上限（默认 100） |
+| `list --symbol <QN>` | 否 | 只返回涉及此符号的克隆 |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+子命令组，检测和查询 Type-1/2/3 克隆。`detect` 将结果持久化到 `clone_pairs` 表，`clear` 清空当前工作区的所有克隆检测结果。
 
 #### 克隆类型
 
@@ -3076,34 +3988,55 @@ cw clone clear                              # 清空检测结果
 | Type-2 | 重命名克隆（token 序列相同）   | token 归一化后相同    |
 | Type-3 | 微调克隆（添加/删除/修改语句） | Jaccard 相似度 ≥ 阈值 |
 
-参数：
-- `detect`：`--min-lines <N>`（最小行数，默认 3）/ `--similarity <F>`（相似度阈值 0-1，默认 0.7）
-- `list`：`--type <1|2|3>`（类型过滤，0=全部）/ `--limit <N>`（返回上限）/ `--symbol <QN>`（只返回涉及此符号的克隆）
-
 返回字段：clone_type / similarity / token_hash / lines_a / lines_b / symbol_a_name / symbol_b_name / file_a / file_b / detected_at。
 
 对应 MCP 工具：`detect_clones` / `list_clones`（含 `symbol_id` 参数）/ `get_clone_stats` / `clear_clones`
+
+**示例**
+
+```bash
+cw clone detect                              # 检测克隆（默认 min_lines=5, similarity=0.8）
+cw clone detect --min-lines 10 --similarity 0.8  # 自定义阈值
+cw clone detect --file-filter src/core/      # 只扫描 src/core/ 前缀
+cw clone list                               # 列出所有克隆对
+cw clone list --type 1                      # 只列 Type-1（完全相同）
+cw clone list --type 2 --limit 20           # Type-2 + 限制数量
+cw clone list --symbol "module::fn"          # 按符号查重复代码
+cw clone stats                              # 克隆统计
+cw clone clear                              # 清空检测结果
+```
 
 ---
 
 ## 影响分析命令
 
-### `impact <HASH>`：变更影响半径（子命令）
-
-```bash
-cw impact a1b2c3d4e5f6...
-cw impact a1b2c3d4e5f6... --depth 5
-```
-
-以符号为起点，沿调用链向上游扩散，计算受影响调用者数量与跨层分布（代码/DB/API/配置）。
-
 ### `review <HASH>`：审查就绪报告
 
 ```bash
-cw review a1b2c3d4e5f6...
+cw review <HASH>
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<HASH>` | 是 | 源符号内容 hash |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 生成审查就绪报告：风险等级、影响范围、必测项、人工审查点、覆盖率。
+
+**示例**
+
+```bash
+cw review abc123def456
+```
 
 ---
 
@@ -3247,6 +4180,30 @@ cw defect build
 ### `function-issues [FN]`：函数缺陷检测
 
 ```bash
+cw function-issues [FN] [--type <TYPE>] [--module <MODULE>] [--limit <N>] [--summary]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[FN]` | 否 | 函数限定名；省略为列表模式，传入为单函数详情模式 |
+| `--type <TYPE>` | 否 | 按问题类型过滤 |
+| `--module <MODULE>` | 否 | 按模块过滤（`--summary` 模式下同样生效） |
+| `--limit <N>` | 否 | 最大结果数（默认 30） |
+| `--summary` | 否 | 按严重程度汇总全项目问题 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
 # 单函数
 cw function-issues "my_project::payment::process_payment"
 
@@ -3254,11 +4211,8 @@ cw function-issues "my_project::payment::process_payment"
 cw function-issues
 cw function-issues --type missing_comment
 cw function-issues --module src/api
-```
 
-### `function-issues --summary`：缺陷汇总
-
-```bash
+# 全项目按严重程度汇总
 cw function-issues --summary
 ```
 
@@ -3281,7 +4235,37 @@ cw rule candidate create --title "use i18n" --text "禁止硬编码字符串" \
     --confidence 0.8
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--title <TITLE>` | 是 | 规则标题（简短描述） |
+| `--text <TEXT>` | 是 | 规则正文（Agent 注入时会原文返回） |
+| `--scope <JSON>` | 否 | 作用域 JSON，例如 `{"languages":["python"],"actions":["edit"]}` |
+| `--severity <LEVEL>` | 否 | 严重级别：critical/error/warning/info（默认 `info`） |
+| `--source <SOURCE>` | 否 | 来源：manual/auto_quality_findings/auto_semgrep/task_review/other（默认 `manual`） |
+| `--evidence <JSON>` | 否 | 证据 JSON，例如 `{"task_id":"T-xxx","occurrences":3}` |
+| `--confidence <0.0-1.0>` | 否 | 置信度 0.0-1.0 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：走 PROTECTED_MUTATION 保护；创建的候选默认 `pending`，accept 后才写入 `agent_rules` 生效。
+
 必填：`--title` / `--text`。其余可选，`--severity` 默认 `info`，`--source` 默认 `manual`。
+
+**示例**
+
+```bash
+cw rule candidate create --title "use i18n" --text "禁止硬编码字符串" --severity warning
+cw rule candidate create --title "lock deps" --text "新增依赖必须锁定版本" \
+    --source manual --confidence 0.8
+```
 
 ### `rule candidate list`：列出候选规则
 
@@ -3292,6 +4276,29 @@ cw rule candidate list --status ""           # 所有状态
 cw rule candidate list --limit 20
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--status <STATUS>` | 否 | 状态过滤：pending/accepted/rejected，空串=所有（默认 `pending`） |
+| `--limit <N>` | 否 | 返回数量上限（默认 50） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw rule candidate list
+cw rule candidate list --status accepted --limit 20
+cw rule candidate list --status ""
+```
+
 ### `rule candidate accept`：接受候选 -> active 规则
 
 ```bash
@@ -3299,13 +4306,60 @@ cw rule candidate accept ARC-1783253838000-a1b2
 cw rule candidate accept ARC-1783253838000-a1b2 --reviewer human
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<CANDIDATE_ID>` | 是 | 候选规则 ID（ARC-xxx） |
+| `--reviewer <REVIEWER>` | 否 | 审核人标识 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：走 PROTECTED_MUTATION 保护；accept 后规则写入 `agent_rules` 并参与上下文注入。
+
 幂等：重复 accept 已 accepted 的 candidate 会返回原 `linked_rule_id`。
+
+**示例**
+
+```bash
+cw rule candidate accept ARC-1783253838000-a1b2 --reviewer human
+```
 
 ### `rule candidate reject`：拒绝候选规则
 
 ```bash
 cw rule candidate reject ARC-1783253838000-a1b2
 cw rule candidate reject ARC-1783253838000-a1b2 --reason "duplicate"
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<CANDIDATE_ID>` | 是 | 候选规则 ID（ARC-xxx） |
+| `--reviewer <REVIEWER>` | 否 | 审核人标识 |
+| `--reason <REASON>` | 否 | 拒绝原因（可选） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：走 PROTECTED_MUTATION 保护；候选标记为 `rejected`，不会写入 `agent_rules`。
+
+**示例**
+
+```bash
+cw rule candidate reject ARC-1783253838000-a1b2 --reviewer human --reason "duplicate"
 ```
 
 ### `rule list`：列出已生效规则
@@ -3317,6 +4371,28 @@ cw rule list --status ""           # 所有状态
 cw rule list --limit 50
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--status <STATUS>` | 否 | 状态：active/deprecated/removed，空串=所有（默认 `active`） |
+| `--limit <N>` | 否 | 返回数量上限（默认 100） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw rule list
+cw rule list --status deprecated --limit 50
+```
+
 输出含每条规则的 `id` / `title` / `severity` / `synced` 标记 / `scope`。
 
 ### `rule applicable`：按上下文查询匹配规则
@@ -3325,6 +4401,27 @@ cw rule list --limit 50
 cw rule applicable
 cw rule applicable --context '{"languages":["python"],"actions":["edit"]}'
 cw rule applicable --context '{"file_patterns":["src/api/**/*.py"]}' --limit 5
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--context <JSON>` | 否 | 上下文 JSON，例如 `{"languages":["python"],"actions":["edit"]}` |
+| `--limit <N>` | 否 | 返回数量上限（默认 10） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw rule applicable --context '{"languages":["python"],"actions":["edit"]}' --limit 5
 ```
 
 返回按 `severity → 命中字段数 → updated_at` 排序的匹配规则。
@@ -3340,6 +4437,24 @@ cw rule sync --target AGENTS.md
 cw rule sync --apply
 cw rule sync --target path/to/AGENTS.md --apply --actor human
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--target <TARGET>` | 否 | 目标 AGENTS.md 路径（相对 workspace 或绝对） |
+| `--apply` | 否 | 实际写入文件（默认 dry-run） |
+| `--actor <ACTOR>` | 否 | 操作者标识 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：`--apply` 写文件操作走 PROTECTED_MUTATION 保护；默认 dry-run 只读预览，不写文件。
 
 标记区格式：
 
@@ -3357,6 +4472,13 @@ apply 模式会：
 2. 写入 `agent_rule_sync_log`（before_hash / after_hash / rule_ids）
 3. 标记规则的 `synced_to_agents_md=1` 与 `sync_hash`
 
+**示例**
+
+```bash
+cw rule sync                                          # dry-run 预览同步内容
+cw rule sync --target path/to/AGENTS.md --apply --actor human
+```
+
 ### `rule insert-block`：插入标记块
 
 ```bash
@@ -3364,8 +4486,31 @@ cw rule insert-block
 cw rule insert-block --target path/to/AGENTS.md
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--target <TARGET>` | 否 | 目标 AGENTS.md 路径 |
+| `--actor <ACTOR>` | 否 | 操作者标识 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：走 PROTECTED_MUTATION 保护。
+
 当 AGENTS.md 还没有 Call Warden 标记区时调用此命令插入空标记块，
 之后 `rule sync` 才能正常工作。重复插入会返回失败。
+
+**示例**
+
+```bash
+cw rule insert-block --target path/to/AGENTS.md
+```
 
 ### `rule extract`：从质量发现聚合候选规则
 
@@ -3375,8 +4520,32 @@ cw rule extract --task-id T-1783253838000-xxx  # 指定任务
 cw rule extract --min-occurrences 3            # 提高阈值
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--task-id <TASK_ID>` | 否 | 任务 ID（空串=扫描所有任务） |
+| `--min-occurrences <N>` | 否 | 最小出现次数阈值（默认 2） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：走 PROTECTED_MUTATION 保护；生成的候选默认 `pending`。
+
 聚合维度：`(finding_type, severity, source)`。同一聚合键出现次数 ≥
 `min_occurrences`（默认 2）时生成 1 个 pending 候选规则，自动去重。
+
+**示例**
+
+```bash
+cw rule extract --min-occurrences 3
+cw rule extract --task-id T-1783253838000-xxx
+```
 
 ### `rule seed-bootstrap`：种子化内置自举 active rules
 
@@ -3387,6 +4556,22 @@ cw rule seed-bootstrap
 # 实际写入 agent_rules 表
 cw rule seed-bootstrap --apply
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--apply` | 否 | 实际写入 agent_rules 表（默认 dry-run） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：`--apply` 写库操作走 PROTECTED_MUTATION 保护；默认 dry-run 只返回计划，不写库。
 
 **用途**：把 Call Warden 自身的 5 条核心规约（i18n 强制、提交前刷新、
 任务拆分、completion review、capture-diff）以**固定 ID** `AR-bootstrap-*`
@@ -3413,6 +4598,13 @@ cw rule seed-bootstrap --apply
 - 每条规则的 `action`（create / update / skip）+ title
 - dry-run 模式末尾提示 `Use --apply to write rules to agent_rules table.`
 
+**示例**
+
+```bash
+cw rule seed-bootstrap           # dry-run 预览计划
+cw rule seed-bootstrap --apply   # 实际写入 agent_rules 表
+```
+
 ---
 
 ### `rule cleanup-sync-log`：清理 agent_rule_sync_log 旧记录（GC）
@@ -3428,20 +4620,30 @@ cw rule cleanup-sync-log --older-than 30 --keep-latest 50 --apply
 cw rule cleanup-sync-log --apply
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--older-than <DAYS>` | 否 | 超过多少天的记录进入候选（默认 90） |
+| `--keep-latest <N>` | 否 | 保留最近 N 条记录不删除（默认 100） |
+| `--apply` | 否 | 实际执行删除（默认 dry-run，只预估） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：`--apply` 删除操作走 PROTECTED_MUTATION 保护；默认 dry-run 只预估，不执行 DELETE。
+
 **用途**：`agent_rule_sync_log` 表记录每次 `cw rule sync` 的同步日志，
 长期累积会无限增长。本命令按**双重过滤策略**清理旧记录，防止表膨胀。
 
 **清理策略**（同时满足才删除）：
 1. `created_at` 早于 `--older-than` 天前（默认 90 天）
 2. 不在最近 `--keep-latest` 条记录内（按 `created_at` 倒序，默认 100 条）
-
-**命令行参数**：
-
-| 参数                  | 默认  | 说明                                 |
-| --------------------- | ----- | ------------------------------------ |
-| `--older-than <DAYS>` | 90    | 超过多少天的记录进入候选             |
-| `--keep-latest <N>`   | 100   | 保留最近 N 条记录不删除              |
-| `--apply`             | false | 实际执行删除（默认 dry-run，只预估） |
 
 **输出**：
 - dry-run / apply 标题（含 `older_than` / `keep_latest` 参数回显）
@@ -3452,6 +4654,13 @@ cw rule cleanup-sync-log --apply
 
 **对应 MCP 工具**：`cleanup_agent_rule_sync_log(older_than_days, keep_latest, dry_run)`
 
+**示例**
+
+```bash
+cw rule cleanup-sync-log                            # dry-run 预估删除数量
+cw rule cleanup-sync-log --older-than 30 --keep-latest 50 --apply
+```
+
 ---
 
 ## 自举闭环命令
@@ -3461,6 +4670,20 @@ cw rule cleanup-sync-log --apply
 ```bash
 cw bootstrap status
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 **用途**：一行命令汇总自举闭环（bootstrap closure）整体健康度，便于
 人工巡检或 CI 门禁脚本快速判断"系统是否处于一致性状态"。
@@ -3483,6 +4706,12 @@ cw bootstrap status
 > **只读命令**：`bootstrap status` 不会写数据库，不会触发 workspace 激活，
 > 不会与 MCP Server 长连接撞锁。
 
+**示例**
+
+```bash
+cw bootstrap status
+```
+
 ---
 
 ## 迁移回滚命令
@@ -3497,6 +4726,28 @@ cw rollback register --task-id <TASK_ID> --feature <FEATURE_NAME> \
     [--window <ISO8601>] [--config-json <JSON>]
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--task-id <TASK_ID>` | 是 | Migration task ID |
+| `--feature <FEATURE_NAME>` | 是 | Feature name（功能名） |
+| `--phase <N>` | 是 | Phase number（0-7） |
+| `--production-entry <PATH>` | 是 | Rust 生产入口路径，格式 `文件:类.方法`（如 `db/db_base.py:CodeGraphDB._connect`） |
+| `--rollback-entry <PATH>` | 是 | Python 回滚入口路径（fallback 位置） |
+| `--window <ISO8601>` | 否 | 回滚窗口截止时间（ISO8601，如 `2026-12-31T00:00:00`） |
+| `--config-json <JSON>` | 否 | 附加配置 JSON（如 `{"flag":"CW_USE_RUST"}`） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：走 PROTECTED_MUTATION 保护；同一 `task_id` 已有记录时更新之。
+
 **用途**：在功能子任务的 wire-production step 完成后调用，登记该功能的 Rust 生产入口路径与 Python 回滚入口路径。若同一 `task_id` 已有记录，更新之。
 
 - `--production-entry`：Rust 生产入口，格式 `文件:类.方法`（如 `db/db_build.py:CodeGraphDB._save_file_version`）
@@ -3506,34 +4757,100 @@ cw rollback register --task-id <TASK_ID> --feature <FEATURE_NAME> \
 
 > **写命令**：走 CLI，避免与 MCP 长连接撞锁。
 
+**示例**
+
+```bash
+cw rollback register --task-id T-1783253838000-xxx --feature db_build \
+    --phase 3 --production-entry db/db_build.py:CodeGraphDB.build \
+    --rollback-entry db/db_build_py.py:CodeGraphDBPy.build \
+    --window 2026-12-31T00:00:00
+```
+
 ### `rollback show <TASK_ID>`：查看回滚配置
 
 ```bash
 cw rollback show <TASK_ID>
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<TASK_ID>` | 是 | Task ID |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 **用途**：查看指定任务的回滚配置详情（生产入口、回滚入口、rollback_flag、回滚窗口等）。
 
 > **只读命令**：可走 MCP，WAL 安全。
 
+**示例**
+
+```bash
+cw rollback show T-1783253838000-xxx
+```
+
 ### `rollback config`：列出回滚配置
 
 ```bash
-cw rollback config [--phase <N>] [--flag <0|1>]
+cw rollback config [--phase <N>] [--flag <-1|0|1>]
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--phase <N>` | 否 | 按迁移阶段过滤（0=全部） |
+| `--flag <-1\|0\|1>` | 否 | 按回滚标志过滤（-1=全部、0=正常 Rust、1=已回退到 Python） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 **用途**：列出所有回滚配置，可按 phase 或 rollback_flag 过滤。
 
-- `--phase <N>`：按迁移阶段过滤（1-7）
-- `--flag <-1|0|1>`：按回滚标志过滤（-1=全部、0=正常 Rust、1=已回退到 Python）
-
 > **只读命令**：可走 MCP，WAL 安全。
+
+**示例**
+
+```bash
+cw rollback config
+cw rollback config --phase 3 --flag 0
+```
 
 ### `rollback set <TASK_ID> <FLAG>`：设置回滚标志
 
 ```bash
 cw rollback set <TASK_ID> <0|1> [--reason "<原因>"]
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<TASK_ID>` | 是 | Task ID |
+| `<0\|1>` | 是 | Rollback flag（0=正常 Rust，1=回退到 Python） |
+| `--reason <REASON>` | 否 | 回滚原因（可选，建议填写以便事后追溯） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写命令：走 PROTECTED_MUTATION 保护；flag 取值仅限 0/1，其余取值 argparse 直接拒绝（退出码 2）。
 
 **用途**：紧急回滚开关。`flag=1` 时该功能切回 Python 回滚入口；`flag=0` 时恢复正常 Rust 路径。
 
@@ -3543,17 +4860,44 @@ cw rollback set <TASK_ID> <0|1> [--reason "<原因>"]
 
 > **写命令**：走 CLI。这是线上紧急回滚的主入口。
 
+**示例**
+
+```bash
+cw rollback set T-1783253838000-xxx 1 --reason "Rust 路径数据不一致，紧急切回 Python"
+cw rollback set T-1783253838000-xxx 0
+```
+
 ### `rollback is-rolled-back <FEATURE_NAME>`：检查功能是否回滚
 
 ```bash
 cw rollback is-rolled-back <FEATURE_NAME>
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<FEATURE_NAME>` | 是 | Feature name（功能名） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 **用途**：检查指定功能是否已回滚到 Python。生产代码通过 `is_feature_rolled_back()` 方法（内部调用此命令的等价查询）决定走 Rust 还是 Python 路径。
 
 **返回**：`true`（已回滚）/ `false`（正常 Rust 路径）。
 
 > **只读命令**：可走 MCP，WAL 安全。生产代码内联调用时走 `CodeGraphDB.is_feature_rolled_back()` 方法。
+
+**示例**
+
+```bash
+cw rollback is-rolled-back db_build
+```
 
 ---
 
@@ -3566,7 +4910,51 @@ cw git import          # 默认 100 个 commit
 cw git import 500
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[N]` | 否 | 最大提交数（默认 100） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写面命令：导入经 daemon `import_git_history` 落库，受 PROTECTED_MUTATION 保护。
+
+**示例**
+
+```bash
+cw git import
+cw git import 500
+```
+
 ### `git log [N]`：commit 历史
+
+```bash
+cw git log
+cw git log 50
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[N]` | 否 | 最大提交数（默认 20） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
 
 ```bash
 cw git log
@@ -3579,7 +4967,47 @@ cw git log 50
 cw git show abc123def456
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<COMMIT>` | 是 | 提交哈希 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw git show abc123def456
+```
+
 ### `git stats`：Git 统计
+
+```bash
+cw git stats
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
 
 ```bash
 cw git stats
@@ -3587,43 +5015,68 @@ cw git stats
 
 ### `git check-task`：检查 active task（L3 pre-commit hook）
 
+```bash
+cw git check-task
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 检查当前是否存在 active task（`in_progress` 状态的任务），供 L3 pre-commit hook 调用，作为软门禁。未设置 active task 时打印警告但不阻断 commit。
+
+> **软门禁**：仅警告不阻断，确保不影响 git commit 正常流程。
+
+**示例**
 
 ```bash
 cw git check-task
 ```
 
-> **软门禁**：仅警告不阻断，确保不影响 git commit 正常流程。
+### `git check-push <LOCAL_REF> <LOCAL_SHA> <REMOTE_REF> <REMOTE_SHA>`：检测 force push（L2 pre-push hook）
 
-### `git check-push`：检测 force push（L2 pre-push hook）
+```bash
+cw git check-push <LOCAL_REF> <LOCAL_SHA> <REMOTE_REF> <REMOTE_SHA>
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<LOCAL_REF>` | 是 | 本地引用名 |
+| `<LOCAL_SHA>` | 是 | 本地 commit SHA |
+| `<REMOTE_REF>` | 是 | 远程引用名 |
+| `<REMOTE_SHA>` | 是 | 远程 commit SHA |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 检测 pre-push 场景下的破坏性 git 操作（如 force push），供 L2 pre-push hook 调用。检测到破坏性操作时记录到 `destructive_operations` 表，作为软门禁（仅记录不阻断）。
 
-```bash
-cw git check-push <local_ref> <local_sha> <remote_ref> <remote_sha>
-```
-
-| 参数           | 说明            |
-| -------------- | --------------- |
-| `<local_ref>`  | 本地引用名      |
-| `<local_sha>`  | 本地 commit SHA |
-| `<remote_ref>` | 远程引用名      |
-| `<remote_sha>` | 远程 commit SHA |
-
 > **软门禁**：仅记录到 `destructive_operations` 表不阻断 push，确保不影响 git push 正常流程。
 
-### `git destructive-log`：查询破坏性 git 操作历史
-
-查询 `destructive_operations` 表中记录的破坏性 git 操作历史（force push 等）。
+**示例**
 
 ```bash
-cw git destructive-log [limit] [--type <TYPE>]
+cw git check-push <LOCAL_REF> <LOCAL_SHA> <REMOTE_REF> <REMOTE_SHA>
 ```
 
-| 参数/选项       | 说明                              |
-| --------------- | --------------------------------- |
-| `[limit]`       | 返回条目上限，默认 20             |
-| `--type <TYPE>` | 按操作类型过滤（如 `force_push`） |
+### `git destructive-log [N]`：查询破坏性 git 操作历史
 
 ```bash
 cw git destructive-log              # 最近 20 条
@@ -3631,16 +5084,62 @@ cw git destructive-log 50           # 最近 50 条
 cw git destructive-log --type force_push  # 仅 force push 记录
 ```
 
-### `git check-ref-transaction`：审计 ref 更新
+**参数**
 
-Git reference-transaction hook 调用，审计破坏性 ref 更新（reset_hard / branch -f / force push），软护栏仅记录到 `destructive_operations` 表，不拦截 working tree 破坏。
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `[N]` | 否 | 返回条目上限（默认 20） |
+| `--type <TYPE>` | 否 | 按操作类型过滤：`force_push` / `reset_hard` / `checkout_clean` |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+查询 `destructive_operations` 表中记录的破坏性 git 操作历史（force push 等）。
+
+**示例**
 
 ```bash
-cw git check-ref-transaction <old_value> <new_value> <ref_name> [flags]
+cw git destructive-log
+cw git destructive-log 50
+cw git destructive-log --type force_push
+```
+
+### `git check-ref-transaction <OLD_VALUE> <NEW_VALUE> <REF_NAME> [FLAGS]`：审计 ref 更新
+
+```bash
+cw git check-ref-transaction <OLD_VALUE> <NEW_VALUE> <REF_NAME> [FLAGS]
 cw git check-ref-transaction 0000... abcdef1234 refs/heads/main forced
 ```
 
-- `flags`：ref-transaction flags（如 `forced`），可选
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<OLD_VALUE>` | 是 | ref 旧值（全 0 SHA 表示分支新建） |
+| `<NEW_VALUE>` | 是 | ref 新值（全 0 SHA 表示分支删除） |
+| `<REF_NAME>` | 是 | 引用名（如 `refs/heads/main`） |
+| `[FLAGS]` | 否 | ref 事务标志（如 `forced`），可选 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+Git reference-transaction hook 调用，审计破坏性 ref 更新（reset_hard / branch -f / force push），软护栏仅记录到 `destructive_operations` 表，不拦截 working tree 破坏。
+
+**示例**
+
+```bash
+cw git check-ref-transaction 0000... abcdef1234 refs/heads/main forced
+```
 
 ---
 
@@ -3652,7 +5151,29 @@ cw git check-ref-transaction 0000... abcdef1234 refs/heads/main forced
 cw semantic-search "处理用户认证的函数"
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<QUERY>` | 是 | 搜索查询文本 |
+| `--top-k <TOP_K>` | 否 | 最大结果数（默认 10） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 > 首次使用前需运行 `cw embed` 生成向量嵌入。嵌入模型不可用时自动回退到关键词匹配。
+
+**示例**
+
+```bash
+cw semantic-search "处理用户认证的函数"
+cw semantic-search "处理用户认证的函数" --top-k 5
+```
 
 ### `embed`：生成向量嵌入
 
@@ -3661,10 +5182,55 @@ cw embed           # 增量嵌入
 cw embed --force     # 强制重新嵌入所有函数
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--force` | 否 | 强制重新嵌入全部（默认增量） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 写面命令：嵌入经 daemon `embed_all_symbols` 落库，受 PROTECTED_MUTATION 保护。
+
+**示例**
+
+```bash
+cw embed
+cw embed --force
+```
+
 ### `similar <NAME>`：查找相似函数
 
 ```bash
 cw similar "my_project::payment::process_payment"
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<NAME>` | 是 | 符号全限定名 |
+| `--threshold <THRESHOLD>` | 否 | 相似度阈值（默认 0.7） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw similar "my_project::payment::process_payment"
+cw similar "my_project::payment::process_payment" --threshold 0.5
 ```
 
 ---
@@ -3677,7 +5243,27 @@ cw similar "my_project::payment::process_payment"
 cw brief
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 输出项目类型、文件数、函数数、健康评分、复杂度热点等。
+
+**示例**
+
+```bash
+cw brief
+```
 
 ### `map`：仓库模块依赖图
 
@@ -3686,10 +5272,54 @@ cw map                    # 默认 text
 cw map --format mermaid
 ```
 
-### `export-module-graph [FORMAT]`：导出模块依赖图
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--format <FORMAT>` | 否 | 输出格式：`text`（默认）/ `mermaid` |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw map
+cw map --format mermaid
+```
+
+### `export-module-graph`：导出模块依赖图
 
 ```bash
 cw export-module-graph --format mermaid
+cw export-module-graph --format mermaid --output deps.mmd
+cw export-module-graph --format dot --output deps.dot
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--format <FORMAT>` | 否 | 输出格式：`mermaid`（默认）/ `dot` |
+| `--output <OUTPUT>` | 否 | 输出文件路径（默认打印到标准输出） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+**示例**
+
+```bash
+cw export-module-graph
 cw export-module-graph --format mermaid --output deps.mmd
 cw export-module-graph --format dot --output deps.dot
 ```
@@ -3818,9 +5448,51 @@ cw coverage test
 cw who src/payment/mod.rs
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<FILE>` | 是 | 文件路径 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
 综合 CODEOWNERS 和 git blame 信息。
 
+**示例**
+
+```bash
+cw who src/payment/mod.rs
+```
+
 ### `ownership-map`：所有权映射
+
+```bash
+cw ownership-map
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+按模块列出主要负责人与 owner 分布（Top 5）。
+
+**示例**
 
 ```bash
 cw ownership-map
@@ -4238,12 +5910,35 @@ cw build-context edges 1 3f2a9c --limit 20
 ```
 
 
-### `toolchain list-bound`：列出绑定到 workspace 的工具链
+### `toolchain list-bound <WORKSPACE_ID>`：列出绑定到 workspace 的工具链
 
-列出绑定到指定 workspace 的工具链。
+列出绑定到指定 workspace 的工具链（READ_ONLY，经 daemon RPC 查询）。
 
 ```bash
-cw toolchain list-bound <workspace_id>
+cw toolchain list-bound <WORKSPACE_ID> [--build-context-hash <HASH>]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<WORKSPACE_ID>` | 是 | Workspace ID |
+| `--build-context-hash <HASH>` | 否 | 按 build context hash 过滤 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> workspace 无绑定工具链时打印 `No toolchains bound to workspace <id>`，仍返回 0。
+
+**示例**
+
+```bash
+cw toolchain list-bound 1
 cw toolchain list-bound 1 --build-context-hash 3a2f1b8c   # 按 build context 过滤
 ```
 
@@ -4506,6 +6201,36 @@ snapshot fallback——metrics 仅经 daemon 获取，失败即 fail-closed；`-
 不作自动降级）。
 
 ```bash
+cw daemon metrics [--format {prometheus,json}] [--name <NAME>] [--from-file <FILE>]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--format {prometheus,json}` | 否 | 输出格式（默认 json；prometheus 输出 Prometheus 文本格式） |
+| `--name <NAME>` | 否 | 仅显示指定指标名（缺省显示全部；在 counters/gauges/histograms 三类中查找） |
+| `--from-file <FILE>` | 否 | 显式离线读取 daemon 周期性 dump 的快照文件（JSON，不含本地 DB）；默认走 daemon RPC（Rust daemon 为唯一 authority），RPC 失败即 fail-closed |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> RPC 失败时 fail-closed 返回 1（无本地 SQLite 降级）；`--from-file` 指向的
+> 快照文件不存在/损坏，或与 `--format prometheus` 组合使用时返回 2。
+
+返回的指标包含：`memory_rss_bytes` / `cpu_total_seconds` / `uptime_seconds` /
+`requests_total{method, status}` / `request_duration_seconds{method}` /
+`errors_total{type}` / `jobs_submitted_total` / `job_duration_seconds{handler}` 等
+内置指标。
+
+**示例**
+
+```bash
 # 默认走 RPC 拉 daemon 进程指标（JSON 格式）
 cw daemon metrics
 
@@ -4518,11 +6243,6 @@ cw daemon metrics --name requests_total
 # 显式离线检视 daemon 周期性 dump 的 JSON 快照（daemon 不可达时人工使用；仅支持 json）
 cw daemon metrics --from-file ~/.callwarden/metrics_snapshot.json
 ```
-
-返回的指标包含：`memory_rss_bytes` / `cpu_total_seconds` / `uptime_seconds` /
-`requests_total{method, status}` / `request_duration_seconds{method}` /
-`errors_total{type}` / `jobs_submitted_total` / `job_duration_seconds{handler}` 等
-内置指标。
 
 ### daemon 运维命令（bridge / snapshot）
 
@@ -4742,27 +6462,74 @@ cw daemon gc-snapshots --keep-last 3
 按保留策略 GC snapshot：每个 workspace 保留最近 N 个（`--keep-last`，int，
 默认 3）。
 
-### `cw-agent` 子命令（start / stop / status）
+### `cw-agent <COMMAND>`：per-UID 文件监控 agent（start / stop / status）
 
-`cw-agent` 是 per-UID 文件监控 agent，通过 IPC 将文件变更转发给 Enterprise Daemon：
+`cw-agent` 是独立角色入口（PyInstaller bundle / 角色化入口，非 `cw` 的 argparse
+子命令），per-UID 文件监控 agent，通过 IPC 将文件变更转发给 Enterprise Daemon：
 
 ```bash
-cw-agent start [--watch-dir DIR] [--workspace-id ID]   # 启动 watcher（前台运行）
-cw-agent stop                                          # 读取 PID 文件，发送 SIGTERM
-cw-agent status                                        # 查询 agent 运行状态
+cw-agent <COMMAND> [options]    # COMMAND: start / stop / status
 ```
 
-PID 文件路径：`~/.callwarden/agent.pid`（per-UID）。
+**参数**
 
-### `config check-role`：检查平台角色支持
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<COMMAND>` | 是 | `start`（启动 watcher，前台运行）/ `stop`（读取 PID 文件，发送 SIGTERM）/ `status`（查询 agent 运行状态） |
+| `--watch-dir <DIR>` | 否 | （仅 start）监控目录，默认当前工作目录 |
+| `--workspace-id <ID>` | 否 | （仅 start）workspace_instance_id，默认从 watch-dir 推导 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 平台门禁：非 Linux/Windows/macOS 平台 rc=2；未知子命令 rc=2；
+> `start` 的 `--watch-dir` 目录不存在 rc=2；无参数运行或 `--help` 打印用法（rc=0）。
+> PID 文件路径：`~/.callwarden/agent.pid`（per-UID），日志：`~/.callwarden/agent.log`。
+
+**示例**
+
+```bash
+cw-agent start --watch-dir /path/to/project --workspace-id ws-001
+cw-agent status
+cw-agent stop
+```
+
+### `config check-role <ROLE>`：检查平台角色支持
 
 检查当前平台是否支持指定角色。
 
 ```bash
-cw config check-role <role>
+cw config check-role <ROLE>
 ```
 
-`role` 取值：`local` / `client` / `agent` / `daemon` / `all`。
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<ROLE>` | 是 | 要检查的角色：`local` / `client` / `agent` / `daemon` / `all` |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> 平台差异：Windows/macOS 仅支持 `local` / `client` 角色；`agent` / `daemon` /
+> `all` 需 Linux（SO_PEERCRED + SCM_RIGHTS + UDS）。角色不支持时打印 ❌ 与提示。
+
+**示例**
+
+```bash
+cw config check-role local
+cw config check-role agent
+```
 
 ### 平台门禁
 
