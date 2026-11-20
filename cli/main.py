@@ -4474,10 +4474,10 @@ def _handle_task(args, db):
                 steps = json.loads(opts.steps)
                 if not isinstance(steps, list):
                     cprint(t("cli.messages.task_steps_invalid"), "red")
-                    return True
+                    raise SystemExit(2)
             except json.JSONDecodeError as e:
                 cprint(t("cli.messages.task_steps_parse_error", error=e), "red")
-                return True
+                raise SystemExit(2)
 
         # C1: 孤儿任务 soft warning（CLI 层显式提示，db 层也会输出到 stderr）
         if steps:
@@ -4515,7 +4515,7 @@ def _handle_task(args, db):
         if isinstance(role_contracts, str):
             cprint(  # 错误信息字符串
                 role_contracts, "red")
-            return True
+            raise SystemExit(2)
 
         # BR-02：task.create 必须携带 daemon 解析的 workspace 配对
         # （workspace_id + workspace_instance_id），daemon 不可用时一律
@@ -4524,9 +4524,10 @@ def _handle_task(args, db):
         workspace_id = int(opts.workspace_id or 0)
         workspace_instance_id = (opts.workspace_instance_id or "").strip()
         if governed_create and (not workspace_id or not workspace_instance_id):
-            raise DaemonUnavailableError(
-                "Governed task.create requires explicit --workspace-id and "
-                "--workspace-instance-id from daemon authority")
+            # §24.5：缺显式 workspace 对属本地输入校验失败 → rc=2
+            cprint("Governed task.create requires explicit --workspace-id and "
+                   "--workspace-instance-id from daemon authority", "red")
+            raise SystemExit(2)
         # 归属 fail-closed：配对必须由**调用方项目根**解析，而不是连接默认项目。
         # 显式传入的 workspace 若属于另一个项目，一律拒绝（A 项目不能给 B 项目建卡）。
         # 未给出的那一半用调用方项目根补齐，agent/脚本无权决定归属。
@@ -4623,7 +4624,7 @@ def _handle_task(args, db):
         _claim_identity, _ireason = _collect_identity(opts)
         if _ireason:
             _identity_reason_output(_ireason, False)
-            return True
+            raise SystemExit(2)
         _claim_params = {"task_id": opts.task_id}
         if opts.remediation_step_id:
             _claim_params["remediation_step_id"] = opts.remediation_step_id
@@ -4863,7 +4864,7 @@ def _handle_task(args, db):
                 print(json.dumps({"ok": False, "code": code, "message": str(exc)}, ensure_ascii=False, indent=2))
             else:
                 cprint("[assignment-status] {}".format(exc), "red")
-            return True
+            raise SystemExit(1)
         if opts.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
@@ -4881,7 +4882,7 @@ def _handle_task(args, db):
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, opts.json)
-            return True
+            raise SystemExit(2)
         params = {
             "task_id": opts.task_id,
             "assignment_id": opts.assignment_id,
@@ -4905,7 +4906,7 @@ def _handle_task(args, db):
                 print(json.dumps({"ok": False, "code": code, "message": str(exc)}, ensure_ascii=False, indent=2))
             else:
                 cprint("[assignment-heartbeat] {}".format(exc), "red")
-            return True
+            raise SystemExit(1)
         if opts.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
@@ -4923,40 +4924,40 @@ def _handle_task(args, db):
                 parsed_changes = json.loads(opts.changes_json)
             except (TypeError, ValueError) as exc:
                 cprint(f"Invalid --changes-json: {exc}", "red")
-                return True
+                raise SystemExit(2)
             if not isinstance(parsed_changes, list):
                 cprint("Invalid --changes-json: expected a JSON array", "red")
-                return True
+                raise SystemExit(2)
             report_changes = parsed_changes
         # 治理前置门禁：governance_blocked 的卡拒绝 report（与 lease acquire 对称）。
         _gate = _governance_gate(opts.task_id, "task report")
         if _gate:
             _identity_reason_output(_gate, False)
-            return True
+            raise SystemExit(1)
         # P3：收集并校验结构化身份（可选；提供后必须完整，否则 fail closed）
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, False)
-            return True
+            raise SystemExit(2)
         if identity:
             # P0-2：enterprise/auto 模式不得实例化本地 DB 做身份校验
             # （daemon RPC handler 内部已做 claimed_by/owner 权限校验）
             ok, vreason = _validate_identity_routed(db, identity)
             if not ok:
                 _identity_reason_output(vreason, False)
-                return True
+                raise SystemExit(1)
             if not _method_accepts_identity_routed(db, "task_report_step"):
                 _identity_reason_output({
                     "code": "E_IDENTITY_NOT_WIRED",
                     "message_key": "daemon_errors.error.identity_not_wired",
                     "detail": "task_report_step 尚不支持 identity 参数（8.6 接线后可用）",
                 }, False)
-                return True
+                raise SystemExit(1)
         # P4：受保护写 Lease 凭证（可选；凭证不完整时 fail closed）
         lease_kwargs = _collect_lease_creds(opts)
         if "error" in lease_kwargs:
             _lease_reason_output(lease_kwargs["error"], False)
-            return True
+            raise SystemExit(2)
         # ec89dbe4 S1：本分支是 implementer 写路径，但 lease 凭证来自调用方
         # （holder 已持有），CLI 自身不 acquire。任何 future executor-runner 若
         # 在任务执行开始通过 lease.acquire 获取 implementer lease，必须用
@@ -5041,14 +5042,14 @@ def _handle_task(args, db):
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, False)
-            return True
+            raise SystemExit(2)
         if not identity:
             _identity_reason_output({
                 "code": "E_IDENTITY_REQUIRED",
                 "message_key": "daemon_errors.error.identity_required",
                 "detail": "结构化 task.handoff 必须携带完整 identity",
             }, False)
-            return True
+            raise SystemExit(2)
 
         _handoff_payload = {
             "task_id": opts.task_id,
@@ -5081,7 +5082,7 @@ def _handle_task(args, db):
                 "message_key": "daemon_errors.error.handoff_invalid",
                 "detail": str(exc),
             }, False)
-            return True
+            raise SystemExit(2)
 
         def _local_handoff_forbidden():
             raise DaemonUnavailableError(
@@ -5100,18 +5101,18 @@ def _handle_task(args, db):
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, False)
-            return True
+            raise SystemExit(2)
         if not identity:
             _identity_reason_output({
                 "code": "E_IDENTITY_REQUIRED",
                 "message_key": "daemon_errors.error.identity_required",
                 "detail": "task.step.resolve 必须携带完整 identity（resolution 记入 ledger）",
             }, False)
-            return True
+            raise SystemExit(2)
         lease_kwargs = _collect_lease_creds(opts)
         if "error" in lease_kwargs:
             _lease_reason_output(lease_kwargs["error"], False)
-            return True
+            raise SystemExit(2)
 
         _resolve_payload = {
             "task_id": opts.task_id,
@@ -5143,7 +5144,7 @@ def _handle_task(args, db):
                     ensure_ascii=False, indent=2))
             else:
                 cprint(f"[step-resolve] {exc.code}: {exc.message}", "red")
-            return True
+            raise SystemExit(1)
         except DaemonUnavailableError as exc:
             if getattr(opts, "json", False):
                 print(json.dumps(
@@ -5151,7 +5152,7 @@ def _handle_task(args, db):
                     ensure_ascii=False, indent=2))
             else:
                 cprint(f"[step-resolve] daemon 不可用: {exc}", "red")
-            return True
+            raise SystemExit(1)
 
         if getattr(opts, "json", False):
             print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -5213,21 +5214,21 @@ def _handle_task(args, db):
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, False)
-            return True
+            raise SystemExit(2)
         apply_kwargs = {"reviewer": opts.reviewer}
         if identity:
             # P0-2：enterprise/auto 模式不实例化本地 DB 做身份校验
             ok, vreason = _validate_identity_routed(db, identity)
             if not ok:
                 _identity_reason_output(vreason, False)
-                return True
+                raise SystemExit(1)
             if not _method_accepts_identity_routed(db, "task_apply"):
                 _identity_reason_output({
                     "code": "E_IDENTITY_NOT_WIRED",
                     "message_key": "daemon_errors.error.identity_not_wired",
                     "detail": "task_apply 尚不支持 identity 参数（8.6 接线后可用）",
                 }, False)
-                return True
+                raise SystemExit(1)
             apply_kwargs["identity"] = identity
         else:
             # --reviewer 自由文本不是身份证明（Req 10.5）；P3 门禁在 db 层 fail closed
@@ -5236,7 +5237,7 @@ def _handle_task(args, db):
         lease_kwargs = _collect_lease_creds(opts)
         if "error" in lease_kwargs:
             _lease_reason_output(lease_kwargs["error"], False)
-            return True
+            raise SystemExit(2)
         apply_kwargs.update(lease_kwargs)
         
         def _local_apply():
@@ -5273,21 +5274,21 @@ def _handle_task(args, db):
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, False)
-            return True
+            raise SystemExit(2)
         close_kwargs = {"reviewer": opts.reviewer}
         if identity:
             # P0-2：enterprise/auto 模式不实例化本地 DB 做身份校验
             ok, vreason = _validate_identity_routed(db, identity)
             if not ok:
                 _identity_reason_output(vreason, False)
-                return True
+                raise SystemExit(1)
             if not _method_accepts_identity_routed(db, "task_close"):
                 _identity_reason_output({
                     "code": "E_IDENTITY_NOT_WIRED",
                     "message_key": "daemon_errors.error.identity_not_wired",
                     "detail": "task_close 尚不支持 identity 参数（8.6 接线后可用）",
                 }, False)
-                return True
+                raise SystemExit(1)
             close_kwargs["identity"] = identity
         else:
             cprint(t("cli.messages.identity_reviewer_free_text_warning"), "yellow")
@@ -5295,7 +5296,7 @@ def _handle_task(args, db):
         lease_kwargs = _collect_lease_creds(opts)
         if "error" in lease_kwargs:
             _lease_reason_output(lease_kwargs["error"], False)
-            return True
+            raise SystemExit(2)
         close_kwargs.update(lease_kwargs)
 
         def _local_close():
@@ -5338,7 +5339,7 @@ def _handle_task(args, db):
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, False)
-            return True
+            raise SystemExit(2)
 
         def _local_cascade_close(payload):
             raise SharedTaskWriterRequiredError(
@@ -5400,21 +5401,21 @@ def _handle_task(args, db):
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, False)
-            return True
+            raise SystemExit(2)
         reopen_kwargs = {"reviewer": opts.reviewer, "reason": opts.reason}
         if identity:
             # P0-2：enterprise/auto 模式不实例化本地 DB 做身份校验
             ok, vreason = _validate_identity_routed(db, identity)
             if not ok:
                 _identity_reason_output(vreason, False)
-                return True
+                raise SystemExit(1)
             if not _method_accepts_identity_routed(db, "task_reopen"):
                 _identity_reason_output({
                     "code": "E_IDENTITY_NOT_WIRED",
                     "message_key": "daemon_errors.error.identity_not_wired",
                     "detail": "task_reopen 尚不支持 identity 参数（8.6 接线后可用）",
                 }, False)
-                return True
+                raise SystemExit(1)
             reopen_kwargs["identity"] = identity
         else:
             cprint(t("cli.messages.identity_reviewer_free_text_warning"), "yellow")
@@ -5422,7 +5423,7 @@ def _handle_task(args, db):
         lease_kwargs = _collect_lease_creds(opts)
         if "error" in lease_kwargs:
             _lease_reason_output(lease_kwargs["error"], False)
-            return True
+            raise SystemExit(2)
         reopen_kwargs.update(lease_kwargs)
 
         def _local_reopen():
@@ -5470,20 +5471,20 @@ def _handle_task(args, db):
                           "（agent_id/session_id/model_id/role，agent_instance_id 可选）",
             }
             _identity_reason_output(reason, getattr(opts, "json", False))
-            return True
+            raise SystemExit(2)
         if identity.get("role") != "adjudicator":
             _identity_reason_output({
                 "code": "E_RECOVERY_ROLE_REQUIRED",
                 "message_key": "daemon_errors.error.identity_not_wired",
                 "detail": "claim-recover 只能由 adjudicator 身份执行（--role adjudicator）",
             }, getattr(opts, "json", False))
-            return True
+            raise SystemExit(2)
         # P4：受保护写 Lease 凭证（claim-recover 必须持有独立 Reviewer lease，
         # 凭证不完整时 fail closed；不提供 lease 凭证同样拒绝）。
         lease_kwargs = _collect_lease_creds(opts)
         if "error" in lease_kwargs:
             _lease_reason_output(lease_kwargs["error"], getattr(opts, "json", False))
-            return True
+            raise SystemExit(2)
         if not lease_kwargs:
             _lease_reason_output({
                 "code": "E_LEASE_REQUIRED",
@@ -5491,7 +5492,7 @@ def _handle_task(args, db):
                 "detail": "claim-recover 必须提供 --lease-token 与 --fencing-counter"
                           "（独立 Reviewer 对目标任务的 active lease；缺失时 fail-closed）",
             }, getattr(opts, "json", False))
-            return True
+            raise SystemExit(2)
         import uuid
         request_id = opts.request_id or f"claim-recover-{uuid.uuid4().hex[:12]}"
 
@@ -6017,7 +6018,7 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_split_plan_not_found",
                      path=plan_path), "red")
             print()
-            return True
+            raise SystemExit(2)
         with open(plan_path, encoding="utf-8") as f:
             plan_md = f.read()
         # 验证任务存在（enterprise/auto 走 daemon RPC task.status，避免在路由
@@ -6032,14 +6033,14 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_not_found",
                    default="Task not found", id=opts.task_id), "red")
             print()
-            return True
+            raise SystemExit(1)
         # 解析 Markdown 计划为子任务定义
         subtasks = _parse_plan_to_subtasks(plan_md)
         if not subtasks:
             cprint(t("cli.messages.task_split_no_subtasks",
                      default="No subtasks found in plan"), "yellow")
             print()
-            return True
+            raise SystemExit(2)
         def _local_split():
             return db.task_split(opts.task_id, subtasks)
 
@@ -6079,13 +6080,13 @@ def _handle_task(args, db):
         _sup_id, _ireason = _collect_identity(opts)
         if _ireason:
             _identity_reason_output(_ireason, False)
-            return True
+            raise SystemExit(2)
         # 证据 manifest 前置校验（fail-fast，稳定提示；daemon 侧仍会 fail-closed）
         if not getattr(opts, "evidence_path", "") or not getattr(opts, "evidence_hash", ""):
             cprint(t("cli.messages.task_supersede_evidence_required",
                      default="task.supersede 必须提供 --evidence-path 与 --evidence-hash（治理依据）"),
                    "red")
-            return True
+            raise SystemExit(2)
         _sup_params = {
             "superseded_id": opts.old,
             "superseding_id": opts.new,
@@ -6175,7 +6176,7 @@ def _handle_task(args, db):
         _attest_identity, _attest_reason = _collect_identity(opts)
         if _attest_reason:
             _identity_reason_output(_attest_reason, False)
-            return True
+            raise SystemExit(2)
         _attest_params = {
             "legacy_task_id": opts.legacy_task_id,
             "anchor_task_id": opts.anchor_task_id,
@@ -6230,16 +6231,16 @@ def _handle_task(args, db):
         _bootstrap_identity, _bootstrap_reason = _collect_identity(opts)
         if _bootstrap_reason:
             _identity_reason_output(_bootstrap_reason, False)
-            return True
+            raise SystemExit(2)
         try:
             with open(opts.envelope_path, "r", encoding="utf-8") as _envelope_file:
                 _bootstrap_envelope = json.load(_envelope_file)
         except (OSError, json.JSONDecodeError) as exc:
             cprint(f"task.contract_bootstrap envelope 读取失败: {exc}", "red")
-            return True
+            raise SystemExit(2)
         if not isinstance(_bootstrap_envelope, dict):
             cprint("task.contract_bootstrap envelope 必须是 JSON object", "red")
-            return True
+            raise SystemExit(2)
         _bootstrap_params = {
             "task_id": opts.task_id,
             "envelope": _bootstrap_envelope,
@@ -6287,23 +6288,23 @@ def _handle_task(args, db):
         _revise_identity, _revise_reason = _collect_identity(opts)
         if _revise_reason:
             _identity_reason_output(_revise_reason, False)
-            return True
+            raise SystemExit(2)
         if not (_revise_identity or {}).get("agent_instance_id"):
             _identity_reason_output({
                 "code": "E_TASK_CONTRACT_REVISE_IDENTITY_INSTANCE_REQUIRED",
                 "message_key": "daemon_errors.error.identity_not_wired",
                 "detail": "task.contract_revise 必须携带 --agent-instance-id（P0-G §3 identity 全字段门禁）",
             }, False)
-            return True
+            raise SystemExit(2)
         try:
             with open(opts.envelope_path, "r", encoding="utf-8") as _revise_file:
                 _revise_envelope = json.load(_revise_file)
         except (OSError, json.JSONDecodeError) as exc:
             cprint(f"task.contract_revise envelope 读取失败: {exc}", "red")
-            return True
+            raise SystemExit(2)
         if not isinstance(_revise_envelope, dict):
             cprint("task.contract_revise envelope 必须是 JSON object", "red")
-            return True
+            raise SystemExit(2)
         _revise_params = {
             "task_id": opts.task_id,
             "envelope": _revise_envelope,
@@ -6352,15 +6353,15 @@ def _handle_task(args, db):
         _dexec_identity, _dexec_reason = _collect_identity(opts)
         if _dexec_reason:
             _identity_reason_output(_dexec_reason, False)
-            return True
+            raise SystemExit(2)
         try:
             _dexec_steps = json.loads(opts.steps)
         except json.JSONDecodeError as exc:
             cprint(f"task.bootstrap_executor_evidence steps JSON 解析失败: {exc}", "red")
-            return True
+            raise SystemExit(2)
         if not isinstance(_dexec_steps, list) or not _dexec_steps:
             cprint("task.bootstrap_executor_evidence --steps 必须是非空 JSON array", "red")
-            return True
+            raise SystemExit(2)
         _dexec_params = {
             "task_id": opts.task_id,
             "steps": _dexec_steps,
@@ -6404,7 +6405,7 @@ def _handle_task(args, db):
         _drev_identity, _drev_reason = _collect_identity(opts)
         if _drev_reason:
             _identity_reason_output(_drev_reason, False)
-            return True
+            raise SystemExit(2)
         _drev_params = {
             "task_id": opts.task_id,
             "workspace_id": opts.workspace_id,
@@ -15129,14 +15130,14 @@ def _handle_collab(args, db):
         method = "verdict.submit"
         identity, ireason = _collect_identity(opts)
         if not identity:
-            # §9.41（§24 rc 口径）：身份门禁拒绝属运行时失败 → rc=1
-            # （此前 return True 把 E_IDENTITY_REQUIRED 掩盖成 rc=0 假成功）
+            # §24.5：identity 缺失/四字段不全属本地输入校验失败 → rc=2
+            # （§9.41 曾按运行时失败记 rc=1，本卡统一为输入校验口径）
             _identity_reason_output(ireason or {
                 "code": "E_IDENTITY_REQUIRED",
                 "message_key": "daemon_errors.error.identity_required",
                 "detail": "verdict.submit 必须携带完整 Reviewer identity（agent_id/session_id/model_id/role + 可选 agent_instance_id）",
             }, use_json)
-            raise SystemExit(1)
+            raise SystemExit(2)
         try:
             clause_results = json.loads(opts.clause_results)
             findings = json.loads(opts.findings)
@@ -15972,7 +15973,7 @@ def _identity_revoke(db, opts, use_json):
             "detail": ("撤销请求必须显式指定 --revocation-mode "
                        "（compromised 或 rotated）；未提供时不追加任何撤销记录"),
         }, use_json)
-        return True
+        raise SystemExit(2)
 
     # 发起者身份（可选；提供则必须完整，否则 fail closed）
     initiator_identity = None
@@ -15983,7 +15984,7 @@ def _identity_revoke(db, opts, use_json):
                 "message_key": "daemon_errors.error.identity_incomplete",
                 "detail": "发起者身份必须同时提供 --agent-id/--session-id/--model-id/--role",
             }, use_json)
-            return True
+            raise SystemExit(2)
         initiator_identity = {
             "agent_id": opts.agent_id,
             "session_id": opts.session_id,
@@ -16002,7 +16003,7 @@ def _identity_revoke(db, opts, use_json):
                        "（锁序 gate → authority store → task DB）；0B 阶段 gate 接入"
                        "尚未完成，拒绝直写（fail-closed），不回退本地 SQLite"),
         }, use_json)
-        return True
+        raise SystemExit(1)
 
     register = getattr(db, "register_attestation_revocation", None)
     if register is None:
@@ -16011,7 +16012,7 @@ def _identity_revoke(db, opts, use_json):
             "message_key": "daemon_errors.error.identity_not_wired",
             "detail": "数据库层未提供 register_attestation_revocation",
         }, use_json)
-        return True
+        raise SystemExit(1)
 
     # 工作区 ID：写命令启动时已激活工作区；取不到时交由 db 层解析
     ws_id = None
@@ -16041,11 +16042,11 @@ def _identity_revoke(db, opts, use_json):
             "message_key": "daemon_errors.error.attestation_invalid",
             "detail": f"撤销记录写入失败: {exc}",
         }, use_json)
-        return True
+        raise SystemExit(1)
 
     if not ok:
         _identity_reason_output(result or {}, use_json)
-        return True
+        raise SystemExit(1)
 
     if use_json:
         print(json.dumps({"ok": True, "revocation": result},
@@ -16373,7 +16374,7 @@ def _handle_lease(args, db):
     identity, ireason = _collect_lease_identity(opts)
     if ireason is not None:
         _lease_reason_output(ireason, use_json)
-        return True
+        raise SystemExit(2)
 
     # --role 省略时取 daemon 投影的权威 lease_role（adjudicator→reviewer、
     # executor→implementer）；显式 --role 优先。daemon 不可用时回退到历史
@@ -16389,7 +16390,7 @@ def _handle_lease(args, db):
         _gate = _governance_gate(opts.task_id, "lease acquire", role=getattr(opts, "role", None))
         if _gate:
             _lease_reason_output(_gate, use_json)
-            return True
+            raise SystemExit(1)
         # 非 local 模式经 daemon RPC（lease.acquire），daemon 权威时钟 + 单写点；
         # identity 需含 role（parse_action_identity 四字段齐备要求）。
         _daemon_identity = {**identity, "role": opts.role} if identity else None
@@ -16402,7 +16403,7 @@ def _handle_lease(args, db):
             opts.task_id, opts.role, identity, ttl_seconds=opts.ttl))
         if not ok:
             _lease_reason_output(result, use_json)
-            return True
+            raise SystemExit(1)
         if use_json:
             # `token` is the historical lease RPC field.  Keep it as a
             # compatibility alias while exposing the protected-mutation name
@@ -16435,7 +16436,7 @@ def _handle_lease(args, db):
             opts.task_id, opts.role, opts.token, identity=identity, ttl_seconds=opts.ttl))
         if not ok:
             _lease_reason_output(result, use_json)
-            return True
+            raise SystemExit(1)
         if use_json:
             print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
         else:
@@ -16457,7 +16458,7 @@ def _handle_lease(args, db):
             opts.task_id, opts.role, opts.token, identity=identity))
         if not ok:
             _lease_reason_output(result, use_json)
-            return True
+            raise SystemExit(1)
         if use_json:
             print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
         else:

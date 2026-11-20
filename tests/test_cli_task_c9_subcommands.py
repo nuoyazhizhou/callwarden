@@ -237,10 +237,11 @@ class TestHandlerDispatch:
         parent_id = db.task_create(title="parent", steps=[], creator="test")
         captured = io.StringIO()
         with redirect_stdout(captured):
-            result = cli_main._handle_task(
-                ["split", parent_id, "--plan", "/nonexistent/plan.md"], db
-            )
-        assert result is True
+            with pytest.raises(SystemExit) as excinfo:
+                cli_main._handle_task(
+                    ["split", parent_id, "--plan", "/nonexistent/plan.md"], db
+                )
+        assert excinfo.value.code == 2
         out = captured.getvalue()
         # 应输出文件不存在的错误
         assert "/nonexistent/plan.md" in out or "not found" in out.lower() or "不存在" in out
@@ -250,7 +251,7 @@ class TestHandlerDispatch:
 
         stale 依据（A 桶：薄客户端 RPC seam）：`cli/main.py:6034` 先经
         `route_task_read("task.status", ...)` 校验任务；daemon 回包为空
-        （任务不存在）时 :6037-6041 打印 task_not_found 并返回 True。
+        （任务不存在）时 :6037-6041 打印 task_not_found 并 rc=1（daemon 权威判定）。
         旧实现直查本地 `db.task_status`，已过期。
         """
         plan_file = tmp_path / "plan.md"
@@ -259,10 +260,11 @@ class TestHandlerDispatch:
 
         captured = io.StringIO()
         with redirect_stdout(captured):
-            result = cli_main._handle_task(
-                ["split", "T-nonexistent", "--plan", str(plan_file)], db
-            )
-        assert result is True
+            with pytest.raises(SystemExit) as excinfo:
+                cli_main._handle_task(
+                    ["split", "T-nonexistent", "--plan", str(plan_file)], db
+                )
+        assert excinfo.value.code == 1
         assert route_stub.count("task.status") == 1
 
     def test_split_no_subtasks_in_plan(self, db, route_stub, tmp_path):
@@ -280,10 +282,11 @@ class TestHandlerDispatch:
 
         captured = io.StringIO()
         with redirect_stdout(captured):
-            result = cli_main._handle_task(
-                ["split", parent_id, "--plan", str(plan_file)], db
-            )
-        assert result is True
+            with pytest.raises(SystemExit) as excinfo:
+                cli_main._handle_task(
+                    ["split", parent_id, "--plan", str(plan_file)], db
+                )
+        assert excinfo.value.code == 2
         out = captured.getvalue()
         # 应输出未找到子任务的提示（i18n 文本为"计划文件中未找到子任务定义"）
         assert "未找到" in out or "no" in out.lower() or "no subtasks" in out.lower()

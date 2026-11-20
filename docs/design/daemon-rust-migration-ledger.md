@@ -3987,8 +3987,51 @@ live round-trip 已纳入常规 CLI 回归；CLI 面 skip 清零。
 - 未改产品源码（`rust_ext/`、`server/`、`cli/`）；改动集中在 `tests/` 与
   `docs/design/migration-manifest.md`（已删模块标注），生成物仅重生
   `outputs/coverage_manifest.json`。
-- 仍待办：§24.5 CLI 本地输入校验失败 `rc=0 → 2`；i18n 动态 key
-  （`t(variable)`）占位符静态校验。
+- 仍待办：i18n 动态 key（`t(variable)`）占位符静态校验。§24.5 已在 §9.48 收口。
+
+## 9.48 §24.5 退出码口径收口：本地输入校验 `rc=2` / daemon 拒绝 `rc=1`（2026-11-20）
+
+### 1. 口径（承接 §24.1，用户裁决）
+
+| 失败来源 | 退出码 |
+|---|---|
+| 成功 | 0 |
+| argparse 用法错误 | 2 |
+| **本地输入校验失败**（identity 四字段缺失/不全、lease token 与 fencing_counter 不完整、文件名/JSON 非法、角色取值非法） | **2** |
+| **daemon 业务拒绝 / 传输失败 / 运行时或能力未接线**（含 `_validate_identity_routed` 权威判定失败） | **1** |
+| 平台/部署前置条件不满足 | 2（不变） |
+
+边界：identity 四字段齐备但 daemon 判 `E_IDENTITY_UNREGISTERED` /
+`E_IDENTITY_SESSION_MISMATCH` / 实例不匹配 → 1；`cw collab verdict` 的 identity
+门禁由 §9.41 的 1 改回 **2**（identity 缺失属输入校验）。
+
+### 2. 变更点（`cli/main.py`，仅把失败分支 `return True` 换成 `raise SystemExit(N)`）
+
+| 类别 | 命令/分支 | 新 rc |
+|---|---|---|
+| 本地输入 | `task create`（`--steps` 非数组/JSON 失败、role_contracts 非法、governed 缺 workspace 对）、`task next`、`task report`（`--changes-json`、identity、lease）、`task handoff`（identity/规范化）、`task step-resolve`、`task apply`/`close`/`reopen`/`cascade-close`、`task claim-recover`、`task split`（plan 缺失/无子任务）、`task supersede`、`attest-legacy-workspace-binding`、`contract-bootstrap`/`contract-revise`、`bootstrap-executor-evidence`/`bootstrap-reviewer-pass`、`lease *`（身份三字段）、`identity revoke`（mode/initiator） | 2 |
+| daemon 拒绝 | `task report` 的 `_governance_gate`、`_validate_identity_routed` 失败、`E_IDENTITY_NOT_WIRED`；`task apply`/`close`/`reopen` 的权威校验与能力未接线；`task step-resolve` 两处异常捕获；`task assignment-status/heartbeat` 异常捕获；`task split` 目标任务不存在；`lease acquire/renew/release` 业务拒绝与 `_governance_gate`；`identity revoke` 能力未接线/写入失败/db 拒绝 | 1 |
+
+未触碰：已 `sys.exit(1)` 的 `task governed-projection`/`task superseded` 及各
+`{"error": ...}` 分支；成功路径与输出文案保持不变。
+
+### 3. 验证
+
+| 项 | 结果 |
+|---|---|
+| 新增 `tests/test_cli_exit_code_local_input.py`（11 个输入校验 + 4 个 daemon 拒绝代表分支） | **15 passed** |
+| 更新陈旧断言（期望旧 `rc=0`/`return True`）：`test_cli_089_http_rpc`、`test_cli_091_http_rpc`、`test_cli_094_http_rpc`、`test_cli_073_http_rpc`、`test_cli_task_c9_subcommands`、`test_task_create_parent_governance`、`test_task_step_resolve_e2e` | 改为 `pytest.raises(SystemExit)` 并断言 1/2 |
+| 环境隔离补强 | `test_cli_task_claim_recover` 的 CLI 子进程 `USERPROFILE/HOME` 指向 `tmp_path`，避免真实 HOME 残留 stale manifest 掩盖 `E_DAEMON_UNAVAILABLE` |
+| 定向回归（含新增，10 模块） | **122 passed / 0 failed（106.05s）** |
+| 进程级抽查（真实 `cw.py` 子进程） | `task apply` 部分 identity → **rc=2 / E_IDENTITY_INCOMPLETE**；`task split --plan missing.md` → **rc=2**；`lease acquire` 无 identity → **rc=2 / E_ASSIGNMENT_INCOMPLETE**；`collab verdict` 缺 identity → **rc=2 / E_IDENTITY_INCOMPLETE** |
+| 文档 | `docs/cli_reference.md` 新增「退出码契约（全局约定）」，45 处逐命令 rc=2 表述同步更新 |
+
+### 4. 残留
+
+- `_handle_assignment` 等未列入本卡的命令面未逐一审计同类吞错出口；若发现，
+  另立卡（本卡不扩大改动面）。
+- `_run_subcommand_mode` 在非 `task` 写命令上先做 workspace 注册，注册失败时以
+  既有 `rc=2` 提前退出（环境门禁口径），不影响本卡分支的 rc 语义。
 
 ## 10. 相关真相源
 

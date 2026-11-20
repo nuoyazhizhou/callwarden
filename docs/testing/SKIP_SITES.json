@@ -1162,7 +1162,7 @@
       "reason_literal": "claim-recover CLI↔daemon E2E 需要 Windows 隔离 daemon",
       "reason_expression": "'claim-recover CLI↔daemon E2E 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "c39fb2bc21147081b51c80383922d0e9e2d4e36a0f3be185ce38ebdd4e055c50",
+      "file_sha256": "af1b5b65cce8ff034e800faa0de771d46d9c35c8ed19d3a92a9e13771d9b626b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1174,7 +1174,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "c39fb2bc21147081b51c80383922d0e9e2d4e36a0f3be185ce38ebdd4e055c50",
+      "file_sha256": "af1b5b65cce8ff034e800faa0de771d46d9c35c8ed19d3a92a9e13771d9b626b",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5218,7 +5218,7 @@
       "reason_literal": "task.step.resolve 进程级 E2E 需要 Windows 隔离 daemon",
       "reason_expression": "'task.step.resolve 进程级 E2E 需要 Windows 隔离 daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "60bfa4d04d63fad55ef1bff93ac805f47bb21af49a9ef0b5a5c21bfee658fc51",
+      "file_sha256": "1f4f25a126ec0d3961e857ede798e2c8fdeda22d314783b1f9467d1471df4df1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5230,7 +5230,7 @@
       "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
       "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "60bfa4d04d63fad55ef1bff93ac805f47bb21af49a9ef0b5a5c21bfee658fc51",
+      "file_sha256": "1f4f25a126ec0d3961e857ede798e2c8fdeda22d314783b1f9467d1471df4df1",
       "root_cause": "UNREVIEWED"
     },
     {

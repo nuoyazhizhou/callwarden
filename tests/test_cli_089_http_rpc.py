@@ -9,6 +9,8 @@ Python 侧已通过 route_task_write/route_task_read 路由到 Rust daemon；Rus
 """
 
 
+import pytest
+
 import callwarden.cli.main as main_mod
 
 
@@ -49,7 +51,7 @@ def test_cli089_split_routes_to_daemon(monkeypatch, tmp_path):
 
 
 def test_cli089_split_plan_missing(monkeypatch, tmp_path):
-    """plan 文件不存在 -> 返回 True（业务错误，不崩溃，不触达 daemon）。"""
+    """plan 文件不存在 -> 本地输入校验失败 rc=2（不崩溃，不触达 daemon）。"""
     captured = {}
 
     def _fake_write(method, params, fallback_fn):
@@ -59,6 +61,8 @@ def test_cli089_split_plan_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "route_task_write", _fake_write)
     monkeypatch.setattr(main_mod, "route_task_read", lambda m, p, f: {"task_id": "T-1"})
 
-    rc = main_mod._handle_task(["split", "T-789", "--plan", str(tmp_path / "missing.md")], None)
-    assert rc is True
+    with pytest.raises(SystemExit) as excinfo:
+        main_mod._handle_task(
+            ["split", "T-789", "--plan", str(tmp_path / "missing.md")], None)
+    assert excinfo.value.code == 2
     assert "hit" not in captured, "plan 缺失时应短路，不应触达 route_task_write"

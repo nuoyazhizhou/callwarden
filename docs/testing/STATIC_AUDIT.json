@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "ad4f8cf2b75eae3aa4bab4dbeee21915bb01971d",
+  "supplied_source_revision": "65d979351e5c9ddd79a167249ad2e697e3c45fa2",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,8 +38,8 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7290,
-    "python_source_files": 703,
+    "python_definitions": 7305,
+    "python_source_files": 704,
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 25,
@@ -1983,7 +1983,7 @@
     },
     {
       "path": "tests/test_cli_073_http_rpc.py",
-      "sha256": "0cb4cf551068d98b29aba7a0815d0745e530de3ca80bf7ecba6ae580171aee7a"
+      "sha256": "3b999a885ead0c97a0f2441331798fd20e3270833e8b7b575617361a1260d9fb"
     },
     {
       "path": "tests/test_cli_074_http_rpc.py",
@@ -2047,7 +2047,7 @@
     },
     {
       "path": "tests/test_cli_089_http_rpc.py",
-      "sha256": "2a8b5d49d4dd42dc2864b133d97c41393b37aea2a9295e04378ba5db3d5988b0"
+      "sha256": "abb8a3e747f80ba6d2217172e1e96563a07e1f9e7a99dbe1f4267c9761408ce8"
     },
     {
       "path": "tests/test_cli_090_http_rpc.py",
@@ -2067,7 +2067,7 @@
     },
     {
       "path": "tests/test_cli_094_http_rpc.py",
-      "sha256": "4419e023a8c635aeeca1d91dbcf6d5c0d5817b491d66522d2e2df36828ed9c52"
+      "sha256": "c6e0226e719445f0b31122a792f7de468da6423b09fab06e95fce1d4b2c17560"
     },
     {
       "path": "tests/test_cli_095_http_rpc.py",
@@ -2106,6 +2106,10 @@
       "sha256": "3572911fbb5f51b2cd49d258340f1af8849a6b2f8d0c44fb37434634676f87a1"
     },
     {
+      "path": "tests/test_cli_exit_code_local_input.py",
+      "sha256": "5a43c40879ee77ba3fff930cf32f66f0909f22ab90fbbbfd67d954c318dfe04d"
+    },
+    {
       "path": "tests/test_cli_governance_gate.py",
       "sha256": "5e3c0ea0d81b4284b4d74916f0bfcb79772488c4959ab31e623904fd0a43da22"
     },
@@ -2139,11 +2143,11 @@
     },
     {
       "path": "tests/test_cli_task_c9_subcommands.py",
-      "sha256": "89dbbde2a335b7026789e3ce57da041ef3501cd43778bba747f2c81146cb41a7"
+      "sha256": "7689a98ff5de5f9edc8398cfc16f27123363d9bddb8f042e23700870fde479d8"
     },
     {
       "path": "tests/test_cli_task_claim_recover.py",
-      "sha256": "c39fb2bc21147081b51c80383922d0e9e2d4e36a0f3be185ce38ebdd4e055c50"
+      "sha256": "af1b5b65cce8ff034e800faa0de771d46d9c35c8ed19d3a92a9e13771d9b626b"
     },
     {
       "path": "tests/test_cli_task_fix.py",
@@ -3687,7 +3691,7 @@
     },
     {
       "path": "tests/test_task_create_parent_governance.py",
-      "sha256": "a304350d98e0882f161d252c48c73549dbc95db6bcd89d8366dec312a97c70a3"
+      "sha256": "29a77b24928aea27e8fd4e468c28cd0fb3644d98b8153ad7340f5ce904d782ed"
     },
     {
       "path": "tests/test_task_create_subtask_steps.py",
@@ -3795,7 +3799,7 @@
     },
     {
       "path": "tests/test_task_step_resolve_e2e.py",
-      "sha256": "60bfa4d04d63fad55ef1bff93ac805f47bb21af49a9ef0b5a5c21bfee658fc51"
+      "sha256": "1f4f25a126ec0d3961e857ede798e2c8fdeda22d314783b1f9467d1471df4df1"
     },
     {
       "path": "tests/test_task_supersede.py",

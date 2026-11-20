@@ -1896,6 +1896,20 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
 - `cw daemon serve` 下线提示的 `return 2` 分支理论上不可达（argparse 不再注册），
   保持原样，避免为死路径引入噪音。
 
+**§24.5 已收口（2026-11-20，见 ledger §9.48）**：
+
+- 上述本地输入校验出口（identity 缺失/字段不全、lease 凭证不完整、
+  `--envelope-path`/plan 文件不存在、`--steps`/`--changes-json`/信封 JSON 非法、
+  `claim-recover` 角色不合法、governed create 缺 workspace 对）统一改为 `rc=2`，
+  保留原结构化错误输出与错误码。
+- 侦察中发现的 daemon 拒绝吞成 `rc=0` 出口一并收敛为 `rc=1`：
+  `lease acquire/renew/release` 业务拒绝、`task step-resolve` 两处异常捕获、
+  `task report` 的 `_governance_gate`、`task assignment-status/heartbeat` 异常捕获、
+  `identity revoke` 的能力未接线/写入失败/db 拒绝、`task split` 目标任务不存在。
+- `cw collab verdict` 的 identity 门禁由 §9.41 的 `rc=1` 改为 `rc=2`
+  （identity 缺失属输入校验；identity 齐备但 daemon 权威拒绝仍为 `rc=1`）。
+- 文档契约见 `docs/cli_reference.md`「退出码契约（全局约定）」。
+
 ---
 
 ## 25. i18n 文案漂移：引用即存在（`T-1793521395642-f45bc274`）

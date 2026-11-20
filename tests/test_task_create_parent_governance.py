@@ -84,8 +84,9 @@ def test_unknown_cli_field_rejected_before_write(monkeypatch):
                                   ["--task-contract-envelope", "{}"]])
 def test_governed_workspace_must_be_explicit(monkeypatch, args):
     calls = capture_cli(monkeypatch)
-    with pytest.raises(dc.DaemonUnavailableError):
+    with pytest.raises(SystemExit) as excinfo:
         cli._handle_task(["create", "--title", "child"] + args, None)
+    assert excinfo.value.code == 2
     assert not calls
 
 

@@ -491,6 +491,10 @@ class TestCliClaimRecover:
         env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
         env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
         env.pop("CW_AGENT_SESSION_ID", None)
+        # 隔离 USERPROFILE：避免真实用户目录下残留的 stale manifest
+        # （E_HTTP_MANIFEST_STALE）掩盖「daemon 不可达」这一被测语义。
+        env["USERPROFILE"] = str(tmp_path)
+        env["HOME"] = str(tmp_path)
 
         proc = _run_cw_cli(
             ["task", "claim-recover", "T-NO-DAEMON",

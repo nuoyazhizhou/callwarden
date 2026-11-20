@@ -4,6 +4,18 @@ Call Warden CLI 统一使用 subcommand 风格：`cw <subcommand> [options]`，�
 
 > 下文用 `cw` 作为命令前缀。全局 flag（`--lang`/`--workspace`/`--root`/`--force`/`--no-auto-setup`）见本文档末尾「全局 flag」章节。旧的 `cw --flag` 风格已在未上线阶段整体移除，不再保留兼容入口（决策记录见 [architecture.md 命令风格统一规范](architecture.md#命令风格统一规范c8)）。
 
+## 退出码契约（全局约定）
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时或能力未接线（含 `_validate_identity_routed` 的权威判定失败） |
+| 2 | 输入/用法错误：argparse 用法错误，或**本地**输入校验失败（identity 四字段缺失、lease 凭证不完整、计划/信封文件不存在或 JSON 非法等） |
+
+判定边界：**本地即可判定不合法** → 2；**需要 daemon 权威判定或运行时环境** → 1。
+identity 四字段齐备但 daemon 判 `E_IDENTITY_UNREGISTERED` / `E_IDENTITY_SESSION_MISMATCH`
+等，属 daemon 拒绝 → 1。
+
 ## 命令概览（按 21 大功能分类）
 
 Call Warden 把 84 个顶层命令按功能聚合为 21 个主分类（[1]-[17] 与 MCP 工具 17 分类同构对齐，[18]-[21] 为 CLI 独有运维面），每个主分类下包含若干 subcommand。顶层命令数 = `cli.main._SUBCOMMANDS` 的 79 个 subcommand + `cw.py` standalone 入口 3 个（`install` / `server` / `test`）+ `setup`（cli/main.py 单独分发）+ `daemon`（cli.main 转发 daemon_commands）= 84 个；展开各命令的二级子动作后约 200+ 个可执行命令（`gc` / `task` / `rule` 等含多级子动作）。分类真相源为 `cli/categories.py`（`COMMAND_CATEGORIES`），下表由 `scripts/gen_category_overview.py --emit-cli` 生成，勿手工编辑标记块内内容。命令数以实际 argparse 树为准（2026-10-08 审计核对）。
@@ -647,7 +659,7 @@ cw status
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -676,7 +688,7 @@ cw stats
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -723,7 +735,7 @@ cw search "handle" --limit 20
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -782,7 +794,7 @@ cw file src/payment/mod.rs
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -810,7 +822,7 @@ cw query process_payment src/payment/mod.rs
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1158,7 +1170,7 @@ cw task create --title "t" --workspace-id 72 --workspace-instance-id 2bba6e894ee
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1200,7 +1212,7 @@ cw task next <task_id>
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1255,7 +1267,7 @@ cw task next-action <task_id> --json
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1310,7 +1322,7 @@ canonical 化与 hash，返回可直接供 LLM 使用的 Role Prompt Bundle（§
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1361,7 +1373,7 @@ cw task report <task_id> <step_id> --result "文件不存在" --fail
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1389,7 +1401,7 @@ cw task rollback <task_id> <step_id>
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1450,7 +1462,7 @@ close 的 task_id。
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1505,7 +1517,7 @@ cw task close <task_id> [--reviewer <identity>] [--agent-id <A> --session-id <S>
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1582,7 +1594,7 @@ cw task reopen <task_id> [--reviewer <identity>] [--reason "<原因>"] [--agent-
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1628,7 +1640,7 @@ cw task findings <task_id> --severity error
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1671,7 +1683,7 @@ cw task resolve-finding <finding_id> --by human
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1721,7 +1733,7 @@ signature mismatch），根据所有 open finding 的严重度给出决策：
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1765,7 +1777,7 @@ cw task split <task_id> --plan <plan.md>
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1812,7 +1824,7 @@ cw task status-tree <task_id>
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1865,7 +1877,7 @@ cw task list --limit 50
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1913,7 +1925,7 @@ daemon 不可用时按兼容模式规则 fail-closed，不用本地 raw status �
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -1979,7 +1991,7 @@ cw task capture-diff --auto
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2019,7 +2031,7 @@ cw task assignment-status <task_id> --json
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2067,7 +2079,7 @@ executor 仍持有该派工；仅转发 daemon，客户端不能直接修改队�
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2127,7 +2139,7 @@ cw task handoff <task_id> --from-role executor --outcome blocked \
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2178,7 +2190,7 @@ daemon-only 命令（`task.step.resolve`）：失败步骤经 remediation 步骤
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2218,7 +2230,7 @@ cw task cascade-close <task_id>
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2265,7 +2277,7 @@ cw task claim-recover <task_id> --reason "executor 会话已失联" \
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2317,7 +2329,7 @@ append-only 事件 + 独立关系表）。仅 daemon 权威写点，local 模式
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2351,7 +2363,7 @@ Task Contract、当前步骤、Reviewer Role Contract、normalization 规则与�
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2382,7 +2394,7 @@ reason_code 与 evidence_hash；未被替代时明确提示。
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -2542,7 +2554,7 @@ cw task show <task_id>        # 任务详情（树形模式）
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3351,7 +3363,7 @@ cw workspace list
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3379,7 +3391,7 @@ cw workspace register my_project /path/to/project
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3407,7 +3419,7 @@ cw workspace set 1
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3434,7 +3446,7 @@ cw workspace delete my_project
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3468,7 +3480,7 @@ cw workspace generate-ignore --apply         # 实际写入 .callwardenignore
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3507,7 +3519,7 @@ cw build-context register 1 release --flags -O2 --defines NDEBUG=1
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3536,7 +3548,7 @@ cw build-context list 1
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3566,7 +3578,7 @@ cw build-context show 1 3a2f1b8c
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3596,7 +3608,7 @@ cw build-context activate 1 3a2f1b8c
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3626,7 +3638,7 @@ cw build-context delete 1 3a2f1b8c
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3659,7 +3671,7 @@ cw build-context import-compile-commands build/compile_commands.json 1 --name de
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3699,7 +3711,7 @@ Resolved edges computed for: debug
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 
@@ -3732,7 +3744,7 @@ cw build-context edges 1 3a2f1b8c --caller 42
 | ------ | ---- |
 | 0      | 成功 |
 | 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
-| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+| 2      | 输入/用法错误（argparse 用法错误；或本地输入校验失败：identity 缺失、lease 凭证不完整、文件/JSON 非法等） |
 
 **示例**
 

@@ -514,7 +514,7 @@ class TestStepResolveCliProcess:
                  "--json"],
                 _cli_env("", tmp, mode="local",
                          extra={"CW_TASK_WRITE_POLICY": "isolated"}), tmp)
-            assert proc.returncode == 0, f"local 模式 step-resolve 失败:\n{_all_out(proc)}"
+            assert proc.returncode == 1, f"local 模式 step-resolve 失败:\n{_all_out(proc)}"
             data = json.loads(proc.stdout)
             assert data["ok"] is False
             assert data["code"] == "E_DAEMON_UNAVAILABLE", data

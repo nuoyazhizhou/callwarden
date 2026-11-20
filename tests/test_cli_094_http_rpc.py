@@ -89,9 +89,10 @@ def test_cli094_lease_write_identity_incomplete(monkeypatch, capsys):
 
     monkeypatch.setattr(main_mod, "_route_lease_write", _fake_route)
 
-    rc = main_mod._handle_lease(
-        ["acquire", "T-1", "--role", "reviewer"], None)
-    assert rc is True
+    with pytest.raises(SystemExit) as excinfo:
+        main_mod._handle_lease(
+            ["acquire", "T-1", "--role", "reviewer"], None)
+    assert excinfo.value.code == 2
     assert not hit["called"], "身份不完整时必须 fail-closed，不触达 lease.acquire"
     out = capsys.readouterr().out
     assert "E_ASSIGNMENT_INCOMPLETE" in out

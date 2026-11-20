@@ -11,6 +11,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -50,8 +52,9 @@ def test_cli073_revoke_missing_mode_fails_closed(monkeypatch, capsys):
 
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
     monkeypatch.setattr(proxy, "get_active_workspace", lambda: called.append("get"))
-    rc = main_mod._identity_revoke(proxy, _Opts(), False)
-    assert rc is True
+    with pytest.raises(SystemExit) as excinfo:
+        main_mod._identity_revoke(proxy, _Opts(), False)
+    assert excinfo.value.code == 2
     out = capsys.readouterr().out
     assert "E_REVOCATION_MODE_REQUIRED" in out
     assert called == []  # 未触发任何 db 调用
@@ -69,7 +72,8 @@ def test_cli073_revoke_daemon_gate_fails_closed(monkeypatch, capsys):
     monkeypatch.setattr(main_mod, "get_daemon_mode", lambda: "daemon")
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
     monkeypatch.setattr(proxy, "get_active_workspace", lambda: None)
-    rc = main_mod._identity_revoke(proxy, _Opts(), False)
-    assert rc is True
+    with pytest.raises(SystemExit) as excinfo:
+        main_mod._identity_revoke(proxy, _Opts(), False)
+    assert excinfo.value.code == 1
     out = capsys.readouterr().out
     assert "E_TASK_LOOP_CAPABILITY_DISABLED" in out
