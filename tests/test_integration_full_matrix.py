@@ -349,12 +349,17 @@ class TestCLISmokeRun:
             timeout=120,
             env=_live_daemon_env(w3_live),
         )
-        # exit 0 = 成功；exit 2 = argparse 错误/db 锁/workspace 未激活等可接受情况
-        # exit 1 = 未捕获异常 → 失败
-        assert result.returncode in (0, 2), (
+        # 退出码口径统一（cli/main.py）：0=成功，2=本地输入校验失败，
+        # 1=daemon 拒绝/传输失败等运行时失败（fail-closed 的合法路径）。
+        # 本冒烟只验证「不抛未捕获异常」，故 0/1/2 均可接受，另断言无 traceback。
+        assert result.returncode in (0, 1, 2), (
             f"`cw {subcmd} {' '.join(args)}` exit {result.returncode}\n"
             f"stdout: {result.stdout[:500]}\n"
             f"stderr: {result.stderr[:500]}"
+        )
+        assert "Traceback (most recent call last)" not in result.stderr, (
+            f"`cw {subcmd} {' '.join(args)}` 抛出未捕获异常\n"
+            f"stderr: {result.stderr[:800]}"
         )
 
 

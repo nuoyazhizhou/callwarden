@@ -258,20 +258,37 @@ class TestGrantRevocation:
         )
         assert status == 200 and code is None, data
 
-        # 磁盘 grants.json 是授权权威（每次新连接实时读取）
+        # 授权台账是「磁盘 grants.json ∪ 权威 DB workspace_principal_grants」
+        # 的并集（auth_principal.rs §5/§15.3，任一命中即生效），回收必须两侧
+        # 同时清空；只清磁盘而 DB 投影仍在 → 仍放行（并集语义）。
         grants_path = os.path.join(
             cp.pki_dir_of(data_root), "identities", "pr_grant", "grants.json"
         )
         with open(grants_path, "w", encoding="utf-8") as f:
             json.dump({"principal_id": "pr_grant", "workspace_ids": []}, f)
+        conn = sqlite3.connect(os.path.join(data_root, "task.db"))
+        try:
+            conn.execute(
+                "DELETE FROM workspace_principal_grants WHERE principal_id = ?",
+                ("pr_grant",),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
-        # 新连接（新 SSLContext）≤1s 内拒绝；旧连接由 MAX_CONNECTION_AGE 兜底
-        status2, code2, data2 = rpc(
-            manifest, data_root, "pr_grant", params={"workspace_id": "1"}
-        )
+        # 新连接（新 SSLContext）≤1s 内拒绝；DB 侧按 data_version 每
+        # DB_RECHECK_INTERVAL(1s) 重载，故在 3s 内轮询到拒绝即算通过，
+        # 旧连接由 MAX_CONNECTION_AGE 兜底。
+        deadline = time.time() + 3.0
+        while True:
+            status2, code2, data2 = rpc(
+                manifest, data_root, "pr_grant", params={"workspace_id": "1"}
+            )
+            if code2 == "E_PRINCIPAL_WORKSPACE_FORBIDDEN" or time.time() >= deadline:
+                break
+            time.sleep(0.1)
         assert status2 == 200, data2
         assert code2 == "E_PRINCIPAL_WORKSPACE_FORBIDDEN", data2
-        time.sleep(0.2)
 
     @requires_binaries
     def test_s1_14_db_grant_projections_match_disk(self, daemon):

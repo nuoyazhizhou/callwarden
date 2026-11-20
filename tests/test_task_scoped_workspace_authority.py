@@ -18,6 +18,11 @@ class _FakeHttpClient:
     def _ensure_remote_snapshot(self, _db_path):
         return "callwarden-instance"
 
+    def is_remote_profile(self) -> bool:
+        # S2 §16.1：route_rpc 依 bind_scope 决定是否以 "." 注册 workspace；
+        # 本替身模拟 loopback profile（数值 authority 注入路径）。
+        return False
+
     def call(self, method: str, params: dict):
         self.calls.append((method, dict(params)))
         return {"method": method, "params": params}

@@ -35,9 +35,13 @@ def test_start_daemon_windows_injects_authority_task_db(monkeypatch):
 
     monkeypatch.setattr(da.subprocess, "Popen", _fake_popen)
 
-    ok = da._start_daemon_windows(r"\\.\pipe\callwarden-test")
+    # 单轨 HTTPS：`_start_daemon_windows()` 无参，且不得再传 `--socket`（daemon 自行监听）
+    ok = da._start_daemon_windows()
     assert ok is True
-    assert captured["cmd"] == [r"C:\fake\cw-daemon.exe", "--socket", r"\\.\pipe\callwarden-test"]
+    assert captured["cmd"] == [r"C:\fake\cw-daemon.exe"]
+    assert not any(str(x).startswith("--socket") for x in captured["cmd"]), (
+        "单轨 HTTPS 下不应再传 --socket/pipe 参数"
+    )
     assert captured["env"] is not None, "Popen 未传递 child_env"
     assert captured["env"].get("CW_DAEMON_TASK_DB") == cw_config.DB_PATH, (
         f"daemon 启动未注入权威任务库：CW_DAEMON_TASK_DB={captured['env'].get('CW_DAEMON_TASK_DB')!r}，"

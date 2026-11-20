@@ -770,6 +770,12 @@ def spawn_isolated_daemon(bin_path, data_root, http_bind="127.0.0.1:0"):
     # 服务端会按「外部 CA 模式」校验并要求 CW_CA_KEY → E_PKI_CA_LOAD 秒退。
     for _k in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT"):
         env.pop(_k, None)
+    # 隔离 daemon 的 PKI 必须落在自身 USERPROFILE 下；调用方残留的 CW_PKI_DIR
+    # 会让服务端读到别的 CA（与 inject_isolated_mtls_env 注入身份不同源）。
+    env.pop("CW_PKI_DIR", None)
+    # 固定语言：daemon 侧模板/消息按 CALLWARDEN_LANG 选语言，LANG=zh_CN 的
+    # 宿主环境会让「默认英文模板」类断言随机变红。与 acceptance harness 同口径。
+    env["CALLWARDEN_LANG"] = "en_US"
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")

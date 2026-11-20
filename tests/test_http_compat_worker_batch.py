@@ -36,6 +36,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from server import compat_registry as reg  # noqa: E402
+from _w3_harness import inject_isolated_mtls_env, restore_w3_env  # noqa: E402
 from callwarden.server.daemon_client import (  # noqa: E402
     DaemonUnavailableError,
     HttpDaemonRpcClient,
@@ -398,7 +399,7 @@ def _wait_manifest(data_root, proc, timeout=10.0):
 
 
 def _terminate(proc):
-    """终止 daemon 进程（terminate 优先，兜底 kill）。"""
+    """终止 daemon 进程（terminate 优先，兜底 kill），并还原 mTLS 身份 env。"""
     try:
         proc.terminate()
         proc.wait(timeout=5)
@@ -407,6 +408,7 @@ def _terminate(proc):
             proc.kill()
         except Exception:
             pass
+    restore_w3_env()
 
 
 def _spawn_isolated_daemon(bin_path, data_root, http_bind, worker_script=None):
@@ -478,6 +480,9 @@ class TestRealDaemonCompatWorkerBatch:
         if manifest is None:
             _terminate(proc)
             pytest.fail("隔离 daemon 未发布 manifest")
+        # ADR-002 单轨 mTLS：客户端须持与隔离 daemon 同源 CA 的身份证书，
+        # 否则 HttpDaemonRpcClient 会在装配 SSL 上下文时 fail-closed。
+        inject_isolated_mtls_env(data_root)
         client = HttpDaemonRpcClient(
             endpoint=manifest["endpoint"],
             verify_health=False,

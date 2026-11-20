@@ -141,9 +141,13 @@ def e2e_daemon():
             skip_if_daemon_exited_before_manifest(proc, stderr)
             pytest.fail(f"隔离 daemon 未发布 manifest\nstdout={stdout}\nstderr={stderr}")
         skip_if_isolated_daemon_pipe_conflict(proc)
+        # 隔离 daemon 的 CA/身份与真实 HOME 不同源：注入其 PKI 客户端证书，
+        # 否则 TLS 校验失败（CERTIFICATE_VERIFY_FAILED）。
+        from _w3_harness import inject_isolated_mtls_env
+        inject_isolated_mtls_env(data_root)
         client = HttpDaemonRpcClient(
             endpoint=manifest["endpoint"], verify_health=False,
-            validate_manifest=False, timeout=30,
+            manifest_path=manifest_path, validate_manifest=False, timeout=30,
         )
         # 1. 注册临时 workspace（daemon 注册表 + task-DB 双写）
         name = f"rp10-e2e-ws-{uuid.uuid4().hex[:8]}"
@@ -177,6 +181,8 @@ def e2e_daemon():
         }
     finally:
         _terminate(proc)
+        from _w3_harness import restore_w3_env
+        restore_w3_env()
         _restore_or_clean_http_manifest(manifest_path, proc.pid, backup)
         shutil.rmtree(data_root, ignore_errors=True)
         shutil.rmtree(ws_root, ignore_errors=True)

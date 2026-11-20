@@ -56,7 +56,7 @@
 |---|---|---|---|
 | `server/mcp_server.py` + `server/tools/*.py` | 237 `@mcp.tool()`（注册收敛到 server/tools 功能域模块） | Python adapter 保留 | Phase 6（adapter） |
 | `server/watcher.py` | `FileWatcher` 类、事件合并 | `rust_ext/src/watcher.rs` 已实现 | Phase 3 |
-| `server/daemon_server.py` | Python 侧 daemon（legacy） | `rust_ext/src/bin/cw_daemon.rs` 已实现 | Phase 4 |
+| `server/daemon_server.py` | Python 侧 daemon（legacy，**已删除**：Rust daemon 全量迁移后移除） | `rust_ext/src/bin/cw_daemon.rs` 已实现 | Phase 4 |
 | `server/daemon_client.py` | UDS RPC 客户端 | 待迁移 | Phase 4/5 |
 | `server/replicator.py` | CAS→DB 复制 | `daemon/replicator.rs` 已实现 | Phase 1 |
 | `server/snapshot_manager.py` | snapshot 发布、GC | `snapshot.rs` + `daemon/snapshot_state.rs` 已实现 | Phase 1 |
@@ -125,7 +125,7 @@
 | `daemon/protocol.rs` | UDS framing | Phase 4 |
 | `daemon/config.rs` | daemon 配置 | Phase 4 |
 | `daemon/toolchain.rs` | toolchain | Phase 4 |
-| `daemon/memfd.rs` | memfd 共享 | Phase 4 |
+| `daemon/memfd.rs` | memfd 共享（**已移除**：单轨 HTTPS/mTLS 迁移后不再使用 memfd 传递快照） | Phase 4 |
 | `bin/cw_daemon.rs` | daemon binary 入口 | Phase 4 |
 | `watcher.rs` | 跨平台 watcher | Phase 3 |
 | `canonicalize.rs` | 输入规范化（已暴露） | ✅ |

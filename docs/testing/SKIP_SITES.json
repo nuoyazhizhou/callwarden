@@ -206,15 +206,15 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/conftest.py:34:8:pytest.skip",
+      "site_id": "tests/conftest.py:42:8:pytest.skip",
       "file": "tests/conftest.py",
-      "line": 34,
+      "line": 42,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "未找到隔离 cw-daemon 二进制，跳过 live 用例",
       "reason_expression": "'未找到隔离 cw-daemon 二进制，跳过 live 用例'",
       "condition_or_module": null,
-      "file_sha256": "9e8f906794d7aeff9514d7a870add1d9f207ee48c11ad38efb5b138d5b151f9e",
+      "file_sha256": "5afe33201e66822c18014436a58cc7e717ef4623f959baf9912936c39bc38797",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1234,7 +1234,7 @@
       "reason_literal": "daemon_autostart Windows 分支注入链仅在 Windows 验证",
       "reason_expression": "'daemon_autostart Windows 分支注入链仅在 Windows 验证'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "72e134d12cceeee143feaeedc408aa03c879dc508aa3d7a50a2266148755b9bd",
+      "file_sha256": "368a055bb460de96096f9bc9774072c70b72eab2ffc2ebc4c97c25a9afada7f6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1450,7 +1450,7 @@
       "reason_literal": null,
       "reason_expression": "f'无法读取 git HEAD: {r.stderr}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1462,7 +1462,7 @@
       "reason_literal": null,
       "reason_expression": "f'未找到 runtime refresh evidence: {_EVIDENCE_DIR}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1474,7 +1474,7 @@
       "reason_literal": null,
       "reason_expression": "f'未找到 refresh evidence（需 schema=cw.runtime_refresh.v1 且 status/daemon_runtime/binaries 齐全）: {_EVIDENCE_DIR}；最近文件: {recent}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1486,7 +1486,7 @@
       "reason_literal": null,
       "reason_expression": "f'runtime refresh evidence git_head {ev_head[:12]} != 当前 HEAD {head[:12]}：runtime 未按当前 HEAD 刷新（部署环境前置，非代码回归）；执行 scripts/refresh_shared_runtime.ps1 后重跑'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1498,7 +1498,7 @@
       "reason_literal": "运行路径核对仅 Windows 适用",
       "reason_expression": "'运行路径核对仅 Windows 适用'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1510,7 +1510,7 @@
       "reason_literal": null,
       "reason_expression": "f'无法枚举运行 daemon: {e}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1522,7 +1522,7 @@
       "reason_literal": "无来自 runtime/current 的运行 daemon（生产 daemon 未启动，环境前置条件）",
       "reason_expression": "'无来自 runtime/current 的运行 daemon（生产 daemon 未启动，环境前置条件）'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1534,7 +1534,7 @@
       "reason_literal": null,
       "reason_expression": "f'cw daemon health 执行异常: {e}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1546,67 +1546,67 @@
       "reason_literal": null,
       "reason_expression": "f'生产 daemon 不可达（exit={r.returncode}）: {r.stdout.strip() or r.stderr.strip()}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_http_daemon_release_acceptance.py:553:12:pytest.skip",
+      "site_id": "tests/test_http_daemon_release_acceptance.py:559:12:pytest.skip",
       "file": "tests/test_http_daemon_release_acceptance.py",
-      "line": 553,
+      "line": 559,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": null,
       "reason_expression": "f'runtime/current/cw-daemon.exe 不存在: {_CURRENT_DAEMON}'",
       "condition_or_module": null,
-      "file_sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d",
+      "file_sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_http_daemon_transport.py:173:8:pytest.skip",
+      "site_id": "tests/test_http_daemon_transport.py:179:8:pytest.skip",
       "file": "tests/test_http_daemon_transport.py",
-      "line": 173,
+      "line": 179,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "178df4a1033757988c1006f66314b71a23637b8a27c3d8a56630af0d2d22b6d3",
+      "file_sha256": "aebab2ac4c18907fa4770222678aeb9cd640547618dc27b553d1e0f058447fe0",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_http_daemon_transport.py:251:8:pytest.skip",
+      "site_id": "tests/test_http_daemon_transport.py:257:8:pytest.skip",
       "file": "tests/test_http_daemon_transport.py",
-      "line": 251,
+      "line": 257,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用",
       "reason_expression": "'cw-daemon 二进制不可用'",
       "condition_or_module": null,
-      "file_sha256": "178df4a1033757988c1006f66314b71a23637b8a27c3d8a56630af0d2d22b6d3",
+      "file_sha256": "aebab2ac4c18907fa4770222678aeb9cd640547618dc27b553d1e0f058447fe0",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_http_daemon_transport.py:300:8:pytest.skip",
+      "site_id": "tests/test_http_daemon_transport.py:306:8:pytest.skip",
       "file": "tests/test_http_daemon_transport.py",
-      "line": 300,
+      "line": 306,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用",
       "reason_expression": "'cw-daemon 二进制不可用'",
       "condition_or_module": null,
-      "file_sha256": "178df4a1033757988c1006f66314b71a23637b8a27c3d8a56630af0d2d22b6d3",
+      "file_sha256": "aebab2ac4c18907fa4770222678aeb9cd640547618dc27b553d1e0f058447fe0",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_http_governance_error_cutover.py:867:12:pytest.skip",
+      "site_id": "tests/test_http_governance_error_cutover.py:874:12:pytest.skip",
       "file": "tests/test_http_governance_error_cutover.py",
-      "line": 867,
+      "line": 874,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "2f1f58400143a88d0513854fa9a1f44b01f2b948b132f484924c82d6fcc6e4ac",
+      "file_sha256": "0dc7251cfec72a50f4204cb5a13c961974c292949db157d947b5cc982c91b414",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1618,7 +1618,7 @@
       "reason_literal": null,
       "reason_expression": "f'无最小参数集，跳过：{subcmd}'",
       "condition_or_module": null,
-      "file_sha256": "03433e903c6580551e062da8176e895107975900799cc06024d95db85731c5fd",
+      "file_sha256": "387255a45c886054ec2ba95e71502b0428608d872d0d683314703e22cea1f23f",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1886,15 +1886,15 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_migration_manifest.py:324:8:pytest.skip",
+      "site_id": "tests/test_migration_manifest.py:328:8:pytest.skip",
       "file": "tests/test_migration_manifest.py",
-      "line": 324,
+      "line": 328,
       "column": 8,
       "mechanism": "pytest.skip",
       "reason_literal": "callwarden_core 未安装或 migration_manifest 未暴露",
       "reason_expression": "'callwarden_core 未安装或 migration_manifest 未暴露'",
       "condition_or_module": null,
-      "file_sha256": "7b7814aaacc64d31545c7a3eb5f2f67306d198e6a02060994878ca9056f39229",
+      "file_sha256": "2665c2f40eaa1e2f713147a036fb8d0d1bd251afdfa636b82086217bd1648de0",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4174,7 +4174,7 @@
       "reason_literal": "mTLS principal 授权需要 Windows + loopback HTTPS daemon",
       "reason_expression": "'mTLS principal 授权需要 Windows + loopback HTTPS daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9",
+      "file_sha256": "7bada978384e35cfb6dddefad4f69c9402d79ad7647215fb5fb6db55614238d8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4186,7 +4186,7 @@
       "reason_literal": "未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'未找到 cw-daemon 构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "cp._DAEMON_BIN is None",
-      "file_sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9",
+      "file_sha256": "7bada978384e35cfb6dddefad4f69c9402d79ad7647215fb5fb6db55614238d8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4198,7 +4198,7 @@
       "reason_literal": "cw-daemon 未构建",
       "reason_expression": "'cw-daemon 未构建'",
       "condition_or_module": null,
-      "file_sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9",
+      "file_sha256": "7bada978384e35cfb6dddefad4f69c9402d79ad7647215fb5fb6db55614238d8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4210,7 +4210,7 @@
       "reason_literal": null,
       "reason_expression": null,
       "condition_or_module": "'cryptography'",
-      "file_sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9",
+      "file_sha256": "7bada978384e35cfb6dddefad4f69c9402d79ad7647215fb5fb6db55614238d8",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4246,7 +4246,7 @@
       "reason_literal": "进程级 query.file round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.file round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9",
+      "file_sha256": "3c0cd463bd63201afbc64019391e8e2bcb35790472483e6700b35be9db551ca5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4258,7 +4258,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9",
+      "file_sha256": "3c0cd463bd63201afbc64019391e8e2bcb35790472483e6700b35be9db551ca5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4270,7 +4270,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9",
+      "file_sha256": "3c0cd463bd63201afbc64019391e8e2bcb35790472483e6700b35be9db551ca5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4282,7 +4282,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9",
+      "file_sha256": "3c0cd463bd63201afbc64019391e8e2bcb35790472483e6700b35be9db551ca5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4294,7 +4294,7 @@
       "reason_literal": "进程级 query.grep round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.grep round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34",
+      "file_sha256": "4a986dd68235690156256335802f81166e055bd0a8396a976ae3e9266746da6a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4306,7 +4306,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34",
+      "file_sha256": "4a986dd68235690156256335802f81166e055bd0a8396a976ae3e9266746da6a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4318,7 +4318,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34",
+      "file_sha256": "4a986dd68235690156256335802f81166e055bd0a8396a976ae3e9266746da6a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4330,7 +4330,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34",
+      "file_sha256": "4a986dd68235690156256335802f81166e055bd0a8396a976ae3e9266746da6a",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4342,7 +4342,7 @@
       "reason_literal": "进程级 query.issues round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.issues round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206",
+      "file_sha256": "5b17301caa8b058db3547edfea71193f377c92090f80c03810cf29951d064905",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4354,7 +4354,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206",
+      "file_sha256": "5b17301caa8b058db3547edfea71193f377c92090f80c03810cf29951d064905",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4366,7 +4366,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206",
+      "file_sha256": "5b17301caa8b058db3547edfea71193f377c92090f80c03810cf29951d064905",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4378,7 +4378,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206",
+      "file_sha256": "5b17301caa8b058db3547edfea71193f377c92090f80c03810cf29951d064905",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4390,7 +4390,7 @@
       "reason_literal": "进程级 query.symbol round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.symbol round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459",
+      "file_sha256": "50de582a8a27748cc967c424d4550cf2d1155cfbd0d2e2a9136a4e2d3662fdb5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4402,7 +4402,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459",
+      "file_sha256": "50de582a8a27748cc967c424d4550cf2d1155cfbd0d2e2a9136a4e2d3662fdb5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4414,7 +4414,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459",
+      "file_sha256": "50de582a8a27748cc967c424d4550cf2d1155cfbd0d2e2a9136a4e2d3662fdb5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4426,7 +4426,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459",
+      "file_sha256": "50de582a8a27748cc967c424d4550cf2d1155cfbd0d2e2a9136a4e2d3662fdb5",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4438,7 +4438,7 @@
       "reason_literal": "进程级 query.tests round-trip 需要 Windows 平台",
       "reason_expression": "'进程级 query.tests round-trip 需要 Windows 平台'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573",
+      "file_sha256": "3656f2e281b599a9b98e0278b0e94254a5e28ded43ff3e33ed7e21f9061cc23d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4450,7 +4450,7 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573",
+      "file_sha256": "3656f2e281b599a9b98e0278b0e94254a5e28ded43ff3e33ed7e21f9061cc23d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4462,7 +4462,7 @@
       "reason_literal": "未找到 cw-daemon 二进制（release/debug 均缺失），跳过",
       "reason_expression": "'未找到 cw-daemon 二进制（release/debug 均缺失），跳过'",
       "condition_or_module": null,
-      "file_sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573",
+      "file_sha256": "3656f2e281b599a9b98e0278b0e94254a5e28ded43ff3e33ed7e21f9061cc23d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -4474,7 +4474,7 @@
       "reason_literal": "隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）",
       "reason_expression": "'隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）'",
       "condition_or_module": null,
-      "file_sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573",
+      "file_sha256": "3656f2e281b599a9b98e0278b0e94254a5e28ded43ff3e33ed7e21f9061cc23d",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5023,34 +5023,34 @@
       "line": 119,
       "column": 17,
       "mechanism": "pytest.mark.skipif",
-      "reason_literal": "真实 cw daemon/CLI E2E 需要 Windows + Named Pipe",
-      "reason_expression": "'真实 cw daemon/CLI E2E 需要 Windows + Named Pipe'",
+      "reason_literal": "真实 cw daemon/CLI E2E 需要 Windows + 本机 mTLS PKI",
+      "reason_expression": "'真实 cw daemon/CLI E2E 需要 Windows + 本机 mTLS PKI'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "d670ba7f46d459b9fa222acd6b1ea7fb5fa07421efa9a2c5e753f03d61eefd3b",
+      "file_sha256": "8254ecb8a49997b4c957c774b4bd158d024a73f993d7081038d607af70d2e354",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_close_gate.py:127:16:pytest.mark.skipif",
+      "site_id": "tests/test_task_close_gate.py:126:16:pytest.mark.skipif",
       "file": "tests/test_task_close_gate.py",
-      "line": 127,
+      "line": 126,
       "column": 16,
       "mechanism": "pytest.mark.skipif",
-      "reason_literal": "cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）",
-      "reason_expression": "'cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）'",
-      "condition_or_module": "not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN))",
-      "file_sha256": "d670ba7f46d459b9fa222acd6b1ea7fb5fa07421efa9a2c5e753f03d61eefd3b",
+      "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
+      "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
+      "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
+      "file_sha256": "8254ecb8a49997b4c957c774b4bd158d024a73f993d7081038d607af70d2e354",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_close_gate.py:186:8:pytest.skip",
+      "site_id": "tests/test_task_close_gate.py:158:12:pytest.skip",
       "file": "tests/test_task_close_gate.py",
-      "line": 186,
-      "column": 8,
+      "line": 158,
+      "column": 12,
       "mechanism": "pytest.skip",
-      "reason_literal": null,
-      "reason_expression": "f'默认管道 {pipe} 已被其他 daemon 占用，跳过进程级 E2E'",
+      "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
+      "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "d670ba7f46d459b9fa222acd6b1ea7fb5fa07421efa9a2c5e753f03d61eefd3b",
+      "file_sha256": "8254ecb8a49997b4c957c774b4bd158d024a73f993d7081038d607af70d2e354",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5174,39 +5174,39 @@
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_split_steps.py:88:17:pytest.mark.skipif",
+      "site_id": "tests/test_task_split_steps.py:86:17:pytest.mark.skipif",
       "file": "tests/test_task_split_steps.py",
-      "line": 88,
+      "line": 86,
       "column": 17,
       "mechanism": "pytest.mark.skipif",
-      "reason_literal": "真实 cw daemon/CLI E2E 需要 Windows + Named Pipe",
-      "reason_expression": "'真实 cw daemon/CLI E2E 需要 Windows + Named Pipe'",
+      "reason_literal": "真实 cw daemon/CLI E2E 需要 Windows + 本机 mTLS PKI",
+      "reason_expression": "'真实 cw daemon/CLI E2E 需要 Windows + 本机 mTLS PKI'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "12706ef13f378b30e4ec39b8d77f2f07e5f3a0880aa2067a2dd91832aedc17a2",
+      "file_sha256": "50e369df1b73811c7f4ba85dfd12c1bb11dcb62f90e12a14dd668f6a28c5d8a6",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_split_steps.py:96:16:pytest.mark.skipif",
+      "site_id": "tests/test_task_split_steps.py:93:16:pytest.mark.skipif",
       "file": "tests/test_task_split_steps.py",
-      "line": 96,
+      "line": 93,
       "column": 16,
       "mechanism": "pytest.mark.skipif",
-      "reason_literal": "cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）",
-      "reason_expression": "'cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）'",
-      "condition_or_module": "not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN))",
-      "file_sha256": "12706ef13f378b30e4ec39b8d77f2f07e5f3a0880aa2067a2dd91832aedc17a2",
+      "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
+      "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
+      "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
+      "file_sha256": "50e369df1b73811c7f4ba85dfd12c1bb11dcb62f90e12a14dd668f6a28c5d8a6",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_task_split_steps.py:156:8:pytest.skip",
+      "site_id": "tests/test_task_split_steps.py:123:12:pytest.skip",
       "file": "tests/test_task_split_steps.py",
-      "line": 156,
-      "column": 8,
+      "line": 123,
+      "column": 12,
       "mechanism": "pytest.skip",
-      "reason_literal": null,
-      "reason_expression": "f'默认管道 {pipe} 已被其他 daemon 占用，跳过进程级 E2E'",
+      "reason_literal": "隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）",
+      "reason_expression": "'隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）'",
       "condition_or_module": null,
-      "file_sha256": "12706ef13f378b30e4ec39b8d77f2f07e5f3a0880aa2067a2dd91832aedc17a2",
+      "file_sha256": "50e369df1b73811c7f4ba85dfd12c1bb11dcb62f90e12a14dd668f6a28c5d8a6",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5482,7 +5482,7 @@
       "reason_literal": "进程级 snapshot round-trip 需要 Windows + loopback HTTP daemon",
       "reason_expression": "'进程级 snapshot round-trip 需要 Windows + loopback HTTP daemon'",
       "condition_or_module": "sys.platform != 'win32'",
-      "file_sha256": "fcef295943b5beffaea8b6ed361fa9865b65cd4d758ddfa7fc1c5543c4098711",
+      "file_sha256": "3306132addd2f7d370a04718deeec763f8d4aaad9fab3f4b62607f43530132d1",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5494,19 +5494,19 @@
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": "not os.path.exists(_DAEMON_BIN)",
-      "file_sha256": "fcef295943b5beffaea8b6ed361fa9865b65cd4d758ddfa7fc1c5543c4098711",
+      "file_sha256": "3306132addd2f7d370a04718deeec763f8d4aaad9fab3f4b62607f43530132d1",
       "root_cause": "UNREVIEWED"
     },
     {
-      "site_id": "tests/test_workspace_snapshot_rpc_http.py:344:12:pytest.skip",
+      "site_id": "tests/test_workspace_snapshot_rpc_http.py:349:12:pytest.skip",
       "file": "tests/test_workspace_snapshot_rpc_http.py",
-      "line": 344,
+      "line": 349,
       "column": 12,
       "mechanism": "pytest.skip",
       "reason_literal": "cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "fcef295943b5beffaea8b6ed361fa9865b65cd4d758ddfa7fc1c5543c4098711",
+      "file_sha256": "3306132addd2f7d370a04718deeec763f8d4aaad9fab3f4b62607f43530132d1",
       "root_cause": "UNREVIEWED"
     },
     {

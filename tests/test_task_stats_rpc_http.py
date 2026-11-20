@@ -258,9 +258,10 @@ class TestToolRouteContract:
 
         monkeypatch.setattr(tools_task, "_route", fake_route)
         q = _register_tools(tools_task)
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
-            out = q[tool_name]()
-            mock_db.assert_not_called()
+        # 工具层已无本地 db 入口（get_db 属性已移除）：属性不存在本身即
+        # 「不可能回落本地 SQL」的结构性证据。
+        assert not hasattr(tools_task, "get_db")
+        out = q[tool_name]()
         assert out == {"ok": True}
         assert seen["method"] == rpc_method
         assert seen["op"] == "READ_ONLY"
@@ -280,7 +281,6 @@ class TestToolRouteContract:
 
         monkeypatch.setattr(tools_task, "_route", fake_route)
         q = _register_tools(tools_task)
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
-            with pytest.raises(DaemonRemoteError):
-                q[tool_name]()
-            mock_db.assert_not_called()
+        assert not hasattr(tools_task, "get_db")
+        with pytest.raises(DaemonRemoteError):
+            q[tool_name]()

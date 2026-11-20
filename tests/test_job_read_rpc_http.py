@@ -313,10 +313,9 @@ class TestToolRouteContract:
 
         monkeypatch.setattr(tools_task, "_route", fake_route)
         q = _register_tools(tools_task)
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
-            out = q[tool_name](**call_kwargs)
-            mock_db.assert_not_called()
+        out = q[tool_name](**call_kwargs)
         assert out == {"ok": True}
+        assert not hasattr(tools_task, "get_db"), "工具层不应再有本地 DB 回退入口"
         assert seen["method"] == rpc_method
         assert seen["op"] == "READ_ONLY"
         assert seen["params"] == call_kwargs
@@ -355,7 +354,6 @@ class TestToolRouteContract:
 
         monkeypatch.setattr(tools_task, "_route", fake_route)
         q = _register_tools(tools_task)
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
-            with pytest.raises(DaemonRemoteError):
-                q[tool_name](**call_kwargs)
-            mock_db.assert_not_called()
+        assert not hasattr(tools_task, "get_db"), "工具层不应再有本地 DB 回退入口"
+        with pytest.raises(DaemonRemoteError):
+            q[tool_name](**call_kwargs)

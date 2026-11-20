@@ -52,11 +52,13 @@ _EXPECTED_RUST_PY_API_MODULES = {
 }
 
 # manifest 第 2.2 节列出的 daemon 内部模块
+# memfd.rs 已随 legacy 共享内存方案一并移除（Rust daemon 全量迁移后不再使用
+# memfd_create 传递快照，见 ADR-002 单轨 HTTPS/mTLS），不再断言其存在。
 _EXPECTED_DAEMON_MODULES = {
     "cas", "cas_merge", "replicator", "workspace", "snapshot_guard",
     "snapshot_state", "staging_log", "parse_retry_log", "dispatch", "server",
     "peercred", "budget", "health", "parser_metrics", "protocol", "config",
-    "toolchain", "memfd",
+    "toolchain",
 }
 
 # manifest 第 2.2 节列出的其他内部模块
@@ -166,8 +168,10 @@ _EXPECTED_DB_MIXINS = {
 }
 
 # manifest 第 1.3 节列出的 server 模块
+# daemon_server.py（legacy Python daemon）已在 Rust daemon 全量迁移后删除，
+# 其职责由 rust_ext/src/bin/cw_daemon.rs + daemon/* 承接，不再断言其存在。
 _EXPECTED_SERVER_MODULES = {
-    "mcp_server.py", "watcher.py", "daemon_server.py", "daemon_client.py",
+    "mcp_server.py", "watcher.py", "daemon_client.py",
     "replicator.py", "snapshot_manager.py", "staging_log.py",
     "schema_migrator.py", "backup_restore.py", "agent_watcher.py",
     "agent_session.py", "health_check.py", "metrics.py", "query_budget.py",

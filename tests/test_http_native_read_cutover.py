@@ -391,6 +391,7 @@ class TestNoPseudoRoutes:
         `return _route(...)`（tools_query.py:56 / tools_workspace.py:29），
         故改为反向断言：旧 seam 调用点必须为 0。
         """
+        governed = {"file_read", "file_write"}  # S3 治理读写：本机执行，不走 _route
         for module in (tools_query, tools_workspace):
             for name, fn in _register_tools(module).items():
                 source = inspect.getsource(fn)
@@ -400,6 +401,8 @@ class TestNoPseudoRoutes:
                 assert "_call_daemon_rpc(" not in source, (
                     f"{module.__name__}.{name} 不应再有 _call_daemon_rpc 调用"
                 )
+                if name in governed:
+                    continue
                 assert "_route(" in source, (
                     f"{module.__name__}.{name} 应经 _route 路由"
                 )

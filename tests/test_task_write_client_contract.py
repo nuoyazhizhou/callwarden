@@ -25,7 +25,7 @@ def test_task_report_daemon_rejection_exits_nonzero(monkeypatch, capsys):
     with pytest.raises(SystemExit) as exit_info:
         main_mod._handle_task(["report", "T-1", "S-1", "--result", "done"], None)
 
-    assert exit_info.value.code == 2
+    assert exit_info.value.code == 1
     output = capsys.readouterr().out
     assert "E_REPORT_REJECTED" in output
     assert "Task Report" not in output
@@ -49,7 +49,7 @@ def test_task_report_contract_lookup_failure_exits_nonzero(monkeypatch, capsys):
     with pytest.raises(SystemExit) as exit_info:
         main_mod._handle_task(["report", "T-1", "S-1", "--result", "done"], None)
 
-    assert exit_info.value.code == 2
+    assert exit_info.value.code == 1
     output = capsys.readouterr().out
     assert "E_CONTRACT_LOOKUP_REJECTED" in output
     assert "Task Report" not in output

@@ -522,7 +522,9 @@ class TestHttpClientWorkspaceInjection:
         # :3315 _resolve_workspace_instance）：register_params 现额外并入
         # _workspace_snapshot_metadata() 的 git_remote_url / git_head_commit_sha，
         # 不再与仅含 client_view_root 的 dict 全等 → 改断言关键字段。
-        assert calls[0][1]["client_view_root"] == os.getcwd()
+        # Windows 盘符大小写不敏感：cwd 由启动参数决定大小写，生产侧用
+        # config.PROJECT_ROOT 的规范化绝对路径，故按 normcase 比较。
+        assert os.path.normcase(calls[0][1]["client_view_root"]) == os.path.normcase(os.getcwd())
         # publish：注入权威 instance_id + 透传 db_path（abspath 规范化）
         assert calls[1][1]["workspace_instance_id"] == "inst-http2"
         assert calls[1][1]["db_path"] == os.path.abspath(db_path)
@@ -579,7 +581,9 @@ class TestHttpClientWorkspaceInjection:
         # stale 依据（A 类，生产侧 server/daemon_client.py:3291/:3315）：register_params
         # 现并入 _workspace_snapshot_metadata 的 git_remote_url/git_head_commit_sha，
         # 不再仅含 client_view_root → 改断言关键字段。
-        assert calls[0][1]["client_view_root"] == os.getcwd()
+        # Windows 盘符大小写不敏感：cwd 由启动参数决定大小写，生产侧用
+        # config.PROJECT_ROOT 的规范化绝对路径，故按 normcase 比较。
+        assert os.path.normcase(calls[0][1]["client_view_root"]) == os.path.normcase(os.getcwd())
         assert calls[1][1]["workspace_instance_id"] == "inst-http2"
         assert calls[1][1]["db_path"] == os.path.abspath(db_path)
         # query.symbol_location：注入权威 instance_id，name/file_path 契约保持

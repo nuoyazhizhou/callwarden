@@ -59,7 +59,11 @@ def test_http_route_binds_project_root_and_publishes_snapshot_for_status(monkeyp
     result = route_rpc("workspace.status", {})
 
     assert result["snapshot_id"] == "snap-1"
-    client.configure_workspace.assert_called_once_with(_REPO_ROOT)
+    # Windows 盘符大小写不敏感：生产侧 binding 取 realpath（本机解析为 c:），
+    # 而 Path.resolve() 在测试侧给出 C:；按 normcase 比较同一路径。
+    from os.path import normcase
+    configured_root = client.configure_workspace.call_args.args[0]
+    assert normcase(configured_root) == normcase(_REPO_ROOT)
     client._ensure_remote_snapshot.assert_called_once_with(
         r"C:\authority\callwarden.db"
     )
@@ -79,7 +83,7 @@ def test_http_route_binds_project_root_and_publishes_snapshot_for_status(monkeyp
         "workspace.status",
         {
             "workspace_instance_id": "authority-ws-1",
-            "workspace_root": _REPO_ROOT,
+            "workspace_root": configured_root,
         },
     )
 

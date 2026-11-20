@@ -103,6 +103,12 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     home = os.path.join(data_root, "userhome")
     os.makedirs(os.path.join(home, ".callwarden"), exist_ok=True)
     env = os.environ.copy()
+    # §9.42：daemon 是服务端，不得继承客户端证书 env。restart 场景中测试已用
+    # monkeypatch 注入 CW_CA_CERT（而无 CW_CA_KEY），服务端会按「外部 CA 模式」
+    # 校验并要求 CW_CA_KEY → E_PKI_CA_LOAD 秒退，导致 restart 后无 manifest。
+    for _k in ("CW_CLIENT_CERT", "CW_CLIENT_KEY", "CW_CA_CERT"):
+        env.pop(_k, None)
+    env.pop("CW_PKI_DIR", None)
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = task_db
     env["CW_DAEMON_REGISTRY_DB"] = registry_db

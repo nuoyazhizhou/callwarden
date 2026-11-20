@@ -41,7 +41,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from callwarden.config import HTTP_MVP_TRANSPORT_PROFILE  # noqa: E402
+from callwarden.config import HTTPS_MTLS_TRANSPORT_PROFILE  # noqa: E402
 from callwarden.server.daemon_client import (  # noqa: E402
     DaemonUnavailableError,
     E_HTTP_REQUEST_TIMEOUT,
@@ -433,8 +433,10 @@ def _spawn_isolated_daemon(bin_path, data_root):
     不读 CW_DAEMON_DATA_ROOT——隔离 daemon 的 manifest 与 single-instance 锁
     原本固定写真实 ~/.callwarden，与生产 daemon 的 authority 锁冲突 →
     E_DAEMON_ALREADY_RUNNING → daemon 立即退出 → 「未发布 manifest」。
-    现重定向 USERPROFILE=data_root，manifest 与锁完全隔离到 data_root/.callwarden，
-    生产 daemon 不受影响，backup/restore 也不再触碰真实 HOME 权威 manifest。
+    现重定向 USERPROFILE=data_root/userhome（与 _w3_harness 隔离栈同一布局），
+    manifest 与锁完全隔离，生产 daemon 不受影响，backup/restore 也不再触碰真实
+    HOME 权威 manifest；同时 PKI 落在 userhome/.callwarden/pki，便于
+    `inject_isolated_mtls_env` 补齐同源客户端身份。
     """
     env = os.environ.copy()
     env["CW_DAEMON_DATA_ROOT"] = data_root
@@ -444,7 +446,9 @@ def _spawn_isolated_daemon(bin_path, data_root):
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     env["CW_COMPAT_PYTHON"] = sys.executable
     # 重定向 manifest/lock 作用域：daemon http_manifest_dir() 读 USERPROFILE
-    env["USERPROFILE"] = data_root
+    home = os.path.join(data_root, "userhome")
+    os.makedirs(os.path.join(home, ".callwarden"), exist_ok=True)
+    env["USERPROFILE"] = home
     # toolchain 库显式指向任务库同文件（生产语义：两者默认同为
     # ~/.callwarden/callwarden.db）。toolchain 读面走 open_task_db_readonly()
     # （snapshot_state.rs:3273-3280），表由 ToolchainStore::open 以幂等 DDL
@@ -463,10 +467,10 @@ def _wait_manifest(proc, data_root, timeout=10.0):
     """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配当前进程）。
 
     stale 修正（族D）：USERPROFILE 重定向后 manifest 写
-    data_root/.callwarden（= daemon http_manifest_dir()），轮询该目录
+    data_root/userhome/.callwarden（= daemon http_manifest_dir()），轮询该目录
     而非真实 get_http_manifest_dir()。
     """
-    directory = os.path.join(data_root, ".callwarden")
+    directory = os.path.join(data_root, "userhome", ".callwarden")
     deadline = time.time() + timeout
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -486,15 +490,15 @@ def _wait_manifest(proc, data_root, timeout=10.0):
 
 
 def _isolated_manifest_path(data_root) -> str:
-    """隔离 daemon 的 authority-scoped manifest 路径（data_root/.callwarden）。
+    """隔离 daemon 的 authority-scoped manifest 路径（data_root/userhome/.callwarden）。
 
-    stale 修正（族D）：USERPROFILE=data_root 重定向后，daemon 的
-    http_manifest_dir() 解析为 data_root/.callwarden；backup/restore/clean
+    stale 修正（族D）：USERPROFILE=data_root/userhome 重定向后，daemon 的
+    http_manifest_dir() 解析为 userhome/.callwarden；backup/restore/clean
     全部针对该隔离路径，不再触碰真实 ~/.callwarden 权威 manifest。
     """
     authority = get_http_authority_id()
     safe = authority.replace("/", "_").replace("\\", "_").replace(":", "_")
-    return os.path.join(data_root, ".callwarden",
+    return os.path.join(data_root, "userhome", ".callwarden",
                         f"http-daemon.{safe}.manifest.json")
 
 
@@ -538,6 +542,8 @@ def _terminate(proc):
             proc.kill()
         except Exception:
             pass
+    from _w3_harness import restore_w3_env
+    restore_w3_env()
 
 
 class TestHttpBootstrapSmoke:
@@ -569,6 +575,10 @@ class TestHttpBootstrapSmoke:
                 pytest.fail(
                     f"隔离 daemon 未发布 manifest\nstdout={stdout}\nstderr={stderr}"
                 )
+            # ADR-002 单轨 mTLS：隔离 daemon 自带 LocalCa，客户端须注入同源
+            # owner 身份证书，否则装配 SSL 上下文即 fail-closed。
+            from _w3_harness import inject_isolated_mtls_env
+            inject_isolated_mtls_env(data_root)
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],
                 verify_health=False,
@@ -606,7 +616,7 @@ class TestHttpBootstrapSmoke:
 
     def test_manifest_discovery_and_health_cross_check(self, isolated_http_daemon):
         client, manifest = isolated_http_daemon
-        assert client.discover().startswith("http://127.0.0.1:"), client.discover()
+        assert client.discover().startswith("https://127.0.0.1:"), client.discover()
         health = client.verify_health()
         assert health["pid"] == manifest["pid"], (
             f"/health pid {health['pid']} != manifest pid {manifest['pid']}"
@@ -614,14 +624,14 @@ class TestHttpBootstrapSmoke:
         assert health["schema_version"] == manifest["schema_version"] == (
             _canonical_schema_version()
         )
-        assert health["security_profile"] == HTTP_MVP_TRANSPORT_PROFILE
+        assert health["security_profile"] == HTTPS_MTLS_TRANSPORT_PROFILE
 
     def test_capabilities_python_compat_available_matches_rust_route(
         self, isolated_http_daemon
     ):
         client, _ = isolated_http_daemon
         caps = client.capabilities()
-        assert caps["server_mode"] == HTTP_MVP_TRANSPORT_PROFILE
+        assert caps["server_mode"] == HTTPS_MTLS_TRANSPORT_PROFILE
         methods = caps.get("methods", {})
         assert methods.get("ping", {}).get("status") == "available"
         pc_available = {

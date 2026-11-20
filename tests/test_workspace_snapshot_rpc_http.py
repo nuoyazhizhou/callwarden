@@ -225,8 +225,9 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     不读 CW_DAEMON_DATA_ROOT——隔离 daemon 的 manifest 与 single-instance 锁
     原本固定写真实 ~/.callwarden，与生产 daemon 的 authority 锁冲突 →
     E_DAEMON_ALREADY_RUNNING → daemon 立即退出 → 「未发布 manifest」。
-    现重定向 USERPROFILE=data_root，manifest 与锁完全隔离到 data_root/.callwarden，
-    生产 daemon 不受影响，无需 skip。
+    现重定向 USERPROFILE=data_root/userhome（与 _w3_harness 隔离栈同一布局），
+    manifest 与锁完全隔离，生产 daemon 不受影响，无需 skip；PKI 同时落在
+    userhome/.callwarden/pki，供 `inject_isolated_mtls_env` 补齐同源客户端身份。
     """
     env = os.environ.copy()
     env["CW_DAEMON_DATA_ROOT"] = data_root
@@ -235,7 +236,9 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     # 重定向 manifest/lock 作用域：daemon http_manifest_dir() 读 USERPROFILE
-    env["USERPROFILE"] = data_root
+    home = os.path.join(data_root, "userhome")
+    os.makedirs(os.path.join(home, ".callwarden"), exist_ok=True)
+    env["USERPROFILE"] = home
     proc = subprocess.Popen(
         [bin_path, "--http-bind=" + http_bind],
         env=env,
@@ -248,14 +251,14 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
 def _wait_isolated_manifest(proc, data_root, timeout=15.0):
     """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配）。
 
-    stale 修正（族D）：manifest 现写入 data_root/.callwarden（USERPROFILE
-    重定向后），轮询 data_root 而非真实 HOME。
+    stale 修正（族D）：manifest 现写入 data_root/userhome/.callwarden（USERPROFILE
+    重定向后），轮询该目录而非真实 HOME。
     """
     from callwarden.config import get_http_authority_id
     authority = get_http_authority_id()
     safe = authority.replace("/", "_").replace("\\", "_").replace(":", "_")
     manifest_path = os.path.join(
-        data_root, ".callwarden",
+        data_root, "userhome", ".callwarden",
         f"http-daemon.{safe}.manifest.json",
     )
     deadline = time.time() + timeout
@@ -284,6 +287,8 @@ def _terminate(proc):
             proc.kill()
         except Exception:
             pass
+    from _w3_harness import restore_w3_env
+    restore_w3_env()
 
 
 def _make_minimal_db(path, workspace_id=1) -> str:
@@ -356,6 +361,9 @@ class TestRealDaemonSnapshotRoundTrip:
                 pytest.fail(
                     f"隔离 daemon 未在超时内发布 manifest\nstdout={stdout}\nstderr={stderr}")
             skip_if_isolated_daemon_pipe_conflict(proc)
+            # ADR-002 单轨 mTLS：客户端须持与隔离 daemon 同源 CA 的身份证书。
+            from _w3_harness import inject_isolated_mtls_env
+            inject_isolated_mtls_env(data_root)
             from callwarden.server.daemon_client import HttpDaemonRpcClient
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],

@@ -11,13 +11,11 @@
 3. 真实 CLI：cw task split --plan 后子任务 steps 完整（daemon/CLI E2E）
 4. 真实 CLI：多子任务不互相串步骤
 """
-import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
 
 import pytest
 
@@ -82,121 +80,80 @@ def test_parse_subtasks_handles_action_formats():
 
 
 # ------------------------------------------------------------
-# 2. 真实 CLI E2E（Windows daemon Named Pipe）
+# 2. 真实 CLI E2E（Windows daemon，ADR-002 单轨 HTTPS + manifest）
 # ------------------------------------------------------------
 
 pytestmark_cli = pytest.mark.skipif(
     sys.platform != "win32",
-    reason="真实 cw daemon/CLI E2E 需要 Windows + Named Pipe",
+    reason="真实 cw daemon/CLI E2E 需要 Windows + 本机 mTLS PKI",
 )
 
 _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-daemon.exe")
-_CLIENT_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-client.exe")
 _CW_BIN = os.path.join(_REPO_ROOT, "cw.py")
 _requires_bin = pytest.mark.skipif(
-    not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN)),
-    reason="cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）",
+    not os.path.exists(_DAEMON_BIN),
+    reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
 )
 
-
-def _client(pipe: str, args: list, timeout: int = 15) -> dict:
-    """调用真实 cw-client.exe（Named Pipe 客户端），返回结构化结果。"""
-    try:
-        result = subprocess.run(
-            [_CLIENT_BIN, "--socket", pipe, "--timeout", str(timeout)] + args,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout + 10,
-        )
-    except subprocess.TimeoutExpired:
-        # 管道尚未就绪时 cw-client 可能阻塞等待，按未连接处理
-        return {"code": -1, "json": {}, "stdout": "", "stderr": "client timeout"}
-    parsed = {}
-    try:
-        parsed = json.loads(result.stdout)
-    except Exception:
-        pass
-    return {
-        "code": result.returncode,
-        "json": parsed,
-        "stdout": result.stdout.strip(),
-        "stderr": result.stderr.strip(),
-    }
-
-
-def _daemon_config(tmp: str) -> dict:
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 4,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 4,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
+# fixture 会临时改写这些 env，teardown 逐项还原（避免污染后续测试）
+_CLI_ENV_KEYS = (
+    "USERPROFILE", "HOME", "CW_DAEMON_HTTP_ENDPOINT", "CW_DAEMON_TRANSPORT",
+    "CW_DAEMON_MODE", "CW_TASK_WRITE_POLICY", "CW_DAEMON_AUTOSTART_WINDOW",
+    "CALLWARDEN_SKIP_AUTO_SETUP",
+)
 
 
 @pytest.fixture(scope="module")
 def isolated_daemon():
-    """启动隔离临时目录的真实 cw-daemon（Named Pipe 由 transport 按 SID 派生）。"""
-    from callwarden.config import _get_windows_user_sid
+    """隔离 HTTPS daemon + workspace 权威栈（USERPROFILE 重定向，不碰真实 HOME）。
 
-    sid = _get_windows_user_sid()
-    pipe = rf"\\.\pipe\callwarden-{sid}"
+    沿用 `_w3_harness.setup_w3_client`：隔离 PKI / manifest / registry / task DB，
+    并补齐 CLI `resolve_workspace_pair` 所需的 registry 注册与 task-DB canonical
+    workspace 权威（workspaces + workspace_authority_captures）。
+    """
+    from _w3_harness import restore_w3_env, seed_cli_task_authority, setup_w3_client
 
-    # 若默认管道已被其他 daemon 占用，跳过（避免干扰既有实例）
-    occupied = _client(pipe, ["ping"], timeout=2)
-    if occupied["code"] == 0:
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过进程级 E2E")
-
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
     tmp = tempfile.mkdtemp(prefix="task-split-e2e-")
-    config_path = os.path.join(tmp, "config.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(_daemon_config(tmp), f)
-
-    log_path = os.path.join(tmp, "daemon.log")
-    log = open(log_path, "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        stdout=log, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8",
-    )
+    proc = None
+    saved_env = {k: os.environ.get(k) for k in _CLI_ENV_KEYS}
     try:
-        deadline = time.time() + 40.0
-        ok = False
-        time.sleep(1.5)  # 给 daemon 初始化（加载配置/注册表/任务库）留出时间
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                break
-            r = _client(pipe, ["ping"], timeout=2)
-            if r["code"] == 0 and r["json"].get("status") == "ok":
-                ok = True
-                break
-            time.sleep(0.5)
-        if not ok:
-            log_content = ""
-            try:
-                with open(log_path, "r", encoding="utf-8") as f:
-                    log_content = f.read()[-3000:]
-            except Exception:
-                pass
-            pytest.fail(f"daemon 未在超时内响应，日志：\n{log_content}")
-        yield {"pipe": pipe, "tmp": tmp, "task_db": os.path.join(tmp, "callwarden.db")}
+        client, inst, endpoint, proc = setup_w3_client(tmp, _REPO_ROOT, ws_id=1)
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        task_db = os.path.join(tmp, "task.db")
+        seed_cli_task_authority(
+            task_db, ws_id=1, name="task-split-e2e",
+            root_path=_REPO_ROOT, instance_id=inst,
+        )
+        # CLI 子进程经这些 env 命中隔离 daemon（身份证书由 setup_w3_client 注入）
+        os.environ.update({
+            "USERPROFILE": os.path.join(tmp, "userhome"),
+            "HOME": os.path.join(tmp, "userhome"),
+            "CW_DAEMON_HTTP_ENDPOINT": endpoint,
+            "CW_DAEMON_TRANSPORT": "http",
+            "CW_DAEMON_MODE": "enterprise",
+            "CW_TASK_WRITE_POLICY": "shared",
+            "CW_DAEMON_AUTOSTART_WINDOW": "0",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+        })
+        yield {"tmp": tmp, "task_db": task_db}
     finally:
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=5)
-        log.close()
+        restore_w3_env()
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -244,10 +201,12 @@ def test_cli_split_plan_persists_steps(isolated_daemon):
             "# 计划\n"
             "\n"
             "## 子任务甲\n"
+            "子任务甲描述\n"
             "- implement @ rust_ext/src/daemon/task_collab.rs\n"
             "- test @ tests/test_task_split_steps.py\n"
             "\n"
             "## 子任务乙\n"
+            "子任务乙描述\n"
             "路由逻辑\n"
             "- implement @ server/daemon_client.py\n"
         )

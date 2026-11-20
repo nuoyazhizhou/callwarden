@@ -685,6 +685,11 @@ def test_http_mode_route_rpc_injects_workspace_id_for_workspace_scoped_methods(
         def _ensure_remote_snapshot(self, db_path):
             return "ws-instance-abc"
 
+        def is_remote_profile(self) -> bool:
+            # S2 §16.1：route_rpc 依 bind_scope 决定 workspace 注册方式；
+            # 本替身模拟 loopback（数值 authority 注入路径）。
+            return False
+
         def call(self, method, params=None, request_id=None):
             if method == "mcp.common.get_db_path_for_daemon":
                 # stale 修正（daemon_client.py:4215-4224，2026-09-30 snapshot
@@ -806,7 +811,7 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
 
 
 def _terminate(proc):
-    """终止 daemon 进程（terminate 优先，兜底 kill）。"""
+    """终止 daemon 进程（terminate 优先，兜底 kill），并还原 mTLS 身份 env。"""
     try:
         proc.terminate()
         proc.wait(timeout=5)
@@ -815,6 +820,8 @@ def _terminate(proc):
             proc.kill()
         except Exception:
             pass
+    from _w3_harness import restore_w3_env
+    restore_w3_env()
 
 
 class TestRealDaemonGovernanceErrorRpcAlignment:
@@ -872,6 +879,10 @@ class TestRealDaemonGovernanceErrorRpcAlignment:
             manifest = _wait_manifest(data_root, proc)
             if manifest is None:
                 pytest.fail("隔离 daemon 未发布 manifest")
+            # ADR-002 单轨 mTLS：客户端须持与隔离 daemon 同源 CA 的身份证书，
+            # 否则会拿真实 PKI 证书去校验隔离 CA（CERTIFICATE_VERIFY_FAILED）。
+            from _w3_harness import inject_isolated_mtls_env
+            inject_isolated_mtls_env(data_root)
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],
                 verify_health=False,

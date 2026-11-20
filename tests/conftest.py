@@ -16,6 +16,14 @@ from callwarden.db import db_base as _db_base
 if sys.platform == "win32":
     os.environ.setdefault("CW_RUST_SENTINEL_CONN", "0")
 
+# PKI 不属于「每测试可变状态」：`_isolate_db_path` 隔离 CALLWARDEN_DIR 只为让
+# manifest / registry / dedup 等测试产物落 tmp，不能连带把 mTLS 身份目录
+# （真实 USER_HOME 下的 .callwarden/pki）换到空 tmp。否则任何未显式注入证书的
+# `HttpDaemonRpcClient` 都会在装配 SSL 上下文时 fail-closed
+# （E_MTLS_CLIENT_CERT_MISSING），把「daemon 不可达」等真实断言掩盖成证书缺失。
+# 在 fixture monkeypatch 生效前捕获真实值，供下方 fixture 覆盖 get_pki_dir()。
+_REAL_PKI_DIR = _cw_config.get_pki_dir()
+
 
 @pytest.fixture(scope="module")
 def w3_live(tmp_path_factory):
@@ -57,6 +65,12 @@ def _isolate_db_path(tmp_path, monkeypatch):
     _isolated_dir = tmp_path / "callwarden_dir"
     _isolated_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(_cw_config, "CALLWARDEN_DIR", str(_isolated_dir))
+
+    def _pki_dir_ignoring_isolation() -> str:
+        override = os.environ.get("CW_PKI_DIR", "").strip()
+        return override or _REAL_PKI_DIR
+
+    monkeypatch.setattr(_cw_config, "get_pki_dir", _pki_dir_ignoring_isolation)
     yield
     # CI-DEBT 深水区正式修法后，Rust 侧 DB 访问一律「每次调用独立短连接 +
     # 写后 wal_checkpoint(TRUNCATE) drain」（见 rust_ext/src/db_conn.rs），

@@ -415,15 +415,17 @@ class TestCliDbConsistency:
         assert params["reviewer"] == "cli_test"
 
     def test_cli_reopen_nonexistent_returns_error(self, db, route_stub):
-        """CLI reopen 不存在的任务：daemon 回包 error → fail-closed RC=2"""
+        """CLI reopen 不存在的任务：daemon 回包 error → fail-closed RC=1"""
         route_stub.reply("task.reopen", {"error": "task not found"})
 
         argv = ["reopen", "T-nonexistent", "--reviewer", "cli_test"]
-        # daemon 权威返回 error 属失败路径，禁止 RC=0 假成功（GOV-FIX-08）
+        # daemon 权威返回 error 属失败路径，禁止 RC=0 假成功（GOV-FIX-08）；
+        # 退出码口径统一（cli/main.py:5441）：daemon 拒绝属运行时失败 RC=1，
+        # RC=2 专用于本地输入校验失败。
         with pytest.raises(SystemExit) as exc_info:
             cli_main._handle_task(argv, db)
 
-        assert exc_info.value.code == 2
+        assert exc_info.value.code == 1
 
 
 # ============================================

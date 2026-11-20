@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "62f1cf93231b91c649be19e0a35b1cc57e5dd41c",
+  "supplied_source_revision": "ad4f8cf2b75eae3aa4bab4dbeee21915bb01971d",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -52,10 +52,10 @@
     "core_not_installed_exact_sites": 46,
     "core_not_built_exact_sites": 4,
     "parser_core_not_installed_exact_sites": 18,
-    "reason_literal_sites": 272,
-    "reason_expression_sites": 167,
+    "reason_literal_sites": 274,
+    "reason_expression_sites": 165,
     "reason_absent_sites": 23,
-    "reason_nonliteral_or_absent_sites": 190,
+    "reason_nonliteral_or_absent_sites": 188,
     "root_cause_reviewed_sites": 0,
     "rust_src_attributes": 2163,
     "rust_src_cfg_test_files": 122
@@ -1147,7 +1147,7 @@
     },
     {
       "path": "tests/_w3_harness.py",
-      "sha256": "f47ef914304b961e3bcedabb97fe52be506a139ed4536198acd8753c2f0604a6"
+      "sha256": "b025bd8b5239b4feaa6ffe08a34cfe5401dfe0fd7a5b453c564a8199752b6810"
     },
     {
       "path": "tests/acceptance/cli/cli_acceptance_harness.py",
@@ -1323,7 +1323,7 @@
     },
     {
       "path": "tests/conftest.py",
-      "sha256": "9e8f906794d7aeff9514d7a870add1d9f207ee48c11ad38efb5b138d5b151f9e"
+      "sha256": "5afe33201e66822c18014436a58cc7e717ef4623f959baf9912936c39bc38797"
     },
     {
       "path": "tests/convergence/conftest.py",
@@ -2219,7 +2219,7 @@
     },
     {
       "path": "tests/test_daemon_autostart_windows.py",
-      "sha256": "72e134d12cceeee143feaeedc408aa03c879dc508aa3d7a50a2266148755b9bd"
+      "sha256": "368a055bb460de96096f9bc9774072c70b72eab2ffc2ebc4c97c25a9afada7f6"
     },
     {
       "path": "tests/test_daemon_identity_routing.py",
@@ -2363,7 +2363,7 @@
     },
     {
       "path": "tests/test_http_compat_worker_batch.py",
-      "sha256": "9291c23b498e1cb75f99c2a171982ac3d5888b15b03502d5a20a180f999ba4b4"
+      "sha256": "62cd293dc6b4f93c6ccade52fb82d0afef343cb5c1b2598a11dad44fa7d3cebd"
     },
     {
       "path": "tests/test_http_core_bootstrap.py",
@@ -2387,15 +2387,15 @@
     },
     {
       "path": "tests/test_http_daemon_release_acceptance.py",
-      "sha256": "7753c6c7d9dcf251a6cfdf7041f4b5f9d511fd562ca69a0218bf156bb5effb0d"
+      "sha256": "b9f8906627007b8ad4a9748acbc5c9416a3b303f259763050b154540bd3ec82c"
     },
     {
       "path": "tests/test_http_daemon_transport.py",
-      "sha256": "178df4a1033757988c1006f66314b71a23637b8a27c3d8a56630af0d2d22b6d3"
+      "sha256": "aebab2ac4c18907fa4770222678aeb9cd640547618dc27b553d1e0f058447fe0"
     },
     {
       "path": "tests/test_http_governance_error_cutover.py",
-      "sha256": "2f1f58400143a88d0513854fa9a1f44b01f2b948b132f484924c82d6fcc6e4ac"
+      "sha256": "0dc7251cfec72a50f4204cb5a13c961974c292949db157d947b5cc982c91b414"
     },
     {
       "path": "tests/test_http_index_job_cutover.py",
@@ -2407,7 +2407,7 @@
     },
     {
       "path": "tests/test_http_native_read_cutover.py",
-      "sha256": "b0c1681246229cdcbc2e6b4d4282c2454a15bb337d1ca670c129b7b95dc6d198"
+      "sha256": "bc1ee3f7a61da6c9b4a087d1b3476772dce3d79c915548681f034895e4819ac1"
     },
     {
       "path": "tests/test_http_unsupported_error_cutover.py",
@@ -2447,7 +2447,7 @@
     },
     {
       "path": "tests/test_integration_full_matrix.py",
-      "sha256": "03433e903c6580551e062da8176e895107975900799cc06024d95db85731c5fd"
+      "sha256": "387255a45c886054ec2ba95e71502b0428608d872d0d683314703e22cea1f23f"
     },
     {
       "path": "tests/test_integration_phase3_8.py",
@@ -2459,7 +2459,7 @@
     },
     {
       "path": "tests/test_job_read_rpc_http.py",
-      "sha256": "47c95eca5643b15abcd2cf2c93c026d60e6506b501c1807ef7d68d16fd3adb10"
+      "sha256": "609e5535f73087e6d651ddc7e4a275be451bab0894401a17b206eb56edb5fcf9"
     },
     {
       "path": "tests/test_k2_audit_fix.py",
@@ -2839,7 +2839,7 @@
     },
     {
       "path": "tests/test_migration_manifest.py",
-      "sha256": "7b7814aaacc64d31545c7a3eb5f2f67306d198e6a02060994878ca9056f39229"
+      "sha256": "2665c2f40eaa1e2f713147a036fb8d0d1bd251afdfa636b82086217bd1648de0"
     },
     {
       "path": "tests/test_mtls_control_plane.py",
@@ -3439,7 +3439,7 @@
     },
     {
       "path": "tests/test_principal_authorization.py",
-      "sha256": "7ca7bc721d87293c90a69922b9d196b013b8d2b51cdd9cd43329fbf5dd5b23c9"
+      "sha256": "7bada978384e35cfb6dddefad4f69c9402d79ad7647215fb5fb6db55614238d8"
     },
     {
       "path": "tests/test_process_level_e2e_recovery.py",
@@ -3455,15 +3455,15 @@
     },
     {
       "path": "tests/test_query_file_rpc.py",
-      "sha256": "00fbe57427861b359550540006811f2ecbedd10aebd1e880b21d59a53b1a2ed9"
+      "sha256": "3c0cd463bd63201afbc64019391e8e2bcb35790472483e6700b35be9db551ca5"
     },
     {
       "path": "tests/test_query_grep_rpc.py",
-      "sha256": "789447ad8f02d39c7ad90622b64548d3780f2267e4c354e8c79af62e65ce1e34"
+      "sha256": "4a986dd68235690156256335802f81166e055bd0a8396a976ae3e9266746da6a"
     },
     {
       "path": "tests/test_query_issues_rpc.py",
-      "sha256": "ae5d43ab3aab5c1f7a5f78fdd98b99c0b9ecefe2de7f713dfb703013024d1206"
+      "sha256": "5b17301caa8b058db3547edfea71193f377c92090f80c03810cf29951d064905"
     },
     {
       "path": "tests/test_query_stats_rpc_http.py",
@@ -3471,11 +3471,11 @@
     },
     {
       "path": "tests/test_query_symbol_rpc.py",
-      "sha256": "8766937868fd73e6b706250451fdb821d80a99c6ac296f723dd37604cbe67459"
+      "sha256": "50de582a8a27748cc967c424d4550cf2d1155cfbd0d2e2a9136a4e2d3662fdb5"
     },
     {
       "path": "tests/test_query_tests_rpc.py",
-      "sha256": "4cc92ab50b1db8feee943e99af98671410e369f5e1beb30bf64a938580ee6573"
+      "sha256": "3656f2e281b599a9b98e0278b0e94254a5e28ded43ff3e33ed7e21f9061cc23d"
     },
     {
       "path": "tests/test_refresh_shared_runtime_task_id.py",
@@ -3683,7 +3683,7 @@
     },
     {
       "path": "tests/test_task_close_gate.py",
-      "sha256": "d670ba7f46d459b9fa222acd6b1ea7fb5fa07421efa9a2c5e753f03d61eefd3b"
+      "sha256": "8254ecb8a49997b4c957c774b4bd158d024a73f993d7081038d607af70d2e354"
     },
     {
       "path": "tests/test_task_create_parent_governance.py",
@@ -3739,7 +3739,7 @@
     },
     {
       "path": "tests/test_task_prompt_e2e.py",
-      "sha256": "a40aed936dcedba890887c9c6393929307e786b7b2cf591be23ed6b2dedde367"
+      "sha256": "7f0333d140d60e191a39c5122b23d1cd23036fd810225eebc4c3cc41284f3127"
     },
     {
       "path": "tests/test_task_prompt_mcp.py",
@@ -3763,7 +3763,7 @@
     },
     {
       "path": "tests/test_task_reopen_consistency.py",
-      "sha256": "43ecc37407130108c720cefd1f262f4c2ca83ffd782172d293b65ccd21533c7f"
+      "sha256": "837490bb632f278eff1c6d68977116016dfb290b9154dcbe32e61a8e83a26cf0"
     },
     {
       "path": "tests/test_task_report_snapshot.py",
@@ -3779,7 +3779,7 @@
     },
     {
       "path": "tests/test_task_scoped_workspace_authority.py",
-      "sha256": "2663384a7e11a72492cc64c61ef0203f4e393827f49bf8409445aa616792edc6"
+      "sha256": "e7c26a9352b3f6b61127beeb45b0db60685b6a3210c96868ccfd7dd818201f6e"
     },
     {
       "path": "tests/test_task_split_governance.py",
@@ -3787,11 +3787,11 @@
     },
     {
       "path": "tests/test_task_split_steps.py",
-      "sha256": "12706ef13f378b30e4ec39b8d77f2f07e5f3a0880aa2067a2dd91832aedc17a2"
+      "sha256": "50e369df1b73811c7f4ba85dfd12c1bb11dcb62f90e12a14dd668f6a28c5d8a6"
     },
     {
       "path": "tests/test_task_stats_rpc_http.py",
-      "sha256": "12a8f33a4dae0d1a1d9a5211724c0f4c9b1307291f24c96991f83e3d7bedc58b"
+      "sha256": "29c701455d1560e2b468f02aa2a8751215e22cac001e6b5652ba333a8d906dde"
     },
     {
       "path": "tests/test_task_step_resolve_e2e.py",
@@ -3827,7 +3827,7 @@
     },
     {
       "path": "tests/test_task_write_client_contract.py",
-      "sha256": "f44b7dcb70efb348e373ed75c4d3c5c6d7c028db4a3360439386c2fff694ab42"
+      "sha256": "874219ba38d0bf6b7d592a066bb596c6c86b32d85f9d0d594812e926b4814c6f"
     },
     {
       "path": "tests/test_tools_task_create_workspace_params.py",
@@ -3855,11 +3855,11 @@
     },
     {
       "path": "tests/test_workspace_snapshot_binding.py",
-      "sha256": "c46ac4001eed4ac04aaa3d77a567cdde3553ca5b0d5da51558448f2cda37f2aa"
+      "sha256": "2aa55eaf0cd1bfecde6edba1a204ad00a0ad4a2bfd7ecad0fb9f33cf5077a9c6"
     },
     {
       "path": "tests/test_workspace_snapshot_rpc_http.py",
-      "sha256": "fcef295943b5beffaea8b6ed361fa9865b65cd4d758ddfa7fc1c5543c4098711"
+      "sha256": "3306132addd2f7d370a04718deeec763f8d4aaad9fab3f4b62607f43530132d1"
     },
     {
       "path": "tests/test_workspace_write_rpc_http.py",

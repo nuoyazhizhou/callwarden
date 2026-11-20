@@ -113,120 +113,88 @@ def test_close_writes_closed_at():
 
 
 # ------------------------------------------------------------
-# 2. 真实 CLI E2E（Windows daemon Named Pipe）
+# 2. 真实 CLI E2E（Windows daemon，ADR-002 单轨 HTTPS + manifest）
 # ------------------------------------------------------------
 
 pytestmark_cli = pytest.mark.skipif(
     sys.platform != "win32",
-    reason="真实 cw daemon/CLI E2E 需要 Windows + Named Pipe",
+    reason="真实 cw daemon/CLI E2E 需要 Windows + 本机 mTLS PKI",
 )
 
 _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-daemon.exe")
-_CLIENT_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-client.exe")
 _CW_BIN = os.path.join(_REPO_ROOT, "cw.py")
 _requires_bin = pytest.mark.skipif(
-    not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN)),
-    reason="cw-daemon.exe / cw-client.exe 未构建（需先 cargo build --bin cw-daemon --bin cw-client）",
+    not os.path.exists(_DAEMON_BIN),
+    reason="cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）",
 )
 
-
-def _client(pipe: str, args: list, timeout: int = 15) -> dict:
-    """调用真实 cw-client.exe（Named Pipe 客户端），返回结构化结果。"""
-    try:
-        result = subprocess.run(
-            [_CLIENT_BIN, "--socket", pipe, "--timeout", str(timeout)] + args,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout + 10,
-        )
-    except subprocess.TimeoutExpired:
-        return {"code": -1, "json": {}, "stdout": "", "stderr": "client timeout"}
-    parsed = {}
-    try:
-        parsed = json.loads(result.stdout)
-    except Exception:
-        pass
-    return {
-        "code": result.returncode,
-        "json": parsed,
-        "stdout": result.stdout.strip(),
-        "stderr": result.stderr.strip(),
-    }
-
-
-def _daemon_config(tmp: str) -> dict:
-    data_root = os.path.join(tmp, "data")
-    return {
-        "socket_path": "",
-        "registry_db_path": os.path.join(tmp, "registry.db"),
-        "task_db_path": os.path.join(tmp, "callwarden.db"),
-        "data_root": data_root,
-        "max_workers": 4,
-        "request_timeout_secs": 30,
-        "snapshot_cache_capacity": 4,
-        "codegraph_db_path_template": os.path.join(
-            data_root, "workspaces", "{workspace_instance_id}", "codegraph.db"
-        ),
-        "socket_mode": 0o660,
-        "socket_group": "",
-        "stage_toggle_db_path": os.path.join(tmp, "stage_toggle.db"),
-    }
+# fixture 会临时改写这些 env，teardown 逐项还原（避免污染后续测试）
+_CLI_ENV_KEYS = (
+    "USERPROFILE", "HOME", "CW_DAEMON_HTTP_ENDPOINT", "CW_DAEMON_TRANSPORT",
+    "CW_DAEMON_MODE", "CW_TASK_WRITE_POLICY", "CW_DAEMON_AUTOSTART_WINDOW",
+    "CALLWARDEN_SKIP_AUTO_SETUP",
+)
 
 
 @pytest.fixture(scope="module")
 def isolated_daemon():
-    """启动隔离临时目录的真实 cw-daemon（Named Pipe 由 transport 按 SID 派生）。"""
-    from callwarden.config import _get_windows_user_sid
+    """隔离 HTTPS daemon + workspace 权威栈（USERPROFILE 重定向，不碰真实 HOME）。
 
-    sid = _get_windows_user_sid()
-    pipe = rf"\\.\pipe\callwarden-{sid}"
-
-    # 若默认管道已被其他 daemon 占用，跳过（避免干扰既有实例）
-    occupied = _client(pipe, ["ping"], timeout=2)
-    if occupied["code"] == 0:
-        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过进程级 E2E")
-
-    tmp = tempfile.mkdtemp(prefix="task-close-e2e-")
-    config_path = os.path.join(tmp, "config.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(_daemon_config(tmp), f)
-
-    log_path = os.path.join(tmp, "daemon.log")
-    log = open(log_path, "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [_DAEMON_BIN, "--config", config_path],
-        stdout=log, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8",
+    沿用 `_w3_harness.setup_w3_client`：隔离 PKI / manifest / registry / task DB，
+    并补齐 CLI `resolve_workspace_pair` 所需的 registry 注册与 task-DB canonical
+    workspace 权威（workspaces + workspace_authority_captures）。
+    """
+    from _w3_harness import (
+        restore_w3_env, seed_cli_task_agent, seed_cli_task_authority, setup_w3_client,
     )
+
+    prev_pki = os.environ.pop("CW_PKI_DIR", None)
+    tmp = tempfile.mkdtemp(prefix="task-close-e2e-")
+    proc = None
+    saved_env = {k: os.environ.get(k) for k in _CLI_ENV_KEYS}
     try:
-        deadline = time.time() + 40.0
-        ok = False
-        time.sleep(1.5)  # 给 daemon 初始化（加载配置/注册表/任务库）留出时间
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                break
-            r = _client(pipe, ["ping"], timeout=2)
-            if r["code"] == 0 and r["json"].get("status") == "ok":
-                ok = True
-                break
-            time.sleep(0.5)
-        if not ok:
-            log_content = ""
-            try:
-                with open(log_path, "r", encoding="utf-8") as f:
-                    log_content = f.read()[-3000:]
-            except Exception:
-                pass
-            pytest.fail(f"daemon 未在超时内响应，日志：\n{log_content}")
-        yield {"pipe": pipe, "tmp": tmp, "task_db": os.path.join(tmp, "callwarden.db")}
+        client, inst, endpoint, proc = setup_w3_client(tmp, _REPO_ROOT, ws_id=1)
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 前置不可用（二进制/PKI/端口）")
+        task_db = os.path.join(tmp, "task.db")
+        seed_cli_task_authority(
+            task_db, ws_id=1, name="task-close-e2e",
+            root_path=_REPO_ROOT, instance_id=inst,
+        )
+        # task.claim 要求 identity 已注册且 active（role 必须与 claim 一致）
+        seed_cli_task_agent(
+            task_db, "agent-close-e2e", agent_name="close-e2e",
+            session_id="session-close-e2e", model_id="model-close-e2e",
+            role="implementer",
+        )
+        # CLI 子进程经这些 env 命中隔离 daemon（身份证书由 setup_w3_client 注入）
+        os.environ.update({
+            "USERPROFILE": os.path.join(tmp, "userhome"),
+            "HOME": os.path.join(tmp, "userhome"),
+            "CW_DAEMON_HTTP_ENDPOINT": endpoint,
+            "CW_DAEMON_TRANSPORT": "http",
+            "CW_DAEMON_MODE": "enterprise",
+            "CW_TASK_WRITE_POLICY": "shared",
+            "CW_DAEMON_AUTOSTART_WINDOW": "0",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+        })
+        yield {"tmp": tmp, "task_db": task_db}
     finally:
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=5)
-        log.close()
+        restore_w3_env()
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        if prev_pki is not None:
+            os.environ["CW_PKI_DIR"] = prev_pki
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -270,6 +238,55 @@ def _task_db_status(task_db: str, task_id: str) -> str:
         conn.close()
 
 
+def _seed_pass_verdict(task_db: str, task_id: str) -> None:
+    """测试注入：预置 reviewer pass verdict（关闭门禁前置条件，非本次断言对象）。
+
+    `verdict.submit` 的完整 provenance 契约由 test_task_verdict_cli 覆盖；这里
+    只验证 close 在「已有 pass verdict」时放行并写入 closed_at。
+    """
+    conn = sqlite3.connect(task_db)
+    try:
+        conn.execute(
+            "INSERT INTO task_verdict_events "
+            "(verdict_id, task_id, contract_id, contract_revision, contract_hash, "
+            "phase, reviewer_identity, findings, overall, attestation, submitted_at) "
+            "VALUES (?, ?, ?, 1, ?, 'blind_first_pass', '{}', '[]', 'pass', "
+            "'e2e pass verdict', ?)",
+            (f"V-{task_id}", task_id, f"TC-{task_id}", f"sha256:{task_id}",
+             time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+_IDENTITY = [
+    "--agent-id", "agent-close-e2e",
+    "--session-id", "session-close-e2e",
+    "--model-id", "model-close-e2e",
+]
+
+
+def _acquire_lease(task_id: str, role: str) -> list:
+    """按 P4 受保护写契约领取 lease，返回 --lease-token/--fencing-counter 参数。"""
+    r = _run_cw(["lease", "acquire", task_id, "--role", role, *_IDENTITY, "--json"])
+    assert r.returncode == 0, f"lease acquire 失败: {r.stdout} {r.stderr}"
+    data = json.loads(r.stdout)
+    assert data.get("ok") and data.get("token"), f"lease acquire 未返回 token: {data}"
+    return [
+        "--lease-token", data["token"],
+        "--fencing-counter", str(data["fencing_counter"]),
+    ]
+
+
+def _close_with_lease(task_id: str, role: str = "reviewer"):
+    """携带结构化身份 + 有效 lease 执行 close（P3/P4 治理契约）。"""
+    return _run_cw([
+        "task", "close", task_id, "--role", role, *_IDENTITY,
+        *_acquire_lease(task_id, role),
+    ])
+
+
 @_requires_bin
 def test_cli_close_parent_with_open_child_rejected(isolated_daemon):
     """S1：父任务含 open 子任务时 `cw task close` 被拒绝（E_CHILD_TASKS_NOT_CLOSED）。"""
@@ -281,14 +298,14 @@ def test_cli_close_parent_with_open_child_rejected(isolated_daemon):
     # 2. 用 split 创建 1 个 open 子任务
     plan_path = os.path.join(isolated_daemon["tmp"], "plan-close.md")
     with open(plan_path, "w", encoding="utf-8") as f:
-        f.write("# 计划\n\n## 子任务\n- implement @ a.py\n")
+        f.write("# 计划\n\n## 子任务\n子任务描述\n- implement @ a.py\n")
     r2 = _run_cw(["task", "split", parent_id, "--plan", plan_path])
     assert r2.returncode == 0, f"task split 失败: {r2.stdout} {r2.stderr}"
 
     # 3. 关闭父任务必须被拒绝，且子任务状态不被破坏
     #    注：CLI 对 daemon 业务错误打印到 stdout 并返回 0 退出码（既有契约，非本任务可改范围），
     #    因此断言错误码出现在输出中 + 任务状态未被写入 closed
-    r3 = _run_cw(["task", "close", parent_id, "--reviewer", "reviewer"])
+    r3 = _close_with_lease(parent_id)
     assert "E_CHILD_TASKS_NOT_CLOSED" in r3.stdout + r3.stderr, f"父任务关闭应被拒绝: {r3.stdout} {r3.stderr}"
 
     # 4. 父任务状态保持原样（未写入 closed）
@@ -308,7 +325,7 @@ def test_cli_close_leaf_with_pending_steps_rejected(isolated_daemon):
 
     assert len(_task_db_step_ids(isolated_daemon["task_db"], task_id)) == 2
 
-    r2 = _run_cw(["task", "close", task_id, "--reviewer", "reviewer"])
+    r2 = _close_with_lease(task_id)
     # CLI 对 daemon 业务错误打印到 stdout 并返回 0 退出码（既有契约），断言错误码即可
     assert "E_STEPS_NOT_DONE" in r2.stdout + r2.stderr, f"pending 步骤任务关闭应被拒绝: {r2.stdout} {r2.stderr}"
 
@@ -320,7 +337,7 @@ def test_cli_close_zero_step_task_rejected(isolated_daemon):
     assert r1.returncode == 0, f"task create 失败: {r1.stdout} {r1.stderr}"
     task_id = _parse_task_id(r1.stdout)
 
-    r2 = _run_cw(["task", "close", task_id, "--reviewer", "reviewer"])
+    r2 = _close_with_lease(task_id)
     # CLI 对 daemon 业务错误打印到 stdout 并返回 0 退出码（既有契约），断言错误码即可
     assert "E_NO_STEPS" in r2.stdout + r2.stderr, f"零步骤任务关闭应被拒绝: {r2.stdout} {r2.stderr}"
 
@@ -336,14 +353,21 @@ def test_cli_close_succeeds_after_steps_done(isolated_daemon):
     step_ids = _task_db_step_ids(isolated_daemon["task_db"], task_id)
     assert len(step_ids) == 1
 
-    # 领取并回报唯一步骤为 done
-    r2 = _run_cw(["task", "next", task_id])
+    # 领取并回报唯一步骤为 done（P3 结构化身份 + P4 受保护写 lease）
+    impl_lease = _acquire_lease(task_id, "implementer")
+    r2 = _run_cw(["task", "next", task_id, "--role", "implementer", *_IDENTITY])
     assert r2.returncode == 0, f"task next 失败: {r2.stdout} {r2.stderr}"
-    r3 = _run_cw(["task", "report", task_id, step_ids[0], "--result", "ok"])
+    r3 = _run_cw([
+        "task", "report", task_id, step_ids[0], "--result", "ok",
+        "--role", "implementer", *_IDENTITY, *impl_lease,
+    ])
     assert r3.returncode == 0, f"task report 失败: {r3.stdout} {r3.stderr}"
 
+    # report 后任务进入 review 态：预置 pass verdict 满足 verdict 关闭门禁
+    _seed_pass_verdict(isolated_daemon["task_db"], task_id)
+
     # 步骤全部 done 后允许关闭
-    r4 = _run_cw(["task", "close", task_id, "--reviewer", "reviewer"])
+    r4 = _close_with_lease(task_id)
     assert r4.returncode == 0, f"task close 失败: {r4.stdout} {r4.stderr}"
 
     # closed_at 非零
