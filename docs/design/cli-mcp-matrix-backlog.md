@@ -2919,7 +2919,7 @@ review / apply，只能手工 `supersede` 收编。
 | 类别 | 说明 |
 | --- | --- |
 | 本次范围 | `i18n/__init__.py`、`tests/test_i18n_placeholder_consistency.py`、backlog §27.5 / §37 |
-| 非目标 | 升级为抛错（fail-closed）；动态 key 的 kwargs 形状静态校验；en 文案打磨 |
+| 非目标 | 升级为抛错（fail-closed）；en 文案打磨（动态 key 的 kwargs 形状静态校验已在 §39 收口） |
 | 语义 | 分类仅用于诊断 / 门禁；`t()` 对外输出与失败兜底保持历史契约（不抛异常） |
 | 回滚 | 回退两文件提交即可；无 catalog 变更、无数据迁移 |
 
@@ -3123,3 +3123,45 @@ review / apply，只能手工 `supersede` 收编。
 > - 机检**不覆盖** S4-02 / S4-04 / S4-05 / S4-06 / S4-07：其中 S4-05 即本门禁自身
 >   （本次 PASS），其余四项的结论以 §38.4 的取证记录（`pytest tests/test_windows_bridge_e2e.py`
 >   移除/改矩阵、release 产物清单、跨 OS 双向实机证据、文档残留扫描）为准，本轮未重跑活体。
+
+---
+
+## 39. 动态 key（`t(variable)`）占位符静态校验（2026-11-20）
+
+### 39.1 现象与缺口
+
+§32 把 14 个动态调用点冻结为 allowlist，但只保证「不新增/不消失」；§27 的占位符
+门禁只覆盖首参为字符串字面量的调用。二者之间仍有盲区：动态站点的 catalog 模板
+若引入调用方未提供的占位符，`t()` 会在运行时缺参并静默回退原文，而 allowlist
+与字面量门禁都不会失败。
+
+### 39.2 处置（`tests/test_i18n_placeholder_consistency.py` §39 段）
+
+只覆盖**静态可判定**的动态站点：
+
+| 类别 | 站点 | 校验 |
+| --- | --- | --- |
+| F | `cli/main.py::_handle_experiment._msg` 的 28 个调用点 | key 与 kwargs 均字面量：模板占位符 ⊆ 调用点 kwargs，双语各判一遍；并断言 `_msg` 仍将 `**kwargs` 透传给 `t()`（防门禁空转） |
+| B | `_print_main_help` 的注册表 `title_key` / `desc_key` | title 无 kwargs → 模板零占位符；desc 仅接受 `count`；数量冻结 12 / 44 |
+| D（无 kwargs） | `_collab_output_structured_reason` / `_t_structured` 消费的 5 个结构化默认 key | `daemon_errors` 扁平段模板必须零占位符 |
+| D/E（`**context`） | 6 个常量映射 resolver（contracts/evidence/gate/protocol/evaluator/views） | catalog 与 bundled 双语默认的占位符集合逐 key、逐语言一致 |
+
+不可静态判定的 A 类公开入口（`i18n/__init__.py` 的 `**kwargs` 包装）与 daemon
+动态 `message_key` 继续由 §32 冻结清单兜底。
+
+### 39.3 验证
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| §39 门禁 + 既有占位符门禁 | `pytest tests/test_i18n_placeholder_consistency.py -o addopts='' -q` | **109 passed** |
+| i18n 其余三件套 | `pytest tests/test_i18n_key_existence.py tests/test_i18n_cleanup_c5.py tests/test_i18n_print_cleanup.py -o addopts='' -q` | **69 passed** |
+| 负向自检 | `test_dynamic_placeholder_gate_detects_missing_kwarg` | 缺参 / 非标识符花括号均被判定为不合规 |
+
+### 39.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 本次范围 | 仅测试门禁（`tests/test_i18n_placeholder_consistency.py`），无产品代码与 catalog 变更 |
+| 非目标 | A 类公开入口 / daemon 动态 key 的数据流分析；`t()` 失败语义升级为抛错 |
+| 语义 | 门禁为冻结式：调用点、key 数量、占位符契约任一漂移都会失败 |
+| 回滚 | 回退单文件提交即可 |

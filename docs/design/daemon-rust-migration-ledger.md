@@ -3987,7 +3987,7 @@ live round-trip 已纳入常规 CLI 回归；CLI 面 skip 清零。
 - 未改产品源码（`rust_ext/`、`server/`、`cli/`）；改动集中在 `tests/` 与
   `docs/design/migration-manifest.md`（已删模块标注），生成物仅重生
   `outputs/coverage_manifest.json`。
-- 仍待办：i18n 动态 key（`t(variable)`）占位符静态校验。§24.5 已在 §9.48 收口。
+- 仍待办：无。i18n 动态 key 占位符静态校验已在 §9.49 收口；§24.5 已在 §9.48 收口。
 
 ## 9.48 §24.5 退出码口径收口：本地输入校验 `rc=2` / daemon 拒绝 `rc=1`（2026-11-20）
 
@@ -4032,6 +4032,43 @@ live round-trip 已纳入常规 CLI 回归；CLI 面 skip 清零。
   另立卡（本卡不扩大改动面）。
 - `_run_subcommand_mode` 在非 `task` 写命令上先做 workspace 注册，注册失败时以
   既有 `rc=2` 提前退出（环境门禁口径），不影响本卡分支的 rc 语义。
+
+## 9.49 动态 key（`t(variable)`）占位符静态校验（2026-11-20）
+
+### 1. 缺口
+
+§32 冻结了 14 个动态调用点（首参非字面量），但只保证「不新增/不消失」；§27 的
+占位符门禁只覆盖字面量首参。动态站点的 catalog 模板若引入调用方未提供的占位符，
+`t()` 会在运行时缺参并静默回退原文，allowlist 与字面量门禁都不会失败。
+
+### 2. 处置（仅测试门禁，无产品代码/catalog 变更）
+
+`tests/test_i18n_placeholder_consistency.py` 新增 §39 段：
+
+| 类别 | 站点 | 校验 |
+|---|---|---|
+| F | `_handle_experiment._msg` 28 个调用点 | key/kwargs 字面量：模板占位符 ⊆ 调用点 kwargs（双语）；调用点数量冻结 28 / 26 key；拒绝 `**` 展开；断言 `_msg` 仍透传 `**kwargs`（防空转） |
+| B | 注册表 `title_key` / `desc_key` | title 无 kwargs → 零占位符；desc 仅 `count`；冻结 12 / 44 |
+| D（无 kwargs） | 5 个结构化默认 key（`_collab_output_structured_reason` / `_t_structured`） | `daemon_errors` 扁平段模板零占位符 |
+| D/E（`**context`） | 6 个常量映射 resolver | catalog 与 bundled 双语默认占位符集合逐 key、逐语言一致 |
+
+不可静态判定的 A 类公开入口（`i18n/__init__.py` 的 `**kwargs` 包装）与 daemon
+动态 `message_key` 继续由 §32 冻结清单兜底。
+
+### 3. 验证
+
+| 项 | 结果 |
+|---|---|
+| `tests/test_i18n_placeholder_consistency.py` | **109 passed**（含新增 6 条 §39 用例） |
+| `tests/test_i18n_key_existence.py` + `i18n_cleanup_c5` + `i18n_print_cleanup` | **69 passed** |
+| 负向自检 | 缺参 / 非标识符花括号（`{0}`）均被 helpers 判为不合规 |
+| 基线扫描 | 28 个 `_msg`、12 title / 44 desc、5 个结构化 key、6 个 resolver 均零违规（门禁为冻结式，无基线修复） |
+
+### 4. 边界
+
+- 非目标：A 类公开入口与 daemon 动态 key 的数据流分析；`t()` 缺参语义升级为抛错。
+- 门禁只读：不改 `cli/main.py`、`i18n/*.json` 与各 resolver。
+- 回滚：回退测试文件提交。
 
 ## 10. 相关真相源
 

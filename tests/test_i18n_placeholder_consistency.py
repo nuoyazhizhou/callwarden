@@ -41,6 +41,12 @@ str 值包成单元素列表，并用 AST 正反扫描保证调用点已全部�
 （文件 + 函数限定名 + 函数名 + 实参签名）冻结成显式 allowlist，新增或消失都失败；
 另把两处可枚举的 ``mode_key`` 迁移为字面量 key，并为 ``cli/categories.py`` 注册表的
 ``title_key`` / ``desc_key`` 补双语存在性断言。
+
+§39 在 §32 冻结清单之上补**动态站点的占位符静态校验**：F 类
+``_handle_experiment._msg`` 的 28 个字面量调用（kwargs 必须覆盖模板占位符）、
+B 类注册表 key（title 无 kwargs / desc 仅 ``count``）、无 kwargs 的 D 类结构化
+默认 key（模板必须零占位符）、以及 6 个 resolver 的 catalog ↔ bundled 占位符
+契约一致性。A 类公开入口与 daemon 动态 message_key 仍由 §32 清单兜底。
 """
 import ast
 import json
@@ -1202,4 +1208,216 @@ def test_t_keeps_raw_default_on_unsafe_value(active_language):
     active_language("zh_CN")
     default = '{"raw": 1}'
     assert i18n.t("no.such.key.for.gate", default=default) == default
+
+
+# ---------------------------------------------------------------------------
+# §39 动态 key（t(variable)）占位符静态校验
+#
+# §32 冻结了 14 个动态调用点（首参非字面量），§27 只管字面量 key 的占位符。
+# 本段补上动态站点中**静态可判定**的三类：
+#   F 类：`_handle_experiment._msg(key, default, **kwargs)` 的 28 个调用点
+#         （key 与 kwargs 均为字面量）；
+#   B 类：`_print_main_help` 的注册表 key（title 无 kwargs；desc 仅 count）；
+#   D/E 类：6 个常量映射 resolver 的 `t(message_key, **context)`——context 形状
+#         由 bundled 双语默认定义，故断言 catalog 与 bundled 占位符集合一致。
+# 不可静态判定的 A 类公开入口（`i18n/__init__.py` 的 `**kwargs` 包装）与
+# daemon 动态 message_key 仍由 §32 冻结清单兜底。
+# ---------------------------------------------------------------------------
+
+EXPERIMENT_MSG_SITE_COUNT = 28
+EXPERIMENT_MSG_KEY_COUNT = 26
+REGISTRY_TITLE_KEY_COUNT = 12
+REGISTRY_DESC_KEY_COUNT = 44
+STRUCTURED_DEFAULT_KEY_COUNT = 5
+
+
+def _collect_experiment_msg_sites(source: str) -> dict:
+    """收集 `_handle_experiment` 内 `_msg(<literal>, ...)`：key → kwargs 并集。
+
+    `_msg` 是 F 类动态站点（`t(key, default=..., **kwargs)`），但其调用方的
+    key 与 kwargs 都是字面量，因此占位符必须在调用点被显式满足。
+    """
+    tree = ast.parse(source)
+    owner = next(
+        (node for node in ast.walk(tree)
+         if isinstance(node, ast.FunctionDef) and node.name == "_handle_experiment"),
+        None,
+    )
+    assert owner is not None, "cli/main.py 未找到 _handle_experiment"
+    sites = {}
+    for node in ast.walk(owner):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "_msg"):
+            continue
+        first = node.args[0] if node.args else None
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            continue
+        entry = sites.setdefault(
+            first.value, {"kwargs": set(), "splat": False, "lines": []})
+        entry["kwargs"] |= {kw.arg for kw in node.keywords if kw.arg}
+        entry["splat"] = entry["splat"] or any(kw.arg is None for kw in node.keywords)
+        entry["lines"].append(node.lineno)
+    return sites
+
+
+def _missing_placeholders(kwargs: set, value: str):
+    """返回未被 kwargs 覆盖的占位符；值含非标识符花括号时返回 ``None``。"""
+    fields = _format_fields(value)
+    if fields is None:
+        return None
+    return sorted(fields - kwargs)
+
+
+def _experiment_msg_forwards_kwargs(source: str) -> bool:
+    """`_msg` 必须把关键字实参透传给 `t()`，否则 F 类校验会退化为空转。"""
+    tree = ast.parse(source)
+    owner = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_handle_experiment"
+    )
+    msg_def = next(
+        node for node in ast.walk(owner)
+        if isinstance(node, ast.FunctionDef) and node.name == "_msg"
+    )
+    t_call = next(
+        node for node in ast.walk(msg_def)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "t"
+    )
+    return any(kw.arg is None for kw in t_call.keywords)
+
+
+def test_experiment_msg_sites_are_frozen():
+    """F 类调用点数量与 key 集合冻结；任何 `**` 展开都要显式登记。"""
+    source = _load_source("cli/main.py")
+    sites = _collect_experiment_msg_sites(source)
+    total = sum(len(entry["lines"]) for entry in sites.values())
+    assert total == EXPERIMENT_MSG_SITE_COUNT, f"_msg 调用点数量漂移: {total}"
+    assert len(sites) == EXPERIMENT_MSG_KEY_COUNT, (
+        f"_msg 去重 key 数量漂移: {len(sites)}")
+    splat = sorted(key for key, entry in sites.items() if entry["splat"])
+    assert not splat, f"_msg 调用出现 **kwargs 展开（无法静态校验）: {splat}"
+    assert _experiment_msg_forwards_kwargs(source), (
+        "_msg 不再透传 **kwargs，F 类占位符校验已退化为空转")
+
+
+def test_experiment_msg_placeholders_satisfied(zh_catalog, en_catalog):
+    """28 个 `_msg` 调用点的 kwargs 必须覆盖 catalog 模板的全部占位符。"""
+    sites = _collect_experiment_msg_sites(_load_source("cli/main.py"))
+    problems = []
+    for key, entry in sorted(sites.items()):
+        for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+            value = _reach(catalog, key)
+            if not isinstance(value, str):
+                problems.append(f"{lang} 缺少 {key}")
+                continue
+            missing = _missing_placeholders(entry["kwargs"], value)
+            if missing is None:
+                problems.append(f"{lang} {key} 含非标识符花括号: {value!r}")
+            elif missing:
+                problems.append(
+                    f"{lang} {key} 缺 {missing}（kwargs={sorted(entry['kwargs'])}）")
+    assert not problems, "动态 key 占位符未被调用点 kwargs 满足:\n" + "\n".join(problems)
+
+
+def test_categories_registry_placeholders_match_call_site(zh_catalog, en_catalog):
+    """`_print_main_help` 的注册表 key：title 无 kwargs，desc 仅接受 count。"""
+    from cli.categories import COMMAND_CATEGORIES
+
+    titles = [cat.title_key for cat in COMMAND_CATEGORIES if cat.title_key]
+    descs = [
+        cmd.desc_key
+        for cat in COMMAND_CATEGORIES
+        for cmd in cat.commands
+        if cmd.desc_key
+    ]
+    assert len(titles) == REGISTRY_TITLE_KEY_COUNT, f"title_key 数量漂移: {len(titles)}"
+    assert len(descs) == REGISTRY_DESC_KEY_COUNT, f"desc_key 数量漂移: {len(descs)}"
+
+    problems = []
+    for key, allowed in (
+        [(key, set()) for key in titles] + [(key, {"count"}) for key in descs]
+    ):
+        for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+            value = _reach(catalog, key)
+            if not isinstance(value, str):
+                problems.append(f"{lang} 缺少 {key}")
+                continue
+            missing = _missing_placeholders(allowed, value)
+            if missing is None:
+                problems.append(f"{lang} {key} 含非标识符花括号: {value!r}")
+            elif missing:
+                problems.append(f"{lang} {key} 缺 {missing}（允许={sorted(allowed)}）")
+    assert not problems, "注册表 key 占位符与调用点不一致:\n" + "\n".join(problems)
+
+
+def test_structured_default_keys_are_placeholder_free(zh_catalog, en_catalog):
+    """无 kwargs 的 D 类动态站点：结构化默认 key 的模板不得含占位符。
+
+    `_collab_output_structured_reason` 与 `_t_structured` 以 `t(message_key)` 解析
+    daemon message_key，传参只有 `default`；catalog 模板一旦含占位符就会在运行时
+    缺参并回退原文。
+    """
+    tree = ast.parse(_load_source("cli/main.py"))
+    keys = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)):
+            continue
+        if not any(isinstance(t, ast.Name)
+                   and t.id in ("_IDENTITY_REASON_DEFAULTS", "_DEFAULTS")
+                   for t in node.targets):
+            continue
+        keys |= {
+            k.value for k in node.value.keys
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+        }
+    assert len(keys) == STRUCTURED_DEFAULT_KEY_COUNT, (
+        f"结构化默认 key 数量漂移: {sorted(keys)}")
+
+    problems = []
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        flat = catalog.get("daemon_errors", {})
+        for key in sorted(keys):
+            short = key[len("daemon_errors."):] if key.startswith("daemon_errors.") else key
+            value = flat.get(short)
+            if not isinstance(value, str):
+                problems.append(f"{lang} 缺少 {key}")
+            elif _format_fields(value) != set():
+                problems.append(f"{lang} {key} 含占位符 {sorted(_format_fields(value))}")
+    assert not problems, "无 kwargs 动态站点的模板含占位符:\n" + "\n".join(problems)
+
+
+def test_bundled_catalog_placeholder_parity(zh_catalog, en_catalog):
+    """D/E 类 resolver：catalog 与 bundled 的占位符集合必须逐 key、逐语言一致。
+
+    resolver 以 `t(message_key, **context)` 调用；context 形状由 bundled 双语默认
+    定义。catalog 一旦引入 bundled 没有的占位符，真实调用就会缺参并静默回退。
+    """
+    problems = []
+    for (label, dotted, err_attr, warn_attr, bundled_attr,
+         _resolver, _emit_n, _bundled_n) in BUNDLED_RESOLVER_SPECS:
+        module = _import_dotted(dotted)
+        bundled = getattr(module, bundled_attr)
+        for key in sorted(_emitted_keys(module, err_attr, warn_attr)):
+            for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+                catalog_value = _catalog_string(catalog, key)
+                bundle_value = bundled.get(key, {}).get(lang)
+                if not isinstance(catalog_value, str) or not isinstance(bundle_value, str):
+                    continue
+                catalog_fields = _format_fields(catalog_value)
+                bundle_fields = _format_fields(bundle_value)
+                if catalog_fields is None or bundle_fields is None:
+                    problems.append(f"{label} {key} {lang} 含非标识符花括号")
+                elif catalog_fields != bundle_fields:
+                    problems.append(
+                        f"{label} {key} {lang} catalog={sorted(catalog_fields)} "
+                        f"bundled={sorted(bundle_fields)}")
+    assert not problems, "catalog 与 bundled 占位符契约漂移:\n" + "\n".join(problems)
+
+
+def test_dynamic_placeholder_gate_detects_missing_kwarg():
+    """负向自检：缺参 / 非标识符花括号必须被 helpers 判为不合规。"""
+    assert _missing_placeholders({"a"}, "x {a} {b}") == ["b"]
+    assert _missing_placeholders({"a"}, "raw {{literal}}") == []
+    assert _missing_placeholders(set(), "bad {0}") is None
 

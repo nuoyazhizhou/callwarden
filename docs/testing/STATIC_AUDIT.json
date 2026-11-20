@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "65d979351e5c9ddd79a167249ad2e697e3c45fa2",
+  "supplied_source_revision": "230ff90471c9c642f5764fd823a8ce06b0d802b7",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,7 +38,7 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7305,
+    "python_definitions": 7311,
     "python_source_files": 704,
     "convergence_definitions": 58,
     "skip_calls": {
@@ -2427,7 +2427,7 @@
     },
     {
       "path": "tests/test_i18n_placeholder_consistency.py",
-      "sha256": "b41be8dbfed23b4cec4a935e704387e898b9a27627e02e32e01dd31f167ba310"
+      "sha256": "be870b5f09655061186ffc661331409f9ca56976fb79b37c654a5cc05bbffea9"
     },
     {
       "path": "tests/test_i18n_print_cleanup.py",
