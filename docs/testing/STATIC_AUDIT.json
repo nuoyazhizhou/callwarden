@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "230ff90471c9c642f5764fd823a8ce06b0d802b7",
+  "supplied_source_revision": "e3bc9d1e51781e860ca217deba6b82e128ba9eb4",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,7 +38,7 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7311,
+    "python_definitions": 7313,
     "python_source_files": 704,
     "convergence_definitions": 58,
     "skip_calls": {
@@ -2407,7 +2407,7 @@
     },
     {
       "path": "tests/test_http_manifest_discovery.py",
-      "sha256": "8e4afe109c5f2907a6ceec5ad95bc550f7c7340cb698a0919ddfce0fb636302e"
+      "sha256": "e3cd88cabede481760e970b5527b8dd66cd29090af0d0e9e7ccb16b4ea8bac89"
     },
     {
       "path": "tests/test_http_native_read_cutover.py",
@@ -3443,7 +3443,7 @@
     },
     {
       "path": "tests/test_principal_authorization.py",
-      "sha256": "7bada978384e35cfb6dddefad4f69c9402d79ad7647215fb5fb6db55614238d8"
+      "sha256": "e2ad8c397a54a1c358f49c4face54e71f0d5881c09f2d3bc12af27069fd8e516"
     },
     {
       "path": "tests/test_process_level_e2e_recovery.py",
@@ -3711,7 +3711,7 @@
     },
     {
       "path": "tests/test_task_loop_capability_authority.py",
-      "sha256": "de62c07acf99b20040d7e221f526625dacdfefd91d9647592810c5c4fc5b2d04"
+      "sha256": "036ccaf4e4408d45087098aabaec52551c2c8315c9447cb9a86fe416650244e2"
     },
     {
       "path": "tests/test_task_loop_gate_order.py",

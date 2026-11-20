@@ -4070,6 +4070,92 @@ live round-trip 已纳入常规 CLI 回归；CLI 面 skip 清零。
 - 门禁只读：不改 `cli/main.py`、`i18n/*.json` 与各 resolver。
 - 回滚：回退测试文件提交。
 
+## 9.50 §24.5/§9.49 后全量分段门禁复跑：4 项失败归因（2026-11-20）
+
+### 1. 装置与口径
+
+承接 §9.47 的分段门禁，在 §9.48（退出码口径）与 §9.49（动态 key 占位符）落地后
+复跑全量 `tests/test_*.py`：
+
+- `%TEMP%\cw_seg_run_fresh.py`（临时脚本，非仓库）：全新输出目录
+  `%TEMP%\cw_seg_run_20261120c`（不复用 §9.47 的 594 行结果），单模块预算
+  **900s**（§9.47 结论：300s 对 i18n/e2e 过紧），6 并发，超时
+  `taskkill /F /T` 回收进程树，结果写 `results.jsonl`。
+- 589 行 / 589 模块（+1 = §9.48 新增 `test_cli_exit_code_local_input.py`），
+  墙钟 **1579.6s**，模块耗时合计 8912.6s。
+
+### 2. 结果
+
+| 指标 | 值 |
+|---|---|
+| 模块 | 589：clean 580 / nonzero 9 |
+| 执行用例（junit 汇总） | 8030：failed+error **10** / skipped 142 |
+| 超时模块 | **0**（900s 预算生效；§9.47 的 5 个超时模块本轮均 rc=0） |
+| 全量 collect-only（含 `tests/acceptance/**`） | 9554 条（分段装置只跑顶层 `tests/test_*.py`） |
+
+非零 9 个 = 4 个真实失败模块 + 5 个 `rc=5` 脚本基准（无 `def test_`，沿用 §9.47
+口径排除出 pytest 门禁：`test_f11_rust_build_graph`、`test_p3_gate_smoke`、
+`test_p3_identity_smoke`、`test_p3_reviews_smoke`、`test_p3_task_mutation_smoke`）。
+
+### 3. F 簇归因（4 项 → 清零）
+
+| 模块 / 用例 | 签名 | 族与判定 | 处置 |
+|---|---|---|---|
+| `test_task_loop_capability_authority::test_cli_identity_revoke_fail_closed` | `SystemExit: 1`（旧断言 `ret is True`） | **卡内**：§9.48 口径变更后的陈旧断言 | `_identity_revoke` 在非 local 模式已是 `raise SystemExit(1)`（capability gate 未接线属 daemon 拒绝面）→ 断言改 `pytest.raises(SystemExit)` + `code == 1` |
+| `test_mcp_export_module_graph_http_rpc`（4 errors） | `E_HTTP_MANIFEST_STALE: [Errno 13] Permission denied`（setup） | **卡外**并发窗口 + 产品侧瞬时读缺陷 | `read_http_manifest` 对 `PermissionError` 做有界重试（见 §4） |
+| `test_mcp_validate_revision_dependencies_http_rpc`（4 errors） | 同上 | 同上 | 同上 |
+| `test_principal_authorization::test_s1_05_missing_san_uri_is_rejected` | `ConnectionAbortedError: [WinError 10053]` | **卡外**：拒绝时机不确定（403 vs TLS 断连） | 断言接受 `(ssl.SSLError, OSError)`，与 `test_mtls_enrollment::S1-06` 同口径（见 §4） |
+
+### 4. 修复
+
+**（a）manifest 瞬时读竞态（产品侧，`server/daemon_autostart.py`）**
+
+daemon 以 `publish_manifest_atomic` → `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` 发布
+manifest；替换瞬间目标文件处于 Windows delete-pending 状态，此时 `open()` 得到
+瞬时 `ERROR_ACCESS_DENIED`（不是旧值也不是新值）。6 并发门禁下两个 MCP 模块的
+setup 同时命中该窗口。旧实现把任何 `OSError` 直接映射为 `E_HTTP_MANIFEST_STALE`，
+使瞬时竞态表现为硬失败。
+
+现改为：仅 `PermissionError` 在 **1.0s 预算 / 50ms 间隔**内重试，预算耗尽仍报
+`E_HTTP_MANIFEST_STALE`；其它 `OSError`/`ValueError` 及 `FileNotFoundError`
+语义不变（立即 fail-closed）。新增 2 条用例于 `tests/test_http_manifest_discovery.py`：
+瞬时两次 `PermissionError` 后成功；持续拒绝在预算耗尽后报 STALE。
+
+**（b）S1-05 拒绝口径（测试侧）**
+
+无 SAN URI 的客户端证书在 rustls 证书校验阶段即被拒，客户端看到 HTTP 403
+（`E_MTLS_CLIENT_CERT_MISSING/REJECTED`）还是 TLS 层断连取决于服务端拒绝时机，
+并发负载下两态均实测出现。测试改为二者皆算「拒绝」，与既有过期证书用例
+（`test_mtls_enrollment::S1-06`）保持一致。
+
+**（c）§24.5 陈旧断言（测试侧）**
+
+见 §3 第一行；`tests/test_task_loop_capability_authority.py` 同步退出码语义。
+
+### 5. 验证
+
+| 批次 | 范围 | 结果 |
+|---|---|---|
+| A | `test_http_manifest_discovery` + `test_principal_authorization` + `test_task_loop_capability_authority` | **55 passed** |
+| B | 两个 manifest 模块 6 并发 × 2 轮（修复后压测） | **12/12 rc=0** |
+| C | manifest/autostart 关联面 5 模块（`test_daemon_autostart`、`test_daemon_autostart_windows`、`test_cli01_health_manifest_capability`、`test_cli_daemon_stop`、`test_mcp_daemon_startup`） | **46 passed / 2 skipped** |
+| D | 门禁内 i18n（§9.49 基线复核） | `test_i18n_placeholder_consistency` **109 passed**；`test_i18n_cleanup_c5` **46 passed**（103.8s） |
+
+### 6. 卡外判定依据
+
+- `git diff --name-only 65d9793..HEAD` 仅 `cli/main.py` + 13 个测试/文档文件；
+  `server/`、`tests/conftest.py` 与上表三个失败模块均未被本轮改动触及。
+- 两个 manifest 模块单跑各 **5 passed**；`test_principal_authorization` 单跑
+  **8 passed**；§9.47 同装置同并发下三者均未非零 → 复现依赖并发/时序，非本轮
+  代码引入。
+- 本轮已将 manifest 读竞态与 S1-05 断言硬化，消除同签名复发路径；`rc=5` 5 个
+  仍按脚本基准口径排除。
+
+### 7. 边界
+
+- 不改 daemon 侧发布语义（仍为原子替换）；重试只在客户端读取侧、且有界。
+- 仍待办：无。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

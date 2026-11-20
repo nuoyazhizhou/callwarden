@@ -238,8 +238,10 @@ def test_cli_identity_revoke_fail_closed(monkeypatch):
         def register_attestation_revocation(self, *a, **k):
             raise AssertionError("enterprise 模式下 CLI 不得直写 db")
 
-    ret = cli_main._identity_revoke(_NoDb(), opts, use_json=False)
-    assert ret is True
+    # §24.5：daemon 拒绝（capability gate 未接线）属运行时失败 → rc=1
+    with pytest.raises(SystemExit) as exc:
+        cli_main._identity_revoke(_NoDb(), opts, use_json=False)
+    assert exc.value.code == 1
     assert captured["reason"]["code"] == GATE_DISABLED
     assert captured["use_json"] is False
 

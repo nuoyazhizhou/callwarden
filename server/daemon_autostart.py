@@ -619,6 +619,15 @@ def _win_pid_executable(pid: int) -> str:
         return ""
 
 
+# Windows 上 daemon 用 MoveFileExW(REPLACE_EXISTING) 原子替换 manifest；替换瞬间
+# 目标文件处于 delete-pending 状态，此时 open() 会瞬时得到 WinError 5
+# （ERROR_ACCESS_DENIED）而不是旧/新任一版本内容。6 并发门禁下实测复现为
+# `E_HTTP_MANIFEST_STALE: Permission denied`。仅对该瞬时窗口做有界重试，
+# 其它 OSError（真正的权限/IO 故障）仍立即 fail-closed。
+_MANIFEST_READ_RETRY_BUDGET_S = 1.0
+_MANIFEST_READ_RETRY_INTERVAL_S = 0.05
+
+
 def read_http_manifest(path: str) -> Dict[str, Any]:
     """读取并解析 HTTP manifest 文件。
 
@@ -631,17 +640,26 @@ def read_http_manifest(path: str) -> Dict[str, Any]:
         E_HTTP_MANIFEST_STALE,
     )
 
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        raise DaemonRemoteError(
-            E_HTTP_MANIFEST_MISSING, f"HTTP manifest 文件不存在: {path}"
-        )
-    except (OSError, ValueError) as exc:
-        raise DaemonRemoteError(
-            E_HTTP_MANIFEST_STALE, f"HTTP manifest 读取/解析失败: {exc}"
-        )
+    deadline = time.monotonic() + _MANIFEST_READ_RETRY_BUDGET_S
+    while True:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            break
+        except FileNotFoundError:
+            raise DaemonRemoteError(
+                E_HTTP_MANIFEST_MISSING, f"HTTP manifest 文件不存在: {path}"
+            )
+        except PermissionError as exc:
+            if time.monotonic() >= deadline:
+                raise DaemonRemoteError(
+                    E_HTTP_MANIFEST_STALE, f"HTTP manifest 读取/解析失败: {exc}"
+                )
+            time.sleep(_MANIFEST_READ_RETRY_INTERVAL_S)
+        except (OSError, ValueError) as exc:
+            raise DaemonRemoteError(
+                E_HTTP_MANIFEST_STALE, f"HTTP manifest 读取/解析失败: {exc}"
+            )
     if not isinstance(data, dict):
         raise DaemonRemoteError(E_HTTP_MANIFEST_STALE,
                                 "HTTP manifest 不是 JSON 对象")

@@ -359,3 +359,41 @@ def test_read_manifest_missing_file(monkeypatch, tmp_path):
     with pytest.raises(DaemonRemoteError) as exc:
         da.read_http_manifest(str(missing))
     assert exc.value.code == E_HTTP_MANIFEST_MISSING
+
+
+def test_read_manifest_retries_transient_permission_denied(tmp_path, monkeypatch):
+    """Windows 原子替换窗口内的瞬时 ERROR_ACCESS_DENIED 不应报 STALE。
+
+    daemon 用 MoveFileExW(REPLACE_EXISTING) 发布 manifest，替换瞬间目标处于
+    delete-pending，open() 瞬时报 PermissionError（6 并发门禁实测复现）。
+    """
+    mpath = tmp_path / "http.manifest.json"
+    mpath.write_text(json.dumps(build_manifest_dict()), encoding="utf-8")
+
+    real_open = open
+    state = {"calls": 0}
+
+    def _flaky_open(file, *a, **kw):
+        if str(file) == str(mpath) and state["calls"] < 2:
+            state["calls"] += 1
+            raise PermissionError(13, "Permission denied", str(mpath))
+        return real_open(file, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", _flaky_open)
+    data = da.read_http_manifest(str(mpath))
+    assert data["authority_id"] == AUTHORITY
+    assert state["calls"] == 2
+
+
+def test_read_manifest_persistent_permission_denied_is_stale(monkeypatch, tmp_path):
+    mpath = tmp_path / "http.manifest.json"
+    mpath.write_text("{}", encoding="utf-8")
+
+    def _deny(file, *a, **kw):
+        raise PermissionError(13, "Permission denied", str(file))
+
+    monkeypatch.setattr("builtins.open", _deny)
+    monkeypatch.setattr(da, "_MANIFEST_READ_RETRY_BUDGET_S", 0.0)
+    with pytest.raises(DaemonRemoteError) as exc:
+        da.read_http_manifest(str(mpath))
+    assert exc.value.code == E_HTTP_MANIFEST_STALE

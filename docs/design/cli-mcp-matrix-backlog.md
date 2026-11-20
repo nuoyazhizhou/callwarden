@@ -1910,6 +1910,13 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
   （identity 缺失属输入校验；identity 齐备但 daemon 权威拒绝仍为 `rc=1`）。
 - 文档契约见 `docs/cli_reference.md`「退出码契约（全局约定）」。
 
+**全量门禁复核（2026-11-20，见 ledger §9.50）**：589 模块 / 8030 条，
+nonzero 9 = 4 个真实失败 + 5 个 `rc=5` 脚本基准。其中
+`test_task_loop_capability_authority::test_cli_identity_revoke_fail_closed`
+是本次口径变更的陈旧断言（`_identity_revoke` 已为 `SystemExit(1)`），已同步；
+其余 3 个为并发/传输层卡外项（manifest delete-pending 读竞态已加有界重试、
+S1-05 拒绝口径对齐 TLS 断连），修复后 55 passed / 压测 12/12 rc=0。
+
 ---
 
 ## 25. i18n 文案漂移：引用即存在（`T-1793521395642-f45bc274`）

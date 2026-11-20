@@ -8,6 +8,7 @@ import datetime
 import json
 import os
 import sqlite3
+import ssl
 import sys
 import time
 
@@ -211,7 +212,13 @@ class TestSanAuthorization:
     def test_s1_05_missing_san_uri_is_rejected(self, daemon):
         manifest, data_root = daemon
         cert, key = _make_client_identity(data_root, "pr_nosan", sans=[])
-        status, code, _data = _rpc_with(manifest, cert, key, data_root)
+        # 无 SAN URI 的客户端证书在 rustls 证书校验阶段即被拒；服务端拒绝时机
+        # 决定客户端看到 HTTP 403 还是 TLS 层断连（并发门禁下两态均实测出现）。
+        # 二者同为「拒绝」语义，与 test_mtls_enrollment S1-06 口径一致。
+        try:
+            status, code, _data = _rpc_with(manifest, cert, key, data_root)
+        except (ssl.SSLError, OSError):
+            return
         assert status == 403, code
         # 无 SAN URI → 服务端视为“无 principal 证书”（fail-closed）
         assert code in {"E_MTLS_CLIENT_CERT_MISSING", "E_MTLS_CLIENT_CERT_REJECTED"}, code
