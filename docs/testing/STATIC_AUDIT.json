@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "a63de7f675f44ee1f15e4c6cc82da8b0d171977d",
+  "supplied_source_revision": "0ec83fbffd0b6b7531bd0a47c193a0c5094bb7e6",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -57,7 +57,7 @@
     "reason_absent_sites": 23,
     "reason_nonliteral_or_absent_sites": 188,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2163,
+    "rust_src_attributes": 2184,
     "rust_src_cfg_test_files": 122
   },
   "inputs": [
@@ -255,7 +255,7 @@
     },
     {
       "path": "rust_ext/src/daemon/auth_principal.rs",
-      "sha256": "c9cc4a9897a90645f09f5cbb0388ff3b8f19e46f2164c9f39cbdd5c4d367bc0c"
+      "sha256": "882f696b17e5b19eedf04ff839a0733135dc8f4ffbc20b4cc57f561d092bcbad"
     },
     {
       "path": "rust_ext/src/daemon/backup_restore_handlers.rs",
@@ -327,7 +327,7 @@
     },
     {
       "path": "rust_ext/src/daemon/dispatch.rs",
-      "sha256": "b73636971c0c710c610c74d08df5d1dc6e223aacf1642530e434396e00d629f7"
+      "sha256": "1e6deb0f2e7f25aa95550fa1d3e268d8048f4a0424dc741a62480517be4f533d"
     },
     {
       "path": "rust_ext/src/daemon/durable_staging_handlers.rs",
@@ -359,7 +359,7 @@
     },
     {
       "path": "rust_ext/src/daemon/http_server.rs",
-      "sha256": "7fb418d4d22bcca3223570119dc3c7607a5a9a2ee6124978b95d1acd82c08e9d"
+      "sha256": "4a50a270136fd63fb5daf0e4be16acb8c32c817b6fb4f69d5700928c223befa4"
     },
     {
       "path": "rust_ext/src/daemon/job_executor_handlers.rs",
@@ -391,11 +391,11 @@
     },
     {
       "path": "rust_ext/src/daemon/pki_api.rs",
-      "sha256": "57c8b13fc2d3317ca25835f5f3dae69f510dadef8e34dca679ee7331f1449091"
+      "sha256": "c22005fb818c78e6a00bb62e1fb7158ff65a0e23a565bd998a2699a3eea5f969"
     },
     {
       "path": "rust_ext/src/daemon/pki_handlers.rs",
-      "sha256": "fcd79abd65acbcaf0da108edb03fa80db7d30758a1fa8da745e228bbe3ba04de"
+      "sha256": "de9e1d73488a9b2e10bbd4c9cbf4b02228c74e136bf9c0565d5a66cfee4578b1"
     },
     {
       "path": "rust_ext/src/daemon/protocol.rs",
@@ -475,7 +475,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_collab.rs",
-      "sha256": "dd9a4be11571a3c85f3780e8b7027ab59724c03d0d6935f5c2475aa7e914db65"
+      "sha256": "6ad94f943b5cd45ad044e88b9511e1644a8ee267e651771d7a1500ac0b28d00e"
     },
     {
       "path": "rust_ext/src/daemon/task_collab_contract.rs",
@@ -815,7 +815,7 @@
     },
     {
       "path": "rust_ext/src/daemon/workspace.rs",
-      "sha256": "e7c1145bb76af699ceba64a8b36225b0e87524bb11f06f83665053855979e9aa"
+      "sha256": "aa39259005641983ef6c3125008b346491f20d259a1bfe29a49d6e22b9505fcc"
     },
     {
       "path": "rust_ext/src/daemon/workspace_reconciliation.rs",
@@ -1567,7 +1567,7 @@
     },
     {
       "path": "tests/test_audit_key_rotation.py",
-      "sha256": "0b4212130798fde34ace76cb0029b6556a1407927749134b9cb374d77e19ee12"
+      "sha256": "f65222284c091c9c990d6a29310aa8eeef69d02eb1b172de97b7f1fafd28b942"
     },
     {
       "path": "tests/test_audit_round2_2026_07_20.py",

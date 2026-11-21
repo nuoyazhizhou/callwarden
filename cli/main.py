@@ -2374,6 +2374,8 @@ def _handle_rule_candidate(opts, db):
         except Exception as e:
             cprint(t("cli.messages.rule_candidate_create_failed",
                    default="Create failed: {error}", error=e), "red")
+            # §45 口径统一：写失败属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         return True
 
     elif opts.cand_action == "list":
@@ -2404,6 +2406,8 @@ def _handle_rule_candidate(opts, db):
         except Exception as e:
             cprint(t("cli.messages.rule_candidate_accept_failed",
                      default="Accept failed: {error}", error=e), "red")
+            # §45 口径统一：写失败属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         return True
 
     elif opts.cand_action == "reject":
@@ -2416,6 +2420,8 @@ def _handle_rule_candidate(opts, db):
         except Exception as e:
             cprint(t("cli.messages.rule_candidate_reject_failed",
                      default="Reject failed: {error}", error=e), "red")
+            # §45 口径统一：写失败属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         return True
     return True
 
@@ -2526,6 +2532,8 @@ def _handle_rule_insert_block(opts, db):
     else:
         cprint(t("cli.messages.rule_insert_block_failed",
                  default="Insert failed: {msg}", msg=result.get("message", "")), "yellow")
+        # §45 口径统一：写失败属运行时失败，RC=1（禁止 RC=0 假成功）
+        raise SystemExit(1)
     return True
 
 
@@ -2625,7 +2633,8 @@ def _handle_rule_cleanup_sync_log(opts, db):
     if not result.get("success"):
         cprint(t("cli.messages.rule_cleanup_sync_log_failed",
                  default="Cleanup failed: {error}", error=result.get("error", "")), "red")
-        return True
+        # §45 口径统一：写失败属运行时失败，RC=1（禁止 RC=0 假成功）
+        raise SystemExit(1)
 
     print(t("cli.messages.rule_cleanup_sync_log_summary",
             default="total_before: {total_before} | deleted: {deleted} | remaining: {remaining}",
@@ -2970,7 +2979,8 @@ def _handle_impact(args, db):
     if not result.get("source_symbol"):
         cprint(t("cli.messages.impact_symbol_not_found",
                  symbol_hash=opts.symbol_hash), "red")
-        return True
+        # §45 口径统一：查询目标不存在属运行时失败，RC=1（禁止 RC=0 假成功）
+        raise SystemExit(1)
 
     print(t("cli.messages.impact_source_symbol",
             symbol=result['source_symbol']))
@@ -6695,7 +6705,8 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
         detail = route_task_read("task.status", {"task_id": task_id}, _local_status)
         if not detail:
             print(t("cli.messages.task_show_not_found", id=task_id))
-            return True
+            # §45 口径统一：查询目标不存在属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         _print_task_detail_single(detail, indent_depth=0)
         _print_task_governance_summary(db, task_id)
         _print_task_link_section(db, task_id)
@@ -6711,7 +6722,8 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
     tree = route_task_read("task.status_tree", {"task_id": task_id}, _local_tree)
     if not tree:
         print(t("cli.messages.task_show_not_found", id=task_id))
-        return True
+        # §45 口径统一：查询目标不存在属运行时失败，RC=1（禁止 RC=0 假成功）
+        raise SystemExit(1)
 
     cprint(t("cli.messages.task_show_title"), "cyan", bold=True)
     print("-" * 50)
@@ -7107,11 +7119,13 @@ def _handle_audit(args, db):
         except ValueError as exc:
             cprint(t("cli.messages.audit_rotate_key_invalid_arg",
                      error=str(exc)), "red")
-            return True
+            # §45 口径统一：本地输入校验失败 RC=2（全局退出码契约）
+            raise SystemExit(2)
         except Exception as exc:
             cprint(t("cli.messages.audit_rotate_key_failed",
                      error=str(exc)), "red")
-            return True
+            # §45 口径统一：轮换失败属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
 
         cprint(t("cli.messages.audit_rotate_key_title").strip(),
                "green", bold=True)
@@ -8914,6 +8928,8 @@ def _handle_workspace(args, db):
             print(t("cli.messages.delete_success", name=ws_arg))
         else:
             print(t("cli.messages.delete_not_found", name=ws_arg))
+            # §45 口径统一：目标不存在属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         return True
 
     if opts.action == "scan":
@@ -9082,6 +9098,9 @@ def _handle_refresh(args, db):
                 for path, err in failed_paths:
                     print(t("cli.messages.refresh_multi_failed_item",
                             path=path, error=err))
+        if failure_count:
+            # §45 口径统一：存在失败路径属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         return True
 
     # 未指定 --all 也未指定路径：打印帮助
@@ -10168,7 +10187,8 @@ def _handle_symbol(args, db):
     if not detail:
         print(t("cli.messages.symbol_not_found", name=opts.name))
         print(t("cli.messages.symbol_search_hint"))
-        return True
+        # §45 口径统一：查询目标不存在属运行时失败，RC=1（禁止 RC=0 假成功）
+        raise SystemExit(1)
     print(t("cli.messages.symbol_detail_title"))
     print(t("cli.messages.symbol_name", name=detail['qualified_name']))
     print(t("cli.messages.symbol_kind", kind=detail['kind']))
@@ -10344,6 +10364,8 @@ def _handle_query(args, db):
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         print(t("cli.messages.query_not_found", name=opts.name))
+        # §45 口径统一：查询目标不存在属运行时失败，RC=1（禁止 RC=0 假成功）
+        raise SystemExit(1)
     return True
 
 
@@ -10624,6 +10646,8 @@ def _handle_restore_all_comments(args, db):
         print(t("cli.messages.restore_all_errors_title"))
         for err in result["errors"]:
             print(t("cli.messages.restore_all_error_item", err=err))
+        # §45 口径统一：存在失败条目属运行时失败，RC=1（禁止 RC=0 假成功）
+        raise SystemExit(1)
     return True
 
 
@@ -12840,7 +12864,8 @@ def _handle_rollback(args, db):
         if not result.get("success"):
             cprint(t("cli.messages.rollback_register_failed",
                      error=result.get("error", "unknown")), "red")
-            return True
+            # §45 口径统一：写失败属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         action = result.get("action", "unknown")
         cprint(t("cli.messages.rollback_register_ok",
                  action=action, id=result.get("id", ""),
@@ -12852,7 +12877,8 @@ def _handle_rollback(args, db):
         if not config:
             cprint(t("cli.messages.rollback_config_not_found",
                      task_id=opts.task_id), "yellow")
-            return True
+            # §45 口径统一：查询目标不存在属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         print(f"Task ID:          {config['task_id']}")
         print(f"Feature:          {config['feature_name']}")
         print(f"Phase:            {config['phase']}")
@@ -12886,7 +12912,8 @@ def _handle_rollback(args, db):
         if not result.get("success"):
             cprint(t("cli.messages.rollback_set_failed",
                      error=result.get("error", "unknown")), "red")
-            return True
+            # §45 口径统一：写失败属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         flag_str = "ROLLED BACK to Python" if opts.flag == 1 else "Normal (Rust)"
         cprint(t("cli.messages.rollback_set_ok",
                  feature=result.get("feature_name", ""),
@@ -16587,7 +16614,8 @@ def _handle_assignment(args, db):
         if result is None:
             print(t("cli.messages.assignment_not_found",
                     default="No active assignment found"))
-            return True
+            # §45 口径统一：查询目标不存在属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         if use_json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:

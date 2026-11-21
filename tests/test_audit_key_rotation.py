@@ -540,14 +540,20 @@ def test_cli_rotate_key_auto_generates_secret():
 
 
 def test_cli_rotate_key_invalid_arg_prints_error(capsys):
-    """db.rotate_signing_key 抛 ValueError 时，CLI 输出错误信息。"""
+    """db.rotate_signing_key 抛 ValueError 时，CLI 输出错误信息并 RC=2。
+
+    §45 口径统一：本地输入校验失败按全局退出码契约归 2。
+    """
+    import pytest
     from callwarden.cli.main import _handle_audit
 
     class _MockDB:
         def rotate_signing_key(self, new_key_id, new_key_secret):
             raise ValueError("new_key_id is required")
 
-    _handle_audit(["rotate-key", "--key-id", "x", "--secret", "y"], _MockDB())
+    with pytest.raises(SystemExit) as ei:
+        _handle_audit(["rotate-key", "--key-id", "x", "--secret", "y"], _MockDB())
+    assert ei.value.code == 2
     out = capsys.readouterr().out
     assert "new_key_id is required" in out or "参数无效" in out or "Invalid" in out
 

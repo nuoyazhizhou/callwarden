@@ -4330,7 +4330,39 @@ elif 链对 `_SUBCOMMANDS` 全集闭合，fallthrough 不可达。
 ### 4. 边界与残留
 
 - 个别 not-found 分支打印提示后仍 `return True`（如 `git show` 提交不存在），
-  不在 False→rc=1 网内；如需收口逐分支另立任务卡（backlog §44.4）。
+  不在 False→rc=1 网内；如需收口逐分支另立任务卡（backlog §44.4）
+  → 已由 §9.56 收口（backlog §45）。
+
+## 9.56 「打印失败文案后 return True」残留分支 rc 收口（2026-11-21）
+
+### 1. 装置与侦察
+
+启发式扫描（失败标记出现在 `return True` 前 6 行内）命中 41 处，逐点裁定：
+19 处真失败 → RC=1；1 处本地输入校验失败（rotate-key ValueError）→ RC=2；
+14 处设计使然保持 RC=0 并逐点登记理由（doctor 软工具、首跑引导态、报告型
+空结果、fail-soft、行内状态展示等）。
+
+### 2. 处置
+
+- **RC=1**（`raise SystemExit(1)`）：rule candidate create/accept/reject、
+  rule insert-block / cleanup-sync-log 失败、impact / symbol / query /
+  task show ×2 / rollback show / assignment show 的 not-found、audit
+  rotate-key 失败、workspace delete not-found、rollback register/set 失败、
+  refresh 多路径存在失败、restore-all 存在 error 条目。
+- **RC=2**：rotate-key 本地输入校验失败。
+- **测试**：`test_audit_key_rotation.py` 无效参数断言升级为 `SystemExit(2)`。
+
+### 3. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `cw symbol __definitely_missing_symbol__` | rc=1 |
+| 10 个 CLI 回归套件 | **374 passed** |
+
+### 4. 边界与残留
+
+- 报告型命令（`tests`/`issues` 等）空结果保持 rc=0；如需「测试失败 → 非零
+  退出码」新语义另立任务卡（涉及 CI 消费方契约）。
 
 ## 10. 相关真相源
 

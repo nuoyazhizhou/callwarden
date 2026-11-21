@@ -3348,5 +3348,40 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 
 | 类别 | 说明 |
 | --- | --- |
-| 已知残留 | 个别 not-found 分支打印提示后仍 `return True`（如 `git show` 提交不存在），属历史不一致，不在 False→rc=1 网内；如需收口逐分支另立任务卡 |
+| 已知残留 | 个别 not-found 分支打印提示后仍 `return True`（如 `git show` 提交不存在），属历史不一致，不在 False→rc=1 网内；如需收口逐分支另立任务卡——已由 §45 收口 |
+| 回滚 | 回退本次提交即可；无迁移状态 |
+
+## 45. 「打印失败文案后 return True」残留分支 rc 收口（§44.4 落地，2026-11-21）
+
+### 45.1 侦察与裁定
+
+启发式扫描（失败标记 ❌/not_found/未找到/失败/failed/ERROR 等出现在
+``return True`` 前 6 行内）命中 41 处，逐点裁定：
+
+| 类别 | 处置 | 站点 |
+| --- | --- | --- |
+| 真失败 → RC=1 | `raise SystemExit(1)` | 19 处：rule candidate create/accept/reject 失败 ×3、`rule insert-block` 失败、`rule cleanup-sync-log` 失败、`impact` 符号不存在、`task show` not-found ×2（status/status_tree）、`audit rotate-key` 轮换失败、`workspace delete` not-found、`symbol` not-found、`query` not-found、`rollback register/show/set` 失败 ×3、`assignment show` not-found、`refresh` 多路径存在失败、`restore-all` 存在 error 条目 |
+| 本地输入校验失败 → RC=2 | `raise SystemExit(2)` | `audit rotate-key` ValueError 分支（全局契约：2 = 本地输入校验失败） |
+| 保持 RC=0（设计使然，登记） | 不改 | doctor Defender 排除 ×2（咨询型软工具）、`gc db-cleanup` 目录未初始化（首跑引导态）、`gc audit-list/show` 展示行内 failed 状态（查询本身成功）、`task capture-diff` fail-soft（注释明示不阻断 git commit）、`issues`/`tests`/`symbol` 关联查询空结果（报告型，含「未运行扫描」等正常态）、`graph` 未找到 .c 文件 / 无 callers（空态）、`rule sync` suggested_block 提示、`workspace scan` registered 统计 |
+| 已在 §43/§44 网内 | 不改 | `git import` / `embed` / `impact` blast 之外已有显式 SystemExit 或 False 的分支 |
+
+### 45.2 处置
+
+19+1 处统一收口（见上表）。连带更新
+`tests/test_audit_key_rotation.py::test_cli_rotate_key_invalid_arg_prints_error`
+：无效参数断言升级为 `SystemExit(2)`（原断言隐含 rc=0，与全局契约冲突）。
+
+### 45.3 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `cw symbol __definitely_missing_symbol__` | rc=1（「未找到符号」+ 搜索提示） |
+| `cw config check-role agent` / `local` | rc=1 / 0（无回归） |
+| 10 个 CLI 回归套件（exit-code / help 模板 / 章节门禁 / coverage / audit chain & key rotation / bootstrap / agent rules / agent integration） | **374 passed** |
+
+### 45.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 设计使然保留项 | 上表「保持 RC=0」14 处已逐点登记理由；如需对报告型命令引入「测试失败 → 非零退出码」等新语义，另立任务卡（涉及 CI 消费方契约） |
 | 回滚 | 回退本次提交即可；无迁移状态 |
