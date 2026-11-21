@@ -7319,6 +7319,11 @@ def _handle_clone(args, db):
         help=t("cli_clone_detect_arg_similarity",
                default="Type-3 similarity threshold [0,1] (default: 0.8)"),
     )
+    detect_p.add_argument(
+        "--fail-on-findings", action="store_true",
+        help=t("cli.args.fail_on_findings",
+               default="Exit with code 3 when findings are reported (CI gate)"),
+    )
 
     # list：列出克隆对
     list_p = sub.add_parser(
@@ -7384,6 +7389,7 @@ def _handle_clone(args, db):
         print(t("cli.messages.clone_detect_threshold",
                 sim=result.get("similarity_threshold", 0.8),
                 min_lines=result.get("min_lines", 5)))
+        _exit_on_findings(opts, result.get("total_pairs", 0))
         return True
 
     if opts.action == "list":
@@ -9904,6 +9910,18 @@ def _handle_grep(args, db):
     return True
 
 
+def _exit_on_findings(opts, count: int) -> None:
+    """§46：--fail-on-findings 门禁语义——报告了 findings 时以退出码 3 终止。
+
+    默认（不带 flag）行为不变：报告型命令始终 rc=0。仅当调用方显式开启
+    ``--fail-on-findings`` 且本次报告了 findings（count > 0）时退出码 3
+    （3 = 报告发现失败，见 cli_reference.md 退出码契约）。
+    """
+    if getattr(opts, "fail_on_findings", False) and count > 0:
+        print(t("cli.messages.fail_on_findings_triggered", count=count))
+        raise SystemExit(3)
+
+
 def _handle_issues(args, db):
     """处理 issues 子命令（符号级静态检查问题）
 
@@ -9921,6 +9939,9 @@ def _handle_issues(args, db):
     parser.add_argument("qualified_name", help="Symbol qualified name")
     parser.add_argument("--include-info", action="store_true",
                         help="Include INFO level findings (default: WARNING+ only)")
+    parser.add_argument("--fail-on-findings", action="store_true",
+                        help=t("cli.args.fail_on_findings",
+                               default="Exit with code 3 when findings are reported (CI gate)"))
     opts = parser.parse_args(args)
 
     issues = db.get_symbol_issues(
@@ -9985,6 +10006,7 @@ def _handle_issues(args, db):
         print()
 
     print(f"Total: {len(issues)} issues")
+    _exit_on_findings(opts, len(issues))
     return True
 
 
@@ -10780,6 +10802,9 @@ def _handle_orphan_symbols(args, db):
                         help=t("cli.messages.orphan_arg_module", default="Module filter (prefix)"))
     parser.add_argument("--limit", type=int, default=50,
                         help=t("cli.messages.orphan_arg_limit", default="Max results (default 50)"))
+    parser.add_argument("--fail-on-findings", action="store_true",
+                        help=t("cli.args.fail_on_findings",
+                               default="Exit with code 3 when findings are reported (CI gate)"))
     opts = parser.parse_args(args)
 
     results = db.get_orphan_symbols(kind=opts.kind, module_filter=opts.module, limit=opts.limit)
@@ -10801,6 +10826,7 @@ def _handle_orphan_symbols(args, db):
     else:
         print(t("cli.messages.orphan_none"))
     print()
+    _exit_on_findings(opts, len(results))
     return True
 
 
@@ -10872,6 +10898,9 @@ def _handle_detect_cycles(args, db):
     )
     parser.add_argument("--depth", type=int, default=10,
                         help=t("cli.messages.cycle_arg_depth", default="Max cycle detection depth (default 10)"))
+    parser.add_argument("--fail-on-findings", action="store_true",
+                        help=t("cli.args.fail_on_findings",
+                               default="Exit with code 3 when findings are reported (CI gate)"))
     opts = parser.parse_args(args)
 
     cycles = db.detect_cycles(max_depth=opts.depth)
@@ -10894,6 +10923,7 @@ def _handle_detect_cycles(args, db):
     else:
         print(t("cli.messages.cycles_none"))
         print()
+    _exit_on_findings(opts, len(cycles))
     return True
 
 
@@ -11540,6 +11570,9 @@ def _handle_function_issues(args, db):
     parser.add_argument("--summary", action="store_true", help=t(
         "cli.messages.function_issues_arg_summary",
         default="Project-wide issue summary by severity"))
+    parser.add_argument("--fail-on-findings", action="store_true", help=t(
+        "cli.args.fail_on_findings",
+        default="Exit with code 3 when findings are reported (CI gate)"))
     opts = parser.parse_args(args)
 
     # --summary 子选项：全项目缺陷按严重程度汇总
@@ -11556,6 +11589,8 @@ def _handle_function_issues(args, db):
         issue_filter=issue_filter,
         limit=opts.limit,
     )
+    # §46 --fail-on-findings 计数口径：fn 模式取该函数 issue_count，list 模式取条数
+    findings_count = results[0]["issue_count"] if (fn_name and results) else len(results)
     severity_icon = {"danger": "[!]", "warn": "[~]", "info": "[i]"}
 
     if fn_name:
@@ -11601,6 +11636,7 @@ def _handle_function_issues(args, db):
             print(f"  #{i:2d}  {r['qualified_name']}")
             print(f"        {issue_str}")
         print()
+    _exit_on_findings(opts, findings_count)
     return True
 
 
@@ -12091,6 +12127,9 @@ def _handle_semgrep(args, db):
     scan_p.add_argument("--head", default="HEAD",
                         help=t("cli.messages.semgrep_arg_head",
                                default="Head ref for incremental scan (default HEAD)"))
+    scan_p.add_argument("--fail-on-findings", action="store_true",
+                        help=t("cli.args.fail_on_findings",
+                               default="Exit with code 3 when findings are reported (CI gate)"))
 
     list_p = sub.add_parser("list", help=t(
         "cli.messages.semgrep_action_list", default="List saved findings"))
@@ -12121,6 +12160,8 @@ def _handle_semgrep(args, db):
             print(t("cli.messages.semgrep_incremental_mode",
                     base=opts.base_branch, head=opts.head))
         print()
+        # §46：--fail-on-findings findings 计数（scan 各成功分支回填）
+        findings_count = 0
         # A14: 增量扫描分支（优先于 --save / --quick）
         if opts.incremental:
             result = db.scan_semgrep_incremental(
@@ -12133,6 +12174,7 @@ def _handle_semgrep(args, db):
             if not result.get("success"):
                 print(t("cli.messages.semgrep_error",
                         error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+                raise SystemExit(1)
             else:
                 print(t("cli.messages.semgrep_incremental_done",
                         changed=result['changed_files'],
@@ -12140,6 +12182,7 @@ def _handle_semgrep(args, db):
                         saved=result['saved_findings'],
                         total=result['total_findings'],
                         stale=result['stale_file_ids']))
+                findings_count = result.get("total_findings", 0)
         elif opts.save:
             result = db.run_semgrep_and_save(
                 target_paths=target_paths or [db.client_workspace_root],
@@ -12150,6 +12193,7 @@ def _handle_semgrep(args, db):
             if not result.get("success"):
                 print(t("cli.messages.semgrep_error", error=result.get(
                     'error', t("cli.messages.semgrep_unknown_error"))))
+                raise SystemExit(1)
             else:
                 print(t("cli.messages.semgrep_scan_done",
                       count=result['total_findings']))
@@ -12157,14 +12201,17 @@ def _handle_semgrep(args, db):
                       count=result['saved_findings']))
                 print()
                 print(t("cli.messages.semgrep_save_hint"))
+                findings_count = result.get("total_findings", 0)
         elif opts.quick:
             result = db.get_semgrep_summary(target_paths)
             if not result.get("success"):
                 print(t("cli.messages.semgrep_error", error=result.get(
                     'error', t("cli.messages.semgrep_unknown_error"))))
+                raise SystemExit(1)
             else:
                 print(t("cli.messages.semgrep_quick_total",
                       count=result['total_findings']))
+                findings_count = result.get("total_findings", 0)
                 print()
                 if result.get("by_severity"):
                     print(t("cli.messages.semgrep_severity_dist"))
@@ -12204,9 +12251,11 @@ def _handle_semgrep(args, db):
             if not result.get("success"):
                 print(t("cli.messages.semgrep_error", error=result.get(
                     'error', t("cli.messages.semgrep_unknown_error"))))
+                raise SystemExit(1)
             else:
                 print(t("cli.messages.semgrep_scan_done",
                       count=result['total_findings']))
+                findings_count = result.get("total_findings", 0)
                 print()
                 severity_icon = {"ERROR": "[!]",
                                  "WARNING": "[~]", "INFO": "[i]"}
@@ -12242,6 +12291,7 @@ def _handle_semgrep(args, db):
                             print()
         print(t("cli.messages.semgrep_hint"))
         print()
+        _exit_on_findings(opts, findings_count)
         return True
 
     if opts.action == "stats":

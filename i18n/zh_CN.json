@@ -15,6 +15,7 @@
     "cli": {
         "description": "代码知识图谱数据库",
         "args": {
+            "fail_on_findings": "有 findings 时以退出码 3 终止（CI 门禁）",
             "workspace": "工作区根目录路径（或工作区名称）",
             "root": "工作区根目录路径（同 --workspace）",
             "list_workspaces": "列出所有工作区",
@@ -127,6 +128,7 @@
             "install_agent_project": "在项目级安装 AI 工具集成，而非全局安装"
         },
         "messages": {
+            "fail_on_findings_triggered": "--fail-on-findings：报告了 {count} 条 findings，以退出码 3 终止",
             "building": "构建代码知识图谱...",
             "building_force": "构建代码知识图谱（强制重新解析）...",
             "building_incremental": "构建代码知识图谱（增量构建）...",

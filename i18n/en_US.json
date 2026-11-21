@@ -15,6 +15,7 @@
     "cli": {
         "description": "Code Graph Database",
         "args": {
+            "fail_on_findings": "Exit with code 3 when findings are reported (CI gate)",
             "workspace": "Workspace root path (or workspace name)",
             "root": "Workspace root path (same as --workspace)",
             "list_workspaces": "List all workspaces",
@@ -127,6 +128,7 @@
             "install_agent_project": "Install agent integration at project level instead of global"
         },
         "messages": {
+            "fail_on_findings_triggered": "--fail-on-findings: {count} finding(s) reported, exiting with code 3",
             "building": "Building code graph...",
             "building_force": "Building code graph (force rebuild)...",
             "building_incremental": "Building code graph (incremental)...",

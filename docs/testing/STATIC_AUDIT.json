@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "0ec83fbffd0b6b7531bd0a47c193a0c5094bb7e6",
+  "supplied_source_revision": "b83b699f51891cac93fa44e0844310998a36bf9a",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,8 +38,8 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7313,
-    "python_source_files": 704,
+    "python_definitions": 7332,
+    "python_source_files": 705,
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 25,
@@ -3508,6 +3508,10 @@
     {
       "path": "tests/test_reopen_docs_structure.py",
       "sha256": "b024eadc49c85f8d318b6b1410ef28cafeb363a5ac338e9d2edd134d302f678f"
+    },
+    {
+      "path": "tests/test_report_rc_semantics.py",
+      "sha256": "505f27a80bd4394c4df47878581780c24f64d6863125d1751f107bc5c1e23e89"
     },
     {
       "path": "tests/test_resolved_edges_engine.py",

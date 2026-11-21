@@ -3383,5 +3383,50 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 
 | 类别 | 说明 |
 | --- | --- |
-| 设计使然保留项 | 上表「保持 RC=0」14 处已逐点登记理由；如需对报告型命令引入「测试失败 → 非零退出码」等新语义，另立任务卡（涉及 CI 消费方契约） |
+| 设计使然保留项 | 上表「保持 RC=0」14 处已逐点登记理由；报告型 rc 新语义已由 §46 落地（opt-in `--fail-on-findings` → rc=3，仅门禁型 6 命令） |
+| 回滚 | 回退本次提交即可；无迁移状态 |
+
+## 46. 报告型命令 rc 新语义：opt-in `--fail-on-findings` + 退出码 3（§45.4 挂账落地，2026-11-21）
+
+### 46.1 裁决
+
+§45.4 挂账「报告型命令 rc 新语义（涉及 CI 消费方契约）」经裁决落地：
+
+- **方案**：opt-in flag `--fail-on-findings`，默认 rc=0 不变（零 CI 破坏）；
+  flag 开启且报告 findings → rc=3。新退出码 **3 = 报告发现失败**
+  （区别于 1=daemon/运行时失败、2=本地输入校验失败），CLI-only，MCP 契约不动。
+- **范围（仅门禁型 6 命令）**：`issues`、`function-issues`、`detect-cycles`、
+  `orphan-symbols`、`semgrep scan`、`clone detect`；咨询型
+  （tests/coverage/uncommented/doctor/graph 等）不加 flag。
+
+### 46.2 处置
+
+- `cli/main.py`：新增 `_exit_on_findings(opts, count)` helper；6 个 parser 加
+  flag 并在 return 前接入（issues 取 `len(issues)`、detect-cycles 取
+  `len(cycles)`、orphan-symbols 取 `len(results)`、function-issues 单函数模式取
+  `issue_count` / 列表模式取条数（`--summary` 不参与）、semgrep scan 各成功分支取
+  `total_findings`、clone detect 取 `total_pairs`）。
+- **连带收口（§43-45 口径「真失败 → rc=1」）**：`semgrep scan` 四个分支
+  （incremental/save/quick/default）`success=false` 时原打印 error 后静默
+  rc=0，现改 `raise SystemExit(1)`。
+- i18n：`cli.args.fail_on_findings` + `cli.messages.fail_on_findings_triggered`
+  双语新增。
+- `docs/cli_reference.md`：全局退出码契约表加 3 行 + 判定边界补 opt-in 说明；
+  6 个命令章节参数表/退出码表同步（semgrep 章节退出码 1 行含义补 scan 失败）。
+
+### 46.3 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 活体：`cw detect-cycles`（主仓调用图有环）不带 flag / 带 flag | rc=0 / **rc=3** |
+| 活体：`cw issues __definitely_missing_symbol__ --fail-on-findings`（空态） | rc=0 |
+| 新增 `tests/test_report_rc_semantics.py`（19 例：6 命令 ×3 口径 + semgrep 失败 3 分支 + helper 单测） | 全 passed |
+| 门禁：章节四段式 + i18n 存在性/占位符 + exit-code + help 模板 + coverage + audit key rotation + consistency + audit chain + bootstrap + agent rules + agent integration | 全 passed |
+
+### 46.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 非目标 | 咨询型命令不加 flag；`function-issues --summary` 门禁口径另立批次；`semgrep quick` 的 `errors` 告警计数保持 rc=0；MCP schema / daemon 不动 |
+| CI 兼容 | 默认行为零变化（无 flag 时 rc 与 §45 完全一致）；rc=3 仅 opt-in 触发 |
 | 回滚 | 回退本次提交即可；无迁移状态 |

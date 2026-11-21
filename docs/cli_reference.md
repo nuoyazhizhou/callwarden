@@ -11,10 +11,12 @@ Call Warden CLI 统一使用 subcommand 风格：`cw <subcommand> [options]`，�
 | 0 | 成功 |
 | 1 | daemon 业务拒绝 / 传输失败 / 运行时或能力未接线（含 `_validate_identity_routed` 的权威判定失败） |
 | 2 | 输入/用法错误：argparse 用法错误，或**本地**输入校验失败（identity 四字段缺失、lease 凭证不完整、计划/信封文件不存在或 JSON 非法等） |
+| 3 | 报告发现失败：门禁型命令（issues / function-issues / detect-cycles / orphan-symbols / semgrep scan / clone detect）开启 `--fail-on-findings` 且报告了 findings（opt-in，默认仍 rc=0） |
 
 判定边界：**本地即可判定不合法** → 2；**需要 daemon 权威判定或运行时环境** → 1。
 identity 四字段齐备但 daemon 判 `E_IDENTITY_UNREGISTERED` / `E_IDENTITY_SESSION_MISMATCH`
-等，属 daemon 拒绝 → 1。
+等，属 daemon 拒绝 → 1。退出码 3 仅由 `--fail-on-findings` 显式 opt-in 触发
+（§46），不带 flag 时报告型命令默认行为仍为 rc=0。
 
 ## 命令概览（按 21 大功能分类）
 
@@ -1561,6 +1563,7 @@ cw detect-cycles --depth 15
 | 参数 | 必填 | 说明 |
 | ---- | ---- | ---- |
 | `--depth <N>` | 否 | 循环检测最大深度（默认 10） |
+| `--fail-on-findings` | 否 | 检测到环时以退出码 3 终止（CI 门禁，默认 rc=0） |
 
 **退出码**
 
@@ -1569,11 +1572,13 @@ cw detect-cycles --depth 15
 | 0 | 成功 |
 | 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
 | 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+| 3 | 报告发现失败：开启 `--fail-on-findings` 且检测到调用环 |
 
 **示例**
 
 ```bash
 cw detect-cycles --depth 15
+cw detect-cycles --fail-on-findings
 ```
 
 ### `module-calls [N]`：模块间调用统计
@@ -1646,6 +1651,7 @@ cw orphan-symbols --module "src/legacy"
 | `[kind]` | 否 | 符号类型（默认 fn） |
 | `--module <MODULE>` | 否 | 模块过滤（前缀） |
 | `--limit <N>` | 否 | 最大结果数（默认 50） |
+| `--fail-on-findings` | 否 | 存在孤立符号时以退出码 3 终止（CI 门禁，默认 rc=0） |
 
 **退出码**
 
@@ -1654,6 +1660,7 @@ cw orphan-symbols --module "src/legacy"
 | 0 | 成功 |
 | 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
 | 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+| 3 | 报告发现失败：开启 `--fail-on-findings` 且存在孤立符号 |
 
 查找未被调用的孤立函数/结构体，适合清理死代码。
 
@@ -1774,14 +1781,16 @@ cw semgrep scan src/payment/ src/api/
 | `--incremental` | 否 | 增量扫描模式：只扫 git diff 变更文件，scan_type='incremental'，清理 stale findings（A14） |
 | `--base <BRANCH>` | 否 | 增量扫描基准分支（默认 `main`，A14） |
 | `--head <REF>` | 否 | 增量扫描目标提交（默认 `HEAD`，A14） |
+| `--fail-on-findings` | 否 | 扫描报告 findings 时以退出码 3 终止（CI 门禁，默认 rc=0） |
 
 **退出码**
 
 | 退出码 | 含义 |
 | ------ | ---- |
 | 0 | 成功 |
-| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约）；含 semgrep 扫描执行失败（success=false，§46 收口） |
 | 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+| 3 | 报告发现失败：开启 `--fail-on-findings` 且扫描报告 findings |
 
 **示例**
 
@@ -1793,6 +1802,7 @@ cw semgrep scan --config p/security --lang rust typescript
 cw semgrep scan --incremental
 cw semgrep scan --incremental --base develop --head HEAD
 cw semgrep scan --incremental --config p/security
+cw semgrep scan --fail-on-findings
 ```
 
 ### `semgrep stats`：Semgrep 统计
@@ -3989,6 +3999,7 @@ cw issues <QN> [--include-info]
 | ---- | ---- | ---- |
 | `<QN>` | 是 | 符号限定名 |
 | `--include-info` | 否 | 包含 INFO 级别（默认只 WARNING+，避免噪音） |
+| `--fail-on-findings` | 否 | 存在 findings 时以退出码 3 终止（CI 门禁，默认 rc=0） |
 
 **退出码**
 
@@ -3997,6 +4008,7 @@ cw issues <QN> [--include-info]
 | 0 | 成功 |
 | 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
 | 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+| 3 | 报告发现失败：开启 `--fail-on-findings` 且存在 findings |
 
 整合 Semgrep + Guardrail findings，按符号聚合。返回符号相关的所有静态检查问题。
 
@@ -4013,6 +4025,7 @@ cw issues <QN> [--include-info]
 ```bash
 cw issues "module::fn"
 cw issues "module::fn" --include-info
+cw issues "module::fn" --fail-on-findings
 ```
 
 ### `tests <QN>`：符号测试 case 查询
@@ -4089,6 +4102,7 @@ cw clone clear
 | `detect --file-filter <PREFIX>` | 否 | 文件路径前缀过滤（如 `src/core/`），留空扫描全部 |
 | `detect --min-lines <N>` | 否 | 最小符号行数（默认 5，跳过更短的符号） |
 | `detect --similarity <F>` | 否 | Type-3 相似度阈值 [0,1]（默认 0.8） |
+| `detect --fail-on-findings` | 否 | 检测到克隆对时以退出码 3 终止（CI 门禁，默认 rc=0；仅 detect 子动作） |
 | `list --type <N>` | 否 | 克隆类型过滤（N=0 全部，1/2/3=Type-N） |
 | `list --min-similarity <F>` | 否 | 最低相似度过滤（默认 0.0） |
 | `list --limit <N>` | 否 | 返回上限（默认 100） |
@@ -4102,6 +4116,7 @@ cw clone clear
 | 0 | 成功 |
 | 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
 | 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+| 3 | 报告发现失败：`clone detect` 开启 `--fail-on-findings` 且检测到克隆对 |
 
 子命令组，检测和查询 Type-1/2/3 克隆。`detect` 将结果持久化到 `clone_pairs` 表，`clear` 清空当前工作区的所有克隆检测结果。
 
@@ -4317,6 +4332,7 @@ cw function-issues [FN] [--type <TYPE>] [--module <MODULE>] [--limit <N>] [--sum
 | `--module <MODULE>` | 否 | 按模块过滤（`--summary` 模式下同样生效） |
 | `--limit <N>` | 否 | 最大结果数（默认 30） |
 | `--summary` | 否 | 按严重程度汇总全项目问题 |
+| `--fail-on-findings` | 否 | 存在缺陷条目时以退出码 3 终止（CI 门禁，默认 rc=0；单函数/列表模式生效，`--summary` 模式不参与） |
 
 **退出码**
 
@@ -4325,12 +4341,14 @@ cw function-issues [FN] [--type <TYPE>] [--module <MODULE>] [--limit <N>] [--sum
 | 0 | 成功 |
 | 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
 | 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+| 3 | 报告发现失败：开启 `--fail-on-findings` 且存在缺陷条目 |
 
 **示例**
 
 ```bash
 # 单函数
 cw function-issues "my_project::payment::process_payment"
+cw function-issues "my_project::payment::process_payment" --fail-on-findings
 
 # 全部函数列表
 cw function-issues

@@ -4362,7 +4362,41 @@ elif 链对 `_SUBCOMMANDS` 全集闭合，fallthrough 不可达。
 ### 4. 边界与残留
 
 - 报告型命令（`tests`/`issues` 等）空结果保持 rc=0；如需「测试失败 → 非零
-  退出码」新语义另立任务卡（涉及 CI 消费方契约）。
+  退出码」新语义另立任务卡（涉及 CI 消费方契约）。**——已由 §9.57 收口。**
+
+## 9.57 报告型命令 rc 新语义：opt-in `--fail-on-findings` + 退出码 3（2026-11-21）
+
+### 1. 装置与裁决
+
+§9.56（§45.4）挂账经用户裁决落地：opt-in flag `--fail-on-findings`，默认 rc=0
+不变；flag 开启且报告 findings → rc=3（新退出码「报告发现失败」，区别于
+1=运行时失败、2=输入校验失败）。范围仅门禁型 6 命令：`issues` /
+`function-issues` / `detect-cycles` / `orphan-symbols` / `semgrep scan` /
+`clone detect`；咨询型不加。CLI-only，MCP 契约不动。
+
+### 2. 处置
+
+- `cli/main.py` 新增 `_exit_on_findings(opts, count)`；6 个 parser 加 flag，
+  return 前接入（计数口径见 backlog §46.2）。
+- **连带收口**：`semgrep scan` 四分支 `success=false` 原静默 rc=0 →
+  `raise SystemExit(1)`（§43-45 口径「真失败 → rc=1」）。
+- i18n 双语新增 `cli.args.fail_on_findings` /
+  `cli.messages.fail_on_findings_triggered`；`cli_reference.md` 全局契约表 +
+  6 章节四段式同步。
+
+### 3. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 活体：`cw detect-cycles` 不带 flag / 带 flag（主仓调用图有环） | rc=0 / rc=3 |
+| 活体：`cw issues <不存在符号> --fail-on-findings` | rc=0 |
+| `tests/test_report_rc_semantics.py` 新增 19 例 | 全 passed |
+| 章节门禁 + i18n 双门禁 + exit-code + help/coverage/audit/bootstrap/agent 回归 | 全 passed |
+
+### 4. 边界与残留
+
+- `function-issues --summary` 模式不参与 rc=3 门禁（汇总口径另立批次）；
+  `semgrep quick` 的 `errors` 告警计数保持 rc=0；默认行为零变化。
 
 ## 10. 相关真相源
 
