@@ -1924,6 +1924,13 @@ impl TaskCollabStore {
     ///
     /// 只读打开 registry、不持写锁；由调用方在领域写事务**之外**调用，
     /// 避免与 daemon writer 竞争。
+    ///
+    /// mTLS 双轨语义（安全取证 #2 固化）：HTTPS 通道无 OS peer cred，`peer_uid`
+    /// 由 `http_server::synthetic_local_owner_peer` 合成为 daemon 宿主身份——
+    /// 本比对在 mTLS loopback 下恒以「daemon 宿主用户」为主体（所有 principal
+    /// 客户端互通，同宿主协作语义）；registry 行 owner 为其他 OS 用户时仍
+    /// fail-closed（`workspace_forbidden`）。principal 身份仅在授权面
+    /// （workspace grant）生效，不参与本比对。
     pub fn verify_registry_owner_for_create(
         &self,
         peer_uid: u32,
@@ -1964,6 +1971,12 @@ impl TaskCollabStore {
     /// - registry 行存在且 `owner_uid` 与 peer 不一致 → `workspace_forbidden`
     ///   fail-closed；
     /// - registry 无该 instance 行 → 放行（无宿主路径可泄露，与 status 面一致）。
+    ///
+    /// mTLS 双轨语义（安全取证 #2 固化）：HTTPS 通道下 `peer_uid` 为
+    /// `http_server::synthetic_local_owner_peer` 合成的 daemon 宿主身份，
+    /// 本比对恒以「daemon 宿主用户」为主体——所有 principal 客户端互通
+    /// （同宿主协作语义）；owner 为其他 OS 用户的 registry 行仍 fail-closed。
+    /// principal 身份仅在授权面（workspace grant）生效，不参与本比对。
     pub fn verify_registry_owner_for_task(
         &self,
         peer_uid: u32,

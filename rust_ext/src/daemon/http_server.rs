@@ -2231,6 +2231,15 @@ fn jsonrpc_int_code(e: &str) -> i64 {
 // ============================================
 
 /// 构造合成 local-owner peer（HTTP 无 OS peer cred；授权主语由 TLS 证书 SAN 承担）。
+///
+/// 双轨身份契约（安全取证 #2 固化）：本合成 peer 的 uid/owner_key **恒等于
+/// daemon 宿主身份**（`current_daemon_owner_key`）——任务面 ACL
+/// （`check_task_owner*`、agent.register owner 校验、`created_by` 归属）在
+/// mTLS loopback 下按该宿主身份判定，所有 principal 客户端互通（同宿主
+/// 协作语义，有意设计）。principal 身份经 `with_principal` 附加，仅在
+/// 授权面（workspace grant 门禁）生效，不进入任务面判定输入；跨 workspace
+/// 隔离由 principal grant 层承担。不得将本函数的 owner 身份改为 principal
+/// 派生——会破坏存量任务卡 owner 比对与同宿主协作语义。
 fn synthetic_local_owner_peer() -> PeerCredential {
     let key = current_daemon_owner_key();
     #[cfg(windows)]
@@ -5915,6 +5924,27 @@ mod tests {
             "structured_error_fixture": "fixture-demo-err",
             "owner": "T-1795251651321-7f78a7b8"
         })
+    }
+
+    /// 安全取证 #2：mTLS 合成 peer 身份坍缩契约锁定——任务面 owner 身份恒等于
+    /// daemon 宿主（所有 principal 客户端互通），principal 仅授权面生效。
+    #[test]
+    fn test_synthetic_local_owner_peer_collapses_to_daemon_owner() {
+        use crate::daemon::peercred::{FixedStr, PrincipalIdentity};
+
+        let os_peer = synthetic_local_owner_peer();
+        // 任务面 ACL 输入（uid/owner_key）= daemon 宿主身份；无 principal。
+        assert_eq!(os_peer.owner_key(), current_daemon_owner_key());
+        assert!(!os_peer.principal.is_authenticated());
+
+        // principal 经 with_principal 附加：授权主语变化，任务面输入不变。
+        let peer = os_peer.with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            ..Default::default()
+        });
+        assert_eq!(peer.owner_key(), current_daemon_owner_key());
+        assert_eq!(peer.auth_subject(), "principal:pr_agent");
     }
 
     #[test]

@@ -133,6 +133,16 @@ impl PeerCredential {
     }
 
     /// 授权主语（ADR-002 §5.1）：有 principal 用 principal，否则回退 OS owner key。
+    ///
+    /// 双轨身份契约（安全取证 #2 固化）：本方法**仅供授权面**（workspace grant /
+    /// principal 门禁）与诊断使用。任务面 ACL（`check_task_owner*` →
+    /// `verify_registry_owner_for_task/create`、agent.register owner 校验、
+    /// `created_by` 归属）的判定输入是 [`Self::owner_key`] / [`Self::uid`]——
+    /// OS 协作语义：mTLS loopback 下由 `synthetic_local_owner_peer` 坍缩为
+    /// daemon 宿主身份，同宿主多 agent 互通（协同设计），跨 workspace 隔离由
+    /// principal grant 层（`workspace_allowed`）承担。两轨不得互相替代：
+    /// 任务面改用 principal 会破坏同宿主协作语义，授权面回退 OS 身份会重开
+    /// #1 类 param-present 旁路。
     pub fn auth_subject(&self) -> String {
         match self.principal_id() {
             Some(id) => format!("principal:{}", id),
@@ -4031,6 +4041,28 @@ mod tests {
             current_daemon_uid().wrapping_add(1)
         );
         assert_eq!(response["result"]["pid"], state.pid);
+    }
+
+    /// 安全取证 #2：双轨身份契约锁定——principal 附加只改变授权主语
+    /// （`auth_subject`），不改变任务面 ACL 输入（uid / owner_key）。
+    #[test]
+    fn test_auth_subject_prefers_principal_over_os_key() {
+        // OS 回退分支：无 principal 时授权主语 = OS owner key。
+        let os_peer = make_peer();
+        assert_eq!(os_peer.auth_subject(), os_peer.owner_key());
+
+        // principal 优先分支：已认证 principal → principal:{id}。
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            ..Default::default()
+        });
+        assert_eq!(peer.auth_subject(), "principal:pr_agent");
+
+        // 任务面 ACL 输入不受 principal 附加影响（双轨不互通：任务面仍按
+        // OS 身份判定，principal 仅授权面生效）。
+        assert_eq!(peer.uid, os_peer.uid);
+        assert_eq!(peer.owner_key(), os_peer.owner_key());
     }
 
     #[test]
