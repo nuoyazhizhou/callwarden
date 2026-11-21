@@ -4237,7 +4237,34 @@ catalog 双向对账）证实为**陈旧残留**——§26 已把缺翻译方向
   locked」退役口径、`config check-role agent` / `git import` / `embed`
   失败分支 rc=0、`git check-*` 软门禁恒 0（设计使然）、`git_arg_limit`
   i18n 键共用文案漂移。
-- `gc archive/restore/status/purge` 动作章节化仍在 §40.4 挂账。
+- `gc archive/restore/status/purge` 动作章节化已在 §9.53 收口（backlog §42）。
+
+## 9.53 gc archive/restore/status/purge 动作章节化（2026-11-21）
+
+### 1. 装置与侦察
+
+§40.4 挂账项：`gc` 顶层 12 个子命令中 4 个动作（archive/restore/status/purge）
+无章节。`--help` 实跑 + 路由表核对：`gc_status` READ_ONLY，
+`gc_archive`/`gc_purge`/`gc_restore` 均 PROTECTED_MUTATION。
+
+### 2. 处置
+
+- **文档**（[cli_reference.md](../../docs/cli_reference.md)）：四节补齐四段式，
+  插在 `gc retention` 与 `gc archive-list` 之间（归档→状态→复活→清除
+  生命周期序）；`purge` 加不可逆语义加注（区别于 archive 可复活）；
+  `gc status` 用无参占位行。
+- **门禁**（[test_cli_reference_sections.py](../../tests/test_cli_reference_sections.py)）：
+  `EXPECTED_COMMANDS_SECOND` 24→28（gc 9→13）。
+
+### 3. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `test_cli_reference_sections.py` | **8 passed** |
+
+### 4. 边界与残留
+
+- §41.4 rc 残差台账不变（`gc` 族 epilog「2 = Database locked」同属该批）。
 
 ## 10. 相关真相源
 

@@ -260,6 +260,133 @@ cw gc retention --dry-run
 cw gc retention --apply --older-than 730 --keep-versions 200 --save-policy
 ```
 
+### `gc archive`：归档被 ignore 命中的文件
+
+```bash
+cw gc archive [--force] [--dry-run]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--force` | 否 | Full GC：扫描所有活跃文件（默认只扫描 pending） |
+| `--dry-run` | 否 | 预演：只统计不实际归档 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> **写命令**：走 PROTECTED_MUTATION 保护。归档不是删除——文件移出活跃索引并保留备份，可经 `gc restore` 复活或 `gc archive-import` 离线导回。
+
+返回字段：`scanned`（扫描文件数）/ `archived`（本次归档数）/ `skipped`（跳过数）/ `reasons`（跳过原因计数）。
+
+**示例**
+
+```bash
+cw gc archive --dry-run          # 预演：只统计不归档
+cw gc archive                    # 按 ignore 规则归档 pending 文件
+cw gc archive --force            # Full GC：扫描所有活跃文件
+```
+
+### `gc status`：查看 GC 状态
+
+```bash
+cw gc status
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> **只读命令**：可走 MCP，WAL 安全。
+
+返回字段：`active_files`（活跃文件数）/ `archived_files`（已归档文件数）/ `deleted_files`（已删除文件数）/ `archive_ratio`（归档占比）/ `archived_symbols` / `archived_calls`（有归档时）/ `recent_archives`（最近归档记录，含时间/路径/符号数/原因）。
+
+**示例**
+
+```bash
+cw gc status                     # 查看活跃/归档/删除文件统计与最近归档记录
+```
+
+### `gc restore`：复活已归档文件
+
+```bash
+cw gc restore [--path <PATH> ...] [--force]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--path <PATH> ...` | 否 | 要复活的文件相对路径（为空则扫描所有归档文件） |
+| `--force` | 否 | 即使仍命中 ignore 也强制复活 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> **写命令**：走 PROTECTED_MUTATION 保护。不带 `--force` 时，仍命中 ignore 规则的文件不会复活（计入 `still_ignored`）。
+
+返回字段：`scanned`（扫描归档数）/ `restored`（复活数）/ `still_ignored`（仍被 ignore 拦下的数量）。复活后提示需 `cw refresh` 重建索引。
+
+**示例**
+
+```bash
+cw gc restore                                  # 扫描所有归档文件并复活未命中 ignore 的
+cw gc restore --path src/legacy/a.py           # 只复活指定文件
+cw gc restore --path src/legacy/a.py --force   # 仍命中 ignore 也强制复活
+```
+
+### `gc purge`：彻底清除归档超过 N 天的文件
+
+```bash
+cw gc purge [--older-than <N>]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--older-than <N>` | 否 | 归档超过多少天才清除（默认 30，单位天） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
+| 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
+
+> **写命令**：走 PROTECTED_MUTATION 保护。purge 是**不可逆**的最终清除（区别于 archive 的可复活归档），清除的文件/符号/调用关系不再可经 `gc restore` 或 `gc archive-import` 找回。
+
+返回字段：`purged_files`（清除文件数）/ `purged_symbols`（清除符号数）/ `purged_calls`（清除调用关系数）。
+
+**示例**
+
+```bash
+cw gc purge                       # 清除归档超过 30 天的文件
+cw gc purge --older-than 7        # 清除归档超过 7 天的文件
+```
+
 ### `gc archive-list`：列出 GC 备份文件
 
 ```bash

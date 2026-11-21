@@ -3257,5 +3257,28 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 
 | 类别 | 说明 |
 | --- | --- |
-| 非目标 | 上表 rc 残差修复留口径统一批次；`gc archive/restore/status/purge` 动作章节化仍在 §40.4 挂账 |
+| 非目标 | 上表 rc 残差修复留口径统一批次；`gc archive/restore/status/purge` 动作章节化已在 §42 收口 |
+| 回滚 | 回退本次提交即可；无迁移状态 |
+
+## 42. gc archive/restore/status/purge 动作章节化（§40.4 挂账清零，2026-11-21）
+
+### 42.1 处置
+
+| 项 | 内容 |
+| --- | --- |
+| 四段式补齐 | `gc archive`（PROTECTED_MUTATION）/ `gc status`（READ_ONLY，无参占位行）/ `gc restore`（PROTECTED_MUTATION）/ `gc purge`（PROTECTED_MUTATION，不可逆语义加注），插在 `gc retention` 与 `gc archive-list` 之间（归档→状态→复活→清除生命周期序） |
+| 真值核对 | 参数表按 `cw gc <action> --help` 实跑：archive `--force/--dry-run`、restore `--path <PATH>.../--force`、purge `--older-than` 默认 30；op 类别按 `cli/main.py` 路由表（gc_status READ_ONLY，其余三个 PROTECTED_MUTATION） |
+| 门禁 | `EXPECTED_COMMANDS_SECOND` 24→28（gc 9→13），docstring 同步 |
+
+### 42.2 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `pytest tests/test_cli_reference_sections.py` | **8 passed**（154→158 命令四段式 + 无未登记章节） |
+
+### 42.3 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 非目标 | §41.4 rc 残差台账不变（`gc` 族 epilog「2 = Database locked」同属该批） |
 | 回滚 | 回退本次提交即可；无迁移状态 |

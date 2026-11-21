@@ -15,9 +15,10 @@
 批次（§9.51/§9.52）：
 - 首批 8 前缀 44 命令：task / build-context / workspace / query / search /
   file / status / stats；
-- 第二批 6 前缀 24 命令：gc / coverage / defect / semgrep / guardrail /
+- 第二批 6 前缀 28 命令：gc / coverage / defect / semgrep / guardrail /
   vuln-blast（同时收口 gc 连字符形标题漂移：``gc archive list`` 等空格形
-  实际 argparse 不存在，真实子命令为 ``gc archive-list`` 等）；
+  实际 argparse 不存在，真实子命令为 ``gc archive-list`` 等；§9.53 补齐
+  gc archive / restore / status / purge 四个动作章节）；
 - 第三批 62 前缀 86 命令（§9.52）：生命周期（install/setup/refresh/fts/
   bootstrap/daemon/cw-agent/config/toolchain/test）、图谱查询（grep/symbol/
   callers/callees/topo/impact/call-chain/top-callers/deepest/detect-cycles/
@@ -138,9 +139,13 @@ EXPECTED_COMMANDS = frozenset({
     "stats",
 })
 
-# 第二批 canonical 命令（§9.51；24 个）
+# 第二批 canonical 命令（§9.51 + §9.53 gc 动作四节；28 个）
 EXPECTED_COMMANDS_SECOND = frozenset({
-    # gc（9）
+    # gc（13）
+    "gc archive",
+    "gc restore",
+    "gc status",
+    "gc purge",
     "gc policy show",
     "gc policy set",
     "gc retention",
