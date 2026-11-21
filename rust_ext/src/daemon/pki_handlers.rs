@@ -120,8 +120,10 @@ fn error_body(code: &str, message: &str) -> Value {
 /// POST /v1/enroll/renew（ADR-002 §4.3）：
 /// 已持有效客户端证书者换发新证书；`{ "csr_pem": "..." }`。
 ///
-/// 旧证书不在此处吊销——按 §4.3 的 overlap 窗口语义，吊销由 owner 显式
-/// `cw pki revoke --serial` 执行（默认保留到过期）。
+/// 换发成功后**自动按 serial 吊销当前连接使用的旧证书**（HTTPS 取证 F3）：
+/// overlap 语义不再依赖 owner 手工 `cw pki revoke --serial`，避免旧私钥在
+/// 有效期内继续可用。吊销写入失败不回滚新证书（新证书已登记并可立即使用），
+/// 但会在响应 `warnings` 中显式暴露部分状态并在 daemon 日志留痕。
 pub async fn renew_handler<S: DaemonStateExt + Send + Sync + 'static>(
     State(app): State<AppState<S>>,
     Extension(auth): Extension<AuthPrincipal>,
@@ -176,6 +178,21 @@ pub async fn renew_handler<S: DaemonStateExt + Send + Sync + 'static>(
                     error_body("E_PKI_IO", "证书已签发但登记失败").to_string(),
                 );
             }
+            // 换发成功：自动吊销当前连接使用的旧证书 serial（HTTPS 取证 F3）。
+            // 新证书已登记 → 吊销失败不回滚，只显式暴露部分状态。
+            let mut warnings: Vec<String> = Vec::new();
+            let old_serial = auth.0.cert_serial.as_str();
+            if old_serial.is_empty() {
+                warnings.push("旧证书 serial 为空，未能自动吊销".to_string());
+            } else if old_serial != issued.serial.as_str() {
+                if let Err(e) = app
+                    .principal_registry
+                    .record_revoked_serial(old_serial, "renew-replaced")
+                {
+                    eprintln!("[cw_daemon][pki] renew 旧证书吊销失败: {}", e);
+                    warnings.push(format!("旧证书 {} 吊销失败: {}", old_serial, e));
+                }
+            }
             let body = json!({
                 "principal_id": issued.principal_id,
                 "cert_pem": issued.cert_pem,
@@ -183,6 +200,7 @@ pub async fn renew_handler<S: DaemonStateExt + Send + Sync + 'static>(
                 "serial": issued.serial,
                 "not_after": issued.not_after,
                 "cert_sha256": issued.cert_sha256,
+                "warnings": warnings,
             });
             json_response(StatusCode::OK, body.to_string())
         }

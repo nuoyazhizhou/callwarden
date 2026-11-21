@@ -107,6 +107,35 @@ const REFRESH_PLAN_TTL: Duration = Duration::from_secs(10 * 60);
 /// 仅当 client 未声明 canonical_len 时使用。
 const DEFAULT_MAX_INLINE_BYTES: usize = 64 * 1024 * 1024;
 
+/// 服务端允许的 canonical_bytes 解压产物硬上限（256 MiB，HTTPS 取证 F1）。
+///
+/// `canonical_len` 是客户端自报值，只能作为“本次解压容量上限”，绝不能当
+/// 服务端上限：谎报超大值会让有界解压退化为无界内存分配（OOM DoS）。
+const MAX_CANONICAL_INLINE_BYTES: usize = 256 * 1024 * 1024;
+
+/// 把 client 声明的 `canonical_len` 收敛为本次解压容量上限。
+///
+/// 缺失/非法/为 0 → 回退 `DEFAULT_MAX_INLINE_BYTES`；超过服务端硬上限 →
+/// fail-fast 拒绝（不做静默截断，避免把 OOM 问题伪装成“解压失败”）。
+fn declared_canonical_cap(params: &Value) -> Result<usize, DaemonRpcError> {
+    let declared = params
+        .get("canonical_len")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_MAX_INLINE_BYTES);
+    if declared > MAX_CANONICAL_INLINE_BYTES {
+        return Err(DaemonRpcError::new(
+            "canonical_len_too_large",
+            format!(
+                "declared canonical_len {} exceeds server limit {} bytes",
+                declared, MAX_CANONICAL_INLINE_BYTES
+            ),
+        ));
+    }
+    Ok(declared)
+}
+
 struct RefreshPlanAccumulator {
     owner_uid: u32,
     workspace_id: i64,
@@ -2337,12 +2366,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
             match payload {
                 InlinePayload::Raw(bytes) => Some(bytes.to_vec()),
                 InlinePayload::Gz(gz) => {
-                    let max_out = params
-                        .get("canonical_len")
-                        .and_then(|v| v.as_u64())
-                        .map(|n| n as usize)
-                        .filter(|n| *n > 0)
-                        .unwrap_or(DEFAULT_MAX_INLINE_BYTES);
+                    let max_out = declared_canonical_cap(params)?;
                     match Self::decompress_gz_bounded(gz, max_out) {
                         Ok(bytes) => Some(bytes),
                         Err(e) => {
@@ -2390,12 +2414,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
             use base64::Engine;
             match base64::engine::general_purpose::STANDARD.decode(gz_b64) {
                 Ok(gz_bytes) => {
-                    let max_out = params
-                        .get("canonical_len")
-                        .and_then(|v| v.as_u64())
-                        .map(|n| n as usize)
-                        .filter(|n| *n > 0)
-                        .unwrap_or(DEFAULT_MAX_INLINE_BYTES);
+                    let max_out = declared_canonical_cap(params)?;
                     match Self::decompress_gz_bounded(&gz_bytes, max_out) {
                         Ok(bytes) => Some(bytes),
                         Err(e) => {
@@ -7514,6 +7533,85 @@ mod tests {
         // 声称 20MB（充足）→ 接受并完整还原
         let r2 = WorkspaceDaemonState::decompress_gz_bounded(&gz, 20 * 1024 * 1024);
         assert_eq!(r2.unwrap(), big);
+    }
+
+    #[test]
+    fn test_declared_canonical_cap_clamps_client_declaration() {
+        // HTTPS 取证 F1：canonical_len 是自报值，必须被服务端硬上限收敛。
+        let err = declared_canonical_cap(&json!({"canonical_len": 1_000_000_000_000u64}))
+            .expect_err("谎报超大 canonical_len 必须 fail-fast 拒绝");
+        assert_eq!(err.code, "canonical_len_too_large");
+        // 缺失 / 非法 / 0 → 回退默认上限
+        assert_eq!(declared_canonical_cap(&json!({})).unwrap(), DEFAULT_MAX_INLINE_BYTES);
+        assert_eq!(
+            declared_canonical_cap(&json!({"canonical_len": 0})).unwrap(),
+            DEFAULT_MAX_INLINE_BYTES
+        );
+        assert_eq!(
+            declared_canonical_cap(&json!({"canonical_len": -5})).unwrap(),
+            DEFAULT_MAX_INLINE_BYTES
+        );
+        // 正常自报值原样采用；恰好等于硬上限放行；超 1 字节拒绝
+        assert_eq!(
+            declared_canonical_cap(&json!({"canonical_len": 1024})).unwrap(),
+            1024
+        );
+        assert_eq!(
+            declared_canonical_cap(&json!({"canonical_len": MAX_CANONICAL_INLINE_BYTES as u64}))
+                .unwrap(),
+            MAX_CANONICAL_INLINE_BYTES
+        );
+        assert!(
+            declared_canonical_cap(
+                &json!({"canonical_len": MAX_CANONICAL_INLINE_BYTES as u64 + 1})
+            )
+            .is_err(),
+            "超过硬上限 1 字节必须拒绝"
+        );
+    }
+
+    #[test]
+    fn test_refresh_refuses_absurd_canonical_len_before_decompress() {
+        // HTTPS 取证 F1 端到端：谎报超大 canonical_len 的 gz 载荷在解压前即被拒绝，
+        // 不进入 decompress_gz_bounded（不会发生大额分配）。
+        use base64::Engine;
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        let canonical = b"pub fn main() {}\n".repeat(64);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&canonical).unwrap();
+        let gz = encoder.finish().unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&gz);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "content_hash": "abc123",
+                "language": "rust",
+                "canonical_bytes_gz_b64": b64,
+                "canonical_len": 1_000_000_000_000u64,
+            }),
+        );
+        assert_eq!(
+            response["error"]["code"].as_str(),
+            Some("canonical_len_too_large"),
+            "谎报超大 canonical_len 必须在解压前被拒绝: {}",
+            response
+        );
     }
 
     #[test]

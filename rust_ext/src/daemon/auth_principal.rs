@@ -436,6 +436,104 @@ impl PrincipalRegistry {
         }
         Ok(())
     }
+    /// 记录单张证书 serial 吊销（renew 换发后自动调用，HTTPS 取证 F3）。
+    ///
+    /// 写 DB `pki_revocations` 并把 `pki_issued_certs.status` 置 `revoked`，
+    /// 随后清 `last_check` 让授权快照在下一个连接立即重载（不必等
+    /// `DB_RECHECK_INTERVAL`）。磁盘台账没有 serial 级吊销标记——磁盘 `revoked`
+    /// 是 principal 级，二者语义不同，本方法只动 DB。
+    pub fn record_revoked_serial(&self, cert_serial: &str, reason: &str) -> Result<(), String> {
+        let serial = cert_serial.trim();
+        if serial.is_empty() {
+            return Err("空 cert_serial".to_string());
+        }
+        let Some(db_path) = self.db_path.as_ref() else {
+            return Err("权威 DB 未配置".to_string());
+        };
+        record_revoked_serial_db(db_path, serial, reason)?;
+        self.refresh
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_check = None;
+        Ok(())
+    }
+}
+
+/// 写入 DB 吊销台账（serial 级）：`pki_revocations` + `pki_issued_certs.status`。
+fn record_revoked_serial_db(
+    db_path: &Path,
+    cert_serial: &str,
+    reason: &str,
+) -> Result<(), String> {
+    let conn = Connection::open(db_path).map_err(|e| format!("open: {}", e))?;
+    let _ = conn.busy_timeout(Duration::from_secs(2));
+    ensure_pki_ledger_tables(&conn)?;
+    let now = unix_now_f64();
+    conn.execute(
+        "INSERT OR REPLACE INTO pki_revocations \
+         (cert_serial, principal_id, revoked_at, reason, actor_principal_id) \
+         VALUES (?1, COALESCE((SELECT principal_id FROM pki_issued_certs WHERE cert_serial = ?1), ''), \
+                 ?2, ?3, 'daemon-renew')",
+        rusqlite::params![cert_serial, now, reason],
+    )
+    .map_err(|e| format!("pki_revocations: {}", e))?;
+    conn.execute(
+        "UPDATE pki_issued_certs SET status = 'revoked', revoked_at = ?2 WHERE cert_serial = ?1",
+        rusqlite::params![cert_serial, now],
+    )
+    .map_err(|e| format!("pki_issued_certs revoke: {}", e))?;
+    crate::cli::task::sign_audit_chain(
+        &conn,
+        "pki_revocations",
+        cert_serial,
+        &serde_json::json!({
+            "event": "pki_cert_revoked",
+            "cert_serial": cert_serial,
+            "reason": reason,
+            "revoked_at": now,
+            "source": "renew",
+        }),
+    )
+    .map_err(|e| format!("pki revoke audit_chain: {}", e))?;
+    Ok(())
+}
+
+/// 幂等补齐 PKI 台账表（列定义与 `db/db_base.py::PKI_SCHEMA_STATEMENTS` 一致）。
+fn ensure_pki_ledger_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS pki_principals (\
+             principal_id TEXT PRIMARY KEY, kind TEXT NOT NULL, \
+             display_name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', \
+             created_at REAL NOT NULL DEFAULT 0, updated_at REAL NOT NULL DEFAULT 0, \
+             note TEXT NOT NULL DEFAULT '');\
+         CREATE TABLE IF NOT EXISTS pki_issued_certs (\
+             cert_serial TEXT PRIMARY KEY, principal_id TEXT NOT NULL, \
+             fingerprint_sha256 TEXT NOT NULL, issued_at REAL NOT NULL, \
+             not_before REAL NOT NULL, not_after REAL NOT NULL, \
+             status TEXT NOT NULL DEFAULT 'active', revoked_at REAL NOT NULL DEFAULT 0, \
+             issued_by TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'enroll', \
+             subject_san TEXT NOT NULL DEFAULT '');\
+         CREATE TABLE IF NOT EXISTS pki_revocations (\
+             cert_serial TEXT PRIMARY KEY, principal_id TEXT NOT NULL, \
+             revoked_at REAL NOT NULL, reason TEXT NOT NULL DEFAULT '', \
+             actor_principal_id TEXT NOT NULL DEFAULT '', \
+             audit_record_id TEXT NOT NULL DEFAULT '');\
+         CREATE TABLE IF NOT EXISTS workspace_principal_grants (\
+             workspace_id INTEGER NOT NULL, principal_id TEXT NOT NULL, \
+             role TEXT NOT NULL, granted_at REAL NOT NULL, \
+             granted_by TEXT NOT NULL DEFAULT '', revoked_at REAL NOT NULL DEFAULT 0, \
+             PRIMARY KEY (workspace_id, principal_id));\
+         CREATE TABLE IF NOT EXISTS audit_chain (\
+             id INTEGER PRIMARY KEY AUTOINCREMENT, table_name TEXT NOT NULL, \
+             record_id TEXT NOT NULL, operation TEXT NOT NULL DEFAULT 'insert', \
+             payload_hash TEXT NOT NULL, prev_signature TEXT DEFAULT '', \
+             record_signature TEXT NOT NULL, signing_key_id TEXT DEFAULT 'local', \
+             signed_at REAL NOT NULL);\
+         CREATE INDEX IF NOT EXISTS idx_audit_chain_table_record \
+             ON audit_chain(table_name, record_id);",
+    )
+    .map_err(|e| format!("ensure pki tables: {}", e))?;
+    Ok(())
 }
 
 /// `pki_revocations` / `pki_principals` / `pki_issued_certs` / `workspace_principal_grants` 读投影。
@@ -517,37 +615,9 @@ fn record_db_ledger(
 ) -> Result<(), String> {
     let conn = Connection::open(db_path).map_err(|e| format!("open: {}", e))?;
     let _ = conn.busy_timeout(Duration::from_secs(2));
-    // 隔离 daemon / 新机器上 Python DB 层可能从未开过库：`cw pki` 只补了 3 张表，
-    // 这里幂等补齐签发登记所需表（列定义与 `db/db_base.py::PKI_SCHEMA_STATEMENTS`
-    // 保持一致），否则下文 INSERT 会因缺表失败并静默丢掉台账。
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS pki_principals (\
-             principal_id TEXT PRIMARY KEY, kind TEXT NOT NULL, \
-             display_name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', \
-             created_at REAL NOT NULL DEFAULT 0, updated_at REAL NOT NULL DEFAULT 0, \
-             note TEXT NOT NULL DEFAULT '');\
-         CREATE TABLE IF NOT EXISTS pki_issued_certs (\
-             cert_serial TEXT PRIMARY KEY, principal_id TEXT NOT NULL, \
-             fingerprint_sha256 TEXT NOT NULL, issued_at REAL NOT NULL, \
-             not_before REAL NOT NULL, not_after REAL NOT NULL, \
-             status TEXT NOT NULL DEFAULT 'active', revoked_at REAL NOT NULL DEFAULT 0, \
-             issued_by TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'enroll', \
-             subject_san TEXT NOT NULL DEFAULT '');\
-         CREATE TABLE IF NOT EXISTS workspace_principal_grants (\
-             workspace_id INTEGER NOT NULL, principal_id TEXT NOT NULL, \
-             role TEXT NOT NULL, granted_at REAL NOT NULL, \
-             granted_by TEXT NOT NULL DEFAULT '', revoked_at REAL NOT NULL DEFAULT 0, \
-             PRIMARY KEY (workspace_id, principal_id));\
-         CREATE TABLE IF NOT EXISTS audit_chain (\
-             id INTEGER PRIMARY KEY AUTOINCREMENT, table_name TEXT NOT NULL, \
-             record_id TEXT NOT NULL, operation TEXT NOT NULL DEFAULT 'insert', \
-             payload_hash TEXT NOT NULL, prev_signature TEXT DEFAULT '', \
-             record_signature TEXT NOT NULL, signing_key_id TEXT DEFAULT 'local', \
-             signed_at REAL NOT NULL);\
-         CREATE INDEX IF NOT EXISTS idx_audit_chain_table_record \
-             ON audit_chain(table_name, record_id);",
-    )
-    .map_err(|e| format!("ensure pki tables: {}", e))?;
+    // 隔离 daemon / 新机器上 Python DB 层可能从未开过库：幂等补齐签发登记所需表，
+    // 否则下文 INSERT 会因缺表失败并静默丢掉台账。
+    ensure_pki_ledger_tables(&conn)?;
     let now = unix_now_f64();
     conn.execute(
         "INSERT OR IGNORE INTO pki_principals \
@@ -969,6 +1039,46 @@ mod tests {
         registry.refresh_now();
         let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
         assert!(!ident.workspace_allowed("9"));
+    }
+
+    /// HTTPS 取证 F3：renew 时按 serial 吊销旧证书——旧 serial 立即失效，
+    /// 新 serial 不受影响；空 serial fail-fast 拒绝。
+    #[test]
+    fn test_record_revoked_serial_invalidates_old_cert_only() {
+        let pki = pki_root();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db_path = db_dir.path().join("callwarden.db");
+        let registry = PrincipalRegistry::new(pki.path().to_path_buf(), Some(db_path));
+
+        registry
+            .record_issued_certificate("pr_agent", "AA11", "fp-old", "1")
+            .unwrap();
+        registry
+            .record_issued_certificate("pr_agent", "BB22", "fp-new", "1")
+            .unwrap();
+        registry.refresh_now();
+        assert!(registry.authorize("pr_agent", "AA11", "fp-old").is_ok());
+
+        registry
+            .record_revoked_serial("AA11", "renew-replaced")
+            .unwrap();
+        registry.refresh_now();
+
+        assert_eq!(
+            registry
+                .authorize("pr_agent", "AA11", "fp-old")
+                .unwrap_err(),
+            PrincipalError::Revoked,
+            "旧 serial 在 renew 吊销后必须立即失效"
+        );
+        assert!(
+            registry.authorize("pr_agent", "BB22", "fp-new").is_ok(),
+            "新 serial 不受旧 serial 吊销影响"
+        );
+        assert!(
+            registry.record_revoked_serial("  ", "x").is_err(),
+            "空 serial 必须 fail-fast 拒绝"
+        );
     }
 
     /// 安全取证 #4：磁盘 grants 逐连接实时读（无缓存）——写盘后无需显式刷新即生效。

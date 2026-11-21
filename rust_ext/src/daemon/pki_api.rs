@@ -206,9 +206,63 @@ fn write_file(path: &Path, contents: &str, private: bool) -> Result<(), PkiError
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    if private {
+        apply_owner_only_dacl(&tmp)?;
+    }
+    #[cfg(not(any(unix, windows)))]
     let _ = private;
     std::fs::rename(&tmp, path).map_err(|e| PkiError::io("rename", e))?;
+    Ok(())
+}
+
+/// Windows：把 `private` 文件的 DACL 收紧为 owner-only（HTTPS 取证 F2/F4）。
+///
+/// 与 `http_server::publish_manifest_windows` 同一 SDDL 范式
+/// （`D:P(A;;FA;;;<owner-sid>)` + `SetFileSecurityW`）。`private=true` 覆盖
+/// `ca.key` / `client.key` / 引导 token 台账等敏感文件：若继承父目录 ACL，
+/// PKI 根被放到自定义或共享路径时同机其他用户可读私钥并冒充 principal。
+/// 施加失败 fail-closed——调用方不得继续 rename，避免敏感文件以宽松 ACL 落盘。
+#[cfg(windows)]
+fn apply_owner_only_dacl(path: &Path) -> Result<(), PkiError> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{SetFileSecurityW, DACL_SECURITY_INFORMATION};
+
+    let owner_sid = crate::daemon::dispatch::current_daemon_owner_key();
+    let sddl = format!("D:P(A;;FA;;;{})", owner_sid);
+    let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut sd: *mut std::ffi::c_void = std::ptr::null_mut();
+    let conv_ok = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_wide.as_ptr(),
+            SDDL_REVISION_1,
+            &mut sd,
+            std::ptr::null_mut(),
+        )
+    };
+    if conv_ok == 0 {
+        return Err(PkiError::new(
+            "E_PKI_ACL",
+            format!("SDDL 转换失败: {}", std::io::Error::last_os_error()),
+        ));
+    }
+    let wide: Vec<u16> = path
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let set_ok = unsafe { SetFileSecurityW(wide.as_ptr(), DACL_SECURITY_INFORMATION, sd) };
+    let set_err = std::io::Error::last_os_error();
+    unsafe { LocalFree(sd) };
+    if set_ok == 0 {
+        return Err(PkiError::new(
+            "E_PKI_ACL",
+            format!("SetFileSecurityW 失败: {}", set_err),
+        ));
+    }
     Ok(())
 }
 
@@ -1350,6 +1404,78 @@ pub fn server_cert_needs_renewal(der: &[u8], now_unix_secs: i64, threshold_days:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HTTPS 取证 F2/F4：Windows 下 `private=true` 的文件必须只对当前用户 SID
+    /// 授权（不继承父目录 ACL，不得含 BUILTIN\Users 等宽泛组）。
+    #[cfg(windows)]
+    #[test]
+    fn test_write_file_private_applies_owner_only_dacl() {
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
+        };
+        use windows_sys::Win32::Security::{
+            GetAce, ACCESS_ALLOWED_ACE, DACL_SECURITY_INFORMATION,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.key");
+        write_file(&path, "secret", true).unwrap();
+
+        let wide: Vec<u16> = path
+            .to_string_lossy()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut sd: *mut std::ffi::c_void = std::ptr::null_mut();
+        let mut dacl: *mut windows_sys::Win32::Security::ACL = std::ptr::null_mut();
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut sd,
+            )
+        };
+        assert_eq!(status, 0, "GetNamedSecurityInfoW 失败: {}", status);
+        assert!(!dacl.is_null(), "private 文件必须有显式 DACL");
+
+        let ace_count = unsafe { (*dacl).AceCount };
+        assert_eq!(
+            ace_count, 1,
+            "private 文件 DACL 应仅含 1 个 ACE（仅 owner），实际 {}",
+            ace_count
+        );
+
+        let mut ace: *mut std::ffi::c_void = std::ptr::null_mut();
+        assert_ne!(unsafe { GetAce(dacl, 0, &mut ace) }, 0, "GetAce 失败");
+        let allowed = ace as *const ACCESS_ALLOWED_ACE;
+        let sid = unsafe { std::ptr::addr_of!((*allowed).SidStart) as *mut std::ffi::c_void };
+        let mut sid_str: *mut u16 = std::ptr::null_mut();
+        assert_ne!(
+            unsafe { ConvertSidToStringSidW(sid, &mut sid_str) },
+            0,
+            "ConvertSidToStringSidW 失败"
+        );
+        let mut len = 0usize;
+        while unsafe { *sid_str.add(len) } != 0 {
+            len += 1;
+        }
+        let sid_text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(sid_str, len) });
+        unsafe {
+            LocalFree(sid_str as *mut std::ffi::c_void);
+            LocalFree(sd);
+        }
+        assert_eq!(
+            sid_text,
+            crate::daemon::dispatch::current_daemon_owner_key(),
+            "private 文件的唯一 ACE 必须授权当前用户 SID"
+        );
+    }
 
     #[test]
     fn test_server_cert_expires_in_days_valid() {
