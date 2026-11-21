@@ -30,11 +30,11 @@ mod pki_handlers;
 #[path = "auth_principal.rs"]
 pub mod auth_principal;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
@@ -1169,11 +1169,22 @@ async fn health_handler<S: DaemonStateExt + Send + Sync + 'static>(
 }
 
 /// GET /capabilities — 返回 capability registry（fail closed 时 503）。
+///
+/// registry 为纯静态数据（T-1795251669229-aadedc48 N1）：进程内 OnceLock
+/// 缓存首次构建结果（成功与失败均缓存——构建是确定性的，失败同样可复现），
+/// 后续 GET 直接复用，避免每请求全量重建 195 行注册表并重跑 fail-closed
+/// 校验；重复 GET 结果逐字节一致，200/503 语义不变。
+static CAPABILITY_REGISTRY_CACHE: OnceLock<Result<String, String>> = OnceLock::new();
+
 async fn capabilities_handler<S: DaemonStateExt + Send + Sync + 'static>(
-    State(app): State<AppState<S>>,
+    State(_app): State<AppState<S>>,
 ) -> Response {
-    match build_capability_registry() {
-        Ok(v) => json_response(StatusCode::OK, serde_json::to_string(&v).unwrap()),
+    let built = CAPABILITY_REGISTRY_CACHE.get_or_init(|| {
+        build_capability_registry()
+            .map(|v| serde_json::to_string(&v).expect("capability registry 序列化不可失败"))
+    });
+    match built {
+        Ok(body) => json_response(StatusCode::OK, body.clone()),
         Err(e) => {
             let body = json!({
                 "jsonrpc": "2.0",
@@ -2667,6 +2678,17 @@ fn publish_manifest_windows(tmp: &PathBuf, path: &PathBuf) -> Result<(), HttpSer
 
 /// 构造 capability registry；任一 row 的 backend/route/operation_class/fixture/owner
 /// 为 unknown/空 → 失败（fail closed）。
+///
+/// 收录判据（T-1795251660607-a8f698f0）：本 registry 是 H4 工具切换的唯一切换清单
+/// 与 HTTP 传输层自描述面（/capabilities）。task 管理面 RPC（task.create/task.report/
+/// task.next_step/task.apply/task.close/task.rollback/task.resolve_block/task.split
+/// 等）属 dispatch 原生任务平面，不经 H4 工具切换清单，**有意不收录**；其操作分类
+/// （含 task.apply/close 的 protected_mutation）由 dispatch.rs 侧分类测试维护。
+/// 当前仅有的 task.* 例外行：task.quality_findings（CLI-083 只读质量查询）与
+/// task.supersede/superseded_by（pending_promotion，暂不宣传 enabled）。守卫测试
+/// test_capability_registry_task_plane_exclusion_contract 锁定该约定：新增 task.*
+/// 行前必须先更新本判据并同步扩测试白名单，否则测试 fail（防 /capabilities
+/// 自描述面与 dispatch 实际方法面静默漂移）。
 fn build_capability_registry() -> Result<Value, String> {
     let mut rows: Vec<Value> = Vec::new();
 
@@ -5765,36 +5787,10 @@ fn build_capability_registry() -> Result<Value, String> {
 
     drop(add);
 
-    // fail closed 校验
-    for r in &rows {
-        for f in [
-            "backend",
-            "status",
-            "operation_class",
-            "http_route",
-            "success_fixture",
-            "structured_error_fixture",
-            "owner",
-        ] {
-            let v = r.get(f).and_then(|x| x.as_str()).unwrap_or("");
-            if v.is_empty() || v == "unknown" {
-                return Err(format!(
-                    "capability row {} has empty/unknown field {}",
-                    r.get("method").and_then(|x| x.as_str()).unwrap_or("?"),
-                    f
-                ));
-            }
-        }
-        let backend = r.get("backend").and_then(|x| x.as_str()).unwrap_or("");
-        let status = r.get("status").and_then(|x| x.as_str()).unwrap_or("");
-        if backend == "none" && status != "unsupported" && status != "disabled" {
-            return Err(format!(
-                "backend=none but status={} for {}",
-                status,
-                r.get("method").and_then(|x| x.as_str()).unwrap_or("?")
-            ));
-        }
-    }
+    // fail closed 校验：重复 method / 必填字段 / backend-status 一致性
+    // （T-1795251651321-7f78a7b8：重复 method 此前会被下方 Map::insert 静默
+    // 覆盖，切换清单静默缺员；现在校验阶段直接 fail closed。）
+    validate_capability_rows(&rows)?;
 
     let mut methods = serde_json::Map::new();
     for r in &rows {
@@ -5813,6 +5809,88 @@ fn build_capability_registry() -> Result<Value, String> {
     }))
 }
 
+/// capability registry 枚举白名单（T-1795251669229-aadedc48 N2）：
+/// typo（如 `availble`）此前会绕过空/unknown 校验静默发布给客户端；
+/// 现在非白名单值一律 fail closed。backend/status 允许值含 backend=none
+/// 配套的 unsupported/disabled（见下方一致性校验）。
+const CAPABILITY_BACKENDS: &[&str] = &["rust_native", "python_compat", "none"];
+const CAPABILITY_STATUSES: &[&str] =
+    &["available", "pending_promotion", "unsupported", "disabled"];
+const CAPABILITY_OPERATION_CLASSES: &[&str] = &[
+    "read_only",
+    "index_write",
+    "write",
+    "protected_mutation",
+    "governance_write",
+];
+const CAPABILITY_WORKSPACE_SCOPES: &[&str] =
+    &["none", "workspace", "snapshot", "authority"];
+
+/// capability registry fail-closed 校验（提取为独立函数以便单测覆盖负向路径）。
+///
+/// 规则：
+/// - method 重复注册 → Err（错误信息含重复的 method 名，经 /capabilities
+///   503 detail 透出，便于第一时间定位漂移行）；
+/// - 任一 row 必填字段为空/unknown → Err；
+/// - backend=none 仅允许 status=unsupported/disabled。
+fn validate_capability_rows(rows: &[Value]) -> Result<(), String> {
+    let mut seen_methods = HashSet::new();
+    for r in rows {
+        let method = r.get("method").and_then(Value::as_str).unwrap_or("");
+        if !seen_methods.insert(method) {
+            return Err(format!(
+                "capability row method '{}' registered more than once (duplicate)",
+                method
+            ));
+        }
+        for f in [
+            "backend",
+            "status",
+            "operation_class",
+            "http_route",
+            "success_fixture",
+            "structured_error_fixture",
+            "owner",
+        ] {
+            let v = r.get(f).and_then(|x| x.as_str()).unwrap_or("");
+            if v.is_empty() || v == "unknown" {
+                return Err(format!(
+                    "capability row {} has empty/unknown field {}",
+                    r.get("method").and_then(|x| x.as_str()).unwrap_or("?"),
+                    f
+                ));
+            }
+        }
+        for (f, allowed) in [
+            ("backend", CAPABILITY_BACKENDS),
+            ("status", CAPABILITY_STATUSES),
+            ("operation_class", CAPABILITY_OPERATION_CLASSES),
+            ("workspace_scope", CAPABILITY_WORKSPACE_SCOPES),
+        ] {
+            let v = r.get(f).and_then(Value::as_str).unwrap_or("");
+            if !allowed.contains(&v) {
+                return Err(format!(
+                    "capability row {} has invalid {} '{}' (allowed: {})",
+                    r.get("method").and_then(Value::as_str).unwrap_or("?"),
+                    f,
+                    v,
+                    allowed.join(", ")
+                ));
+            }
+        }
+        let backend = r.get("backend").and_then(|x| x.as_str()).unwrap_or("");
+        let status = r.get("status").and_then(|x| x.as_str()).unwrap_or("");
+        if backend == "none" && status != "unsupported" && status != "disabled" {
+            return Err(format!(
+                "backend=none but status={} for {}",
+                status,
+                r.get("method").and_then(|x| x.as_str()).unwrap_or("?")
+            ));
+        }
+    }
+    Ok(())
+}
+
 // ============================================
 // 单元测试（真实 loopback HTTP 往返）
 // ============================================
@@ -5824,6 +5902,110 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
+
+    fn capability_row(method: &str) -> Value {
+        json!({
+            "method": method,
+            "backend": "rust_native",
+            "status": "available",
+            "operation_class": "read_only",
+            "workspace_scope": "workspace",
+            "http_route": "/v1/rpc",
+            "success_fixture": "fixture-demo-ok",
+            "structured_error_fixture": "fixture-demo-err",
+            "owner": "T-1795251651321-7f78a7b8"
+        })
+    }
+
+    #[test]
+    fn test_capability_registry_valid_rows_pass() {
+        let rows = vec![
+            capability_row("demo.one"),
+            capability_row("demo.two"),
+        ];
+        assert!(validate_capability_rows(&rows).is_ok());
+    }
+
+    #[test]
+    fn test_capability_registry_duplicate_method_fails_closed() {
+        // 负向：重复 method 必须 Err（此前 Map::insert 会静默覆盖后行）
+        let rows = vec![
+            capability_row("demo.dup"),
+            capability_row("other.method"),
+            capability_row("demo.dup"),
+        ];
+        let err = validate_capability_rows(&rows)
+            .expect_err("duplicate method must fail closed");
+        assert!(
+            err.contains("duplicate"),
+            "error 应标注 duplicate：{}",
+            err
+        );
+        assert!(
+            err.contains("demo.dup"),
+            "error 应包含重复的 method 名（503 detail 透出）：{}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_capability_registry_task_plane_exclusion_contract() {
+        // dispatch-vs-registry 对齐守卫（T-1795251660607-a8f698f0）：
+        // task 管理面 RPC 属 dispatch 原生平面，有意不入 capability registry，
+        // 本测试锁定收录判据，防止 /capabilities 自描述面静默漂移。
+        // 若需新增 task.* 行：先更新 build_capability_registry 头注释判据，
+        // 再同步扩此白名单与 dispatch.rs 侧分类测试。
+        let registry =
+            build_capability_registry().expect("registry must build fail-closed clean");
+        let methods = registry
+            .get("methods")
+            .and_then(Value::as_object)
+            .expect("methods object");
+        let mut task_rows: Vec<&str> = methods
+            .keys()
+            .filter(|m| m.starts_with("task."))
+            .map(|s| s.as_str())
+            .collect();
+        task_rows.sort_unstable();
+        assert_eq!(
+            task_rows,
+            ["task.quality_findings", "task.supersede", "task.superseded_by"],
+            "task.* 收录行偏离约定白名单：先更新 build_capability_registry 头注释判据，\
+             再同步本测试与 dispatch.rs 侧分类测试"
+        );
+    }
+
+    #[test]
+    fn test_capability_registry_invalid_enum_fails_closed() {
+        // 负向（T-1795251669229-aadedc48 N2）：枚举 typo 必须 Err
+        let mut r = capability_row("demo.bad_status");
+        r["status"] = json!("availble");
+        let err = validate_capability_rows(&[r])
+            .expect_err("status typo must fail closed");
+        assert!(
+            err.contains("invalid status") && err.contains("availble"),
+            "{}",
+            err
+        );
+
+        let mut r = capability_row("demo.bad_op_class");
+        r["operation_class"] = json!("writ");
+        let err = validate_capability_rows(&[r])
+            .expect_err("operation_class typo must fail closed");
+        assert!(err.contains("invalid operation_class"), "{}", err);
+
+        let mut r = capability_row("demo.bad_scope");
+        r["workspace_scope"] = json!("global");
+        let err = validate_capability_rows(&[r])
+            .expect_err("workspace_scope typo must fail closed");
+        assert!(err.contains("invalid workspace_scope"), "{}", err);
+
+        let mut r = capability_row("demo.bad_backend");
+        r["backend"] = json!("rust_natvie");
+        let err = validate_capability_rows(&[r])
+            .expect_err("backend typo must fail closed");
+        assert!(err.contains("invalid backend"), "{}", err);
+    }
 
     /// 测试进程内共享的 PKI（一套 CA + 一个 executor 客户端身份）。
     ///
