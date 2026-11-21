@@ -1450,7 +1450,12 @@ def _dispatch_subcommand(argv, db):
         db: CodeGraphDB 实例
 
     Returns:
-        True 表示已处理，False 表示不是有效子命令
+        True 表示已处理；False 表示无效子命令或 handler 运行时失败，
+        调用方（_run_subcommand_mode）将 False 统一转 rc=1。
+        约定：handler 失败优先 return False，由 dispatcher 统一负责
+        rc 换算；仅在 argparse 层面错误（rc=2）或防御性场景才显式
+        raise SystemExit（SystemExit 为 BaseException，不会被下方
+        except Exception 吞掉，且可穿透调用方 finally 释放 db）。
     """
     # 子命令关键字（_run_subcommand_mode 调用时已确认在 _SUBCOMMANDS 中）
     cmd = sys.argv[1]
@@ -1644,6 +1649,9 @@ def _dispatch_subcommand(argv, db):
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
         raise SystemExit(1)
 
+    # 防御：elif 链漏接 _SUBCOMMANDS 新增子命令时，显式报错而非静默 rc=1
+    # （正常闭合验证通过时此分支不可达；留作未来回归的第一现场）。
+    print(f"ERROR: 未接线的子命令: {cmd}", file=sys.stderr)
     return False
 
 
