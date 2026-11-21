@@ -1283,7 +1283,15 @@ def _run_subcommand_mode():
                 raise
 
         # 调度子命令
-        _dispatch_subcommand(sub_argv, db)
+        # §44 全局退出码契约收口：handler 返回 False 一律按运行时失败 RC=1
+        # （审计子代理逐点核验全部 ``return False`` 分支均为真失败：not-found /
+        # 校验失败 / 正则错误 / 构建 / 导入失败 / 未知 action，无「空结果假
+        # False」）。显式仅认 ``False``：True=成功；None 不在此约定内（防误伤）。
+        # 失败分支内部的显式 ``raise SystemExit(1)``（§41.4/§43 批次）与此
+        # 语义等价，保留作防御。
+        dispatch_rc = _dispatch_subcommand(sub_argv, db)
+        if dispatch_rc is False:
+            raise SystemExit(1)
     finally:
         db.close()
 

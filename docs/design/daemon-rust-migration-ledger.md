@@ -4300,7 +4300,37 @@ backlog §41.4 登记 6 项 rc 残差。侦察确认根因：dispatcher
 ### 4. 边界与残留
 
 - dispatcher 级「handler False → rc=1」全局改造不做（影响面大；显式
-  SystemExit 策略已覆盖 §41.4 全部登记项）。
+  SystemExit 策略已覆盖 §41.4 全部登记项）→ 已由 §9.55 收口（backlog §44）。
+
+## 9.55 dispatcher 级 False→rc=1 全局收口（2026-11-21）
+
+### 1. 装置与侦察
+
+§9.54 遗留非目标落地。根因：`_run_subcommand_mode` 忽略
+`_dispatch_subcommand` 返回值，handler `return False` 全部静默 rc=0。
+脚本审计全文件 37 处 `return False`：5 处属辅助函数（不在 dispatch 返回链），
+handler 链上 33 处（audit/bootstrap/clone/gc/fts/grep/tests/graph/config/
+toolchain/build-context/dependency/identity）逐点核验均为真失败（not-found /
+校验失败 / 正则错误 / 构建导入失败 / 未知 action），无「空结果假 False」；
+elif 链对 `_SUBCOMMANDS` 全集闭合，fallthrough 不可达。
+
+### 2. 处置
+
+[main.py](../../cli/main.py) `_run_subcommand_mode` 调度点消费返回值：
+`dispatch_rc is False` → `raise SystemExit(1)`（显式仅认 False，None 防误伤）；
+§41.4/§43 的显式 `SystemExit(1)` 语义等价保留。33 处静默 rc=0 失败分支统一 rc=1。
+
+### 3. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `cw config badaction` / `check-role agent` / `local` | rc=2 / 1 / 0 |
+| 10 个受影响测试套件（含直接调用 `_run_subcommand_mode` 的用例） | **359 passed** |
+
+### 4. 边界与残留
+
+- 个别 not-found 分支打印提示后仍 `return True`（如 `git show` 提交不存在），
+  不在 False→rc=1 网内；如需收口逐分支另立任务卡（backlog §44.4）。
 
 ## 10. 相关真相源
 

@@ -3309,5 +3309,44 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 
 | 类别 | 说明 |
 | --- | --- |
-| 非目标 | dispatcher 级「handler 返回 False → rc=1」的全局改造（影响面大，逐分支显式 SystemExit 的策略已覆盖 §41.4 全部登记项） |
+| 非目标 | dispatcher 级「handler 返回 False → rc=1」的全局改造（影响面大，逐分支显式 SystemExit 的策略已覆盖 §41.4 全部登记项）——已由 §44 收口 |
+| 回滚 | 回退本次提交即可；无迁移状态 |
+
+## 44. dispatcher 级 False→rc=1 全局收口（§43.3 非目标落地，2026-11-21）
+
+### 44.1 侦察与安全性审计
+
+根因：`_run_subcommand_mode` 调用 `_dispatch_subcommand(sub_argv, db)` 时
+忽略返回值——handler `return False`（not-found / 校验失败 / 正则错误 /
+构建或导入失败 / 未知 action）全部静默 rc=0。用脚本把全文件 37 处
+``return False`` 映射到所属函数逐一审计：
+
+- 辅助函数（`_is_readonly_command` / `_is_readonly_args` /
+  `_route_has_blocking_findings` / `_is_python_entry_shim` /
+  `_method_accepts_identity`）不参与 dispatch 返回链，无关；
+- handler 链上的 33 处（audit/bootstrap/clone/gc/fts/grep/tests/graph/
+  config/toolchain/build-context/dependency/identity）抽样 + 全量上下文
+  核验均为**真失败**，无「空结果假 False」（空结果路径全部 `return True`）；
+- elif 链对 `_SUBCOMMANDS` 全集闭合，fallthrough（未知 cmd）不可达，仅防御。
+
+### 44.2 处置
+
+`_run_subcommand_mode` 调度点改为消费返回值：`dispatch_rc is False` →
+`raise SystemExit(1)`（显式仅认 False，True=成功，None 不在约定内防误伤）；
+§41.4/§43 批次的失败分支显式 `SystemExit(1)` 语义等价，保留作防御。
+效果：33 处此前静默 rc=0 的失败分支统一 rc=1。
+
+### 44.3 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `cw config badaction` | rc=2（argparse 拦截，口径不变） |
+| `cw config check-role agent` / `local` | rc=1 / rc=0（§43 修复无回归） |
+| `test_cli_exit_code_local_input` + `test_cli_subcommand_help_template` + `test_cli_reference_sections` + `test_cli_026_http_rpc` + `test_cli_c9_coverage_help` + `test_audit_chain` + `test_audit_key_rotation` + `test_bootstrap_capture` + `test_agent_rules` + `test_agent_integration` | **359 passed**（含多处直接调用 `_run_subcommand_mode` 的既有用例） |
+
+### 44.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 已知残留 | 个别 not-found 分支打印提示后仍 `return True`（如 `git show` 提交不存在），属历史不一致，不在 False→rc=1 网内；如需收口逐分支另立任务卡 |
 | 回滚 | 回退本次提交即可；无迁移状态 |
