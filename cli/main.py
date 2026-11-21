@@ -421,7 +421,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (invalid args, db error, task not found)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "rule": {
@@ -454,7 +454,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (invalid args, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "gc": {
@@ -490,7 +490,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (invalid args, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "audit": {
@@ -512,7 +512,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success (audit chain intact or operation completed)"),
             ("1", "Failure (invalid args, db error, broken audit chain)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "bootstrap": {
@@ -528,7 +528,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "defect": {
@@ -552,7 +552,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (invalid args, db error, pattern not found)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "guardrail": {
@@ -571,7 +571,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (invalid args, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "impact": {
@@ -588,7 +588,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (symbol not found, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "review": {
@@ -604,7 +604,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (symbol not found, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "evolution": {
@@ -621,7 +621,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (function not found, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "hotspot": {
@@ -638,7 +638,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "churn": {
@@ -655,7 +655,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "vuln-blast": {
@@ -674,7 +674,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (db error, no findings)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "symbol-history": {
@@ -691,7 +691,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (symbol not found, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "check-gate": {
@@ -710,7 +710,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success (gate passed or findings resolved)"),
             ("1", "Failure (task not found, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "test-impact": {
@@ -726,7 +726,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (function not found, db error)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "doctor": {
@@ -743,7 +743,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "exit_codes": [
             ("0", "Success"),
             ("1", "Failure (db error, admin required)"),
-            ("2", "Database locked (retry later)"),
+            ("2", "Invalid usage (argparse error / local input validation)"),
         ],
     },
     "install-agent": {
@@ -10691,6 +10691,8 @@ def _handle_embed(args, db):
     if stats['success'] == 0 and stats['total'] > 0:
         print()
         print(t("cli.messages.embed_hint"))
+        # §41.4 口径统一：全失败属运行时失败，RC=1（禁止 RC=0 假成功）
+        raise SystemExit(1)
     print()
     return True
 
@@ -11198,7 +11200,8 @@ def _handle_config(args, db):
             print("提示：")
             print("  - Windows/macOS 仅支持 local/client 角色")
             print("  - Linux 才支持 agent/daemon/all 角色（需 SO_PEERCRED + SCM_RIGHTS + UDS）")
-            return False
+            # §41.4 口径统一：校验失败属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
 
     print(f"ERROR: 未知 config action: {opts.action}", file=_sys.stderr)
     return False
@@ -11742,7 +11745,8 @@ def _handle_git(args, db):
                             help=t("cli.messages.git_action_destructive_log",
                                    default="Show destructive git operations log"))
     dlog_p.add_argument("limit", type=int, nargs="?", default=20,
-                        help=t("cli.messages.git_arg_limit", default="Max results (default 20)"))
+                        help=t("cli.messages.git_arg_destructive_log_limit",
+                               default="Max results (default 20)"))
     dlog_p.add_argument("--type", default="",
                         help=t("cli.messages.git_arg_op_type",
                                default="Filter by operation type (force_push/reset_hard/checkout_clean)"))
@@ -11760,6 +11764,8 @@ def _handle_git(args, db):
         else:
             print(t("cli.messages.git_import_fail", error=result.get(
                 'error', t("cli.messages.semgrep_unknown_error"))))
+            # §41.4 口径统一：业务失败属运行时失败，RC=1（禁止 RC=0 假成功）
+            raise SystemExit(1)
         return True
 
     if opts.action == "log":

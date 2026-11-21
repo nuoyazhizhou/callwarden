@@ -1812,6 +1812,7 @@
             "git_subcommand_desc": "Git integration (import/log/show/stats)",
             "git_action_import": "Import git history",
             "git_arg_limit": "Max commits (default 100)",
+            "git_arg_destructive_log_limit": "Max results (default 20)",
             "git_action_log": "Show git log",
             "git_arg_log_limit": "Max commits (default 20)",
             "git_action_show": "Show commit details",

@@ -4266,6 +4266,42 @@ catalog 双向对账）证实为**陈旧残留**——§26 已把缺翻译方向
 
 - §41.4 rc 残差台账不变（`gc` 族 epilog「2 = Database locked」同属该批）。
 
+## 9.54 §41.4 rc 残差口径统一批次（2026-11-21）
+
+### 1. 装置与侦察
+
+backlog §41.4 登记 6 项 rc 残差。侦察确认根因：dispatcher
+（[main.py](../../cli/main.py) `_run_subcommand_mode` L1286）忽略
+`_dispatch_subcommand` 返回值——handler `return False` 不会变成 rc=1，
+必须失败分支显式 `raise SystemExit(1)`。
+
+### 2. 处置
+
+- **epilog**：`_SUBCOMMAND_HELP_SPECS` 16 处「2 = Database locked (retry
+  later)」统一改「Invalid usage (argparse error / local input validation)」；
+  cli_reference vuln-blast 退役口径加注删除。
+- **rc 修复**（均失败分支显式 `SystemExit(1)`）：`config check-role`
+  平台不支持分支、`git import` 业务失败分支、`embed` 全失败分支
+  （`total>0 且 success=0`）。
+- **i18n**：destructive-log 拆独立键 `git_arg_destructive_log_limit`
+  （zh/en 补键），消除 `git_arg_limit` 共用导致 help 默认值漂移。
+- **不改**：`git check-*` 软门禁恒 rc=0（软护栏设计使然，保留登记）。
+
+### 3. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `cw config check-role agent` 实跑 | rc=1 |
+| `cw gc --help` epilog | 新口径文案 |
+| `cw git destructive-log --help` | 「最大结果数（默认 20）」 |
+| git import / embed 失败分支冒烟（monkeypatch 假 db） | 均 SystemExit(1) |
+| `test_cli_subcommand_help_template` + `test_i18n_key_existence` + `test_i18n_placeholder_consistency` + `test_cli_reference_sections` + `test_cli_exit_code_local_input` | **191 passed** |
+
+### 4. 边界与残留
+
+- dispatcher 级「handler False → rc=1」全局改造不做（影响面大；显式
+  SystemExit 策略已覆盖 §41.4 全部登记项）。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`

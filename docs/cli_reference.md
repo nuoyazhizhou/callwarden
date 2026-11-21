@@ -1691,8 +1691,6 @@ cw vuln-blast --finding-id 42
 
 将 Semgrep findings 与调用图结合，分析漏洞能影响多少下游调用方。返回风险等级 + 每个漏洞的影响树。
 
-> 注：命令自带 epilog 中的「2 = Database locked」为退役口径；锁定等运行时失败按全局退出码契约归 1。
-
 **示例**
 
 ```bash
@@ -5323,7 +5321,7 @@ cw embed --force     # 强制重新嵌入所有函数
 | 1 | daemon 业务拒绝 / 传输失败 / 运行时失败（见全局退出码契约） |
 | 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
-> 写面命令：嵌入经 daemon `embed_all_symbols` 落库，受 PROTECTED_MUTATION 保护。
+> 写面命令：嵌入经 daemon `embed_all_symbols` 落库，受 PROTECTED_MUTATION 保护。全部失败（`total>0` 且 `success=0`）按运行时失败退出码 1。
 
 **示例**
 
@@ -6649,7 +6647,7 @@ cw config check-role <ROLE>
 | 2 | 输入/用法错误：argparse 用法错误，或本地输入校验失败 |
 
 > 平台差异：Windows/macOS 仅支持 `local` / `client` 角色；`agent` / `daemon` /
-> `all` 需 Linux（SO_PEERCRED + SCM_RIGHTS + UDS）。角色不支持时打印 ❌ 与提示。
+> `all` 需 Linux（SO_PEERCRED + SCM_RIGHTS + UDS）。角色不支持时打印 ❌ 与提示，退出码 1。
 
 **示例**
 

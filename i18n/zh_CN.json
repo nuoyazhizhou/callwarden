@@ -1812,6 +1812,7 @@
             "git_subcommand_desc": "Git 集成（import/log/show/stats）",
             "git_action_import": "导入 Git 历史",
             "git_arg_limit": "最大提交数（默认 100）",
+            "git_arg_destructive_log_limit": "最大结果数（默认 20）",
             "git_action_log": "显示 Git 日志",
             "git_arg_log_limit": "最大提交数（默认 20）",
             "git_action_show": "显示提交详情",

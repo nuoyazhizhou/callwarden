@@ -3244,6 +3244,9 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 
 ### 41.4 rc 残差台账（只报告未改码，待口径统一批次）
 
+> **已由 §43 收口（2026-11-21）**：下表前 5 项已修复/闭环，仅 `git check-*`
+> 软门禁恒 rc=0 属设计使然不改（见 §43.1）。本表保留作归因记录。
+
 | 项 | 现象 | 建议 |
 | --- | --- | --- |
 | 多命令 `--help` epilog | audit verify/rotate-key/keys、check-gate、impact、review、evolution、symbol-history、vuln-blast 的 epilog 自述「2 = Database locked」，与全局契约（2=输入/用法错误）冲突 | epilog 文案统一改引全局退出码契约 |
@@ -3281,4 +3284,30 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 | 类别 | 说明 |
 | --- | --- |
 | 非目标 | §41.4 rc 残差台账不变（`gc` 族 epilog「2 = Database locked」同属该批） |
+| 回滚 | 回退本次提交即可；无迁移状态 |
+
+## 43. §41.4 rc 残差口径统一批次（2026-11-21）
+
+### 43.1 处置
+
+| 项 | 处置 | 验证 |
+| --- | --- | --- |
+| epilog「2 = Database locked」退役口径 | `cli/main.py::_SUBCOMMAND_HELP_SPECS` 16 处 `("2", "Database locked (retry later)")` 统一改 `("2", "Invalid usage (argparse error / local input validation)")`（task/rule/gc/audit/bootstrap/defect/guardrail/impact/review/evolution/hotspot/churn/vuln-blast/symbol-history/check-gate/test-impact/doctor）；cli_reference vuln-blast 退役口径加注删除 | `cw gc --help` 实跑见新文案；`test_cli_subcommand_help_template.py` passed |
+| `config check-role` 校验失败 rc=0 | 失败分支 `return False` → `raise SystemExit(1)`（dispatcher L1286 忽略 handler 返回值，False 不会自然变成 rc=1，故必须显式 SystemExit） | `cw config check-role agent` 实跑 rc=1 |
+| `git import` 业务失败 rc=0 | 失败分支打印错误后 `raise SystemExit(1)` | monkeypatch 假 db 冒烟 SystemExit(1) |
+| `embed` 全失败 rc=0 | `total>0 且 success=0` 分支打印提示后 `raise SystemExit(1)` | monkeypatch 假 db 冒烟 SystemExit(1) |
+| `git_arg_limit` i18n 键共用 | destructive-log 拆独立键 `git_arg_destructive_log_limit`（zh/en 同步补键），help 文案恢复「最大结果数（默认 20）」 | `cw git destructive-log --help` 实跑 |
+| `git check-*` 软门禁恒 rc=0 | **不改**：设计使然（软护栏只提示不阻断），保留登记 | — |
+
+### 43.2 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `pytest tests/test_cli_subcommand_help_template.py tests/test_i18n_key_existence.py tests/test_i18n_placeholder_consistency.py tests/test_cli_reference_sections.py tests/test_cli_exit_code_local_input.py` | **191 passed** |
+
+### 43.3 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 非目标 | dispatcher 级「handler 返回 False → rc=1」的全局改造（影响面大，逐分支显式 SystemExit 的策略已覆盖 §41.4 全部登记项） |
 | 回滚 | 回退本次提交即可；无迁移状态 |
