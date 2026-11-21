@@ -323,6 +323,42 @@ pub trait DaemonStateExt {
         }
     }
 
+    /// 安全取证 #5（T-1795254396917-c1bf49c0）：把客户端自述的
+    /// `workspace_instance_id` 解析为 registry workspace_id，供 principal
+    /// grant 强校验。解析顺序对齐
+    /// `task_loop::next_action::resolve_workspace_id_by_instance`：
+    /// 先 capture 精确匹配，再回退 `ws-{id}` 约定；root-hash 推导不在安全
+    /// 路径复刻——未注册实例一律 Ok(None)（调用方 fail-closed）。
+    /// store 未装配（精简 state/部分测试）时仅支持 `ws-{id}` 约定。
+    fn resolve_instance_workspace_id(
+        &self,
+        instance: &str,
+    ) -> Result<Option<i64>, DaemonRpcError> {
+        const CAPTURE_SQL: &str =
+            "SELECT workspace_id FROM workspace_authority_captures \
+             WHERE workspace_instance_id = ?1 LIMIT 1";
+        let instance = instance.trim();
+        if instance.is_empty() {
+            return Ok(None);
+        }
+        let Some(ref store) = self.daemon_state().task_collab_store else {
+            return Ok(instance
+                .strip_prefix("ws-")
+                .and_then(|rest| rest.parse::<i64>().ok()));
+        };
+        store.with_conn(|conn| {
+            match conn.query_row(CAPTURE_SQL, [instance], |row| row.get::<_, i64>(0)) {
+                Ok(ws_id) => Ok(Some(ws_id)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(instance
+                    .strip_prefix("ws-")
+                    .and_then(|rest| rest.parse::<i64>().ok())),
+                Err(e) => Err(DaemonRpcError::internal_error(format!(
+                    "workspace_instance_id 解析失败: {e}"
+                ))),
+            }
+        })
+    }
+
     /// 严格 owner ACL：在 Protected_Mutation 入口要求任务已有 canonical workspace
     /// binding；legacy 无 binding 任务返回 `E_TASK_BINDING_ATTESTATION_REQUIRED`，
     /// 必须先用 `task.attest_legacy_workspace_binding` 完成 attestation。
@@ -3114,6 +3150,25 @@ fn workspace_scope_of(params: &Value) -> Option<String> {
 ///   开头，是载荷而非路径。仅对写治理方法豁免，避免扩大全局豁免面。
 ///   §9.37 裁决后 write.commit 载荷唯一格式 = 全量 content + new_hash，
 ///   旧 delta 占位字段已随实现移除，不再豁免。
+/// 安全取证 #1（T-1795254396917-c1bf49c0）：已认证 principal 调用下列方法且
+/// 请求既无 `workspace_id` 也无可解析 `workspace_instance_id` 时，daemon 侧将
+/// 作用于「当前活动 workspace」——属于必须显式声明范围的受控 mutation，
+/// 一律 fail-closed（E_PRINCIPAL_WORKSPACE_REQUIRED）。
+/// `workspace.register` 是 bootstrap 方法（新 workspace 尚无 id/instance，
+/// 归属语义由 peercred grant 白名单 + workspace owner ACL 承担），不在此表。
+const PRINCIPAL_WORKSPACE_REQUIRED_METHODS: &[&str] = &["build_graph"];
+
+/// 请求显式声明的 `workspace_instance_id`（客户端自推导字段，不可信，
+/// 安全取证 #5：服务端必须解析回 registry workspace_id 后强校验）。
+fn principal_instance_scope_of(params: &Value) -> Option<String> {
+    let s = params.get("workspace_instance_id")?.as_str()?.trim();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
 fn check_remote_path_guard(method: &str, params: &Value) -> Result<(), DaemonRpcError> {
     const PATH_SCAN_EXEMPT_KEYS: &[&str] = &[
         "db_path",
@@ -3179,6 +3234,11 @@ fn dispatch_inner<S: DaemonStateExt>(
     // ADR-002 §5.4：mTLS 连接的 workspace 授权按 principal grant 判定。
     // 请求显式携带 `workspace_id` 时，principal 必须被授予该 workspace；
     // 未认证 principal（legacy UDS/管道）不在此拦截，保持既有 OS ACL 语义。
+    //
+    // 安全取证 #1/#5（T-1795254396917-c1bf49c0）：授权范围不再只依赖请求
+    // 自述——(a) 显式 `workspace_instance_id` 必须解析回 registry workspace_id
+    // 后强校验（防客户端伪造实例字段绕过 grant）；(b) 受控 mutation
+    // （PRINCIPAL_WORKSPACE_REQUIRED_METHODS）在无任何范围声明时 fail-closed。
     if peer.principal.is_authenticated() {
         if let Some(workspace_id) = workspace_scope_of(params) {
             if !peer.principal.workspace_allowed(&workspace_id) {
@@ -3191,6 +3251,41 @@ fn dispatch_inner<S: DaemonStateExt>(
                     ),
                 ));
             }
+        } else if let Some(instance) = principal_instance_scope_of(params) {
+            match state.resolve_instance_workspace_id(&instance)? {
+                Some(ws_id) => {
+                    if !peer.principal.workspace_allowed(&ws_id.to_string()) {
+                        return Err(DaemonRpcError::new(
+                            "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
+                            format!(
+                                "principal {} 未获 workspace {}（instance {}）授权",
+                                peer.principal.principal_id.as_str(),
+                                ws_id,
+                                instance
+                            ),
+                        ));
+                    }
+                }
+                None => {
+                    return Err(DaemonRpcError::new(
+                        "E_PRINCIPAL_WORKSPACE_REQUIRED",
+                        format!(
+                            "workspace_instance_id {} 不可解析（未注册或非约定实例）；\
+                             已认证 principal 调用 {} 必须携带可解析的 workspace 范围",
+                            instance, method
+                        ),
+                    ));
+                }
+            }
+        } else if PRINCIPAL_WORKSPACE_REQUIRED_METHODS.contains(&method) {
+            return Err(DaemonRpcError::new(
+                "E_PRINCIPAL_WORKSPACE_REQUIRED",
+                format!(
+                    "方法 {} 作用于当前活动 workspace，已认证 principal 必须显式携带 \
+                     workspace_id 或可解析的 workspace_instance_id",
+                    method
+                ),
+            ));
         }
     }
     // 管理员方法授权检查（fail-closed：未授权直接拒绝，不进入 handler）
@@ -3993,6 +4088,95 @@ mod tests {
         );
         let code = response["error"]["code"].as_str().unwrap_or("");
         assert_ne!(code, "E_PRINCIPAL_WORKSPACE_FORBIDDEN");
+    }
+
+    // ── 安全取证 #1/#5 守卫（T-1795254396917-c1bf49c0）──────────────────
+
+    #[test]
+    fn test_principal_scope_less_required_method_is_fail_closed() {
+        // 已认证 principal 调用受控 mutation（build_graph）且无任何 workspace
+        // 范围声明时必须 fail-closed，不得静默作用于活动 workspace。
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1").unwrap(),
+            ..Default::default()
+        });
+        let response = dispatch(&mut state, peer, "build_graph", &json!({}));
+        assert_eq!(
+            response["error"]["code"],
+            "E_PRINCIPAL_WORKSPACE_REQUIRED",
+            "受控 mutation 无范围声明必须 fail-closed"
+        );
+    }
+
+    #[test]
+    fn test_principal_unresolvable_instance_is_fail_closed() {
+        // 客户端自推导 instance 不可解析（未注册/非约定）时 fail-closed，
+        // 不得让伪造的 instance 字段绕过 grant 门禁。
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1").unwrap(),
+            ..Default::default()
+        });
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.get",
+            &json!({"workspace_instance_id": "deadbeef00deadbeef"}),
+        );
+        assert_eq!(
+            response["error"]["code"],
+            "E_PRINCIPAL_WORKSPACE_REQUIRED",
+            "不可解析 instance 必须 fail-closed"
+        );
+    }
+
+    #[test]
+    fn test_principal_instance_convention_resolves_and_passes_grant() {
+        // ws-{id} 约定解析：授权 workspace=1 时前置链放行（不被新门禁拦截）。
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1").unwrap(),
+            ..Default::default()
+        });
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.get",
+            &json!({"workspace_instance_id": "ws-1"}),
+        );
+        let code = response["error"]["code"].as_str().unwrap_or("");
+        assert_ne!(code, "E_PRINCIPAL_WORKSPACE_FORBIDDEN");
+        assert_ne!(code, "E_PRINCIPAL_WORKSPACE_REQUIRED");
+    }
+
+    #[test]
+    fn test_principal_instance_grant_mismatch_is_forbidden() {
+        // instance 解析出的 workspace 未获 grant → FORBIDDEN（伪造 instance
+        // 指向未授权 workspace 时必须拒绝）。
+        let mut state = make_state();
+        let peer = make_peer().with_principal(PrincipalIdentity {
+            principal_id: FixedStr::<48>::from_str("pr_agent").unwrap(),
+            kind: FixedStr::<16>::from_str("agent").unwrap(),
+            allowed_workspace_ids: FixedStr::<512>::from_str("1").unwrap(),
+            ..Default::default()
+        });
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.get",
+            &json!({"workspace_instance_id": "ws-999"}),
+        );
+        assert_eq!(
+            response["error"]["code"],
+            "E_PRINCIPAL_WORKSPACE_FORBIDDEN"
+        );
     }
 
     #[test]

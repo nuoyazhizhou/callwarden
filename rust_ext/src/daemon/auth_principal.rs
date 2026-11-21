@@ -16,6 +16,23 @@
 //! 直接读取 `identities/<id>/` 最新内容。旧连接由 `MAX_CONNECTION_AGE`（300s）兜底
 //! 断开——即“吊销后 ≤max_conn_age 内旧连接失效”。
 //!
+//! grants 读取口径（安全取证 #4 锁定）：与吊销同一热更新路径——DB 侧
+//! grants/revocations 共用 `refresh_if_stale`（`PRAGMA data_version` 变化 →
+//! ≤1s 粒度重载，失败保留上次成功快照）；磁盘侧 meta.json / grants.json
+//! 每次连接实时读取（无缓存）。即：新增/撤销授权最迟 ≤1s（DB 侧）或立即
+//! （磁盘侧）生效；旧连接上已缓存的 `PrincipalIdentity` 由 `MAX_CONNECTION_AGE`
+//! （300s）兜底强制重认证。
+//!
+//! grant 条目契约（安全取证 #3 收口）：授权判定是**纯 workspace_id 精确匹配**
+//! （`peercred::PrincipalIdentity::workspace_allowed`），不存在路径形态匹配——
+//! root-path / 大小写 / 分隔符 / 尾斜杠 / 相对路径 / 符号链接等路径归一化概念
+//! 在本层不适用，历史遗留的路径形态条目为惰性死条目。摄取侧（磁盘 meta.json /
+//! grants.json、DB `workspace_principal_grants`）统一经 [`sanitize_grant_entry`]
+//! 规范化：trim → 剔空 → 剔除含逗号/空白/路径分隔符的条目。逗号条目混入 join 后
+//! 的 `allowed_workspace_ids` 会在 split 时裂变成多条授权（注入面）；路径形态
+//! 条目无匹配语义。写入侧（`record_issued_certificate`）对同类条目直接拒绝，
+//! trim 后为空则不写 grant。
+//!
 //! 全部失败路径 fail-closed：未知 principal → 拒绝；无 grant 的 workspace → 拒绝；
 //! 白名单溢出 → 拒绝（绝不静默放宽）。
 
@@ -39,6 +56,25 @@ const DB_RECHECK_INTERVAL: Duration = Duration::from_secs(1);
 
 /// `allowed_workspace_ids` 的固定容量（与 `PrincipalIdentity` 字段一致）。
 const MAX_WORKSPACE_SCOPE_BYTES: usize = 512;
+
+/// grant 条目规范化（安全取证 #3 收口，契约见模块 doc）。
+///
+/// 授权层是纯 workspace_id 精确匹配：条目必须是不含逗号/空白/路径分隔符的
+/// 安全片段。trim 是唯一温和归一化；其余形态整条剔除——逗号条目会在
+/// `workspace_allowed` split 时裂变成多条授权（注入面），路径形态条目
+/// 无匹配语义，空白/空条目只会挤占 `allowed_workspace_ids` 的 512 字节预算。
+fn sanitize_grant_entry(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.contains(',')
+        || trimmed.contains(char::is_whitespace)
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+    {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
 
 /// 授权失败错误码（ADR-002 §15.3）。
 pub const E_PRINCIPAL_UNKNOWN: &str = "E_PRINCIPAL_UNKNOWN";
@@ -310,7 +346,7 @@ impl PrincipalRegistry {
                     record.workspaces.extend(
                         ids.iter()
                             .filter_map(|v| v.as_str())
-                            .map(|s| s.to_string()),
+                            .filter_map(sanitize_grant_entry),
                     );
                 }
             }
@@ -321,7 +357,7 @@ impl PrincipalRegistry {
                     record.workspaces.extend(
                         ids.iter()
                             .filter_map(|v| v.as_str())
-                            .map(|s| s.to_string()),
+                            .filter_map(sanitize_grant_entry),
                     );
                 }
             }
@@ -343,6 +379,21 @@ impl PrincipalRegistry {
         if principal_id.contains('/') || principal_id.contains('\\') || principal_id.contains("..") {
             return Err(format!("非法 principal_id: {}", principal_id));
         }
+        // 写侧 grant 条目契约：trim 温和归一化；含逗号/空白/路径分隔符的条目
+        // fail-fast 拒绝写入（摄取侧 `sanitize_grant_entry` 会剔除同类条目，
+        // 写侧直接拒绝防脏数据落盘）。trim 后为空则不写 grant（既有语义）。
+        let workspace_id = workspace_id.trim();
+        if !workspace_id.is_empty()
+            && (workspace_id.contains(',')
+                || workspace_id.contains(char::is_whitespace)
+                || workspace_id.contains('/')
+                || workspace_id.contains('\\'))
+        {
+            return Err(format!(
+                "非法 workspace_id（含逗号/空白/路径分隔符）: {}",
+                workspace_id
+            ));
+        }
         let dir = self.pki_root.join("identities").join(principal_id);
         std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {}", dir.display(), e))?;
         let grants_path = dir.join("grants.json");
@@ -353,7 +404,7 @@ impl PrincipalRegistry {
                 Some(Value::Array(ids)) => Some(
                     ids.iter()
                         .filter_map(|x| x.as_str())
-                        .map(|s| s.to_string())
+                        .filter_map(sanitize_grant_entry)
                         .collect::<BTreeSet<_>>(),
                 ),
                 _ => None,
@@ -443,10 +494,12 @@ fn load_snapshot(conn: &Connection) -> Result<DbSnapshot, String> {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         }) {
             for (principal_id, workspace_id) in rows.flatten() {
-                snap.grants
-                    .entry(principal_id)
-                    .or_default()
-                    .insert(workspace_id);
+                if let Some(workspace_id) = sanitize_grant_entry(&workspace_id) {
+                    snap.grants
+                        .entry(principal_id)
+                        .or_default()
+                        .insert(workspace_id);
+                }
             }
         }
     }
@@ -747,6 +800,114 @@ mod tests {
         assert!(!ident.workspace_allowed("8"));
     }
 
+    /// 安全取证 #3：grant 条目摄取规范化（负向用例）。
+    ///
+    /// 逗号条目若混入 join 后的 `allowed_workspace_ids`，会在
+    /// `workspace_allowed` split 时裂变成多条授权（注入面）——必须整条剔除。
+    #[test]
+    fn test_grant_comma_entry_does_not_split_into_extra_grants() {
+        let root = pki_root();
+        write_identity(
+            root.path(),
+            "pr_agent",
+            &serde_json::json!({"kind": "agent", "workspace_ids": ["1", "2,3"]}),
+        );
+        let registry = PrincipalRegistry::new(root.path().to_path_buf(), None);
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(ident.workspace_allowed("1"));
+        assert!(!ident.workspace_allowed("2"));
+        assert!(!ident.workspace_allowed("3"));
+        assert!(!ident.workspace_allowed("2,3"));
+    }
+
+    /// 路径形态条目无匹配语义（授权层是纯 workspace_id 精确匹配），
+    /// 变体路径不得绕过或误匹配——摄取即剔除。
+    #[test]
+    fn test_grant_path_like_entries_are_dropped() {
+        let root = pki_root();
+        write_identity(
+            root.path(),
+            "pr_agent",
+            &serde_json::json!({"kind": "agent", "workspace_ids": ["c:/git_work/x", "\\\\srv\\share", "ws_ext936"]}),
+        );
+        let registry = PrincipalRegistry::new(root.path().to_path_buf(), None);
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(!ident.workspace_allowed("c:/git_work/x"));
+        assert!(!ident.workspace_allowed("c:"));
+        assert!(!ident.workspace_allowed("x"));
+        assert!(!ident.workspace_allowed("\\\\srv\\share"));
+        assert!(!ident.workspace_allowed("srv"));
+        // 干净条目不受影响
+        assert!(ident.workspace_allowed("ws_ext936"));
+    }
+
+    /// trim 温和归一化：首尾空白剥离后仍生效；内部空白条目剔除（不挤占 scope 预算）。
+    #[test]
+    fn test_grant_whitespace_normalization() {
+        let root = pki_root();
+        write_identity(
+            root.path(),
+            "pr_agent",
+            &serde_json::json!({"kind": "agent", "workspace_ids": [" 1 ", "1\t2", "   "]}),
+        );
+        let registry = PrincipalRegistry::new(root.path().to_path_buf(), None);
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(ident.workspace_allowed("1"));
+        assert!(!ident.workspace_allowed("1\t2"));
+    }
+
+    /// DB 摄取侧同一规范化：含逗号/路径形态的 DB grant 条目剔除，干净条目保留。
+    #[test]
+    fn test_db_grant_entries_are_sanitized() {
+        let root = pki_root();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db_path = db_dir.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE pki_principals (principal_id TEXT PRIMARY KEY, status TEXT NOT NULL, kind TEXT);
+             CREATE TABLE pki_revocations (cert_serial TEXT PRIMARY KEY);
+             CREATE TABLE pki_issued_certs (cert_serial TEXT PRIMARY KEY, status TEXT NOT NULL);
+             CREATE TABLE workspace_principal_grants (principal_id TEXT NOT NULL, workspace_id TEXT NOT NULL, revoked_at REAL);
+             INSERT INTO pki_principals (principal_id, status, kind) VALUES ('pr_agent', 'active', 'agent');
+             INSERT INTO workspace_principal_grants (principal_id, workspace_id) VALUES ('pr_agent', '5,6');
+             INSERT INTO workspace_principal_grants (principal_id, workspace_id) VALUES ('pr_agent', 'c:/x');
+             INSERT INTO workspace_principal_grants (principal_id, workspace_id) VALUES ('pr_agent', '7');",
+        )
+        .unwrap();
+        drop(conn);
+
+        let registry = PrincipalRegistry::new(root.path().to_path_buf(), Some(db_path));
+        registry.refresh_now();
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(ident.workspace_allowed("7"));
+        assert!(!ident.workspace_allowed("5"));
+        assert!(!ident.workspace_allowed("6"));
+        assert!(!ident.workspace_allowed("c:/x"));
+    }
+
+    /// 写侧契约：脏条目 fail-fast 拒绝写入；trim 温和归一化。
+    #[test]
+    fn test_record_issued_certificate_rejects_dirty_workspace_id() {
+        let root = pki_root();
+        let registry = PrincipalRegistry::new(root.path().to_path_buf(), None);
+        assert!(registry
+            .record_issued_certificate("pr_new", "BB", "fp", "1,2")
+            .is_err());
+        assert!(registry
+            .record_issued_certificate("pr_new", "BB", "fp", "a b")
+            .is_err());
+        assert!(registry
+            .record_issued_certificate("pr_new", "BB", "fp", "c:/x")
+            .is_err());
+        // trim 温和归一化：写盘条目为 "7"
+        registry
+            .record_issued_certificate("pr_new", "BB", "fp", " 7 ")
+            .unwrap();
+        write_identity(root.path(), "pr_new", &serde_json::json!({"kind": "agent"}));
+        let ident = registry.authorize("pr_new", "BB", "fp").unwrap();
+        assert!(ident.workspace_allowed("7"));
+    }
+
     #[test]
     fn test_scope_overflow_fails_closed() {
         let root = pki_root();
@@ -760,5 +921,72 @@ mod tests {
         let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
         assert!(ident.scopes_overflow);
         assert!(!ident.workspace_allowed("ws-000000000000000000000000000000"));
+    }
+
+    /// 安全取证 #4：grants 读取口径锁定——DB 侧 grant 随 data_version 变化热更新，
+    /// 新增生效、撤销（revoked_at 置位）后失效。
+    #[test]
+    fn test_db_grant_hot_reload_and_revoke() {
+        let root = pki_root();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db_path = db_dir.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE pki_principals (principal_id TEXT PRIMARY KEY, status TEXT NOT NULL, kind TEXT);
+             CREATE TABLE pki_revocations (cert_serial TEXT PRIMARY KEY);
+             CREATE TABLE pki_issued_certs (cert_serial TEXT PRIMARY KEY, status TEXT NOT NULL);
+             CREATE TABLE workspace_principal_grants (principal_id TEXT NOT NULL, workspace_id TEXT NOT NULL, revoked_at REAL);
+             INSERT INTO pki_principals (principal_id, status, kind) VALUES ('pr_agent', 'active', 'agent');",
+        )
+        .unwrap();
+        drop(conn);
+
+        let registry = PrincipalRegistry::new(root.path().to_path_buf(), Some(db_path.clone()));
+        registry.refresh_now();
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(!ident.workspace_allowed("9"));
+
+        // 新增 grant → data_version 变化 → 重载后生效
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO workspace_principal_grants (principal_id, workspace_id, revoked_at) VALUES ('pr_agent', '9', 0)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        registry.refresh_now();
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(ident.workspace_allowed("9"));
+
+        // 撤销 grant（revoked_at 置位）→ 重载后失效
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "UPDATE workspace_principal_grants SET revoked_at = 1 WHERE principal_id = 'pr_agent' AND workspace_id = '9'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        registry.refresh_now();
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(!ident.workspace_allowed("9"));
+    }
+
+    /// 安全取证 #4：磁盘 grants 逐连接实时读（无缓存）——写盘后无需显式刷新即生效。
+    #[test]
+    fn test_file_grants_hot_reload_per_connection() {
+        let root = pki_root();
+        write_identity(root.path(), "pr_agent", &serde_json::json!({"kind": "agent"}));
+        let registry = PrincipalRegistry::new(root.path().to_path_buf(), None);
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(!ident.workspace_allowed("1"));
+
+        // 重写 meta.json 追加 grant：下一次连接（authorize 调用）立即读到，无 refresh
+        write_identity(
+            root.path(),
+            "pr_agent",
+            &serde_json::json!({"kind": "agent", "workspace_ids": ["1"]}),
+        );
+        let ident = registry.authorize("pr_agent", "AA", "fp").unwrap();
+        assert!(ident.workspace_allowed("1"));
     }
 }
