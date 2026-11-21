@@ -1,0 +1,28 @@
+{
+  "review_session": "sess-trae-20261121-reviewer",
+  "reviewed_at": "2026-11-21",
+  "title": "HTTP 层并发/限流取证（HTTPS 取证遗留证据缺口补充）",
+  "scope": [
+    "rust_ext/src/daemon/http_server.rs（accept 路径 / 中间件 / 配置）",
+    "rust_ext/src/daemon/pki_api.rs（TLS verifier）",
+    "rust_ext/src/daemon/auth_principal.rs（每请求授权）",
+    "rust_ext/src/daemon/workspace.rs（F1 有界解压，本轮 0ec83fb）",
+    "server/daemon_client.py（生产客户端连接行为）"
+  ],
+  "check_items": [
+    "绑定面：默认 loopback-only；非 loopback 须显式 env CW_DAEMON_HTTP_ALLOW_REMOTE=1（http_server.rs resolve_bind L449-465、remote_bind_allowed_from_env L226，ADR-002 §6），否则 E_HTTP_BIND_REMOTE_NOT_ALLOWED 且不发布 manifest；profile 固定 https_mtls_v1（L210-224），旧明文 profile 启动期拒绝",
+    "TLS 层：WebPkiClientVerifier 使用 allow_unauthenticated（pki_api.rs L1023-1036）——握手允许无客户端证书连接（供 /v1/enroll 与 /health）；业务 /v1/rpc 由 AuthPrincipal 每请求强制 mTLS 身份，无证书 → E_MTLS_CLIENT_CERT_MISSING",
+    "单连接寿命上限：每连接 serve_connection 包 tokio timeout(MAX_CONNECTION_AGE=300s)（http_server.rs L953-960），到期强制断开——slowloris 类单连接最长占用 300s，连接不泄漏",
+    "单请求资源上限：MAX_BODY_BYTES=64MiB 按 Content-Length 预拦 413（enforce_max_body_size L1007-1026）+ multipart part 级二次防线（L76）；F1 修复后 canonical_len 服务端 clamp ≤256MiB 且在解压前 fail-fast（workspace.rs declared_canonical_cap），有界解压",
+    "处理串行化：全部共享状态为单一 Arc<TokioMutex<S>>（http_server.rs L393/577/1505/1874）——handler 在状态层串行执行，CPU/内存密集操作不随并发连接数放大；空闲连接任务仅 I/O 等待，内存占用常数级",
+    "客户端行为：Python HttpDaemonRpcClient 每 RPC 新建短连接（http.client.HTTPSConnection 用完即关，daemon_client.py L1762-1777），进程内单例；慢方法走 worker 线程 + watchdog 短连接探活（L1784-1810）。生产负载为单用户、低并发、短连接模式",
+    "【确认缺口】无并发连接数上限：accept_loop 对每个 accept 的连接 JoinSet::spawn 无 Semaphore/容量上限（http_server.rs L883、L925-962），连接任务数无界（仅受进程 FD/内存物理限制）",
+    "【确认缺口】无 per-principal 连接数/请求频率限制：同一有效 principal 可开任意多连接、任意速率发请求",
+    "【确认缺口】无请求速率限制（rate limiter）中间件；无专用慢读超时（仅 300s 总寿命兜底）",
+    "【确认缺口】allow_remote=true 时未认证连接也可完成 TLS 握手并访问 /v1/enroll 与 /health，每连接可占用 ≤300s——远程部署下连接槽可被未认证方消耗"
+  ],
+  "threat_model": "默认 loopback 单用户部署下，能无限开连接的主体仅为持有有效客户端证书的本机 agent 进程（自伤型 DoS，无跨用户影响；客户端私钥经 F2 收紧后 DACL 仅 daemon owner 可读）。仅当显式 CW_DAEMON_HTTP_ALLOW_REMOTE=1 时，未认证远程方才可消耗连接槽（每连接 ≤300s），风险升级为远程 DoS 面。",
+  "conclusion": "evidence_complete_low_risk_loopback",
+  "disposition": "用户决策（2026-11-21）：仅留档，风险接受，不建卡、不改代码",
+  "notes": "「无显式并发/速率限制」为确认事实；现有结构性缓解（loopback 默认 + mTLS 每请求强制 + 300s 连接寿命 + 64MiB body + 状态串行化 + 客户端短连接）使默认部署风险低。可选修复方向（如未来远程部署启用前再评估）：全局并发连接 cap（Semaphore，超限直接关闭）+ per-principal cap + 429/503 语义。"
+}
