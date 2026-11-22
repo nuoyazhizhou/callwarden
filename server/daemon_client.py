@@ -185,28 +185,116 @@ def assert_supersede_no_local_fallback(method: str, mode: str):
 # workspace_instance_id 推导
 # ----------------------------------------------------------------------
 
-def derive_workspace_instance_id(project_root: str) -> str:
-    """从项目根路径推导 workspace_instance_id（跨进程标识符）。
+def _normalize_identity_root(root: str) -> str:
+    """规范化 root 作身份键（与 Rust `normalize_identity_root` 逐字同语义）。
 
-    用项目根路径的 SHA-256 前 16 位作为 workspace_instance_id，确保同一项目
-    在不同进程（CLI / MCP / daemon）中标识一致。
-    注意：此 hash 仅用于 workspace 标识，不再用于数据库路径（数据库已改为用户级统一路径）。
+    **纯字符串归一，不做 realpath/abspath**——Rust 侧同为纯函数（canonical
+    路径由调用方 `validate_owned_path` 提供），realpath 会让跨语言固定向量
+    在 Windows 上产生 `c:/var/hr` 之类的分歧，破坏 C-08 互锁。
 
-    CR7（2026-09-09）：路径写法归一化——realpath 解析符号链接/junction 后，
-    反斜杠→正斜杠、Windows 全路径 ASCII 小写（NTFS 大小写不敏感）、strip 尾部斜杠。
-    此前 `C:/…` 与 `c:/…`（或大小写差异）会派生不同 id → 客户端 cwd 写法
-    差异即产生新实例（与 daemon 侧 normalize_identity_root 同语义）。
+    CR7（2026-09-09）：剥离 Windows `\\\\?\\` / `\\??\\` 长路径前缀，反斜杠→
+    正斜杠，Windows 全路径 ASCII 小写（NTFS 大小写不敏感），strip 尾部斜杠。
     """
-    abs_root = os.path.realpath(os.path.abspath(project_root))
-    norm_root = abs_root.replace("\\", "/")
+    s = (root or "").strip()
+    for prefix in ("\\\\?\\", "\\??\\"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    s = s.replace("\\", "/")
     if os.name == "nt":
         # 与 Rust normalize_identity_root 对齐：仅 ASCII 小写，非 ASCII 原样
-        norm_root = "".join(
-            ch.lower() if "A" <= ch <= "Z" else ch for ch in norm_root
-        )
-    while len(norm_root) > 1 and norm_root.endswith("/"):
-        norm_root = norm_root.rstrip("/")
-    return hashlib.sha256(norm_root.encode("utf-8")).hexdigest()[:16]
+        s = "".join(ch.lower() if "A" <= ch <= "Z" else ch for ch in s)
+    while len(s) > 1 and s.endswith("/"):
+        s = s[:-1]
+    return s
+
+
+def normalize_remote_url(url: str) -> Optional[str]:
+    """归一化 git remote URL 为仓库级身份键（REQ-01，方案 A）。
+
+    **与 Rust `daemon::workspace::normalize_remote_url` 同语义，双实现需同步
+    演进**（矩阵单测 `tests/test_workspace_identity.py` 双语言互锁）。规则：
+
+    1. trim；空串返回 None（调用方下落到下一级）；
+    2. ssh scp 形式 `git@host:path` → `ssh://host/path`；
+    3. 仅接受 http/https/ssh scheme（`file://` 等本地协议不构成稳定仓库身份，
+       返回 None fail-open）；
+    4. 剥离嵌入凭据 `scheme://user:pass@host/...` → `host/...`
+       （凭据取第一个 `@` 之前；密码中的 `@` 按 RFC 应转义为 `%40`）；
+    5. 全 URL ASCII 小写（NTFS/GitHub 路径大小写不敏感的实用取舍）；
+    6. 剥离 `.git` 后缀与尾部斜杠；
+    7. **scheme 不进入身份键**（https 与 ssh 指向同仓库 → 同 id），
+       返回 `host/path` 形态。
+    """
+    s = (url or "").strip()
+    if not s:
+        return None
+    lower = "".join(ch.lower() if "A" <= ch <= "Z" else ch for ch in s)
+    if lower.startswith("git@"):
+        rest = lower[len("git@"):]
+        if ":" not in rest:
+            return None
+        host, _, path = rest.partition(":")
+        if not host or not path:
+            return None
+        with_scheme = f"ssh://{host}/{path}"
+    else:
+        with_scheme = lower
+    if "://" not in with_scheme:
+        return None
+    scheme, _, remainder = with_scheme.partition("://")
+    if scheme not in ("https", "http", "ssh"):
+        return None
+    if "@" in remainder:
+        remainder = remainder.split("@", 1)[1]
+    if not remainder:
+        return None
+    out = remainder
+    while len(out) > 1 and out.endswith("/"):
+        out = out[:-1]
+    if out.endswith(".git") and len(out) > 4:
+        out = out[:-4]
+    while len(out) > 1 and out.endswith("/"):
+        out = out[:-1]
+    if not out:
+        return None
+    # scheme 已校验但不进入身份键（https/ssh 同仓库 → 同 id）
+    return out
+
+
+def derive_workspace_instance_id(
+    project_root: str,
+    git_remote_url: str = "",
+    git_main_root: str = "",
+    owner_uid: str = "",
+) -> str:
+    """从项目根路径推导 workspace_instance_id（跨进程标识符）。
+
+    三级派生与 Rust `compute_workspace_instance_id` 同语义（REQ-01/02）：
+
+    1. remote 非空 → `sha256("{owner_uid}|remote:{norm_remote}")[:16]`
+    2. 否则 main_root 非空 → `sha256("{owner_uid}|root:{norm_main_root}")[:16]`
+    3. 否则回退自身路径 → `sha256("{owner_uid}|{norm_root}")[:16]`
+
+    `owner_uid` 缺省空串时 tier3 保持历史公式 `sha256(norm_root)`，兼容既有
+    调用方（A-01：本函数仅作本地缓存/展示键，daemon register 返回值为身份
+    权威；身份跨语言一致性由固定向量的矩阵单测互锁）。
+
+    注意：此 hash 仅用于 workspace 标识，不再用于数据库路径（数据库已改为
+    用户级统一路径）。
+    """
+    norm_remote = normalize_remote_url(git_remote_url)
+    if norm_remote is not None:
+        payload = f"{owner_uid}|remote:{norm_remote}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    norm_main = _normalize_identity_root(git_main_root)
+    if norm_main:
+        payload = f"{owner_uid}|root:{norm_main}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    norm_root = _normalize_identity_root(project_root)
+    # 兼容：旧调用方（不传 owner_uid）保持历史 payload，不旋转既有本地 id。
+    payload = f"{owner_uid}|{norm_root}" if owner_uid else norm_root
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _norm_root(root_path: str) -> str:
@@ -231,6 +319,9 @@ def _workspace_snapshot_metadata(project_root: str) -> Dict[str, str]:
     daemon 根据 remote/head/toolchain 生成权威 snapshot_id。客户端不能自行
     生成或猜测该 ID；这里只把当前 checkout 的 Git 元数据传给 authority。
     Git 不可用时保持空值，让 daemon 返回明确的无 snapshot 身份结果。
+
+    C-03（REQ-02）：新增 `git_main_root`（worktree 场景下的主仓绝对路径），
+    供 daemon 做 tier2 仓库级身份收敛；各键按可用性独立返回（不再整体为空）。
     """
     if not project_root:
         return {}
@@ -253,9 +344,24 @@ def _workspace_snapshot_metadata(project_root: str) -> Dict[str, str]:
 
     remote = _git(["config", "--get", "remote.origin.url"])
     head = _git(["rev-parse", "HEAD"])
-    if remote and head:
-        return {"git_remote_url": remote, "git_head_commit_sha": head}
-    return {}
+    # C-03（REQ-02）：主仓绝对路径 —— worktree 场景下 `--git-common-dir`
+    # 返回主仓 `.git` 目录，取其父目录即主仓工作树 root（普通仓返回自身
+    # `.git`，父目录仍是自身）。`--path-format=absolute` 需 git ≥ 2.31，
+    # 低版本/非 git 目录一律失败返回空串（fail-open，不阻塞宿主）。
+    common_dir = _git(
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"]
+    )
+    main_root = ""
+    if common_dir:
+        main_root = os.path.realpath(os.path.dirname(common_dir.rstrip("/\\")))
+    metadata: Dict[str, str] = {}
+    if remote:
+        metadata["git_remote_url"] = remote
+    if head:
+        metadata["git_head_commit_sha"] = head
+    if main_root:
+        metadata["git_main_root"] = main_root
+    return metadata
 
 
 # ----------------------------------------------------------------------
@@ -313,7 +419,14 @@ class DaemonClient:
             project_root: 项目根目录路径
         """
         self._project_root = project_root
-        self._workspace_instance_id = derive_workspace_instance_id(project_root)
+        # C-03：消费与 daemon 同语义的 Git provenance（remote/主仓 root）。
+        # 取不到时各键缺失 → derive 逐级回退到自身路径，不报错。
+        metadata = _workspace_snapshot_metadata(project_root)
+        self._workspace_instance_id = derive_workspace_instance_id(
+            project_root,
+            metadata.get("git_remote_url", ""),
+            metadata.get("git_main_root", ""),
+        )
         self._remote_workspace_id = None
         self._remote_snapshot_id = None
         self._remote_snapshot_ready = False

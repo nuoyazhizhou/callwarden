@@ -8836,6 +8836,79 @@ def _doctor_add_defender_exclusion(db):
 # --------------------------------------------------------------------
 
 
+def cmd_workspace_migrate(args, db) -> bool:
+    """一次性迁移：把按 checkout 派生的历史 workspace 身份收敛为仓库级身份。
+
+    输入 = `workspace.list` 返回的全部 root（外加 ``--root`` 追加项）。每个 root
+    在本地补齐 ``git_remote_url`` / ``git_main_root``（解析失败则留空，由 daemon
+    侧三级派生 fail-open），再调用 ``workspace.migrate``。
+
+    禁止本地写库：daemon 不可用 / RPC 报错时 ``route_rpc`` 直接抛出，由上层
+    统一非 0 退出，CLI 不做任何本地回退。
+    """
+    import json as _json
+
+    from ..server.daemon_client import _workspace_snapshot_metadata
+
+    roots: List[str] = []
+    seen = set()
+
+    def _add_root(value: str) -> None:
+        root = (value or "").strip()
+        if not root:
+            return
+        key = os.path.normcase(os.path.normpath(root))
+        if key in seen:
+            return
+        seen.add(key)
+        roots.append(root)
+
+    for ws in db.list_workspaces() or []:
+        if isinstance(ws, dict):
+            _add_root(ws.get("root_path") or ws.get("host_real_root") or "")
+    for extra in getattr(args, "root", None) or []:
+        _add_root(extra)
+
+    dry_run = bool(getattr(args, "dry_run", False))
+    if not roots:
+        print("No workspace roots to migrate.")
+        return True
+
+    entries = []
+    for root in roots:
+        meta = _workspace_snapshot_metadata(root) or {}
+        entries.append({
+            "root_path": root,
+            "git_remote_url": meta.get("git_remote_url", ""),
+            "git_main_root": meta.get("git_main_root", ""),
+        })
+
+    result = route_rpc(
+        "workspace.migrate",
+        {"entries": entries, "dry_run": dry_run},
+        "PROTECTED_MUTATION",
+    )
+    report = result.get("report", result) if isinstance(result, dict) else {}
+
+    if getattr(args, "json", False):
+        print(_json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        return True
+
+    prefix = "[dry-run] " if dry_run else ""
+    print(f"{prefix}workspace identity migration")
+    print(f"  scanned:       {report.get('scanned', 0)}")
+    print(f"  identity groups: {report.get('groups', 0)}")
+    print(f"  merged rows:   {report.get('merged_rows', 0)}")
+    print(f"  pl06 cleaned:  {report.get('pl06_cleaned', 0)}")
+    for table, count in sorted((report.get("rewired") or {}).items()):
+        print(f"  rewired {table}: {count}")
+    for conflict in report.get("grant_conflicts") or []:
+        print(f"  grant conflict: {conflict}")
+    if report.get("backup_path"):
+        print(f"  backup:        {report['backup_path']}")
+    return True
+
+
 def _handle_workspace(args, db):
     """处理 workspace 子命令（工作区管理）
     """
@@ -8885,6 +8958,16 @@ def _handle_workspace(args, db):
     gen_ignore_p.add_argument("--apply", action="store_true",
                               help="Actually write .callwardenignore (default: dry-run preview)")
 
+    migrate_p = sub.add_parser(
+        "migrate",
+        help="Migrate legacy checkout-scoped workspace identities to repo-level identity")
+    migrate_p.add_argument("--dry-run", action="store_true",
+                           help="Preview the migration report without writing")
+    migrate_p.add_argument("--root", action="append", default=[], metavar="PATH",
+                           help="Extra checkout root to include (repeatable)")
+    migrate_p.add_argument("--json", action="store_true",
+                           help="Print the raw JSON report")
+
     opts = parser.parse_args(args)
 
     if opts.action == "list":
@@ -8905,6 +8988,9 @@ def _handle_workspace(args, db):
         ws_id = db.register_workspace(name, root)
         print(t("cli.messages.register_success", id=ws_id, name=name, root=root))
         return True
+
+    if opts.action == "migrate":
+        return cmd_workspace_migrate(opts, db)
 
     if opts.action == "set":
         ws_arg = opts.id_or_name

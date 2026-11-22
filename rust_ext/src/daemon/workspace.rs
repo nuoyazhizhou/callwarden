@@ -198,24 +198,47 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// 计算一个物理 checkout 的稳定 workspace_instance_id。
+/// 计算一个仓库的稳定 workspace_instance_id（仓库级身份，REQ-01 方案 A）。
 ///
-/// Git remote、HEAD 和 toolchain 是 snapshot provenance，不是 workspace 身份；
-/// 将它们混入这里会让一次 commit/checkout 为同一个目录创造新的 authority。
-/// sha256("owner_uid|host_real_root")[:16]
-/// CR7：host_real_root 先经 `normalize_identity_root` 归一化再进哈希，
-/// 使同物理 checkout 的不同路径写法派生同一 instance id。
-fn compute_workspace_instance_id(
+/// # 决策反转（R0 用户拍板，2026-11-22）
+///
+/// 旧设计刻意排除 Git remote（「remote 是 snapshot provenance，不是身份」），
+/// 身份 = `sha256("owner_uid|host_real_root")[:16]`——路径哈希。后果：同一仓库
+/// 的主仓与 worktree（甚至多 clone）派生不同身份 → 任务库、REQ 追溯、ac-map、
+/// 验收证据、lease 全部按 checkout 隔离，多角色并行无法跨 worktree 协作。
+/// 本设计反转为仓库级身份：remote 优先，主仓 root 兜底，自身路径 fail-open。
+///
+/// 三级派生（领域分隔前缀防 remote 串与路径串同键）：
+/// 1. remote 非空 → `sha256("{owner_uid}|remote:{norm_remote}")[:16]`
+/// 2. 否则 main_root 非空 → `sha256("{owner_uid}|root:{norm_main_root}")[:16]`
+/// 3. 否则回退旧公式 `sha256("{owner_uid}|{norm_host_real_root}")[:16]`
+///
+/// head commit 永不参与身份（每次 commit 换身份会让任务绑定反复失效），
+/// 它只进 snapshot provenance（见 `compute_snapshot_id`）。CR7 归一化
+/// （`normalize_identity_root` / `normalize_remote_url`）保证同仓库不同写法
+/// 收敛到同一 id。任何一级输入缺失自动下落，最终保证恒有 id 返回（fail-open）。
+pub(crate) fn compute_workspace_instance_id(
     owner_uid: u32,
     host_real_root: &str,
-    _git_remote_url: &str,
-    _git_head_commit_sha: &str,
+    git_remote_url: &str,
+    git_main_root: &str,
 ) -> String {
+    if let Some(norm_remote) = normalize_remote_url(git_remote_url) {
+        return sha256_16(&format!("{}|remote:{}", owner_uid, norm_remote));
+    }
+    let norm_main = normalize_identity_root(git_main_root);
+    if !norm_main.is_empty() {
+        return sha256_16(&format!("{}|root:{}", owner_uid, norm_main));
+    }
     let norm_root = normalize_identity_root(host_real_root);
+    sha256_16(&format!("{}|{}", owner_uid, norm_root))
+}
+
+/// sha256 输入取前 8 字节 hex（16 字符），workspace 身份与 snapshot 共用口径。
+pub(crate) fn sha256_16(input: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(format!("{}|{}", owner_uid, norm_root));
+    hasher.update(input);
     let full = hasher.finalize();
-    // 取前 8 字节，hex 编码后 16 字符
     hex_encode(&full[..8])
 }
 
@@ -424,6 +447,109 @@ pub fn normalize_identity_root(root: &str) -> String {
     s
 }
 
+/// 归一化 git remote URL 为仓库级身份键（REQ-01，方案 A）。
+///
+/// 规则（与 Python 侧 `normalize_remote_url` 同语义，双实现需同步演进）：
+/// 1. trim；空串返回 None（调用方下落到下一级）；
+/// 2. ssh scp 形式 `git@host:path` → `ssh://host/path`；
+/// 3. 仅接受 http/https/ssh scheme（`file://` 等本地协议不构成稳定仓库身份，
+///    返回 None fail-open）；
+/// 4. 剥离嵌入凭据 `scheme://user:pass@host/...` → `host/...`
+///    （凭据取第一个 `@` 之前；密码中的 `@` 按 RFC 应转义为 `%40`）；
+/// 5. 全 URL ASCII 小写（NTFS/GitHub 路径大小写不敏感的实用取舍）；
+/// 6. 剥离 `.git` 后缀与尾部斜杠；
+/// 7. **scheme 不进入身份键**（C-01 GWT 契约：https 与 ssh 指向同仓库 → 同 id），
+///    返回 `host/path` 形态。
+///
+/// 已知取舍：仅大小写不同的两个远端、以及同 host/path 的 http 与 https
+/// （病态场景）会被合并为同一身份。
+pub fn normalize_remote_url(url: &str) -> Option<String> {
+    let s = url.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let lower = s.to_ascii_lowercase();
+    // ssh scp 语法先归一为标准 URL，再走统一的 scheme 解析
+    let with_scheme = if let Some(rest) = lower.strip_prefix("git@") {
+        let (host, path) = rest.split_once(':')?;
+        if host.is_empty() || path.is_empty() {
+            return None;
+        }
+        format!("ssh://{host}/{path}")
+    } else {
+        lower
+    };
+    let (scheme, remainder) = with_scheme.split_once("://")?;
+    if !matches!(scheme, "https" | "http" | "ssh") {
+        return None;
+    }
+    // 剥离嵌入凭据：取第一个 '@' 之后的主机/路径段
+    let remainder = match remainder.split_once('@') {
+        Some((_, after)) => after,
+        None => remainder,
+    };
+    if remainder.is_empty() {
+        return None;
+    }
+    let mut out = remainder.to_string();
+    while out.len() > 1 && out.ends_with('/') {
+        out.pop();
+    }
+    if out.ends_with(".git") && out.len() > 4 {
+        out.truncate(out.len() - 4);
+    }
+    while out.len() > 1 && out.ends_with('/') {
+        out.pop();
+    }
+    if out.is_empty() {
+        return None;
+    }
+    // scheme 已校验但不进入身份键（C-01 GWT：https/ssh 同仓库 → 同 id）
+    Some(out)
+}
+
+/// 从 checkout root 解析主仓 root（REQ-02，worktree 收敛的兜底级）。
+///
+/// - `<root>/.git` 为目录：root 自身即主仓工作树；
+/// - `<root>/.git` 为文件（worktree 指针 `gitdir: <path>`）：读指针目标的
+///   `commondir`（相对 gitdir 解析）得到主仓 `.git`，其父目录即主仓 root；
+/// - 无 `commondir` 的 `.git` 文件（submodule 等自包含 checkout）：无法外推
+///   主仓，返回 root 自身。
+/// 任一步失败返回 None（fail-open，调用方下落到自身路径级）。
+///
+/// 生产路径的主仓解析在 Python 客户端（`_workspace_snapshot_metadata`），本函数
+/// 作为 Rust 侧同语义对照实现保留给单测；因此只暴露到 crate 内。
+pub(crate) fn resolve_main_repo_root(root: &str) -> Option<String> {
+    let dot_git = Path::new(root).join(".git");
+    let meta = std::fs::metadata(&dot_git).ok()?;
+    if meta.is_dir() {
+        return Some(normalize_identity_root(root));
+    }
+    let content = std::fs::read_to_string(&dot_git).ok()?;
+    let gitdir = content.trim().strip_prefix("gitdir:")?.trim();
+    if gitdir.is_empty() {
+        return None;
+    }
+    let gitdir_path = Path::new(gitdir);
+    let commondir_file = gitdir_path.join("commondir");
+    let main_git_dir: PathBuf = if commondir_file.exists() {
+        let rel = std::fs::read_to_string(&commondir_file).ok()?;
+        let rel = rel.trim();
+        if rel.is_empty() {
+            return None;
+        }
+        let joined = gitdir_path.join(rel);
+        // commondir 内容可能为相对路径（如 "../.."），相对 gitdir 解析；
+        // 解析失败（含 canonicalize 的 \\?\ 前缀）由 normalize_identity_root 统一收口
+        std::fs::canonicalize(&joined).unwrap_or(joined)
+    } else {
+        // submodule 等无 commondir 场景：外推不可靠，checkout 自身即主仓
+        return Some(normalize_identity_root(root));
+    };
+    let main_root = main_git_dir.parent()?;
+    Some(normalize_identity_root(&main_root.to_string_lossy()))
+}
+
 /// workspace registry：封装 SQLite 连接 + 提供线程安全访问
 ///
 /// 内部用 `std::sync::Mutex`（而非 parking_lot::Mutex）保护 rusqlite Connection，
@@ -536,6 +662,7 @@ impl WorkspaceRegistry {
             git_remote_url,
             git_head_commit_sha,
             toolchain_fingerprint,
+            "",
             &[],
         )
     }
@@ -545,6 +672,11 @@ impl WorkspaceRegistry {
     /// `preferred` 为按权威度降序的 instance id 列表（来自 task-DB
     /// `workspace_authority_captures` 同 root hash 绑定）；同 owner + 同归一化
     /// root 的历史分裂行中命中 preferred 的行优先收编，无命中则取最早注册行。
+    ///
+    /// `git_main_root`（C-02）：客户端自述的主仓绝对路径（worktree 场景下
+    /// 由 `git rev-parse --git-common-dir` 的父目录解析）。它是身份输入而非
+    /// 校验依据——归一化与哈希都在 daemon 侧完成；空串表示客户端未提供或
+    /// 解析失败，compute 会逐级回退，不报错。
     pub fn register_workspace_preferred(
         &self,
         owner_uid: u32,
@@ -553,6 +685,7 @@ impl WorkspaceRegistry {
         git_remote_url: &str,
         git_head_commit_sha: &str,
         toolchain_fingerprint: &str,
+        git_main_root: &str,
         preferred: &[String],
     ) -> Result<Value, rusqlite::Error> {
         // CR7（2026-09-09）：身份输入归一化——存储行与哈希输入统一用归一化
@@ -613,12 +746,15 @@ impl WorkspaceRegistry {
             archive_alias_rows(&conn, owner_uid, &norm_root, &legacy_id, now)?;
             return fetch_workspace_by_instance(&conn, &legacy_id);
         }
-        let instance_id = compute_workspace_instance_id(
-            owner_uid,
-            &norm_root,
-            git_remote_url,
-            git_head_commit_sha,
-        );
+        // AC-05：无 remote 且无主仓 root → 身份回退到 checkout 自身路径（fail-open）。
+        // 该情况必须在日志可见，便于排查「为何同仓不同 worktree 未收敛」。
+        if git_remote_url.is_empty() && git_main_root.is_empty() {
+            eprintln!(
+                "[workspace] warn: 无 git remote 且无主仓 root，身份回退到自身路径（fail-open, root={norm_root}）"
+            );
+        }
+        let instance_id =
+            compute_workspace_instance_id(owner_uid, &norm_root, git_remote_url, git_main_root);
         let now = now_ts();
         let conn = self.conn.lock().unwrap();
         // snapshot_id 恒非空：remote+head 齐全走既有公式，否则以不可变 instance 兜底。
@@ -2032,6 +2168,9 @@ impl WorkspaceDaemonState {
         let git_remote_url = get_str_param_or(params, "git_remote_url", "");
         let git_head_commit_sha = get_str_param_or(params, "git_head_commit_sha", "");
         let toolchain_fingerprint = get_str_param_or(params, "toolchain_fingerprint", "");
+        // C-02：客户端自述的主仓绝对路径（worktree 场景）；缺省空串 →
+        // compute 回退 tier2 跳过、落到 tier3 自身路径，兼容旧客户端。
+        let git_main_root = get_str_param_or(params, "git_main_root", "");
 
         self.registry
             .register_workspace_preferred(
@@ -2041,9 +2180,92 @@ impl WorkspaceDaemonState {
                 &git_remote_url,
                 &git_head_commit_sha,
                 &toolchain_fingerprint,
+                &git_main_root,
                 preferred,
             )
             .map_err(|e| DaemonRpcError::internal_error(format!("register_workspace: {}", e)))
+    }
+
+    /// 存量 workspace 身份一次性迁移（REQ-03 / C-05）。
+    ///
+    /// **一次性维护操作，仅 daemon owner 可触发**：本地未认证连接（UDS/命名
+    /// 管道）或 mTLS `service` principal 放行；`agent` / `human` principal 一律
+    /// fail-closed（`E_PRINCIPAL_WORKSPACE_FORBIDDEN`）。业务逻辑全部在
+    /// `workspace_migration::migrate_repo_identity`，这里只做参数校验与错误映射。
+    pub fn handle_workspace_migrate(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if peer.principal.is_authenticated() && !peer.principal.is_service() {
+            return Err(DaemonRpcError::new(
+                "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
+                "workspace.migrate 仅允许 daemon owner 或 service principal 触发",
+            ));
+        }
+
+        let dry_run = params
+            .get("dry_run")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let raw_entries = params
+            .get("entries")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DaemonRpcError::invalid_params("workspace.migrate 需要 entries 数组"))?;
+        if raw_entries.is_empty() {
+            return Err(DaemonRpcError::invalid_params("entries 不能为空"));
+        }
+
+        let mut entries = Vec::with_capacity(raw_entries.len());
+        for item in raw_entries {
+            let obj = item
+                .as_object()
+                .ok_or_else(|| DaemonRpcError::invalid_params("entries 元素必须是 JSON 对象"))?;
+            let root_path = obj
+                .get("root_path")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if root_path.is_empty() {
+                return Err(DaemonRpcError::invalid_params(
+                    "entries[].root_path 不能为空",
+                ));
+            }
+            entries.push(super::workspace_migration::MigrationEntry {
+                root_path: root_path.to_string(),
+                git_remote_url: obj
+                    .get("git_remote_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                git_main_root: obj
+                    .get("git_main_root")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            });
+        }
+
+        let owner_uid = peer.uid.to_string();
+        let store = self.base.task_collab_store.as_ref().ok_or_else(|| {
+            DaemonRpcError::internal_error("workspace.migrate 需要 task_collab_store")
+        })?;
+        let report = store.with_conn(|conn| {
+            super::workspace_migration::migrate_repo_identity(conn, &owner_uid, &entries, dry_run)
+                .map_err(|e| match e {
+                    super::workspace_migration::MigrationError::IdentityCalc(root) => {
+                        DaemonRpcError::invalid_params(format!("身份派生失败: {root}"))
+                    }
+                    super::workspace_migration::MigrationError::BackupFailed(path) => {
+                        DaemonRpcError::internal_error(format!("迁移前备份失败: {path}"))
+                    }
+                    super::workspace_migration::MigrationError::Db(_) => {
+                        DaemonRpcError::internal_error(e.to_string())
+                    }
+                })
+        })?;
+
+        Ok(serde_json::json!({ "report": report.to_json() }))
     }
 
     /// 解压 gzip 字节流，解压结果不得超过 ``max_out_bytes``。
@@ -2163,6 +2385,14 @@ impl DaemonStateExt for WorkspaceDaemonState {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         self.handle_workspace_register_preferred(peer, params, &[])
+    }
+
+    fn handle_workspace_migrate(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        WorkspaceDaemonState::handle_workspace_migrate(self, peer, params)
     }
 
     fn handle_workspace_list(
@@ -4515,7 +4745,7 @@ mod tests {
         }
         let preferred = vec!["legacy-authority-row".to_string()];
         let reg = registry
-            .register_workspace_preferred(1000, root, root, "", "", "", &preferred)
+            .register_workspace_preferred(1000, root, root, "", "", "", "", &preferred)
             .unwrap();
         assert_eq!(
             reg["workspace_instance_id"], "legacy-authority-row",
@@ -4774,6 +5004,7 @@ mod tests {
                 "",
                 "",
                 "",
+                "",
                 &preferred,
             )
             .unwrap();
@@ -4821,7 +5052,7 @@ mod tests {
 
         let preferred = vec!["alias-canonical".to_string()];
         let adopted = registry
-            .register_workspace_preferred(1000, "C:/tmp/cv", "C:/tmp/cv", "", "", "", &preferred)
+            .register_workspace_preferred(1000, "C:/tmp/cv", "C:/tmp/cv", "", "", "", "", &preferred)
             .unwrap();
         assert_eq!(adopted["workspace_instance_id"], "alias-canonical");
 
@@ -4869,6 +5100,64 @@ mod tests {
             "active",
             "不同 root 的行不受影响"
         );
+    }
+
+    #[test]
+    fn test_register_worktrees_share_remote_identity_single_row() {
+        // C-02：主仓 + 2 worktree 依此 register（各自不同 host_real_root，
+        // 但上送同一 remote）→ 三级派生 tier1 命中同一 instance_id，
+        // registry 只保留一行 active。
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let remote = "git@github.com:nuoyazhizhou/callwarden.git";
+        let roots = ["/tmp/cv", "/tmp/cv-wt1", "/tmp/cv-wt2"];
+        let mut ids = Vec::new();
+        for root in roots {
+            let reg = registry
+                .register_workspace_preferred(1000, root, root, remote, "", "", "", &[])
+                .unwrap();
+            ids.push(reg["workspace_instance_id"].as_str().unwrap().to_string());
+            assert_eq!(reg["status"].as_str().unwrap(), "active");
+        }
+        assert_eq!(ids[0], ids[1], "worktree 必须与主仓同一身份");
+        assert_eq!(ids[0], ids[2], "worktree 必须与主仓同一身份");
+        assert_eq!(
+            registry.count_workspaces().unwrap(),
+            1,
+            "同 repo 多 worktree 只能有一行"
+        );
+    }
+
+    #[test]
+    fn test_register_legacy_client_without_new_fields_falls_back() {
+        // C-02：旧客户端不传 git_remote_url / git_main_root → 按空串处理，
+        // 三级回退到 tier3 自身路径，注册成功不报错。
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let reg = registry
+            .register_workspace_preferred(1000, "/tmp/cv-legacy", "/tmp/cv-legacy", "", "", "", "", &[])
+            .unwrap();
+        assert_eq!(reg["status"].as_str().unwrap(), "active");
+        assert_eq!(
+            reg["workspace_instance_id"].as_str().unwrap(),
+            compute_workspace_instance_id(1000, "/tmp/cv-legacy", "", "")
+        );
+    }
+
+    #[test]
+    fn test_register_same_root_is_idempotent_row() {
+        // C-02：同 root 重复 register → 幂等（同一行，不新增）。
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let remote = "https://github.com/nuoyazhizhou/callwarden.git";
+        let first = registry
+            .register_workspace_preferred(1000, "/tmp/cv", "/tmp/cv", remote, "", "", "", &[])
+            .unwrap();
+        let second = registry
+            .register_workspace_preferred(1000, "/tmp/cv", "/tmp/cv", remote, "", "", "", &[])
+            .unwrap();
+        assert_eq!(
+            first["workspace_instance_id"], second["workspace_instance_id"],
+            "重复注册必须命中同一身份"
+        );
+        assert_eq!(registry.count_workspaces().unwrap(), 1);
     }
 
     #[test]
@@ -5070,28 +5359,175 @@ mod tests {
         assert!(!updated);
     }
 
-    // ---- ID 计算测试 ----
+    // ---- ID 计算测试（REQ-04 Rust 侧矩阵，与 C-08 Python 矩阵同格互锁） ----
 
     #[test]
     fn test_compute_workspace_instance_id_is_deterministic() {
-        let id1 = compute_workspace_instance_id(1000, "/var/hr", "url", "head");
-        let id2 = compute_workspace_instance_id(1000, "/var/hr", "url", "head");
+        let id1 = compute_workspace_instance_id(1000, "/var/hr", "https://github.com/u/r", "");
+        let id2 = compute_workspace_instance_id(1000, "/var/hr", "https://github.com/u/r", "");
         assert_eq!(id1, id2);
         assert_eq!(id1.len(), 16);
     }
 
     #[test]
     fn test_compute_workspace_instance_id_differs_on_owner() {
-        let id1 = compute_workspace_instance_id(1000, "/var/hr", "url", "head");
-        let id2 = compute_workspace_instance_id(2000, "/var/hr", "url", "head");
+        let id1 = compute_workspace_instance_id(1000, "/var/hr", "https://github.com/u/r", "");
+        let id2 = compute_workspace_instance_id(2000, "/var/hr", "https://github.com/u/r", "");
         assert_ne!(id1, id2);
     }
 
+    /// 语义反转（R0 用户拍板）：remote 是身份主键，不同 remote → 不同 id。
     #[test]
-    fn test_compute_workspace_instance_id_ignores_git_provenance() {
-        let before = compute_workspace_instance_id(1000, "/var/hr", "url-a", "head-a");
-        let after = compute_workspace_instance_id(1000, "/var/hr", "url-b", "head-b");
-        assert_eq!(before, after);
+    fn test_compute_workspace_instance_id_differs_on_remote() {
+        let a = compute_workspace_instance_id(1000, "/var/hr", "https://github.com/u/r", "");
+        let b = compute_workspace_instance_id(1000, "/var/hr", "https://github.com/u/other", "");
+        assert_ne!(a, b);
+    }
+
+    /// C-01 GWT：https / ssh scp / .git 后缀 / 大小写 / 尾斜杠 / 带凭据 /
+    /// 首尾空白 → 全部收敛到同一身份键。
+    #[test]
+    fn test_normalize_remote_url_matrix() {
+        let expected = "github.com/u/r";
+        for variant in [
+            "https://github.com/u/r",
+            "https://github.com/u/r.git",
+            "https://GitHub.com/u/r/",
+            "HTTPS://GITHUB.COM/u/r",
+            "http://github.com/u/r",
+            "git@github.com:u/r",
+            "git@github.com:u/r.git",
+            "ssh://git@github.com/u/r",
+            "https://user:token@github.com/u/r",
+            " https://github.com/u/r ",
+        ] {
+            assert_eq!(
+                normalize_remote_url(variant).as_deref(),
+                Some(expected),
+                "variant {variant:?} 应收敛到同一身份键"
+            );
+        }
+    }
+
+    #[test]
+    fn test_normalize_remote_url_rejects_non_identity_forms() {
+        assert_eq!(normalize_remote_url(""), None);
+        assert_eq!(normalize_remote_url("   "), None);
+        assert_eq!(normalize_remote_url("file:///tmp/repo"), None);
+        assert_eq!(normalize_remote_url("/local/path"), None);
+        assert_eq!(normalize_remote_url("git@github.com:"), None);
+        assert_eq!(normalize_remote_url("git@:path"), None);
+    }
+
+    #[test]
+    fn test_normalize_remote_url_strips_credentials() {
+        let norm = normalize_remote_url("https://user:token@github.com/u/r").unwrap();
+        assert!(!norm.contains("token"));
+        assert!(!norm.contains("user"));
+        assert_eq!(norm, "github.com/u/r");
+    }
+
+    /// 跨语言锚固定向量：C-08 Python 侧用同一输入断言同值（sha256 输入见注释）。
+    #[test]
+    fn test_compute_instance_id_tier1_remote_anchor() {
+        // sha256("1000|remote:github.com/u/r")[:16]
+        let id = compute_workspace_instance_id(1000, "/var/hr", "https://github.com/u/r.git", "");
+        assert_eq!(id, "b85559eb88383d60");
+    }
+
+    /// tier 2：无 remote 时 main_root 兜底——同主仓的两个 checkout 同 id。
+    #[test]
+    fn test_compute_instance_id_tier2_main_root_fallback() {
+        let a = compute_workspace_instance_id(1000, "/tmp/checkout-a", "", "/var/hr/main");
+        let b = compute_workspace_instance_id(1000, "/tmp/checkout-b", "", "/var/hr/main");
+        assert_eq!(a, b);
+        // sha256("1000|root:/var/hr/main")[:16]
+        assert_eq!(a, "a7ebc654ca6a7d8b");
+    }
+
+    /// tier 3：remote / main_root 全空 → 旧公式（CR7 语义）fail-open。
+    #[test]
+    fn test_compute_instance_id_tier3_path_fallback() {
+        // sha256("1000|/var/hr")[:16]
+        let id = compute_workspace_instance_id(1000, "/var/hr", "", "");
+        assert_eq!(id, "3bde7a047470a6ef");
+    }
+
+    /// resolve_main_repo_root：手工构造 worktree 指针结构（不依赖 git 可执行文件）。
+    #[test]
+    fn test_resolve_main_repo_root_hermetic_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main_root = tmp.path().join("main");
+        let wt_root = tmp.path().join("wt");
+        let gitdir = main_root.join(".git").join("worktrees").join("wt");
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::create_dir_all(&wt_root).unwrap();
+        std::fs::write(wt_root.join(".git"), format!("gitdir: {}", gitdir.display())).unwrap();
+        std::fs::write(gitdir.join("commondir"), "../..").unwrap();
+        let expected = normalize_identity_root(&main_root.to_string_lossy());
+        // 主仓自身：.git 为目录 → 自身即主仓
+        assert_eq!(
+            resolve_main_repo_root(&main_root.to_string_lossy()).as_deref(),
+            Some(expected.as_str())
+        );
+        // worktree：.git 为文件 + commondir 相对指针 → 主仓 root
+        assert_eq!(
+            resolve_main_repo_root(&wt_root.to_string_lossy()).as_deref(),
+            Some(expected.as_str())
+        );
+    }
+
+    /// resolve_main_repo_root：真实 git 仓 + worktree add 端到端（环境无 git 时跳过）。
+    #[test]
+    fn test_resolve_main_repo_root_real_git_worktree() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let main_root = tmp.path().join("main");
+        std::fs::create_dir_all(&main_root).unwrap();
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&main_root)
+                .output()
+                .expect("git 应可用");
+            assert!(
+                out.status.success(),
+                "git {:?} 失败: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run(&["init"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        run(&["commit", "--allow-empty", "-m", "init"]);
+        run(&["worktree", "add", "../wt"]);
+        let expected = normalize_identity_root(&main_root.to_string_lossy());
+        let wt_root = tmp.path().join("wt");
+        assert_eq!(
+            resolve_main_repo_root(&wt_root.to_string_lossy()).as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            resolve_main_repo_root(&main_root.to_string_lossy()).as_deref(),
+            Some(expected.as_str())
+        );
+    }
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn test_resolve_main_repo_root_non_git_dir_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(resolve_main_repo_root(&tmp.path().to_string_lossy()), None);
     }
 
     #[test]
@@ -9174,5 +9610,173 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+}
+
+/// C-05：`workspace.migrate` 薄壳的权限 / 参数 / 干跑语义。
+#[cfg(test)]
+mod migrate_handler_tests {
+    use super::*;
+    use crate::daemon::dispatch::dispatch;
+    use crate::daemon::peercred::{FixedStr, PrincipalIdentity};
+    use crate::daemon::task_collab::TaskCollabStore;
+    use serde_json::json;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn peer(uid: u32) -> PeerCredential {
+        PeerCredential::new_unix(uid, 1000, 1)
+    }
+
+    fn temp_db_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("cw-mig-handler-{}-{nanos}.db", std::process::id()))
+    }
+
+    fn cleanup(path: &Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn test_migrate_rejects_agent_principal() {
+        let mut state = WorkspaceDaemonState::new(WorkspaceRegistry::open_in_memory().unwrap());
+        let mut principal = PrincipalIdentity::default();
+        principal.principal_id = FixedStr::from_str("pr_agent").unwrap();
+        principal.kind = FixedStr::from_str("agent").unwrap();
+        let err = state
+            .handle_workspace_migrate(
+                peer(1000).with_principal(principal),
+                &json!({"entries": [{"root_path": "C:\\repo"}]}),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_PRINCIPAL_WORKSPACE_FORBIDDEN");
+    }
+
+    #[test]
+    fn test_migrate_rejects_human_principal() {
+        // 权限矩阵：human 也是已认证非 service，必须拒绝（迁移是 daemon owner 操作）。
+        let mut state = WorkspaceDaemonState::new(WorkspaceRegistry::open_in_memory().unwrap());
+        let mut principal = PrincipalIdentity::default();
+        principal.principal_id = FixedStr::from_str("pr_human").unwrap();
+        principal.kind = FixedStr::from_str("human").unwrap();
+        let err = state
+            .handle_workspace_migrate(
+                peer(1000).with_principal(principal),
+                &json!({"entries": [{"root_path": "C:\\repo"}]}),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_PRINCIPAL_WORKSPACE_FORBIDDEN");
+    }
+
+    #[test]
+    fn test_migrate_allows_service_principal() {
+        // service（daemon owner 引导身份）通过权限门禁，进入业务逻辑；未注入
+        // task store 时表现为 internal_error（而非 forbidden）。
+        let mut state = WorkspaceDaemonState::new(WorkspaceRegistry::open_in_memory().unwrap());
+        let mut principal = PrincipalIdentity::default();
+        principal.principal_id = FixedStr::from_str("pr_service").unwrap();
+        principal.kind = FixedStr::from_str("service").unwrap();
+        let err = state
+            .handle_workspace_migrate(
+                peer(1000).with_principal(principal),
+                &json!({"entries": [{"root_path": "C:\\repo"}]}),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "internal_error");
+    }
+
+    #[test]
+    fn test_migrate_missing_root_path_is_invalid_params() {
+        let mut state = WorkspaceDaemonState::new(WorkspaceRegistry::open_in_memory().unwrap());
+        let err = state
+            .handle_workspace_migrate(
+                peer(1000),
+                &json!({"entries": [{"git_remote_url": "https://github.com/u/r.git"}]}),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "invalid_params");
+    }
+
+    #[test]
+    fn test_dispatch_routes_workspace_migrate() {
+        // C-06：先前 dispatch 未注册该方法 → method_not_found；接线后应真正进入
+        // handler（未注入 task store 时表现为 internal_error）。
+        let mut state = WorkspaceDaemonState::new(WorkspaceRegistry::open_in_memory().unwrap());
+        let resp = dispatch(
+            &mut state,
+            peer(1000),
+            "workspace.migrate",
+            &json!({"entries": [{"root_path": "C:\\repo"}]}),
+        );
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["error"]["code"], "internal_error");
+        assert!(resp["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("task_collab_store"));
+    }
+
+    #[test]
+    fn test_migrate_dry_run_returns_report_without_writes() {
+        let path = temp_db_path();
+        {
+            let store = Arc::new(TaskCollabStore::new(&path).unwrap());
+            store
+                .with_conn(|conn| {
+                    conn.execute(
+                        "INSERT INTO workspaces (name, root_path, created_at) \
+                         VALUES ('main', 'C:\\repo', 1.0), ('variant', '\\\\?\\C:\\repo', 2.0)",
+                        [],
+                    )
+                    .unwrap();
+                    conn.execute(
+                        "INSERT INTO workspace_authority_captures \
+                         (workspace_capture_id, workspace_id, capture_revision, supersedes_capture_id, \
+                          daemon_workspace_id, workspace_instance_id, capture_canonicalization_version, \
+                          capture_canonicalization_rules_hash, registry_identity_payload_json, \
+                          registry_identity_hash, workspace_manifest_payload_json, workspace_manifest_hash, \
+                          client_view_root_hash, host_real_root_hash, created_by, authoritative_created_at) \
+                         VALUES ('CAP-2', 2, 1, NULL, 0, 'inst-2', 'v1', 'rules', '{}', 'hash', \
+                                 '{}', 'mhash', 'croot', 'hroot', 'test', '2026-11-22T00:00:00Z')",
+                        [],
+                    )
+                    .unwrap();
+                    Ok(())
+                })
+                .unwrap();
+            let mut state = WorkspaceDaemonState::new(WorkspaceRegistry::open_in_memory().unwrap())
+                .with_task_collab_store(Arc::clone(&store));
+
+            let response = state
+                .handle_workspace_migrate(
+                    peer(1000),
+                    &json!({
+                        "dry_run": true,
+                        "entries": [
+                            {"root_path": "C:\\repo", "git_remote_url": "https://github.com/u/r.git"},
+                            {"root_path": "\\\\?\\C:\\repo", "git_remote_url": "https://github.com/u/r.git"}
+                        ]
+                    }),
+                )
+                .unwrap();
+            assert_eq!(response["report"]["merged_rows"], 1);
+            assert_eq!(response["report"]["dry_run"], true);
+            assert_eq!(response["report"]["backup_path"], "");
+
+            let rows: i64 = store
+                .with_conn(|conn| {
+                    Ok(conn
+                        .query_row("SELECT COUNT(*) FROM workspaces", [], |r| r.get(0))
+                        .unwrap())
+                })
+                .unwrap();
+            assert_eq!(rows, 2, "dry_run 不得改动 workspaces");
+        }
+        cleanup(&path);
     }
 }

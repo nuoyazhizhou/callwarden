@@ -30,6 +30,7 @@ pub mod client;
 /// Workspace registry + UID ACL（跨平台，rusqlite 数据层）
 /// R4：实现 workspace.register / list / status + 路径校验 + owned_workspace ACL
 pub mod workspace;
+pub mod workspace_migration;
 pub mod workspace_reconciliation;
 
 /// CAS（Content-Addressable Storage）+ file_generations 两阶段 CAS（跨平台）

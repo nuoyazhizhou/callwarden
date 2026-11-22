@@ -465,6 +465,18 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("workspace.register"))
     }
 
+    /// 存量 workspace 身份一次性迁移（REQ-03）。
+    ///
+    /// C-05/C-06：默认 fail-closed；`WorkspaceDaemonState` 覆写为真实实现。
+    fn handle_workspace_migrate(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("workspace.migrate"))
+    }
+
     fn handle_workspace_list(
         &mut self,
         peer: PeerCredential,
@@ -3359,6 +3371,7 @@ fn dispatch_inner<S: DaemonStateExt>(
 
         // ---- Workspace 管理（R4 实现）----
         "workspace.register" => state.handle_workspace_register(peer, params),
+        "workspace.migrate" => state.handle_workspace_migrate(peer, params),
         "workspace.list" => state.handle_workspace_list(peer, params),
         "workspace.status" => state.handle_workspace_status(peer, params),
         "workspace.activate" => state.handle_workspace_activate(peer, params),

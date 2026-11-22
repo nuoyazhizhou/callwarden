@@ -21,3 +21,19 @@
 **放行判据**（requirements-cw R4）：全部到 review + 全程无 E_* 门禁错误 + ≥1 单完成 apply/close 全链路；满足后注入第二批（C-09，REQ-05 should）。
 
 **职责边界**：apply/close 由 executor/reviewer 执行；Architect 只读判定进度。
+
+## R5 审查整改单（code-review-cw，2026-11-22）
+
+基线 `5912f52` 未提交改动审查发现，全部已修复并转 `review`：
+
+| 发现 | REQ | 严重度 | task_id | 修复摘要 |
+|---|---|---|---|---|
+| 迁移排除 `task_workspace_bindings` 导致存量任务不可见 + claim 三方一致性破裂 | REQ-03 | 🔴 | `T-1795339793129-9c9d0788` | 同事务改写 binding（workspace_id + capture 指针），同步 `task_step_role_contract_bindings` / `role_contract_lineages` |
+| 模块文档谎称 handler 内重放 register 合并 registry | REQ-03 | 🟡 | `T-1795339793247-a3a5a7b0` | 文档改为「registry 靠下次自然 register 收敛」 |
+| `MigrationReport.groups/scanned` 语义与文档不符 | REQ-04 | 🟡 | `T-1795339801279-82672b58` | 新增 `total_groups`，明确 scanned/groups 口径 |
+| 权限矩阵缺 human/service 用例；`resolve_main_repo_root` 公开面冗余 | REQ-03 | 🟡 | `T-1795339801423-8af32c40` | 补 2 例测试；收窄为 `pub(crate)` |
+
+**变更单说明（C-04 合同反转）**：原合同将 `task_workspace_bindings` 列为「不可改写审计壳」并排除；审查证明该表是 `task.list` 可见性与 claim 一致性的权威来源，排除会同时丢任务与破坏一致性。经本变更改为「同步 rewire + capture 指针指向追加 capture，历史 capture 行不改写」，理由记录于 `workspace_migration.rs` 模块文档。
+
+**证据**：`.design/ws-identity/evidence/AC-01..05.md`（AC-03/04/05 PASS；AC-01/02 待 C-09）。
+
