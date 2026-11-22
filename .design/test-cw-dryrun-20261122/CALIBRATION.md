@@ -96,3 +96,18 @@ git diff --stat f8b8588..HEAD -- cli/main.py i18n/*.json tests/test_report_rc_se
 - `N/A` 的合法形态真实存在（spec §3 活体验证），且它确实导致"需求未关闭"——关闭判据没有漏；
 - 强制并入清单有效：改动含 `i18n/*.json` 与 `docs/cli_reference.md`，若不做强制并入，这两条 AC 会静默缺席；
 - 批次 149 例 < 800、耗时 < 2 min，本地直跑路线成立（不需要 CI）。
+
+## 附：冒烟集实测（实现的 smoke.txt）
+
+按 `skills/test-cw/references/smoke.txt` 整批跑（2026-11-22，CPython 3.14.3 / pytest 9.0.2）：
+
+```
+tests/test_abi_contract.py: 27
+tests/test_cli_reference_sections.py: 8
+tests/test_external_import_scope.py: 7
+tests/test_i18n_key_existence.py: 13
+tests/test_i18n_placeholder_consistency.py: 109
+TOTAL = 164 例，elapsed ≈ 38.6s，全绿
+```
+
+结论：164 < 800 单批上限，作为「任何 scope 都并入」的兜底可行；占时最长的是 `test_i18n_placeholder_consistency.py`（109 例，约 52% 时长）。
