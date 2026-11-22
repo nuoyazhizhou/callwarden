@@ -11,13 +11,13 @@
 
 | 门禁腿 | 状态 | 说明 |
 |---|---|---|
-| 静态清单自洽（`gen_test_cases.py --check`） | 🟢 | 三账本与源 HEAD 字节自洽（2026-11-16 已按 T-13 修复 HEAD `ebb1f8e` 重生，含新增 12 用例） |
+| 静态清单自洽（`gen_test_cases.py --check`） | 🟢 | 三账本与被扫描源码树 `dc6d060a` 字节自洽（2026-11-22 续检 HEAD `dc6d060a`，上游末 12 个输入文件未重生致账本落后，本机备份 + stash + ff pull 后按 HEAD 重生；revision==HEAD、`--check` PASS） |
 | 提交树 CI 比对（远端） | 🔴 | 本机已与 origin/master 同步（0/0）、账本 `--check` PASS；🔴 仅指 **CI 侧实跑未复验**（DEF-01 待 owner 以 CI 结果销项） |
 | CRLF 稳定性 | 🟢 | DEF-02 已根治：三账本 + 输入作用域 `eol=lf`（a8002cc/5ecf7db）+ `digest()` LF 归一化（554ac20）；本机 6 文件 CRLF=0、`--check` PASS |
 | 团队终审（`full_stack_review_20261024.md`） | 🔴 | 结论**不通过**；T-1~T-12 已于 2026-11-14 全部销项（T-12 最后收口：gen_coverage_manifest.py 脚本行为单测 20 用例入库）；T-13（2026-11-16 新登记的同族越权写）已销项 |
 | validate_skip 账本对拍（`--self-check`） | 🔴 | 23 pass / **4 fail**（2026-11-15 实测，详见文末复查小节） |
 
-**缺陷分级**：P0（DEF-01~03、T-1~T-9）、P1（T-10~T-12、GATE-VSKIP）、已知未知（GAP-16、D-MATRIX、DEBT-LEDGER、STASH-0，不分级但不可瞒）。
+**缺陷分级**：P0（DEF-01~03、T-1~T-9、T-13）、P1（T-10~T-12、GATE-VSKIP）、已知未知（GAP-16、D-MATRIX、DEBT-LEDGER、STASH-0，不分级但不可瞒）。
 
 ---
 
@@ -41,8 +41,8 @@
 | T-11 | 真空伪测试 `test_uid_isolation` | P1 | Security/Test | **DONE**（1c2533c：真空双 UID 隔离实现，2026-11-11） |
 | T-12 | 门禁脚本零单测 | P1 | CI/Gate | **DONE**（2026-11-14 销项：gen_coverage_manifest.py 脚本行为单测 20 用例入库全绿（9b9a698），回归 25 用例绿，真实脚本 --print-summary exit 0，详见 §3 T-12） |
 | T-13 | 同族越权写：export/rule-sync/restore 4 入口无 workspace 根约束 | P0 | Security | **DONE**（2026-11-16 销项：4 入口统一 `_is_within_workspace` 前置校验（ebb1f8e），12 用例负向全部 failed 不落盘 + 正向不回归，Rust 侧无同漏，详见 §3 T-13） |
-| GAP-16 | skip 站点 root_cause 0/456 复核 | 已知未知 | Audit | OPEN |
-| GATE-VSKIP | `validate_skip.py --self-check` 23 pass / 4 fail（468≠456 站点集、2 项基线哈希未刷新、`conftest.py` 1 条 file_sha256 漂移） | P1 | CI/Gate | OPEN（2026-11-15 新增登记） |
+| GAP-16 | skip 站点 root_cause 0/466 复核（reason 字面量 277 / 表达式 166 / 缺省 23） | 已知未知 | Audit | OPEN |
+| GATE-VSKIP | `validate_skip.py --self-check` 23 pass / 4 fail（468≠466 站点集、2 项基线哈希未刷新、`conftest.py` 1 条 file_sha256 漂移） | P1 | CI/Gate | OPEN（2026-11-15 新增登记） |
 | D-MATRIX | D 专项矩阵未写 | 已知未知 | Test Design | OPEN |
 | DEBT-LEDGER | 技术债账本 4 项漏登 | 已知未知 | Audit | OPEN |
 | STASH-0 | 原 review-edits stash 已清；`e741-prod-wip` 为上游另一工作副本观察，本机无此条；本机 2026-11-15 实况为两条冲突备份 stash（`local-1114-conflict-merge` / `local-1113-ledger-alignment`），已文件级备份至 `E:/tmp/local_backup_1115/` | 已知未知 | Repo Hygiene | OPEN（待 owner 决定丢弃或保留） |
@@ -246,3 +246,70 @@
 - **新增门禁红项 GATE-VSKIP（本表首次登记）**：`python docs/testing/planning/skip/validate_skip.py --self-check` 实测 **23 pass / 4 fail / 0 warn**（exit 1）。四项性质不同，不可一并当缺陷：① `skip_sites_id_set_equal`：reviews 复核台账 **468** 站点 vs `SKIP_SITES.json` **456** 站点，差 12 条——两套账本口径未同步，须 owner 明确权威基准；② `file_sha256_disk_match`：`tests/conftest.py:22:8:pytest.skip` 的 `file_sha256` 与磁盘不符（源码改过但复核结论仍绑旧内容），须重新审查该站点；③ `skip_sites_hash_baseline` / ④ `generator_hash_baseline`：`docs/testing/registration/source_baseline.json` 硬编码哈希未随 `SKIP_SITES.json` 重生与 `gen_test_cases.py`（554ac20）改动刷新，属**基线未刷新**，须 owner 按流程重新签字刷新，不是数据错误。提交信息称「失败集与改动前一致、不在本范围」，但按门禁铁闸原则，红项必须登记而非静默排除。
 - **不可复跑项（诚实标注）**：本机自备 Python 3.13.12 **无 pytest、无项目 venv、系统 python3 亦无 pytest**，故 T-12 的 20 用例、回归 25 用例、`gen_coverage_manifest.py --print-summary` 均 **NOT_RUN**；本轮采信上游提交信息（`9b9a698`/`da27ddf`）与入库文件 `tests/test_coverage_manifest_script.py`，未做独立实跑验证。
 - **门禁裁决（不变）**：**红，不能发**。T-1~T-12 全部销项仅是必要条件；`full_stack_review_20261024.md` 结论仍「不通过」且本轮 7 提交未改该文档，须 owner 复审改判。另 GAP-16（0/456）、D-MATRIX、DEBT-LEDGER、GATE-VSKIP 均未闭。
+
+### 复查补充（2026-11-16，HEAD `d2b28d8`）
+
+- **本轮范围**：上游 `3b51631..d2b28d8` 合入 9 提交（T-13 安全修复 + 销项、defect_learn 写连接迁移、19 项 transition 路由升格、2 次账本重生、写面迁移收口补记）。本机快进拉取，工作树原为空、本地 0 独有提交，无冲突；两条冲突备份 stash 未动。
+- **账本无需重生**：上游 `f53a4a6` 已按被扫描源码树 `3c54b48` 重生三账本；`d2b28d8` 仅改 `docs/design/daemon-rust-migration-ledger.md`（§9.28/9.29 写面迁移结论），不在生成器输入作用域，`3c54b48..d2b28d8` 输入零变更。故 revision `3c54b48` ≠ HEAD `d2b28d8` 属正常，`--check` PASS（tests NOT_RUN），本机未重生账本。
+- **真值（d2b28d8 源码树 = 3c54b48）**：MCP 244（rust_native 201 / task_rpc 43）｜CLI 86 顶层 / 21 类 / 233 叶子｜python 定义 **7245** / **699** 文件（T-13 新增 `tests/test_t13_write_containment.py` 247 行 12 用例，7233→7245；698→699）｜rust 属性 **2124** / cfg 121（daemon 写面迁移 +2）｜skip 三机制 456（classic 432 / 131 文件，skip 210 / skipif 222 / importorskip 24）｜reason 267/167/22｜schema 漂移 0（GAP-14 闭）｜**root_cause 复核 0/456（GAP-16 仍 OPEN）**。
+- **T-13 销项证据核证（P0 安全）**：`ebb1f8e` 把 4 个同族越权写 db 入口（export/rule-sync/restore 等）统一加 `EditSafetyMixin._is_within_workspace`（realpath + commonpath + normcase）前置校验；新增 247 行 / 12 用例（4 入口 × 2 形态负向：越界必 failed 且不落盘 + 合法路径正向回归）；Rust 侧 `handle_export_module_graph` 不消费 output_file、不落盘，无同漏。台账 T-13 已 DONE。**不可复跑照旧**：本机无 pytest，12 用例 NOT_RUN，采信提交证据与入库文件。
+- **写面迁移收口（设计层，非门禁）**：`daemon-rust-migration-ledger.md` §9.28（写面终态 83 项矩阵核查）/ §9.29（defect_learn 迁主库写连接）声明「写面迁移全部收口」。此为 daemon Rust 迁移账本的设计结论，不替代团队终审门禁结论。
+- **GATE-VSKIP 复核（2026-11-16 实跑）**：`validate_skip.py --self-check` **仍 23 pass / 4 fail / 0 warn**（exit 1），4 项与 11-15 登记完全一致（`skip_sites_id_set_equal` 468≠456、`file_sha256_disk_match` conftest.py 1 条、2 项 `source_baseline.json` 硬编码哈希未刷新）——本轮 9 提交未触及该项，状态不变。
+- **门禁裁决（不变）**：**红，不能发**。T-1~T-13 全部销项仍是必要条件；`full_stack_review_20261024.md` 结论仍「不通过」且本轮 9 提交仍未改该文档，须 owner 复审改判。另 GAP-16（0/456）、D-MATRIX、DEBT-LEDGER、GATE-VSKIP 均未闭。
+
+### 复查补充（2026-11-17，HEAD `4c82a58`）
+
+- **本轮性质**：用户报「代码更新」，实为上游 `d2b28d8..4c82a58` 8 提交已在本地（与 origin 0/0，无待拉取）。工作树仅本机上轮 3 个文档对齐改动（COVERAGE_AUDIT / TESTING_PLAN / DEFECT_HANDOFF），因上游未碰这些文件而完整保留，内容经核**依然正确**。
+- **8 提交内容**：`1b42f05` 退役 Rust CLI defect learn 本地写（external.rs −241 行）+ 清理存量测试失败、`2d3cd98` 安全契约与 ADR-002 对齐、`b6c5c21` S4-FU 卡 review 闭环、`5fe2bf6` §38 验收矩阵逐行对账复跑、`2987b33` split 治理用例改跑模块级隔离 daemon（消除测试残留卡）；`8171747`/`f0e26be`/`4c82a58` 三次按新 revision 重生账本。
+- **真值零漂移（4c82a58 = 2987b33 源码树）**：MCP 244 / CLI 86·21·233 / python 7245·699 / rust 2124·121 / skip 456（classic 432·131）/ reason 267·167·22 / schema 0 / root_cause 0/456，与上轮完全一致。`--check` PASS、6 文件 CRLF 0、账本 revision `2987b33` ≠ HEAD `4c82a58`（末笔账本重生）属正常绑定。
+- **门禁状态（不变）**：`validate_skip.py --self-check` 11-17 实跑**仍 23 pass / 4 fail**（4 项与 11-15 登记完全一致，本轮 SKIP_SITES 仅改 reason 文本未影响项集）；团队终审 `full_stack_review_20261024.md` 与缺陷台账本轮均**未被改**，结论「不通过」不变。T-1~T-13 全销项 ≠ 门禁翻绿，须 owner 复审改判。**门禁裁决：红，不能发**（GAP-16 0/456、GATE-VSKIP、D-MATRIX、DEBT-LEDGER 均未闭）。本机无 pytest，T-13 12 用例 NOT_RUN。
+
+### 复查补充（2026-11-18，HEAD `9d100da`，daemon 优雅停机闭环）
+
+- **本轮范围**：用户报「代码更新」，上游 `4c82a58..9d100da` 8 提交已在本地（与 origin 0/0，无待拉取）。本机工作树上轮 3 份文档对齐改动因上游未碰这些文件而完整保留。
+- **8 提交内容**：全部为 daemon 优雅停机主线——`612aeaf` `/health` 证书到期监控 + slow RPC watchdog + stop 优雅退出审计、`1c161cf` accept_loop shutdown token + drain + dedup 崩溃残留清理 + `cw daemon stop` 子命令、`ad32fe0` stop 幂等修复（陈旧 manifest 下返回 not_running）、`11a31bd` `daemon.shutdown` RPC（Windows 优雅停止全平台闭环）；`4a96019`/`d961a84`/`a9efe4a`/`9d100da` 四次按新 revision 重生账本。新增 `tests/test_cert_expiry_monitor.py`、`tests/test_cli_daemon_stop.py`、`tests/test_slow_rpc_watchdog.py`。
+- **真值（9d100da = 11a31bd 源码树）**：MCP 244（rust_native 201 / task_rpc 43）｜CLI 86 顶层 / 21 类 / 233 叶子｜python 定义 **7270** / **702** 文件（7245→7270，+25，三组新测试）｜rust 属性 **2132** / cfg **122**（2124→2132）｜skip 三机制 **461**（pytest.skip 211 + skipif 225 + importorskip 25；classic 436 / 133 文件）｜reason **271/167/23**（互斥口径，合计 461）｜schema 漂移 0（GAP-14 闭）｜**root_cause 复核 0/461（GAP-16 仍 OPEN）**。上述当前态口径已同步至 COVERAGE_AUDIT §1/§3、TESTING_PLAN §8，带日期历史快照原值保留。
+- **账本一致性**：上游 `9d100da` 已按被扫描源码树 `11a31bd` 重生三账本（末笔 9d100da 自身即账本重生），revision `11a31bd` ≠ HEAD `9d100da` 属正常绑定；`gen_test_cases.py --revision 11a31bd --check` PASS、6 文件 CRLF=0、schema 漂移 0（`missing_current_tools`/`obsolete_schema_tools` 均空）。COVERAGE_AUDIT / TESTING_PLAN / DEFECT_HANDOFF 当前态口径本轮已按新真值同步。
+- **GATE-VSKIP 复核（2026-11-18 实跑）**：`validate_skip.py --self-check` **仍 23 pass / 4 fail / 0 warn**（exit 1）——`skip_sites_id_set_equal` ledger 468≠SKIP_SITES 461、`skip_sites_hash_baseline` 与 `generator_hash_baseline` 两处 `source_baseline.json` 硬编码哈希未刷新、`file_sha256_disk_match` `tests/conftest.py:22:8:pytest.skip` 1 条不一致。root_cause 字段 461 条全为 `UNREVIEWED`。本轮新增测试未触及该项，状态不变。
+- **不可复跑项（诚实标注）**：本机自备 Python 3.13.12 无 pytest、无项目 venv，新增三组测试及 T-13 12 用例均 **NOT_RUN**，本轮采信上游提交证据与入库文件，未做独立实跑验证。
+- **门禁裁决（不变）**：**红，不能发**。T-1~T-13 全部销项仅是必要条件；`full_stack_review_20261024.md` 结论仍「不通过」且本轮 8 提交未改该文档，须 owner 复审改判。另 GAP-16（0/461）、D-MATRIX、DEBT-LEDGER、GATE-VSKIP 均未闭。两条冲突备份 stash（`local-1114-conflict-merge` / `local-1113-ledger-alignment`）仍在，未动。
+
+### 复查补充（2026-11-19，HEAD `1a43a99`，PKI 热加载 + write.commit 治理）
+
+- **本轮范围**：用户报「代码更新」，上游 `9d100da..1a43a99` 18 提交已在本地（与 origin 0/0，无待拉取）。本机工作树上轮 3 份文档对齐改动因上游未碰这些文件而完整保留。
+- **18 提交内容**：全部为证书/PKI 与写治理主线——`602f06f`/`bd658bf` 证书自动续期 + rotate-ca 双 CA 窗口、`85f05ec` 证书热加载不重启轮换、`3ce9fe5` 外部 CA 导入（CW_CA_CERT/CW_CA_KEY）fail-closed、`2a40898` 默认 principal 兜底改 pr_owner、`2729e4d` 换代 CA subject DN 可区分化、`e5945ae` write.commit 全量 content + new_hash 唯一格式 + daemon sha256 fail-closed、`de6dc8d` 对账裁决收口、`aa844b3` stop 核实进程退出后再报 stopped、`1a43a99` §9.38 探针转正 env-gated pytest 资产；另有 `1a93ee3`/`d9cbf7a`/`cccc5aa`/`8907c2d`/`1a43a99` 五次按新 revision 重生账本。新增 `tests/test_client_cert_auto_renew.py`、`tests/test_http_manifest_discovery.py`、`tests/test_remote_write_governance.py`。
+- **真值（1a43a99 = de6dc8d 源码树）**：MCP 244（rust_native 201 / task_rpc 43）｜CLI 86 顶层 / 21 类 / 233 叶子｜python 定义 **7287** / **703** 文件（7270→7287，+17，三组新测试）｜rust 属性 **2162** / cfg **122**（2132→2162）｜skip 三机制 **462**（pytest.skip 212 + skipif 225 + importorskip 25；classic 437 / 133 文件）｜reason **272/167/23**（互斥口径，合计 462）｜schema 漂移 0（GAP-14 闭）｜**root_cause 复核 0/462（GAP-16 仍 OPEN）**。上述当前态口径已同步至 COVERAGE_AUDIT §1/§3、TESTING_PLAN §8，带日期历史快照原值保留。
+- **账本一致性**：上游 `1a43a99` 已按被扫描源码树 `de6dc8d` 重生三账本；末笔 `1a43a99` 自身改了 `tests/test_remote_write_governance.py`（该文件在 de6dc8d 已存在，非新增），其最终态已计入账本 hash，revision `de6dc8d` ≠ HEAD `1a43a99` 属正常绑定。`gen_test_cases.py --revision de6dc8d --check` PASS、6 文件 CRLF=0、schema 漂移 0。
+- **GATE-VSKIP 复核（2026-11-19 实跑）**：`validate_skip.py --self-check` **仍 23 pass / 4 fail / 0 warn**（exit 1）——`skip_sites_id_set_equal` ledger 468≠SKIP_SITES 462、`skip_sites_hash_baseline` 与 `generator_hash_baseline` 两处 `source_baseline.json` 硬编码哈希未刷新、`file_sha256_disk_match` `tests/conftest.py:22:8:pytest.skip` 1 条不一致。root_cause 字段 462 条全为 `UNREVIEWED`。本轮 18 提交未触及该项，状态不变。
+- **不可复跑项（诚实标注）**：本机自备 Python 3.13.12 无 pytest、无项目 venv，新增三组测试及 T-13 12 用例均 **NOT_RUN**，本轮采信上游提交证据与入库文件，未做独立实跑验证。
+- **门禁裁决（不变）**：**红，不能发**。T-1~T-13 全部销项仅是必要条件；`full_stack_review_20261024.md` 结论仍「不通过」且本轮 18 提交未改该文档，须 owner 复审改判。另 GAP-16（0/462）、D-MATRIX、DEBT-LEDGER、GATE-VSKIP 均未闭。两条冲突备份 stash（`local-1114-conflict-merge` / `local-1113-ledger-alignment`）仍在，未动。
+
+### 复查补充（2026-11-20，HEAD `65d9793`，测试失败清零 §9.39~§9.47）
+
+- **本轮范围**：用户报「代码更新」，上游 `1a43a99..65d9793` 9 提交已在本地（与 origin 0/0，无待拉取）。本机工作树上轮 3 份文档对齐改动因上游未碰这些文件而完整保留。
+- **9 提交内容**：全为失败根治/清零主线——`72ce920` C7 残留 cascade/reconciliation 自建隔离 workspace 归一、`0f47d81` principal DB grant 整数 workspace_id 静默丢行修复、`6b83ec4` collab 治理写族 E2E 锁定 + `_handle_collab` 退出码口径修复、`7d3578a` A 族隔离栈逃逸与授权种子口径更正、`236e74a` B 族陈旧断言清零、`b869cb6` C 族字面量断言结构化、`62f1cf9` CLI 面全量回归 A/B/C 清零确认、`ad4f8cf` 4 条 live round-trip 隔离 daemon 化、`65d9793` §9.47 全量分段门禁 + F 簇 38 项归因清零。改 30+ 测试文件（`test_task_close_gate.py` / `test_task_split_steps.py` 等），3 次账本重生。上游只触及两个测试 gate 文件（`test_lease_gate_empirical.py` / `test_task_close_gate.py`），未改任何门禁/终审文档。
+- **真值（65d9793 = ad4f8cf 源码树）**：MCP 244（rust_native 201 / task_rpc 43）｜CLI 86 顶层 / 21 类 / 233 叶子｜python 定义 **7290** / **703** 文件（7287→7290）｜rust 属性 **2163** / cfg **122**（2162→2163）｜skip 三机制 **462**（pytest.skip 212 + skipif 225 + importorskip 25；classic 437 / 133 文件，均不变）｜reason **274/165/23**（互斥口径，合计 462；字面量 +2 / 表达式 −2）｜schema 漂移 0（GAP-14 闭）｜**root_cause 复核 0/462（GAP-16 仍 OPEN）**。上述当前态口径已同步至 COVERAGE_AUDIT §1/§3、TESTING_PLAN §8，带日期历史快照原值保留。
+- **账本一致性**：上游 `65d9793` 自引用重生三账本（末笔即账本重生，输入 hash 含所有 tests 最终态），revision 记 `ad4f8cf`（被扫描源码树）≠ HEAD `65d9793` 属正常绑定；`gen_test_cases.py --revision ad4f8cf --check` PASS、6 文件 CRLF=0、schema 漂移 0。留意本轮 §9.47 宣称「F 簇 38 项归因清零」属上游测试源码层修复，**不等价于** GAP-16 的 SKIP_SITES root_cause 人工复核（仍 0/462、全 UNREVIEWED），两者不是同一口径。
+- **GATE-VSKIP 复核（2026-11-20 实跑）**：`validate_skip.py --self-check` **仍 23 pass / 4 fail / 0 warn**（exit 1）——`skip_sites_id_set_equal` ledger 468≠SKIP_SITES 462、`skip_sites_hash_baseline` 与 `generator_hash_baseline` 两处 `source_baseline.json` 硬编码哈希未刷新、`file_sha256_disk_match` `tests/conftest.py:22:8:pytest.skip` 1 条不一致。本轮 9 提交未触及该项，状态不变。
+- **不可复跑项（诚实标注）**：本机自备 Python 3.13.12 无 pytest、无项目 venv。上游虽宣称 A/B/C/F 族失败清零，本机 **NOT_RUN** 未做独立实跑验证，采信上游提交证据与入库文件。
+- **门禁裁决（不变）**：**红，不能发**。T-1~T-13 全部销项仅是必要条件；`full_stack_review_20261024.md` 结论仍「不通过」且本轮 9 提交未改该文档，须 owner 复审改判。另 GAP-16（0/462）、D-MATRIX、DEBT-LEDGER、GATE-VSKIP 均未闭。两条冲突备份 stash（`local-1114-conflict-merge` / `local-1113-ledger-alignment`）仍在，未动。
+
+### 复查补充（2026-11-21，HEAD `0ec83fb`，CLI rc 收口 + daemon 安全加固；账本落后已重生）
+
+- **本轮范围**：用户报「代码更新」，上游 `65d9793..0ec83fb` 13 提交已在本地（与 origin 0/0，无待拉取）。本机工作树上轮 3 份文档对齐改动因上游未碰这些文件而完整保留。
+- **13 提交内容**：CLI 退出码口径收口（`230ff904` §24.5 本地校验 rc=2/daemon 拒绝 rc=1、`a63de7f6` rc 残差、`c788787a` dispatcher 级 False→rc=1、`dfb7c502` stdin/未接线防御）、cli_reference 四段式收口（`98ef3a85`/`6524c886`/`626618e2`）、`e3bc9d1e` §9.49 i18n 动态 key 占位符门禁、`4896a7f2` §9.50 全量门禁复跑、daemon 安全加固（`7f94609e` capability registry fail-closed、`a545fc32` principal 前置链 instance 强制解析、`ad4b4aed` 双轨身份契约、`0ec83fb` HTTPS 三项加固：gz 解压 clamp / PKI 私钥 Windows DACL / renew 自动吊销旧证书）。上游只触及门禁文档外的源码/测试/cli_reference，未改终审文档。
+- **账本落后已重生（本轮关键动作）**：上游末笔账本重生停在 `c788787a`（revision `a63de7f`），其后 5 提交改 `cli/main.py` + 6 个 rust daemon 源码却未重生，致用记录 revision `--check` 报 `STATIC_AUDIT.json` 不一致。按惯例先文件级备份三账本至 `/e/tmp/callwarden_ledger_backup_20261121_233058/`，再按 HEAD 完整 SHA `0ec83fb` 重生三账本；重生后 revision==HEAD、`--check` PASS、6 文件 CRLF=0、schema 漂移 0。本轮**有本机账本重生改动**（非仅文档对齐），待 owner 处置是否提交。
+- **真值（0ec83fb 源码树）**：MCP 244（rust_native 201 / task_rpc 43）｜CLI 86 顶层 / 21 类 / 233 叶子｜python 定义 **7313** / **704** 文件（较上轮文档 7290/703 +23/+1，增长在 a63de7f 前已发生、本轮据实对齐）｜rust 属性 **2184** / cfg **122**（2163→2184）｜skip 三机制 **462**（pytest.skip 212 + skipif 225 + importorskip 25；classic 437 / 133 文件，均不变）｜reason **274/165/23**（互斥口径，合计 462，不变）｜schema 漂移 0（GAP-14 闭）｜**root_cause 复核 0/462（GAP-16 仍 OPEN）**。SKIP_SITES / TEST_CASES 本轮无变化。当前态口径已同步至 COVERAGE_AUDIT §1、TESTING_PLAN §8，带日期历史快照原值保留。
+- **GATE-VSKIP 复核（2026-11-21 实跑）**：`validate_skip.py --self-check` **仍 23 pass / 4 fail / 0 warn**（exit 1）——4 项与上轮完全一致（`skip_sites_id_set_equal` ledger 468≠SKIP 462、`skip_sites_hash_baseline` 与 `generator_hash_baseline` 两处 `source_baseline.json` 硬编码哈希未刷新、`file_sha256_disk_match` `tests/conftest.py:22:8:pytest.skip` 1 条不一致）。本轮 13 提交未触及该项，状态不变。
+- **不可复跑项（诚实标注）**：本机自备 Python 3.13.12 无 pytest、无项目 venv，上游 §9.49/§9.50 门禁复跑与 rc 收口测试均 **NOT_RUN**，本轮采信上游提交证据与入库文件，未做独立实跑验证。
+- **门禁裁决（不变）**：**红，不能发**。T-1~T-13 全部销项仅是必要条件；`full_stack_review_20261024.md` 结论仍「不通过」且本轮 13 提交未改该文档，须 owner 复审改判。另 GAP-16（0/462）、D-MATRIX、DEBT-LEDGER、GATE-VSKIP 均未闭。两条冲突备份 stash（`local-1114-conflict-merge` / `local-1113-ledger-alignment`）仍在，未动。
+
+### 复查补充（2026-11-22，HEAD `dc6d060a`，workspace 身份派生 + skills 层；冲突解决后提交）
+
+- **本轮范围与冲突处理**：用户报「代码更新 + 有冲突 + 解决后提交」。诊断：本地落后 origin/master **31 提交**、4 文件未提交（3 文档 + 上轮重生账本），本地 0 独有提交、无 merge 冲突标记。按惯例先文件级备份 4 文件至 `/e/tmp/callwarden_conflict_backup_20261122_202056/`，`git stash push` 保存，`git pull --ff-only` 快进（无冲突）。从 stash 恢复 3 份文档——注意 `git checkout stash -- <file>` 触发 `.gitattributes` 把 LF 转成 CRLF（145/213/305 行），已从 LF 备份回灌修正至 CRLF=0；stash 内旧账本（revision `0ec83fb`）不取用，改按新 HEAD 重生。
+- **31 提交内容**：workspace 仓库级身份派生与存量迁移（`dc6d060a` REQ-01..04、`e9135e4b`/`5912f52f`/`bf68a696` R0-R3 设计基线/task-map）、skills 层落地（`1a9e2f76`/`9711442e` requirements-cw / code-review-cw / test-cw / ALM 技能 + `cc37b901` 自检器）、report rc 语义（`f8b85888` opt-in `--fail-on-findings` + rc=3）、`1540638d` discover 缓存自愈、`941de565` §48 盘点与账本补交。上游只触及 `STATIC_AUDIT.json`（与我本地重叠），3 份文档未碰。
+- **账本落后已重生（本轮关键动作）**：上游末笔账本重生停在 `941de565`（revision `3866311`），其后 `3866311..HEAD` 有 12 个输入作用域文件真变化（`rust_ext/src/daemon/workspace.rs` + `workspace_migration.rs` 等 workspace 身份主线 + `cli/main.py` + `server/daemon_client.py` + 2 测试文件），用记录 revision `--check` 报三账本全不一致。已按 HEAD 完整 SHA `dc6d060a` 重生三账本；revision==HEAD、`--check` PASS、6 文件 CRLF=0、schema 漂移 0。
+- **真值（dc6d060a 源码树）**：MCP 244（rust_native 201 / task_rpc 43）｜CLI 86 顶层 / 21 类 / 233 叶子｜python 定义 **7370** / **706** 文件（7313→7370，+57，workspace 身份主线）｜rust 属性 **2207** / cfg **123**（2184→2207）｜skip 三机制 **466**（pytest.skip 214 + skipif 227 + importorskip 25；classic 441 / 134 文件）｜reason **277/166/23**（互斥口径，合计 466；非字面量+缺省 189）｜schema 漂移 0（GAP-14 闭）｜**root_cause 复核 0/466（GAP-16 仍 OPEN）**。当前态口径已同步至 COVERAGE_AUDIT §1/§3、TESTING_PLAN §8、本文件门禁/GAP 表，带日期历史快照原值保留。
+- **GATE-VSKIP 复核（2026-11-22 实跑）**：`validate_skip.py --self-check` **仍 23 pass / 4 fail / 0 warn**（exit 1）——`skip_sites_id_set_equal` ledger 468≠SKIP 466、`skip_sites_hash_baseline` 与 `generator_hash_baseline` 两处 `source_baseline.json` 硬编码哈希未刷新、`file_sha256_disk_match` `tests/conftest.py:22:8:pytest.skip` 1 条不一致。root_cause 466 条全 `UNREVIEWED`。本轮 31 提交未触及该项，状态不变。
+- **不可复跑项（诚实标注）**：本机自备 Python 3.13.12 无 pytest、无项目 venv，上游 §45/§48 新增测试均 **NOT_RUN**，本轮采信上游提交证据与入库文件，未做独立实跑验证。
+- **门禁裁决（不变）**：**红，不能发**。T-1~T-13 全部销项仅是必要条件；`full_stack_review_20261024.md` 结论仍「不通过」且本轮 31 提交未改该文档，须 owner 复审改判。另 GAP-16（0/466）、D-MATRIX、DEBT-LEDGER、GATE-VSKIP 均未闭。两条早期冲突备份 stash（`local-1114-conflict-merge` / `local-1113-ledger-alignment`）仍在，未动。本轮为对齐提交另建 `local-1122-alignment-before-ff`（已取用文档、遗留待 owner 处置）。

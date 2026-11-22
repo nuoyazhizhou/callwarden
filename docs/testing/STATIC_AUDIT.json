@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "38663116352c76852b4bffbc73a4de05a3e608f4",
+  "supplied_source_revision": "dc6d060aa069a4849f61af5d0ce7cd76f11dde2b",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,27 +38,27 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7349,
+    "python_definitions": 7370,
     "python_source_files": 706,
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 25,
-      "pytest.mark.skipif": 225,
-      "pytest.skip": 212
+      "pytest.mark.skipif": 227,
+      "pytest.skip": 214
     },
-    "classic_skip_sites": 437,
-    "classic_skip_files": 133,
+    "classic_skip_sites": 441,
+    "classic_skip_files": 134,
     "parser_contract_classic_sites": 44,
     "core_not_installed_exact_sites": 46,
     "core_not_built_exact_sites": 4,
     "parser_core_not_installed_exact_sites": 18,
-    "reason_literal_sites": 274,
-    "reason_expression_sites": 165,
+    "reason_literal_sites": 277,
+    "reason_expression_sites": 166,
     "reason_absent_sites": 23,
-    "reason_nonliteral_or_absent_sites": 188,
+    "reason_nonliteral_or_absent_sites": 189,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2185,
-    "rust_src_cfg_test_files": 122
+    "rust_src_attributes": 2207,
+    "rust_src_cfg_test_files": 123
   },
   "inputs": [
     {
@@ -327,7 +327,7 @@
     },
     {
       "path": "rust_ext/src/daemon/dispatch.rs",
-      "sha256": "1e6deb0f2e7f25aa95550fa1d3e268d8048f4a0424dc741a62480517be4f533d"
+      "sha256": "0f72d9dcff0bae98cded64f4895d8dd198b84115409e4268f83cfd919bbafcc5"
     },
     {
       "path": "rust_ext/src/daemon/durable_staging_handlers.rs",
@@ -375,7 +375,7 @@
     },
     {
       "path": "rust_ext/src/daemon/mod.rs",
-      "sha256": "d8e79dec212224848912f2bf06f9fe4cf8fd24dd00c240702dd8e91dca615d14"
+      "sha256": "0037b37cd2f36ec274ae2524c2cd491fe408765c98c998141c1eeca21ddbe64e"
     },
     {
       "path": "rust_ext/src/daemon/parse_retry_log.rs",
@@ -743,7 +743,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_prompt/bundle_tests.rs",
-      "sha256": "5f5cb919808b8c8fff160415230a4d499df1cedc17cdfda8ce81e11f1e46c06d"
+      "sha256": "157ea8535ecfb3ce121cf4da45d3a9e70c7b43d8a91f24538b64a1bd35ff0425"
     },
     {
       "path": "rust_ext/src/daemon/task_prompt/canonical.rs",
@@ -783,7 +783,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_prompt/render_tests.rs",
-      "sha256": "7b2fe6f8572887295424f0a238ac8532bded59aafe947a2511e3047c8eff7fe2"
+      "sha256": "b04e3be085cfc2bd933679fabb96956d976c53e85762a4f70f6a8513f5857e36"
     },
     {
       "path": "rust_ext/src/daemon/task_prompt/route.rs",
@@ -815,7 +815,11 @@
     },
     {
       "path": "rust_ext/src/daemon/workspace.rs",
-      "sha256": "aa39259005641983ef6c3125008b346491f20d259a1bfe29a49d6e22b9505fcc"
+      "sha256": "3115d39546ccb5ef7e95c3cf6b39ef17b175208b7776739a4ff86c6b64132436"
+    },
+    {
+      "path": "rust_ext/src/daemon/workspace_migration.rs",
+      "sha256": "2ddcda21c0221f0d64f1d3054b2fa1e245c475ecd56ac34b4784d9f600f49aee"
     },
     {
       "path": "rust_ext/src/daemon/workspace_reconciliation.rs",
@@ -2395,7 +2399,7 @@
     },
     {
       "path": "tests/test_http_daemon_transport.py",
-      "sha256": "aebab2ac4c18907fa4770222678aeb9cd640547618dc27b553d1e0f058447fe0"
+      "sha256": "2814b868c695c9db5bf6056048114ad4ca960f8fddd230d3e08718bc069a9e03"
     },
     {
       "path": "tests/test_http_governance_error_cutover.py",
@@ -3859,7 +3863,7 @@
     },
     {
       "path": "tests/test_workspace_identity.py",
-      "sha256": "86b030207ccadce98d92a45e7c9a6267cf33ddc3d51861e8f43926e2842453b9"
+      "sha256": "445f836399f8e4c1ad3c0e2160ba9d370549d79904192a668ce406f3cb35d36b"
     },
     {
       "path": "tests/test_workspace_rpc_http.py",

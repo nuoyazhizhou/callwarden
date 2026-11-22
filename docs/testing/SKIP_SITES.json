@@ -1570,7 +1570,7 @@
       "reason_literal": "cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）",
       "reason_expression": "'cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）'",
       "condition_or_module": null,
-      "file_sha256": "aebab2ac4c18907fa4770222678aeb9cd640547618dc27b553d1e0f058447fe0",
+      "file_sha256": "2814b868c695c9db5bf6056048114ad4ca960f8fddd230d3e08718bc069a9e03",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1582,7 +1582,7 @@
       "reason_literal": "cw-daemon 二进制不可用",
       "reason_expression": "'cw-daemon 二进制不可用'",
       "condition_or_module": null,
-      "file_sha256": "aebab2ac4c18907fa4770222678aeb9cd640547618dc27b553d1e0f058447fe0",
+      "file_sha256": "2814b868c695c9db5bf6056048114ad4ca960f8fddd230d3e08718bc069a9e03",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -1594,7 +1594,19 @@
       "reason_literal": "cw-daemon 二进制不可用",
       "reason_expression": "'cw-daemon 二进制不可用'",
       "condition_or_module": null,
-      "file_sha256": "aebab2ac4c18907fa4770222678aeb9cd640547618dc27b553d1e0f058447fe0",
+      "file_sha256": "2814b868c695c9db5bf6056048114ad4ca960f8fddd230d3e08718bc069a9e03",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_http_daemon_transport.py:368:8:pytest.skip",
+      "file": "tests/test_http_daemon_transport.py",
+      "line": 368,
+      "column": 8,
+      "mechanism": "pytest.skip",
+      "reason_literal": "cw-daemon 二进制不可用",
+      "reason_expression": "'cw-daemon 二进制不可用'",
+      "condition_or_module": null,
+      "file_sha256": "2814b868c695c9db5bf6056048114ad4ca960f8fddd230d3e08718bc069a9e03",
       "root_cause": "UNREVIEWED"
     },
     {
@@ -5435,6 +5447,42 @@
       "reason_expression": "'未配置 CW_E2E_OTHER_USER / CW_E2E_OTHER_PASSWORD，跳过真实双身份 ACL 验证'",
       "condition_or_module": null,
       "file_sha256": "eb9a43de5a76103f07a3083e49c78bb18f50fcd64b99487a2a063d9fe82e21e7",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_workspace_identity.py:241:5:pytest.mark.skipif",
+      "file": "tests/test_workspace_identity.py",
+      "line": 241,
+      "column": 5,
+      "mechanism": "pytest.mark.skipif",
+      "reason_literal": "Windows NTFS 大小写不敏感",
+      "reason_expression": "'Windows NTFS 大小写不敏感'",
+      "condition_or_module": "os.name != 'nt'",
+      "file_sha256": "445f836399f8e4c1ad3c0e2160ba9d370549d79904192a668ce406f3cb35d36b",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_workspace_identity.py:281:1:pytest.mark.skipif",
+      "file": "tests/test_workspace_identity.py",
+      "line": 281,
+      "column": 1,
+      "mechanism": "pytest.mark.skipif",
+      "reason_literal": "git 不可用",
+      "reason_expression": "'git 不可用'",
+      "condition_or_module": "shutil.which('git') is None",
+      "file_sha256": "445f836399f8e4c1ad3c0e2160ba9d370549d79904192a668ce406f3cb35d36b",
+      "root_cause": "UNREVIEWED"
+    },
+    {
+      "site_id": "tests/test_workspace_identity.py:300:12:pytest.skip",
+      "file": "tests/test_workspace_identity.py",
+      "line": 300,
+      "column": 12,
+      "mechanism": "pytest.skip",
+      "reason_literal": null,
+      "reason_expression": "f'git worktree add 失败: {result.stderr}'",
+      "condition_or_module": null,
+      "file_sha256": "445f836399f8e4c1ad3c0e2160ba9d370549d79904192a668ce406f3cb35d36b",
       "root_cause": "UNREVIEWED"
     },
     {
