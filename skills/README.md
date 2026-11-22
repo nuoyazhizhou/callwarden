@@ -69,7 +69,7 @@
 
 | 缺口 | 现象 | 建议归属 |
 |---|---|---|
-| **测试执行者缺位** | 没有任何技能拥有"跑测试并回填证据"这个动作；G-Test 只产清单，`evidence/` 靠人工贴输出 | 单独立项（谁执行 / 在哪跑 / 证据格式三问先定），不要塞进 `requirements-cw` 变巨无霸 |
+| **测试执行者缺位** | 没有已实现技能拥有"跑测试并回填证据"这个动作；G-Test 只产清单，`evidence/` 靠人工贴输出。**立项稿已出**：`test-cw/DESIGN.md` v0.3（三问 + 三口径已拍板），未实现 | 独立成 `test-cw`（不扩 `requirements-cw`），按立项稿实施 |
 | ~~`g0-experiment` 双份~~ | **已去重（2026-11-22）**：删除 `skills/g0-experiment`，仅保留 `.agents/skills/g0-experiment`（项目级 skill 加载目录）；`.kiro/steering/g0-experiment.md` 的 `#[[file:...]]` 指针已同步到新路径 | 已关闭 |
 | 开发/审核不在本目录 | executor、task-loop、planner、reviewer 模板都在 `.agents/skills/` 与 `docs/role-loop-templates/` | 保持分层：本目录只放"给宿主客户端用"的技能 |
 | 触发词边界 | `requirements-cw` 管需求/设计/拆解，`code-review-cw` 管已有代码审查 | 两侧 description 已互相写负向边界（"不触发：……"），改动时不要删 |
