@@ -91,3 +91,38 @@ load_packages ok: ['gbk']
 **断言只加不减**：AC-01…07 的断言不变；AC-08 为新增。不因"怕红"放宽任何既有断言。
 
 **scope 快照影响**：AC-08 属 must（P2 缺陷修复必须有断言守着），并入快照 → 快照变为 AC-01…06 + AC-08。
+
+---
+
+## CL-03 · 冒烟集第 5 项名实不符 + purity 守卫未纳入（**待用户签字，未执行**）
+
+**类型**：冻结资产变更（`skills/test-cw/references/smoke.txt`，STATUS: FROZEN）
+
+**触发**：PL-02 核实时发现，问题比"注释写错"更重。
+
+**事实（两条，均已读源码核实）**：
+
+| # | 事实 | 证据 |
+|---|---|---|
+| 1 | `smoke.txt` 第 5 项注释写「import 边界：模块越界导入（db/ 退休后 production 零导入的守卫）」，但 `tests/test_external_import_scope.py` 实际测的是**代码图外部符号导入范围**（`db._import_external_packages_for_lang` / `_extract_package_symbols` / `_parse_rust_manifest` 等），与"production 零导入"无关 | `tests/test_external_import_scope.py:1-18` 文件头 + 全部 7 个用例 |
+| 2 | 真正的那个守卫是 `tests/convergence/test_db_retire_prod_purity.py`（文件头自述「生产侧导入期 purity 回归守卫」，从 `pyproject.toml [project.scripts]` 动态派生入口，干净子解释器断言 `callwarden.db.*` 加载数为 0），**它不在冒烟集里** | `tests/convergence/test_db_retire_prod_purity.py:1-25` |
+
+⇒ 冒烟集声称覆盖"production 零导入"，实际**零覆盖**。第 5 项跑绿与 purity 是否回退无关。
+
+**建议变更（两步，需签字后执行）**：
+
+1. 改注释：第 5 项改为「外部符号导入范围：Python/Rust/Go/Java 包依赖解析的收窄规则（与 db 退休无关）」。
+2. **新增** `tests/convergence/test_db_retire_prod_purity.py` 入集——这才是第 5 项注释原本想表达的东西。
+
+**为什么原集合没抓到**（冻结语义强制要求写）：原集合按"跨语言静态契约 + 快"筛，purity 测试落在 `tests/convergence/` 子目录，不在当时的 `tests/test_*.py` 平铺扫描视野内；且注释是**手写**的（未与文件实际内容核对），"注释说它守 purity"被当成了"它守 purity"。
+
+**影响面**：变更后冒烟集从 5 文件 / 164 例变为 6 文件 / 164+? 例；需实测 purity 测试耗时再定（若 >15s 需评估是否另立"慢冒烟"层）。
+
+**状态**：⏸ **未执行**。`smoke.txt` 冻结语义第 2 条要求"修改须变更单 + 用户确认"，签字后方可动。
+
+**CL-03 执行记录（2026-11-22）**：用户当场确认「改注释 + 加入 purity 守卫」。
+已执行：`smoke.txt` 第 5 项注释改为其真实职责；新增第 6 项
+`tests/convergence/test_db_retire_prod_purity.py`；STATUS 记 r2（6 项 / 167 例）。
+r1（5 项 / 164 例）痕迹保留在文件头的 r1→r2 说明里。
+实跑 167 例全绿 rc=0（72+72+23）。`skills/test-cw/README.md` 计数同步。
+提交 `27f13ef`。
