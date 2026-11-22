@@ -30,15 +30,11 @@ foreach ($t in $Targets) {
         }
     }
     # 共享门禁注入：源 skills/_shared/cw-gates.md（与 requirements-cw 共用的单一事实源）
+    # 单一源，无降级路径：check_skill_packages.py 的 AC-04 禁止包内 references/cw-gates.md，
+    # 故"包内副本"回退在此仓库形态下不可达（PL-01）。留着它只会让人以为可以靠副本兜底。
     $sharedGates = Join-Path (Split-Path $PSScriptRoot -Parent) '_shared\cw-gates.md'
     if (-not (Test-Path $sharedGates)) {
-        $localGates = Join-Path $PSScriptRoot 'references\cw-gates.md'
-        if (Test-Path $localGates) {
-            $sharedGates = $localGates
-            Write-Warning "未找到 skills/_shared/cw-gates.md，改用包内副本（可能过期）"
-        } else {
-            throw "找不到共享门禁 skills/_shared/cw-gates.md；分发时须连同 skills/_shared/ 一起拷贝。"
-        }
+        throw "找不到共享门禁 skills/_shared/cw-gates.md（唯一事实源）；分发时须连同 skills/_shared/ 一起拷贝，包内副本不再被接受。"
     }
     $destRef = Join-Path $destDir 'references'
     New-Item -ItemType Directory -Force -Path $destRef | Out-Null
