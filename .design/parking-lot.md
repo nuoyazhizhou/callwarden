@@ -1,0 +1,12 @@
+# .design 停车场（跨 feature，只追加）
+
+> 记录「本轮不做、但确认是真问题」的条目。每条必须有：来源、事实、归属、关闭条件。
+> 无归属 / 无关闭条件的条目视为**待办垃圾**，不允许进本表。
+
+| # | 来源 | 事实 | 为什么不本轮做 | 归属 | 关闭条件 |
+|---|---|---|---|---|---|
+| PL-01 | skillpkg-guard R2 · F-A3 | `skills/{requirements-cw,code-review-cw,test-cw}/install.ps1:36-41` 有 `$localGates` 包内副本回退分支；技能包结构自检器 AC-04 生效后，该分支在合规仓库**恒不可达**（包内不可能存在 `references/cw-gates.md`） | 删降级路径 = 三包分发容错下降，属行为变更，超出「新增检查器」的 REQ 边界 | 下一批：技能包分发健壮性 | 三包 `install.ps1` 同步删除 `$localGates` 分支，并做一次分发影响评估（`_shared` 缺失时的报错文案要能自解释） |
+| PL-02 | skillpkg-guard R5 | `skills/test-cw/references/smoke.txt` 第 5 项注释写「import 边界：模块越界导入（db/ 退休后 production 零导入的守卫）」，但 `tests/test_external_import_scope.py` 实际测的是**代码图外部符号导入范围**（`db._import_external_packages_for_lang` 等）；真正的 purity 守卫是 `tests/convergence/test_db_retire_prod_purity.py` | `smoke.txt` 为 FROZEN 只读，改动须单独变更单 + 用户确认 | test-cw 冒烟集维护 | 开变更单：改正第 5 项注释描述；同时评估是否应把 `test_db_retire_prod_purity.py` 一并纳入冒烟集（当前缺 purity 守卫） |
+| PL-03 | skillpkg-guard R4 · G6.4 | `task_create` 无结构化 blocking 字段，`blocked-by` 只是 description 里的文本约定，daemon 不强制——抢跑不会被拦 | 属 daemon 治理面能力缺失，需 schema 变更与迁移，不是技能层能解的 | daemon 治理（task 依赖结构化） | daemon 提供 `depends_on: [task_id]` 字段并在 `task_next` 处拦截未满足依赖的认领 |
+| PL-04 | skillpkg-guard R0 停车场 | `check_skill_packages.py` 尚未接进 `cicd/check_ci_gates.py` 汇总，也未挂 CI job | 本 REQ 的 In 范围只到「有命令 + 有测试」；接 CI 涉及 workflow 改动与失败归因设计 | CI 门禁汇总 | 独立 job 或并入 `check_ci_gates.py`，并在 PR 模板/AGENTS.md 写明运行时机 |
+| PL-05 | skillpkg-guard R3 · design-gate #5 | 自检器只查 `install.ps1` 里有无 `_shared` + `cw-gates.md` 两个标记，不查注入**目标目录**是否正确 | 语义校验需跑 PowerShell 或解析 AST，成本远超收益；本检查定位是「防忘记」不是「防写错」 | 技能包分发健壮性（与 PL-01 同批） | 出现一次真实「注入到错目录」事故后再评估；届时优先做「安装后自检」而非静态解析 |

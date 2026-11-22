@@ -124,7 +124,7 @@ class Package:
 ## C-04 · `check_package`
 
 - **文件/模块**：`skills/_shared/check_skill_packages.py::check_package`
-- **REQ**：REQ-01（must，revision：1）
+- **REQ**：REQ-01（must，revision：**2** — CL-02 新增 `READ_FAILED`，读盘失败不抛）
 - **签名**：`def check_package(pkg: Package, repo_root: Path) -> list[Finding]:`
 - **入参契约**：
 
@@ -199,7 +199,7 @@ class Package:
 ## C-06 · `main`
 
 - **文件/模块**：`skills/_shared/check_skill_packages.py::main`
-- **REQ**：REQ-01（must，revision：1）
+- **REQ**：REQ-01（must，revision：**2** — CL-02 补 `check_package` 循环的 `except OSError` 兜底）
 - **签名**：`def main(argv: list[str] | None = None) -> int:`
 - **入参契约**：
 
@@ -238,6 +238,38 @@ class Package:
 
 ---
 
+## C-07 · `_read_text`（CL-02 新增）
+
+- **文件/模块**：`skills/_shared/check_skill_packages.py::_read_text`
+- **REQ**：REQ-01（must，revision：1）
+- **签名**：`def _read_text(path: Path) -> str:`
+- **入参契约**：
+
+  | 参数 | 类型 | 约束 | 校验归属 |
+  |---|---|---|---|
+  | `path` | `Path` | 存在的文件 | 调用方先 `is_file()`；本函数不判存在性 |
+
+- **出参契约**：
+  - 成功：`str`，BOM 已剥
+  - 失败：**抛 `OSError`**。两种来源合并为同一类型：
+    | 来源 | 消息 |
+    |---|---|
+    | 真实 IO 失败（权限/被占用/消失） | 原 `OSError` 透传 |
+    | 非 UTF-8 编码（`UnicodeDecodeError`） | `<path>: 非 UTF-8 编码（<reason>，byte <n>）；请另存为 UTF-8` |
+  - **异常场景矩阵勾选**：数据边界 ✓（BOM / 非 UTF-8）；无权限 ✓（透传）；其余不适用
+- **异常路径**：`UnicodeDecodeError` **不得原样上抛**——它继承 `ValueError` 而非 `OSError`，上抛会让 `except OSError` 接不住，检查器以 traceback 崩溃、退出码退化为 1（CL-02 实证）
+- **副作用**：读磁盘。无写入
+- **依赖符号**：new
+- **测试要点（GWT）**：
+  - Given GBK 编码的 `smoke.txt` When `check_package` Then `READ_FAILED` + `exit 2`，无 traceback
+  - Given GBK 编码的 `SKILL.md` When `main` Then `exit 2`
+  - 清单：[x] 边界值 [x] 异常分支 [ ] 并发
+- **验收映射**：AC-08
+- **注释要求**：doc comment 写 ①为什么归一为 OSError ②中文 Windows 记事本场景
+- **assumptions**：只处理 UTF-8 与非 UTF-8 两类；不做编码嗅探自动转码（静默转码会把乱码当正常路径）
+
+---
+
 ## 7. 违规码总表（唯一的机器可判集合）
 
 | code | 触发 | 对应 AC |
@@ -251,6 +283,7 @@ class Package:
 | `SMOKE_BAD_PATH` | `smoke.txt` 行路径不存在 | AC-05 |
 | `INSTALL_MISSING` | `install.ps1` 不存在 | AC-06 |
 | `INSTALL_MISSING_INJECTION` | `install.ps1` 无 `_shared/cw-gates.md` 注入片段 | AC-06 |
+| `READ_FAILED` | 包内文件读取失败（权限 / 被占用 / **非 UTF-8 编码**） | AC-08（CL-02） |
 
 > 码表即契约：新增检查必须同时加码、加 AC（或并入既有 AC）、加测试。禁止出现"能报但不测"的码——那在 test-cw 视角就是 GAP。
 

@@ -12,6 +12,7 @@
 | AC-05 | `references/smoke.txt` 非注释行指向不存在的路径 → `exit 2` | auto | `::test_bad_smoke_path_detected` | 待填 |
 | AC-06 | `install.ps1` 不存在 → `INSTALL_MISSING`；存在但缺 `_shared/cw-gates.md` 注入片段 → `INSTALL_MISSING_INJECTION`；两者均 `exit 2` | auto | `::test_install_missing_injection_detected`、`::test_install_missing_file_detected` | 待填 |
 | AC-07 | 未知 CLI 参数 → `exit 64`（用法错误，与"发现违规"的 2 区分） | auto | `::test_usage_error_exit64` | 待填 |
+| AC-08 | 包内文件非 UTF-8 编码（中文 Windows 记事本 GBK）→ `READ_FAILED` + `exit 2`，**无 traceback**（CL-02 缺陷修复断言） | auto | `::test_gbk_smoke_file_reports_read_failed`、`::test_gbk_skill_md_does_not_traceback` | 待填 |
 
 ## 强制并入（本需求改动触及面）
 
@@ -29,7 +30,7 @@ brief §4 的四项 Out：DESIGN 版本一致性、install.ps1 语法、AGENTS �
 ## 范围与优先级
 
 - MoSCoW：AC-01…06 = **must**；AC-07 = **should**（用法错误友好度，不影响主链路）。
-- **scope 快照 = AC-01…06**（must 全量）；AC-07 标 `deferred` 到下批——但注意：**首版实现若漏写 AC-07 的测试，它在 test-cw 视角仍是 `GAP`（可自动化但无测试）→ 判 FAIL 并建 P1 单**，不得因为"在快照外"就当作 N/A。
+- **scope 快照 = AC-01…06 + AC-08**（must 全量；AC-08 由 CL-02 并入——P2 缺陷修复必须有断言守着）；AC-07 标 `deferred` 到下批——但注意：**首版实现若漏写 AC-07 的测试，它在 test-cw 视角仍是 `GAP`（可自动化但无测试）→ 判 FAIL 并建 P1 单**，不得因为"在快照外"就当作 N/A。
 
 ## 风险
 

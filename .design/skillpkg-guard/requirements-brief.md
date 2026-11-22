@@ -82,6 +82,17 @@
 - 验收方式可执行：6 条 AC 全部可用 `pytest tests/test_skill_packages_guard.py` 断言，无需人工目检
 - 预算：脚本 ≤200 行，测试 ≤150 行
 
+### 6.1 基线记录（R3 冻结）
+
+| 项 | 值 |
+|---|---|
+| 基线 commit | **`b6dfbc5`**（`docs(design): skillpkg-guard 基线冻结（R0-R3）`） |
+| 基线内容 | `requirements-brief` / `ac-map` / `mindmap` / `flowchart` / `symbol-anchor` / `contracts` / `design-gate` 七件 |
+| scope 快照 | AC-01…06（must）；AC-07（should）标 `deferred` 到下批 |
+| R5 漂移检查参照 | HEAD vs `b6dfbc5`，偏差需变更单（见 `change-log.md`） |
+
+> 收口时 R5 实测：预算口径产生偏差，已按 §三 变更单程序登记（见 `change-log.md` CL-01），**不静默放宽**。
+
 ## 7. 追溯
 
 `REQ-01` → `AC-01…06`（见 `ac-map.md`）→ 任务单 → 证据。整改单同样首行带 `REQ-01`。
