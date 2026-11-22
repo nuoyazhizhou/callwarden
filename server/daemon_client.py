@@ -386,6 +386,10 @@ class DaemonClient:
             pass
 
         # 连接失败：尝试自动唤起（带互斥）[Req 14.22, 14.23]
+        # 先清 endpoint 缓存重新 discover：daemon 可能已被其他会话重启到新
+        # 端口（manifest 已更新），旧缓存会让 autostart 与后续重试继续指向
+        # 死端口，manifest 发现机制失效。
+        self._rpc.reset_endpoint_cache()
         try:
             endpoint = self._rpc.discover()
         except Exception:
@@ -1398,16 +1402,49 @@ class HttpDaemonRpcClient:
         self._resolved_endpoint = endpoint
         return endpoint
 
+    def reset_endpoint_cache(self) -> None:
+        """清空 endpoint/manifest 解析缓存，下次 discover() 重新读 manifest。
+
+        daemon 重启换端口（manifest 已更新）后，长驻客户端（MCP server）的
+        `_resolved_endpoint` 缓存会持续指向死端口，manifest 发现机制随之失效；
+        调用方借此强制重新发现（daemon_client 自愈与 autostart 前置清理共用）。
+        """
+        self._resolved_endpoint = None
+        self._manifest = None
+
     def verify_health(self, endpoint: Optional[str] = None,
                       manifest: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """调用 GET /health 核对 manifest_id / PID；不匹配抛结构化错误。
 
+        daemon 重启换端口自愈：无参调用（endpoint/manifest 均缺省，即走缓存
+        endpoint）且不可达时，清缓存重读 manifest 再试一次——长驻客户端
+        （MCP server）在 daemon 重启后无需重启即可恢复。显式传参的调用方
+        （discover 交叉核对、readiness 探针）目标明确，不做自愈改写，亦避免
+        discover↔verify 递归。
+
         Returns:
             /health 响应 dict。
         Raises:
-            DaemonUnavailableError: /health 不可达。
+            DaemonUnavailableError: /health 不可达（自愈重试后仍失败）。
             DaemonRemoteError(E_HTTP_MANIFEST_STALE): manifest_id/PID 不一致。
         """
+        try:
+            return self._verify_health_once(endpoint, manifest)
+        except DaemonUnavailableError:
+            if endpoint is not None or manifest is not None:
+                raise
+            if self._resolved_endpoint is None:
+                raise
+        logger.warning(
+            "daemon endpoint 不可达，清缓存重读 manifest 自愈（原 endpoint=%s）",
+            self._resolved_endpoint,
+        )
+        self.reset_endpoint_cache()
+        return self._verify_health_once(None, None)
+
+    def _verify_health_once(self, endpoint: Optional[str],
+                            manifest: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """verify_health 单次尝试（无自愈，供外层重试包装）。"""
         from callwarden.server.daemon_protocol import DaemonRemoteError
 
         endpoint = endpoint or self._resolved_endpoint or self.discover()

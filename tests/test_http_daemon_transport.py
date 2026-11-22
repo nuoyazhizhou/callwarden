@@ -352,3 +352,72 @@ def test_restart_dedup_persist(tmp_path, monkeypatch):
         assert first == replay, "跨 restart dedup 必须返回原结果"
     finally:
         _terminate(proc2)
+
+
+def test_verify_health_self_heal_after_daemon_restart(tmp_path, monkeypatch):
+    """daemon 重启换端口后，长驻客户端自愈（还原 MCP server 失联故障）。
+
+    故障签名：client 首次 discover 缓存 E1；daemon 重启到 E2（manifest 已
+    更新）；client 缓存仍指 E1 死端口，verify_health/call 永久失败。自愈 =
+    无参 verify_health 连接失败时清缓存重读 manifest 再试一次。
+    """
+    from callwarden.server.daemon_client import HttpDaemonRpcClient as _Client
+
+    bin_path = _find_daemon_binary()
+    if bin_path is None:
+        pytest.skip("cw-daemon 二进制不可用")
+    data_root = str(tmp_path / "data-selfheal")
+    os.makedirs(data_root, exist_ok=True)
+    _mtls.pki_init(data_root)
+    cert, key = _mtls.identity_paths(data_root)
+    monkeypatch.setenv("CW_CLIENT_CERT", cert)
+    monkeypatch.setenv("CW_CLIENT_KEY", key)
+    monkeypatch.setenv("CW_CA_CERT", os.path.join(_mtls.pki_dir_of(data_root), "ca", "ca.crt"))
+    monkeypatch.delenv("CW_PKI_DIR", raising=False)
+    monkeypatch.setenv("CW_DAEMON_TASK_DB", os.path.join(data_root, "task.db"))
+
+    # 第一次启动：动态端口 E1
+    proc1, _ = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
+    man_dir = _manifest_dir(data_root)
+    client = None
+    try:
+        m1 = _wait_manifest(data_root, proc1)
+        assert m1 is not None, "第一次启动未发布 manifest"
+        _mtls.wait_health(m1["endpoint"], _mtls.build_ssl_context(data_root, cert, key))
+        names = [f for f in os.listdir(man_dir)
+                 if f.startswith("http-daemon.") and f.endswith(".manifest.json")]
+        assert len(names) == 1, f"期望唯一 authority-scoped manifest: {names}"
+        # daemon 存活时首次发现并缓存 E1
+        client = _Client(manifest_path=os.path.join(man_dir, names[0]))
+        health1 = client.verify_health()
+        assert health1["pid"] == m1["pid"]
+    finally:
+        _terminate(proc1)
+    assert client is not None
+
+    # 重启：动态端口 E2，manifest 更新；client 缓存仍指 E1
+    proc2, _ = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
+    try:
+        m2 = _wait_manifest(data_root, proc2)
+        assert m2 is not None, "重启后未发布 manifest"
+        _mtls.wait_health(m2["endpoint"], _mtls.build_ssl_context(data_root, cert, key))
+        # 自愈：无参 verify_health → E1 连接失败 → 清缓存重读 manifest → E2
+        health2 = client.verify_health()
+        assert health2["pid"] == m2["pid"], "自愈后 /health 必须来自重启后的 daemon"
+        assert client._resolved_endpoint == m2["endpoint"]
+        assert isinstance(client.call("ping", {}), dict)
+    finally:
+        _terminate(proc2)
+
+
+def test_verify_health_explicit_endpoint_no_self_heal():
+    """显式 endpoint 的 verify_health 不被 manifest 自愈改写（覆盖发现优先级）。
+
+    显式 endpoint 客户端 discover 恒返回该 endpoint，自愈重试仍指向同一地址，
+    最终按原样抛 DaemonUnavailableError（fail-closed 语义不变）。
+    """
+    from callwarden.server.daemon_client import DaemonUnavailableError
+
+    client = HttpDaemonRpcClient(endpoint="https://127.0.0.1:1", verify_health=False)
+    with pytest.raises(DaemonUnavailableError):
+        client.verify_health()
