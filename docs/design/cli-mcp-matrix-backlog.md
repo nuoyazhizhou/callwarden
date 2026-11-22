@@ -3430,3 +3430,40 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 | 非目标 | 咨询型命令不加 flag；`function-issues --summary` 门禁口径另立批次；`semgrep quick` 的 `errors` 告警计数保持 rc=0；MCP schema / daemon 不动 |
 | CI 兼容 | 默认行为零变化（无 flag 时 rc 与 §45 完全一致）；rc=3 仅 opt-in 触发 |
 | 回滚 | 回退本次提交即可；无迁移状态 |
+
+## 47. en 文案打磨批次（§24-§39 多章节挂账统一清零，2026-11-22）
+
+### 47.1 侦察与审阅
+
+- catalog 规模：en_US.json 2297 条；tests/docs 断言敏感（en 输出精确子串）96 条。
+- 规则筛查（错拼/重复词/双空格/标点前空格/大小写）产出 163 疑点，逐条裁定：
+  绝大多数为**设计使然**——ASCII 表格对齐双空格（hotspot/complexity/heatmap 等
+  表头与行模板）、标签值小写（`task_result_success: success`、`caller/callee`
+  等枚举值、`key=value` 行）、格式化占位符（`{idx:2d}`）、多行模板缩进。
+- **实质缺陷仅 1 类**：历史改名残留 "Code Warden"（项目名应为 Call Warden），
+  en catalog 2 处；zh_CN、tests、docs、server/rust_ext/cli 代码侧均无此串，
+  2 处条目不在断言敏感清单内。
+
+### 47.2 处置
+
+- `i18n/en_US.json`：
+  - `cli.messages.main_help_title`：`Call Warden CLI — Code Warden Command Reference`
+    → `Call Warden CLI — Command Reference`；
+  - `cli.subcommand_help`：`Code Warden Architecture Subcommands (Four Pillars)`
+    → `Call Warden Architecture Subcommands (Four Pillars)`。
+
+### 47.3 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 活体：`CALLWARDEN_LANG=en_US cw --help` 标题 | `Call Warden CLI — Command Reference` |
+| 活体：主 help 子命令组标题 | `Call Warden Architecture Subcommands (Four Pillars)` |
+| 门禁：i18n 存在性/占位符 + main/subcommand help 模板 + 章节四段式 + exit-code（219 例） | 全 passed |
+
+### 47.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 挂账清零 | §24-§39 各章节「en 文案打磨另立批次」挂账自此**统一清零**：机械缺陷层面已审阅干净，风格级改动（句式/大小写/对齐）判定不做（设计使然 + 断言敏感 + churn 大于收益） |
+| 非目标 | 对齐双空格/标签值小写等设计使然格式；zh 文案；代码内硬编码英文 help（非 i18n 域） |
+| 回滚 | 回退本次提交即可 |

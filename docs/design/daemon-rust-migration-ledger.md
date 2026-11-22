@@ -4398,6 +4398,33 @@ elif 链对 `_SUBCOMMANDS` 全集闭合，fallthrough 不可达。
 - `function-issues --summary` 模式不参与 rc=3 门禁（汇总口径另立批次）；
   `semgrep quick` 的 `errors` 告警计数保持 rc=0；默认行为零变化。
 
+## 9.58 en 文案打磨批次：术语漂移修复 + 挂账统一清零（2026-11-22）
+
+### 1. 侦察与审阅
+
+§24-§39 多章节挂账「en 文案打磨另立批次」。审阅结论：en_US.json 2297 条
+（断言敏感 96 条），规则筛查 163 疑点绝大多数为设计使然（ASCII 对齐、标签
+枚举值小写、格式化占位符、多行模板缩进）。实质缺陷仅 1 类：历史改名残留
+"Code Warden"（应为 Call Warden），en catalog 2 处，zh/tests/docs/代码侧均无。
+
+### 2. 处置
+
+`i18n/en_US.json`：`cli.messages.main_help_title` 与 `cli.subcommand_help`
+两处 "Code Warden" → Call Warden 口径（前者避免品牌词重复改为
+`Call Warden CLI — Command Reference`）。
+
+### 3. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 活体：en_US `cw --help` / 主 help 子命令组标题 | 两处均已是 Call Warden |
+| i18n 双门禁 + help 模板 + 章节门禁 + exit-code（219 例） | 全 passed |
+
+### 4. 边界与残留
+
+- §24-§39「en 文案打磨另立批次」挂账**统一清零**；风格级改动判定不做
+  （设计使然 + 断言敏感 + churn 大于收益）。后续如再现文案缺陷按单点修复。
+
 ## 10. 相关真相源
 
 - `AGENTS.md`
