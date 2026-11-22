@@ -81,4 +81,4 @@ $end
 Write-Host "test-cw 安装完成：" -ForegroundColor Green
 $installed | ForEach-Object { Write-Host "  - $_" }
 Write-Host "重启对应宿主会话后生效；技能按 description 自动触发，无需每次手动选择。"
-Write-Host "提示：冒烟集 references/smoke.txt 当前为 PROPOSED，需确认后改为 FROZEN。"
+Write-Host "提示：references/smoke.txt 为冻结冒烟集（FROZEN 2026-11-22），改动须走变更单 + 用户确认。"

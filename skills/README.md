@@ -71,7 +71,7 @@
 
 | 缺口 | 现象 | 建议归属 |
 |---|---|---|
-| ~~测试执行者缺位~~ | **已实现（2026-11-22）**：`test-cw` 五步流程 + 六条件判据 + 证据八段已落包，并在 backlog-46 上试跑（149 例全绿 / 6 AC PASS / 1 条 manual N/A → 需求未关闭）。**残留两项**：① `references/smoke.txt` 仍为 `PROPOSED`，待用户签字冻结；② Rust 侧为 `cargo test` 批级判据，尚无 nodeid 级归属 | 已关闭；残留按上列跟踪 |
+| ~~测试执行者缺位~~ | **已实现（2026-11-22）**：`test-cw` 五步流程 + 六条件判据 + 证据八段已落包，并在 backlog-46 上试跑（149 例全绿 / 6 AC PASS / 1 条 manual N/A → 需求未关闭）。**残留一项**：Rust 侧为 `cargo test` 批级判据，尚无 nodeid 级归属（冒烟集已于 2026-11-22 签字冻结） | 已关闭；残留按上列跟踪 |
 | ~~`g0-experiment` 双份~~ | **已去重（2026-11-22）**：删除 `skills/g0-experiment`，仅保留 `.agents/skills/g0-experiment`（项目级 skill 加载目录）；`.kiro/steering/g0-experiment.md` 的 `#[[file:...]]` 指针已同步到新路径 | 已关闭 |
 | 开发/审核不在本目录 | executor、task-loop、planner、reviewer 模板都在 `.agents/skills/` 与 `docs/role-loop-templates/` | 保持分层：本目录只放"给宿主客户端用"的技能 |
 | 触发词边界 | `requirements-cw` 管需求/设计/拆解，`code-review-cw` 管已有代码审查 | 两侧 description 已互相写负向边界（"不触发：……"），改动时不要删 |

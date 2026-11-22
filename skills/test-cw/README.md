@@ -39,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 SKILL.md                     五步流程 + 六条件判据 + 边界（做薄）
 references/
 ├── evidence-spec.md         八段 schema + junit 生成方式 + PASS/FAIL/N/A 示例 + 禁止写入
-└── smoke.txt                冻结冒烟集（当前 PROPOSED，需确认后改 FROZEN）
+└── smoke.txt                冻结冒烟集（FROZEN 2026-11-22，5 项 / 164 例 / ~39s；改动须变更单）
 install.ps1                  三家宿主安装 + AGENTS.md 注入 + 共享门禁注入
 DESIGN.md                    立项稿 v0.4（含 backlog-46 真实试跑校准的 6 处判据修订）
 ```
