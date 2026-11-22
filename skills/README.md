@@ -16,17 +16,17 @@
 | 6 | 任务注入（R4） | `requirements-cw` | `task-map.md`（REQ ↔ 卡片 ↔ task_id） | G1-G4 + G6 建单契约 + 批次放行判据 | ✅ |
 | 7 | 开发（R5） | `requirements-cw` / `.agents/skills/cw-executor-senior-engineer` | 源码 + `task_report_step` | P1-P4（G2-G5） | ⚠️ 主执行者在 `.agents/`，不在本目录 |
 | 8 | CodeReview | `code-review-cw` | 审查报告 + 整改任务单 | 阶段零门禁 + 图谱选靶 Top3 证据表 | ✅ |
-| 9 | **测试执行** | **无归属** | 仅 `test-plan.md` 清单（G-Test 不生成代码、不执行） | — | ❌ **缺口**，见 §6 |
-| 10 | 验收 / 关闭 | `requirements-cw`（FA / G-Test）+ `.agents/skills/cw-task-loop` | `evidence/<AC-id>.md` | 快照内 REQ→AC 全绿 **且证据已提交** | ⚠️ 跨目录 |
+| 9 | **测试执行 / 验收** | `test-cw` | `evidence/<AC-id>.md` + `test-plan.md` + junit | 六条件判据（双 revision / required 全 passed / required skip·xfail=0 / 无 deselect / collected 校验 / rc=0） | ✅ |
+| 10 | 需求关闭判定 | `requirements-cw`（读证据）+ `test-cw`（产证据）+ `.agents/skills/cw-task-loop`（apply/close） | `ac-map.md` 证据位置 + `evidence/` | 快照内 AC 全 PASS（**N/A 不算绿**）且证据已提交 | ⚠️ 跨目录 |
 | 11 | 审核裁决（PASS/BLOCKED） | `docs/role-loop-templates/` v4 + `cw-task-loop` | verdict / lease | reviewer lease 绑定 | ⚠️ 不在本目录 |
 
-**结论口径**：`skills/` 是**客户端技能层**（需求端 + 审查端），不是全量 ALM。第 7、10、11 段的能力在 `.agents/skills/` 与 `docs/role-loop-templates/`；把三处加起来才是完整 ALM。
+**结论口径**：`skills/` 是**客户端技能层**（需求端 + 审查端 + 验收端），不是全量 ALM。第 7 段的执行者、第 10 段的 apply/close、第 11 段的审核裁决在 `.agents/skills/` 与 `docs/role-loop-templates/`；把三处加起来才是完整 ALM。
 
 ## 2. 两条链
 
 ```
-完整链（新项目）：R0 → G-Tech → R1 → R2 → R3(+基线) → R4 → R5 → code-review-cw → G-Test → feature 验收 → 关闭
-精简链（存量仓）：R0 → R1 → R2 → R3(+基线) → R4 → R5 → code-review-cw → FA 轻量验收 → 关闭
+完整链（新项目）：R0 → G-Tech → R1 → R2 → R3(+基线) → R4 → R5 → code-review-cw → test-cw 执行 test-plan（G-Test 清单）→ feature 验收 → 关闭
+精简链（存量仓）：R0 → R1 → R2 → R3(+基线) → R4 → R5 → code-review-cw → test-cw 按 ac-map 轻量验收（FA）→ 关闭
 ```
 
 分叉判据写在 `requirements-cw/SKILL.md`「开工判定」：仓库是否存在 + 技术栈是否已定，冲突时问用户并记 `confirmed`。
@@ -41,14 +41,16 @@
 | executor 领取 | **自身注册身份**（`agent.register` 五字段 + 自己的 session），身份不跨会话借用 | `_shared/cw-gates.md` §G2 |
 | 建单形状 | title 用符号 / description 首行 `REQ-xx` / `check_items` 字符串 / `action` 取值 | `_shared/cw-gates.md` §G6，**两端共用** |
 | 审查 → 验收 | 整改单追加进 `task-map.md` 三列（含 `REQ-GAP`），不另建映射表 | `code-review-cw` 阶段二 |
+| 需求 → 验收 | `ac-map.md` + `test-plan.md` + `symbol-anchor.md`（test-cw 只读这三份，不改设计） | `test-cw` §开工输入 |
+| 验收 → 需求关闭 | `evidence/<AC-id>.md` 八段证据 + junit 原件；`ac-map` 的「证据位置」由 test-cw 填 | `test-cw` §5 |
 
 ## 4. 门禁单一事实源
 
 `_shared/cw-gates.md` 是**唯一**门禁与建单契约来源：
 
-- 仓库内只有这一份；`requirements-cw/references/` 与 `code-review-cw/references/` **不放**同名文件。
-- 两个 `install.ps1` 各自把它注入为安装包的 `references/cw-gates.md`（源码单一、分发独立，装到宿主的包自包含）。
-- 改这个文件 = 改两个技能的门禁，须同步验证两包再提交。
+- 仓库内只有这一份；`requirements-cw/`、`code-review-cw/`、`test-cw/` 的 `references/` **均不放**同名文件。
+- 三个 `install.ps1` 各自把它注入为安装包的 `references/cw-gates.md`（源码单一、分发独立，装到宿主的包自包含）。
+- 改这个文件 = 改三个技能的门禁，须同步验证三包再提交。
 
 ## 5. 工件与提交节奏
 
@@ -69,7 +71,7 @@
 
 | 缺口 | 现象 | 建议归属 |
 |---|---|---|
-| **测试执行者缺位** | 没有已实现技能拥有"跑测试并回填证据"这个动作；G-Test 只产清单，`evidence/` 靠人工贴输出。**立项稿已出并完成试跑校准**：`test-cw/DESIGN.md` v0.4（backlog-46 上 149 例全绿，6 条 AC PASS + 1 条 manual N/A → 按判据需求未关闭），未实现 | 独立成 `test-cw`（不扩 `requirements-cw`），按立项稿实施 |
+| ~~测试执行者缺位~~ | **已实现（2026-11-22）**：`test-cw` 五步流程 + 六条件判据 + 证据八段已落包，并在 backlog-46 上试跑（149 例全绿 / 6 AC PASS / 1 条 manual N/A → 需求未关闭）。**残留两项**：① `references/smoke.txt` 仍为 `PROPOSED`，待用户签字冻结；② Rust 侧为 `cargo test` 批级判据，尚无 nodeid 级归属 | 已关闭；残留按上列跟踪 |
 | ~~`g0-experiment` 双份~~ | **已去重（2026-11-22）**：删除 `skills/g0-experiment`，仅保留 `.agents/skills/g0-experiment`（项目级 skill 加载目录）；`.kiro/steering/g0-experiment.md` 的 `#[[file:...]]` 指针已同步到新路径 | 已关闭 |
 | 开发/审核不在本目录 | executor、task-loop、planner、reviewer 模板都在 `.agents/skills/` 与 `docs/role-loop-templates/` | 保持分层：本目录只放"给宿主客户端用"的技能 |
 | 触发词边界 | `requirements-cw` 管需求/设计/拆解，`code-review-cw` 管已有代码审查 | 两侧 description 已互相写负向边界（"不触发：……"），改动时不要删 |
