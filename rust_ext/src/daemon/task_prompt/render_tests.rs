@@ -22,7 +22,7 @@ pub const REV_V1_HASH: &str =
 pub const ADJ_V1_HASH: &str =
     "sha256:42a5f1defa81008b009058c1baf5d1a14b3ef4521e291b7b55c19bb473a77c3e";
 pub const EXEC_V4_HASH: &str =
-    "sha256:5f22f9bef05ec51a998311bdf4485315eb8fe1f4a092d01fd2e6bd86cc4a8164";
+    "sha256:bdae65f57cc8d1a632bfcdb4be80f4b7574845c2cb01f1cfc762899f481e8155";
 
 pub const GOLDEN_GENERATED_AT: &str = "2026-09-06T12:00:00Z";
 pub const GOLDEN_WATERMARK: i64 = 123;

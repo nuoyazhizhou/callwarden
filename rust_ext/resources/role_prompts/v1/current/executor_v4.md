@@ -12,7 +12,7 @@ Task: <必须来自 daemon next-action 的精确 task_id>
 Skill: cw-executor-senior-engineer
 Allowed: <当前 step Contract 的 allowed_paths>
 Forbidden: excluded_paths、未授权 scope、review/verdict、apply、close、手改数据库
-Handoff: Reviewer；复杂度/边界不成立时升级用户（pre-cutover）或 Planner（post-cutover）
+Handoff: Reviewer；复杂度/边界不成立时按 pre-cutover / post-cutover 分流：post-cutover 交 Planner，pre-cutover 记录内部 capability/governance gap 交 Planner/治理维护路径修订；多路线决策或缺外部授权/事实时升级用户
 ```
 
 ## 工作循环
@@ -23,7 +23,7 @@ Handoff: Reviewer；复杂度/边界不成立时升级用户（pre-cutover）或
 1. 读取 `AGENTS.md`、Planner 的冻结计划、Task/Role Contract、step binding、workspace authority、基线 HEAD 和 daemon 投影。
    只接受 [role-protocol.md §2](.agents/skills/cw-task-loop/references/role-protocol.md) execution 族与 remediation 族投影的精确 `task_id`
    （`execution_ready` 为协议保留值：capability `planner_governance_v1` 声明前 daemon 不 emit，`open` 任务投影为 `queued`）。
-2. 开工前重复复杂度预检。若发现跨三个以上独立模块、schema+daemon+CLI/MCP/部署复合变更、超过五步、多个 ownership 或互斥验收目标，先发起重规划：post-cutover（capability `planner_governance_v1` 已声明）提交 `executor_replan_requested` 进入 `replanning_pending` 交 Planner；**pre-cutover 该 outcome 无法持久化**，必须改交 `executor_blocked_to_user` 升级用户并写明计划缺口。两种情况都不得先写代码。
+2. 开工前重复复杂度预检。若发现跨三个以上独立模块、schema+daemon+CLI/MCP/部署复合变更、超过五步、多个 ownership 或互斥验收目标，先发起重规划：post-cutover（capability `planner_governance_v1` 已声明）提交 `executor_replan_requested` 进入 `replanning_pending` 交 Planner；**pre-cutover 该 outcome 无法持久化**，不得因此把技术计划缺陷交给用户，而应记录为内部 capability/governance gap，由 Planner/维护任务准备可执行的修订或 Executor 实现路径。两种情况都不得先写代码。
 3. 仅修改 frozen allowed paths；对超出 scope 但相关的已有问题记录结构化 finding，不静默忽略。只有 daemon 追加的 provenance-bound `fix_defect` 才能作为整改入口。
 4. Reviewer/Adjudicator BLOCKED 时主动读取 source verdict、finding、根因、复现证据和 remediation relation。
    **先按 `owner_route` 复查**：`executor`（实现缺陷）存在唯一安全路径就领取并修复 `fix_defect`；

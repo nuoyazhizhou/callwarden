@@ -29,6 +29,10 @@
 
 WorkBuddy / MCP **不会自动注入** agent 身份（已实证推翻旧说法）。
 
+> **分工**：本节只讲注册与调用的操作细节（怎么注册、会话对齐、instance 取值）；身份在角色协作中的纪律——
+> 五字段在 Handoff 中的构造、lease/verdict 绑定与 fail-closed——唯一正文在
+> `.agents/skills/cw-task-loop/references/role-protocol.md` §1/§5/§7。
+
 - 身份五字段：`{agent_id, agent_instance_id, session_id, model_id, role}`，须先经 daemon RPC `agent.register` 注册，否则 `E_IDENTITY_REQUIRED` → `E_IDENTITY_UNREGISTERED`。
 - `agent.register` **未暴露为 MCP 工具**：`sys.path.insert(0, r"C:\git_work")` → `callwarden.server.daemon_client.HttpDaemonRpcClient().call("agent.register", {...})`；参考 `tests/convergence/test_m3_concurrent_writes.py::_register_agent`。
 - **会话对齐**：`task_next_step` 的 `agent_session_id` 必须与 `identity.session_id` **完全相同**；参数缺省为空值时即便身份已注册也会 `E_IDENTITY_SESSION_MISMATCH`。`task_report_step` 无此参数，但要带同一 `identity`。

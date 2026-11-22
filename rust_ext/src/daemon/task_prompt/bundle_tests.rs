@@ -15,54 +15,55 @@ use crate::daemon::task_prompt::render_tests::{
 use crate::daemon::task_prompt::route::ROLE_PROMPTS_MANIFEST_SHA256;
 
 /// Golden 冻结 hash（spec §11.2）。首次运行打印，随后冻结。
+/// 当前值 = 提示词三层整合（executor v4 漂移句修正 + 模板指针化）后的重冻结。
 const GOLDEN_EXECUTOR_LEGACY: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:59a459f7786097c671d48fbeec6e361c12d7a95bdec4e3722169d68d5d6a73f6",
-    "sha256:3d0acfa7f5ee514f3d0dfde9fe82654326e9a044e9c67f90f006a4eec59e1442",
+    "sha256:ca00503fd550ad9d07b542140160bab32263e87e967296e1cdbd735f7a96740d",
     "sha256:1af10505b9319819c6c44a867478622c1bf05cc93417610bd143d46cc6df2d95",
-    "sha256:0dc9159272340ca1671270ba3ce3c3b87f54a38bb18073377458ade66456d9e8",
+    "sha256:1520099a81c94366635f07d3e207fc7252cf64ce233b131099620f2effde6a26",
 ));
 const GOLDEN_REVIEWER_LEGACY: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:6415033d8f134392de16fca130bfb762cb6c70d9f466c770ec18a20fc4ce139e",
-    "sha256:285bb73801b5fb1090b20c56f749f801d1c6378935a1be131fd19182e983e3d9",
+    "sha256:15e85a708af0c512689d8fa36ccb01e78d96e5c4e3d51a90053093cbe073681e",
     "sha256:1eac28014ac0c1aa8fc14ab8e03898283a646c1ebfb3baf7e69a3646c02de857",
-    "sha256:2f534cd01bd56e65be947f2f3770872183e23d6f82a6b28f6d773b191c4bc7ef",
+    "sha256:15aff6c859a042c85adcca24a90fdadc4c097869437824a017d43f55dbff3bd2",
 ));
 const GOLDEN_ADJUDICATOR_LEGACY: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:42a5f1defa81008b009058c1baf5d1a14b3ef4521e291b7b55c19bb473a77c3e",
-    "sha256:92b7122528664573a0c66b419d346ef5fb73b0e5f34db084e05d134c34e75048",
+    "sha256:5c178fefeceae5f0966f52fc5e4a2411ac74c89df3854f7024edf45a76acff7d",
     "sha256:69c477c47acb68925c4f981e08553cb3f6856c6d2c926c4e141bd9d00f83ada6",
-    "sha256:2e0f4291f9c013938651bd783668cad7bfa07a9ed21aeb00992456e0d46494ad",
+    "sha256:b914fd89f5a1b4176c68fd5240437c7490e5e119e8e6a5593c2fd73f13f07374",
 ));
 const GOLDEN_EXECUTOR_CURRENT: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
-    "sha256:5f22f9bef05ec51a998311bdf4485315eb8fe1f4a092d01fd2e6bd86cc4a8164",
-    "sha256:b24e29d318f3bbac7cb5f9eb3930138ed18b9e0a125eb415b216860cfa3d7c67",
-    "sha256:5a962f893e4cae68f3a7423a0384e834084bab959cc311c2ba14e677da029503",
-    "sha256:c078174b6d3f9ec099297d7e22c45e356b7eac0e4f97845fc926e99f81076d1f",
+    "sha256:bdae65f57cc8d1a632bfcdb4be80f4b7574845c2cb01f1cfc762899f481e8155",
+    "sha256:90de9c81a452621bc2616d52614b91a165094888452a0568ea0b194a7d1f328d",
+    "sha256:d4b89b89a9846cd1f02095e9c762861b7838d3e9686f41a841a9312a2e2ffdb5",
+    "sha256:a056dcf9b8b68cc75444df04ff214d6043a014de68028116fc1aa754fa15f939",
 ));
 const GOLDEN_BLOCKED: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:80805d678832126ca1c5cad76cc474b0b896e9431182ffdea9f023078b9c3b85",
-    "sha256:4d3fe34866454ae10d8995ea4c7c5f97696c1d572db68b841d86463c615d2ee4",
+    "sha256:608e56b56c1d6606759850d4500404cc4c4f2e9d688594d2ef3df916ede95e22",
     "sha256:b462a9eefbf8fa012a2ef9c9bed22465e6bd4fe2ec066b9ff8e279da19a1af6a",
-    "sha256:01baec3b5c7bb1d352a31898437b42e4ee5800faeb36f010a48660a483228cb3",
+    "sha256:0f31825e8ec8f2e573ddb84887017f140f99099c8833ce51601c1a1a62412cef",
 ));
 const GOLDEN_WAITING: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:56874c7329c9c62bac92ddd4be9720a04417a585f904de1d484f8abc7653f56b",
-    "sha256:fb479539158636717585c0865d510926e8b7a9e40942398f55f325494d5b1189",
+    "sha256:044fa14d4f588ee477f9477040c1e0d8a42fc467aba979d780617cbfab1dd2b3",
     "sha256:64f19dfebb58fc43fb64235aebb34dc2a9d275937b5ff4d808e35920f7fc4b63",
-    "sha256:5a383d8145e076281b589bbd322cbc96408169a0f464de0c621855e3c9933b38",
+    "sha256:8d6c47f9621ea065753670137e2217bf6d4f0484832b113ceb64f6835301fea0",
 ));
 const GOLDEN_TERMINAL: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:450a850620529dd9a2fa1b1f6e791a6a2f4de6cfcac2d1affbe4473142d6257a",
-    "sha256:2ae710caf185440093fed0656c49eed38e14715faaa7b06ecfa40bdf9c99dbb7",
+    "sha256:d1f95cc4cced2e3de4cf754a71dabdeb7afb44af95f3d129a25a793b32edcbcb",
     "sha256:6f030c61d770be7a6474a07db7b9586500b64d42e1d46af4d8c985ab980faa11",
-    "sha256:14b3974f85b1f3b52a0935f257a187fa263c5b7b1d2a4879ea6b400ce5de5028",
+    "sha256:620362134e6a610e1fe8e9f3109310d2657aa5460bb315b27b5ab216b2fee698",
 ));
 
 fn bundle_for(context: &Value) -> Value {
@@ -197,9 +198,9 @@ fn task_prompt_renderer_bundle_hash_covers_minimal_closure_only() {
 // 守卫测试会以可操作提示先行失败。
 
 /// manifest_hash 冻结记录值（重冻结时与 ROLE_PROMPTS_MANIFEST_SHA256 同步更新）。
-/// 当前值 = 37c825b（adjudicator lease_role 提示词修复）之后的 manifest 裸字节 hash。
+/// 当前值 = 提示词三层整合（executor v4 content_sha256 更新）之后的 manifest 裸字节 hash。
 const GOLDEN_MANIFEST_HASH_AT_FREEZE: &str =
-    "sha256:bc6af6c4925e960974d16c842a1e3fed495e8f862d9984666c5dd8270f49fb94";
+    "sha256:12cc8aa5b211af04baa28f3fcbc1e332de8713e163ddac1900aeabfb8d4a4a9c";
 
 fn assert_golden(
     name: &str,

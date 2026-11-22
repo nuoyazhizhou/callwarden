@@ -75,6 +75,13 @@ Handoff: <完成后交给哪个角色>
 > 禁止客户端 derive workspace（如 `derive_workspace_instance_id`）、本地渲染 production prompt，或回落
 > Python Prompt Compiler / SQLite / PyO3 authority。
 
+> **Legacy 模板维护策略：** `role_prompts/v1/legacy/` 下的历史模板被 manifest `content_sha256` 逐字节钉死
+> （唯一 alias 例外 `executor_planner_startup_v1`），不可编辑、移动或删除，只用于重放历史 Contract；
+> 唯一演进面是 `current/` 与 `system/`。修改 `current/` 模板必须同步更新 `manifest.json` 的
+> `content_sha256` 与 `render_tests.rs` 的冻结 hash，并按 `bundle_tests.rs` 的 golden 重冻结流程重跑
+> `role_prompt_assets_golden` / `role_prompt_validator` 测试；`role_prompts/v1/` 资产根下禁止新增未在
+> manifest 声明的文件（`role_prompt_assets_no_undeclared_files_in_tree` 守卫）。
+
 Planner 是执行前的架构、任务分解和自有任务树治理修复责任人（目标模型）。新任务默认先做复杂度预检；只有完整、可验证且
 已绑定 Contract 的计划后，Executor 才能领取实现步骤。Planner 发现数据、Contract、binding、认证、派工或 daemon/client
 能力缺口时，必须主动形成修复路径；“没有现成 RPC”应转化为最小 daemon/client 实现任务，而不是让用户手工改库或反复重试。

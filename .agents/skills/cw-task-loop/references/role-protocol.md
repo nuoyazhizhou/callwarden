@@ -308,7 +308,8 @@ agent 都拿不到治理协议。2026-08-28 已从 `.gitignore` 移除该规则�
 
 ### Reviewer identity 与 lease
 
-Reviewer 必须使用注册的五字段 identity。当前已登记实例的命令示例为：
+Reviewer 必须使用注册的五字段 identity。注册机制、五字段构造、会话对齐与 instance 语义见
+`skills/_shared/cw-gates.md` G2（唯一正文），本节只讲已注册身份的 lease 使用纪律。当前已登记实例的命令示例为：
 
 ```powershell
 & C:\Python314\python.exe C:/git_work/callwarden/cw.py task next-action <task_id> --workspace-instance-id <instance_id> --json

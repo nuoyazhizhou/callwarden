@@ -32,7 +32,9 @@ description: 执行已由 Planner 冻结的 Call Warden 原子任务，主动做
   （唯一单源，本 Skill 不复制阈值）。触碰已超线文件时必须在 report 记录当前行数与拆分方案；不得新建超过硬
   阈值的文件，也不得让既有文件跨线。按职责边界拆，禁止机械按行切成 `_part1`/`_part2`。
 - `adjacent_defect` 必须记录根因、复现、影响半径和建议归属；不因不在本次 diff 而隐藏（自动 `related_to`
-  关联为协议保留能力 `adjacent_relation_v1`，pre-cutover 在 finding/ledger 中人工记录）。
+  关联为协议保留能力 `adjacent_relation_v1`，pre-cutover 在 finding/ledger 中人工记录）。阻断当前交付时：
+  实现缺陷交 Reviewer；scope/Contract/架构缺陷按双轨处理（post-cutover 交 Planner，pre-cutover 记录内部
+  capability/governance gap 交 Planner/治理维护路径修订）；不阻断则通过 daemon 关联 backlog/remediation。
 - Reviewer 或 Adjudicator 返回 BLOCKED 后，读取完整结构化 finding、根因、复现证据和 remediation relation；
   **先按 `owner_route` 复查**：`executor` 的实现缺陷有唯一安全修复路径时自动领取 `fix_defect` 并闭环，
   不等待用户再次提醒；`planner` 的计划缺陷不得实施代码、不得完成该 fix_defect step，也不得把技术问题升级给用户；
