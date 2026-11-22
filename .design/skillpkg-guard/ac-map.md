@@ -5,14 +5,14 @@
 
 | AC | 目标 | level | 验收方式（nodeid / 命令） | 证据位置 |
 |---|---|---|---|---|
-| AC-01 | 三个真实包（requirements-cw / code-review-cw / test-cw）全合规 → `exit 0`，stdout 含 `OK` | auto | `tests/test_skill_packages_guard.py::test_real_packages_pass` | 待填 |
-| AC-02 | frontmatter 违规（`name` 与目录名不一致 / `description` 空 / 无 frontmatter / 跨包 `name` 重复）→ `exit 2` 并指明包名与原因 | auto | `::test_bad_frontmatter_detected`、`::test_missing_frontmatter_detected`、`::test_duplicate_package_name_detected` | 待填 |
-| AC-03 | SKILL.md 引用 `references/<file>` 但文件不存在 → `exit 2`，报包名 + 缺失文件名。**排除安装期注入文件**（`cw-gates.md`，由 `install.ps1` 从 `_shared/` 注入，仓库内本就不存在——见 `symbol-anchor.md` F-A1）。豁免须**双向**锁定：注入项豁免成立 + 换名后立刻红 | auto | `::test_missing_reference_detected`、`::test_injected_reference_exempt`、`::test_other_missing_reference_not_exempt` | 待填 |
-| AC-04 | 包内出现 `references/cw-gates.md`（违反单一源）→ `exit 2` | auto | `::test_duplicate_gates_rejected` | 待填 |
-| AC-05 | `references/smoke.txt` 非注释行指向不存在的路径 → `exit 2` | auto | `::test_bad_smoke_path_detected` | 待填 |
-| AC-06 | `install.ps1` 不存在 → `INSTALL_MISSING`；存在但缺 `_shared/cw-gates.md` 注入片段 → `INSTALL_MISSING_INJECTION`；两者均 `exit 2` | auto | `::test_install_missing_injection_detected`、`::test_install_missing_file_detected` | 待填 |
-| AC-07 | 未知 CLI 参数 → `exit 64`（用法错误，与"发现违规"的 2 区分） | auto | `::test_usage_error_exit64` | 待填 |
-| AC-08 | 包内文件非 UTF-8 编码（中文 Windows 记事本 GBK）→ `READ_FAILED` + `exit 2`，**无 traceback**（CL-02 缺陷修复断言） | auto | `::test_gbk_smoke_file_reports_read_failed`、`::test_gbk_skill_md_does_not_traceback` | 待填 |
+| AC-01 | 三个真实包（requirements-cw / code-review-cw / test-cw）全合规 → `exit 0`，stdout 含 `OK` | auto | `tests/test_skill_packages_guard.py::test_real_packages_pass` | `evidence/AC-01.md` |
+| AC-02 | frontmatter 违规（`name` 与目录名不一致 / `description` 空 / 无 frontmatter / 跨包 `name` 重复）→ `exit 2` 并指明包名与原因 | auto | `::test_bad_frontmatter_detected`、`::test_missing_frontmatter_detected`、`::test_duplicate_package_name_detected` | `evidence/AC-02.md` |
+| AC-03 | SKILL.md 引用 `references/<file>` 但文件不存在 → `exit 2`，报包名 + 缺失文件名。**排除安装期注入文件**（`cw-gates.md`，由 `install.ps1` 从 `_shared/` 注入，仓库内本就不存在——见 `symbol-anchor.md` F-A1）。豁免须**双向**锁定：注入项豁免成立 + 换名后立刻红 | auto | `::test_missing_reference_detected`、`::test_injected_reference_exempt`、`::test_other_missing_reference_not_exempt` | `evidence/AC-03.md` |
+| AC-04 | 包内出现 `references/cw-gates.md`（违反单一源）→ `exit 2` | auto | `::test_duplicate_gates_rejected` | `evidence/AC-04.md` |
+| AC-05 | `references/smoke.txt` 非注释行指向不存在的路径 → `exit 2` | auto | `::test_bad_smoke_path_detected` | `evidence/AC-05.md` |
+| AC-06 | `install.ps1` 不存在 → `INSTALL_MISSING`；存在但缺 `_shared/cw-gates.md` 注入片段 → `INSTALL_MISSING_INJECTION`；两者均 `exit 2` | auto | `::test_install_missing_injection_detected`、`::test_install_missing_file_detected` | `evidence/AC-06.md` |
+| AC-07 | 未知 CLI 参数 → `exit 64`（用法错误，与"发现违规"的 2 区分） | auto | `::test_usage_error_exit64` | `evidence/AC-07.md` |
+| AC-08 | 包内文件非 UTF-8 编码（中文 Windows 记事本 GBK）→ `READ_FAILED` + `exit 2`，**无 traceback**（CL-02 缺陷修复断言） | auto | `::test_gbk_smoke_file_reports_read_failed`、`::test_gbk_skill_md_does_not_traceback` | `evidence/AC-08.md` |
 
 ## 强制并入（本需求改动触及面）
 

@@ -1,0 +1,87 @@
+{
+  "required": {
+    "AC-01": [
+      "test_real_packages_pass"
+    ],
+    "AC-02": [
+      "test_bad_frontmatter_detected",
+      "test_missing_frontmatter_detected",
+      "test_duplicate_package_name_detected"
+    ],
+    "AC-03": [
+      "test_missing_reference_detected",
+      "test_injected_reference_exempt",
+      "test_other_missing_reference_not_exempt"
+    ],
+    "AC-04": [
+      "test_duplicate_gates_rejected"
+    ],
+    "AC-05": [
+      "test_bad_smoke_path_detected"
+    ],
+    "AC-06": [
+      "test_install_missing_injection_detected",
+      "test_install_missing_file_detected"
+    ],
+    "AC-07": [
+      "test_usage_error_exit64"
+    ],
+    "AC-08": [
+      "test_gbk_smoke_file_reports_read_failed",
+      "test_gbk_skill_md_does_not_traceback"
+    ]
+  },
+  "all_nodeids": [
+    "tests/test_skill_packages_guard.py::test_real_packages_pass",
+    "tests/test_skill_packages_guard.py::test_bad_frontmatter_detected",
+    "tests/test_skill_packages_guard.py::test_missing_frontmatter_detected",
+    "tests/test_skill_packages_guard.py::test_duplicate_package_name_detected",
+    "tests/test_skill_packages_guard.py::test_missing_reference_detected",
+    "tests/test_skill_packages_guard.py::test_injected_reference_exempt",
+    "tests/test_skill_packages_guard.py::test_other_missing_reference_not_exempt",
+    "tests/test_skill_packages_guard.py::test_duplicate_gates_rejected",
+    "tests/test_skill_packages_guard.py::test_bad_smoke_path_detected",
+    "tests/test_skill_packages_guard.py::test_install_missing_injection_detected",
+    "tests/test_skill_packages_guard.py::test_install_missing_file_detected",
+    "tests/test_skill_packages_guard.py::test_usage_error_exit64",
+    "tests/test_skill_packages_guard.py::test_gbk_smoke_file_reports_read_failed",
+    "tests/test_skill_packages_guard.py::test_gbk_skill_md_does_not_traceback"
+  ],
+  "results": {
+    "tests/test_skill_packages_guard.py::test_real_packages_pass": "passed",
+    "tests/test_skill_packages_guard.py::test_bad_frontmatter_detected": "passed",
+    "tests/test_skill_packages_guard.py::test_missing_frontmatter_detected": "passed",
+    "tests/test_skill_packages_guard.py::test_duplicate_package_name_detected": "passed",
+    "tests/test_skill_packages_guard.py::test_missing_reference_detected": "passed",
+    "tests/test_skill_packages_guard.py::test_injected_reference_exempt": "passed",
+    "tests/test_skill_packages_guard.py::test_other_missing_reference_not_exempt": "passed",
+    "tests/test_skill_packages_guard.py::test_duplicate_gates_rejected": "passed",
+    "tests/test_skill_packages_guard.py::test_bad_smoke_path_detected": "passed",
+    "tests/test_skill_packages_guard.py::test_install_missing_injection_detected": "passed",
+    "tests/test_skill_packages_guard.py::test_install_missing_file_detected": "passed",
+    "tests/test_skill_packages_guard.py::test_usage_error_exit64": "passed",
+    "tests/test_skill_packages_guard.py::test_gbk_smoke_file_reports_read_failed": "passed",
+    "tests/test_skill_packages_guard.py::test_gbk_skill_md_does_not_traceback": "passed"
+  },
+  "agg": {
+    "tests": 14,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "rc_a": 0,
+  "rc_b": 0,
+  "cond": {
+    "① revision 一致且零漂移": true,
+    "② required 全 passed": true,
+    "③ 本批 failures/errors/collection_errors = 0": true,
+    "④ required 集 skipped/xfail = 0": true,
+    "⑤ deselected ∩ required = ∅": true,
+    "⑥ rc=0 且 collected>0 且 collected==len(required)": true
+  },
+  "head": "1787ad8fd782b5e40470c5d200f91f3a2bd761e1",
+  "code_revision": "cc37b901da717f8b6c39ad04bf8dc899a74d6f44",
+  "drift": "",
+  "full_count": 18,
+  "verdict": true
+}
