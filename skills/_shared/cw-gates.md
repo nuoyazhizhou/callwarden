@@ -32,8 +32,26 @@ WorkBuddy / MCP **不会自动注入** agent 身份（已实证推翻旧说法�
 - 身份五字段：`{agent_id, agent_instance_id, session_id, model_id, role}`，须先经 daemon RPC `agent.register` 注册，否则 `E_IDENTITY_REQUIRED` → `E_IDENTITY_UNREGISTERED`。
 - `agent.register` **未暴露为 MCP 工具**：`sys.path.insert(0, r"C:\git_work")` → `callwarden.server.daemon_client.HttpDaemonRpcClient().call("agent.register", {...})`；参考 `tests/convergence/test_m3_concurrent_writes.py::_register_agent`。
 - **会话对齐**：`task_next_step` 的 `agent_session_id` 必须与 `identity.session_id` **完全相同**；参数缺省为空值时即便身份已注册也会 `E_IDENTITY_SESSION_MISMATCH`。`task_report_step` 无此参数，但要带同一 `identity`。
-- `agent_instance_id` 留空后，后续所有调用必须保持一致（`E_IDENTITY_INSTANCE_MISMATCH`）。
+- **`agent_instance_id` 应给非空值**（如 `<agent_id>-inst`）。留空虽被接受，但会踩角色独立性门禁的假阳性：`check_role_independence` 曾用 `agent_instance_id = ?2` 查询，`?2=""` 会命中**所有** instance 为空的历史行 ⇒ 只要有任一空-instance 的 reviewer 注册过，之后所有 implementer 认领都被拒，且报错把无关 agent 列为冲突方（已修，见 `task_collab.rs` 该函数注释；修前现象：`E_ROLE_INDEPENDENCE_VIOLATION: ... (agent=reviewer-w2-3, instance=, ...) 与 implementer 冲突`）。给非空值不受该缺陷影响，也便于后续 `E_IDENTITY_INSTANCE_MISMATCH` 自证。
+- 决定留空则后续所有调用必须保持一致（`E_IDENTITY_INSTANCE_MISMATCH`）。
 - **身份不跨会话借用**：谁来执行谁用自己注册的身份；交接包传的是证据，不是身份。
+
+### G2.1 · `verdict.submit` 的六个必填项（逐个撞出来的，MCP 文档未写全）
+
+按顺序补齐，缺一个报一个，不会一次告诉你全部：
+
+| # | 参数 | 来源 / 坑 |
+|---|---|---|
+| 1 | `identity`（**嵌套对象**） | 不是扁平 `identity_agent_id` 那一组；扁平传会 `E_IDENTITY_REQUIRED`。字段 `{agent_id, agent_instance_id, session_id, model_id, role}`，role 仅 `reviewer` / `independent_reviewer` |
+| 2 | `request_id` | 幂等键，自造 uuid；缺失报 `缺少 request_id` |
+| 3 | `view_manifest_hash` | 来自 RPC `role_view.get {task_id, role:"reviewer"}` 的 `view_manifest_hash`；**不在 `cw task prompt` 的 bundle 里** |
+| 4 | `phase` | 必须用 v1 名 `blind_first_pass`（或 `post_reveal_amendment`）；传 legacy 的 `PRE_VERDICT` 被拒 |
+| 5 | `findings` | 必须是 **JSON 数组**；字符串会报 `findings 必须是 JSON array`。⚠️ 与 `check_items` **相反**（后者必须字符串，见 G6.3） |
+| 6 | `snapshot_id` | 见下条：不必新 publish，取任务事件里已有的即可 |
+
+其余必填：`task_id` / `step_id`（**review 态下用最后一个已 done 步骤的 ID**；`next-action` 此时不给 Step ID）/ `contract_id` / `contract_revision` / `contract_hash` / `role_contract_id|revision|hash`（前三个与后三个均可从 `cw task prompt <id> --format json` 的 `contract` 段取）/ `lease_token` + `fencing_counter`（`lease.acquire` 返回，**identity 同样必须嵌套**）。
+
+**`snapshot_id` 的正确解法**：`task_collab_verdict.rs` 的空值判定是「仅当该任务 `task_events` 里**零**非空 snapshot 时放行」——反过来说，只要单建出来带了快照溯源，就必须给一个非空值，**但不比对具体值**。所以不必为 verdict 专门 publish；确有需要时 `cw daemon publish <registry_id> <db_path>`（注意第一个参数是 **registry workspace id**，传 task_db id 会 `workspace_not_found`），返回的 `snapshot_id` 即可用。`publish` 响应里的 `workspace_instance_id` 是**入参回显**（数字串），实际落盘仍是 canonical instance，别被误导。
 
 ## G3 · 合同声明
 

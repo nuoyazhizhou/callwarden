@@ -10,3 +10,14 @@
 | PL-03 | skillpkg-guard R4 · G6.4 | `task_create` 无结构化 blocking 字段，`blocked-by` 只是 description 里的文本约定，daemon 不强制——抢跑不会被拦 | 属 daemon 治理面能力缺失，需 schema 变更与迁移，不是技能层能解的 | daemon 治理（task 依赖结构化） | daemon 提供 `depends_on: [task_id]` 字段并在 `task_next` 处拦截未满足依赖的认领 |
 | PL-04 | skillpkg-guard R0 停车场 | `check_skill_packages.py` 尚未接进 `cicd/check_ci_gates.py` 汇总，也未挂 CI job | 本 REQ 的 In 范围只到「有命令 + 有测试」；接 CI 涉及 workflow 改动与失败归因设计 | CI 门禁汇总 | 独立 job 或并入 `check_ci_gates.py`，并在 PR 模板/AGENTS.md 写明运行时机 |
 | PL-05 | skillpkg-guard R3 · design-gate #5 | 自检器只查 `install.ps1` 里有无 `_shared` + `cw-gates.md` 两个标记，不查注入**目标目录**是否正确 | 语义校验需跑 PowerShell 或解析 AST，成本远超收益；本检查定位是「防忘记」不是「防写错」 | 技能包分发健壮性（与 PL-01 同批） | 出现一次真实「注入到错目录」事故后再评估；届时优先做「安装后自检」而非静态解析 |
+
+---
+
+## 关闭记录（只追加，2026-11-22）
+
+| # | 关闭事实 | 出处 |
+|---|---|---|
+| PL-01 | **已关闭**。三包 `install.ps1` 删除 `$localGates` 回退分支，改为 `_shared` 缺失即 `throw`（文案明说"包内副本不再被接受"）。分发影响评估：唯一变化是「单独分发某包且手造 `references/cw-gates.md`」这条路径从"警告+可能过期"变成"硬失败"——该路径本就违反 AC-04，硬失败是正确方向。附带修正：写回时补回 UTF-8 **BOM**（PS 5.1 读无 BOM 的 UTF-8 会把中文注释按 ANSI 解，曾险些引入回归）；三包 `PSParser::Tokenize` 均 PARSE_OK。 | 提交 `refactor(skills): install.ps1 删除 $localGates 死分支` |
+| PL-03 | 未关闭（daemon 治理面能力缺失，需 schema 变更）。本轮仅确认影响面：`blocked-by` 文本约定在 `cw task show` 可原样读回，但 daemon 不拦抢跑。 | `task-map.md` §依赖声明 |
+| PL-04 | 未关闭（未接 CI，本 REQ In 范围外）。 | — |
+| PL-05 | 未关闭（与 PL-01 同批评估后确认：静态标记检查足够，语义校验不做）。 | `design-gate.md` 第 2 轮缺点 #5 |
