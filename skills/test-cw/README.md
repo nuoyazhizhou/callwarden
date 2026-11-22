@@ -39,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 SKILL.md                     五步流程 + 六条件判据 + 边界（做薄）
 references/
 ├── evidence-spec.md         八段 schema + junit 生成方式（Python/Rust）+ PASS/FAIL/N/A 示例 + 禁止写入
-└── smoke.txt                冻结冒烟集（FROZEN 2026-11-22，5 项 / 164 例 / ~39s；改动须变更单）
+└── smoke.txt                冻结冒烟集（FROZEN 2026-11-22 r2，6 项 / 167 例 / ~40s；改动须变更单）
 scripts/
 └── cargo_test_evidence.py   Rust 批次：cargo --list/--exact → 等价 junit + 骨架 + 六条件机检
 install.ps1                  三家宿主安装 + AGENTS.md 注入 + 共享门禁注入
