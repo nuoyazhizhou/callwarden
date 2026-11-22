@@ -2,6 +2,13 @@
 
 > 2026-11-22 · R0 · 精简链（存量仓迭代：仓库存在、技术栈沿用 Python + Rust daemon）
 
+## 基线冻结（R3）
+
+- **基线 commit**：`e9135e4`（design(ws-identity): workspace 仓库级身份 R0-R3 设计基线，2026-11-22）
+- **scope 快照**：must = REQ-01..04（卡片 C-01..C-08，首批建单 8 张）；指定 should = REQ-05（C-09，第二批）。其余 deferred（无 could）。
+- **关闭判据**：快照内全部任务闭环 + AC-01..05 证据齐备提交（REQ-05 为 should，随 C-09 交付）。
+- 此后设计改动走变更单（`references/change-ticket.md`），不走静默漂移。
+
 ## 一句话
 
 把 `workspace_instance_id` 从「checkout 路径哈希」改为「仓库级身份」：同仓库所有 worktree / clone 共享同一身份，任务库、REQ 双向追溯、ac-map、验收证据、lease 全仓共享；含存量一次性迁移。
