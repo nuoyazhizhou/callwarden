@@ -39,6 +39,30 @@ for tc in root.iter("testcase"):
 2. `collection_errors` 不在 `<testcase>` 里，要看 `<testsuite errors=…>` 或 `--collect-only` 的退出；
 3. 同一 nodeid 参数化后是多条 testcase，第 5 段要**逐条列**，不能折叠成一行。
 
+### 2.1 Rust 批次（cargo test）
+
+junit 不由 pytest 产生，由 `scripts/cargo_test_evidence.py parse` 从 libtest stdout 生成等价产物（testsuite name=`cargo-test-<target>`，nodeid 形态 `<target>#<test_path>`）：
+
+```powershell
+cargo test --<target> -- --list                 # 采集集：list 模式 → nodeid 全集
+cargo test --<target> -- --exact <ids...> 1> run.txt 2> run.err   # 执行；rc 一并记录
+python scripts/cargo_test_evidence.py parse --input run.txt --target <target> --rc <rc> `
+    --required required.txt --junit reports/junit-<batch>.xml --out 骨架.md `
+    --command <命令原文> --stderr run.err
+```
+
+统计语义差异（对照第 4 段字段）：
+
+| 本 schema 字段 | Rust 侧取值 |
+|---|---|
+| collected / executed | 汇总行 `passed+failed+ignored+measured`（实际执行数） |
+| skipped | libtest `ignored`（libtest 无 xfail 概念；`#[ignore]` 即 skip，进判据 ④ 分母） |
+| xfail | 恒为 0（概念不存在） |
+| deselected | libtest `filtered out`（备查；判据 ⑤ 用「required 缺席」判定） |
+| collection_errors | rc≠0 且无任何 `test` 行（编译失败），脚本合成 `<target>#<collection>` error testcase |
+
+Rust 批上限 **≤300 ids**（Windows 命令行限制），超限拆批；多二进制（lib + 各集成测试）逐二进制分批，不得混判。详见 `../DESIGN.md §15`。
+
 ## 3. 三个示例
 
 ### 3.1 PASS（真实样例，摘自 backlog-46 试跑）

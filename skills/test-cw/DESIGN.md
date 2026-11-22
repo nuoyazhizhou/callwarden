@@ -1,7 +1,7 @@
-# test-cw 技能设计文档（立项稿 v0.4）
+# test-cw 技能设计文档（立项稿 v0.5）
 
 > 状态：**立项稿，未实现**。三问已拍板（新建独立技能 / 首版本地直跑 / 沿用 `evidence/<AC-id>.md`）。
-> v0.1 主理人初稿 → **v0.2 并入 qa-engineer（凌无缺）测试验收结论**（三处按裁决收紧，§13）→ **v0.3 三口径拍板完成（§12）** → **v0.4 按 backlog-46 真实试跑校准 6 处（§14）**。
+> v0.1 主理人初稿 → **v0.2 并入 qa-engineer（凌无缺）测试验收结论**（三处按裁决收紧，§13）→ **v0.3 三口径拍板完成（§12）** → **v0.4 按 backlog-46 真实试跑校准 6 处（§14）** → **v0.5 补齐 Rust 侧 nodeid 级归属（§15，脚本 + 真机验证）**。
 > 本稿只定义「跑测试并回填证据」这一个动作，批准后再写 `SKILL.md` 与 `references/`。
 > 关联：`requirements-cw`（上游：ac-map / symbol-anchor / R5 收口）、`code-review-cw`（平行：审缺口，不跑测试）、
 > `_shared/cw-gates.md`（共享门禁 G0-G6）。
@@ -51,7 +51,7 @@
 ### 4.2 强制并入（改动触及即必须加，不受 AC 映射左右）
 
 - MCP 工具注册 / RPC schema / daemon 边界 / `pyproject` / `cicd/*` 改动 → 并入 `test_abi_contract.py`、相关 `test_*_wiring.py`、以及 `check_selector_manifest.py` 对应 domain manifest 的全量 nodeid；
-- `rust_ext/` 改动 → 追加独立 `cargo test` 批次 + Python 侧 `test_*_rust*` / `test_*_daemon*`。
+- `rust_ext/` 改动 → 追加独立 `cargo test` 批次（按 §15 做 nodeid 级归属：`--list` 采集 + `--exact` 执行 + 脚本解析）+ Python 侧 `test_*_rust*` / `test_*_daemon*`。
 
 ### 4.3 冒烟兜底
 
@@ -148,7 +148,7 @@ C6 的强制范围（已拍板，§12-3）：**`must` 故事强制；`should` / 
 - 不触发 CI、不轮询远程结果（本地直跑，命令可复现即可；CI 结果只能作附加参考，不能替代本地本 revision 证据）；
 - 不设覆盖率门槛（只把数字记进证据，不判绿——避免重演「阈值噪音逼人 pin select」）；
 - 不做性能 / 安全专项测试；
-- Rust 与 Python nodeid 形态不同，首版共用一套 schema，靠「命令原文」自解释。
+- Rust 侧 nodeid 形态为 `<target>#<test_path>`（§15），与 Python 共用一套 schema；差异由「命令原文」与 `<target>#` 前缀自解释。
 
 ## 10. 交付结构（批准后实现）
 
@@ -157,6 +157,8 @@ skills/test-cw/
 ├── SKILL.md                      # 五步流程 + 判据 + 边界（做薄）
 ├── references/evidence-spec.md   # 八段 schema + 六检查 + 失败示例
 ├── references/smoke.txt          # 冻结冒烟集（只读，见 §12-1）
+├── scripts/
+│   └── cargo_test_evidence.py    # Rust 批次：list/parse → 等价 junit + 骨架 + 机检（§15）
 ├── install.ps1                   # 三家宿主安装 + 注入 _shared/cw-gates.md
 ├── README.md
 └── DESIGN.md
@@ -207,3 +209,54 @@ skills/test-cw/
 | F6 | （缺）证据生成方式 | 手抄 149 行 nodeid 不可行，漏一行判据 ② 即失效 | junit 脚本生成骨架 + 人工判读；junit 随证据落盘（§6） |
 
 **试跑顺带验证成立的部分**（不改）：判据 ③④⑤⑥ 均可机器判定；`N/A` 的合法形态真实存在且确实导致需求未关闭；强制并入清单有效（`i18n/*.json` 与 `docs/cli_reference.md` 若不并入，两条 AC 会静默缺席）；149 例单批 < 2 min，本地直跑路线成立。
+
+## 15. Rust 侧 nodeid 归属（v0.4 → v0.5）
+
+### 15.1 问题与选型
+
+v0.4 只覆盖 Python（pytest junit nodeid）；Rust 侧 `cargo test` 只有批级判据（§4.2 原文「独立 cargo test 批次」），六条件无法逐条核对。v0.5 补齐：**Rust 侧同样产出 junit + nodeid 级完成表**，与 Python 共用八段 schema 与六条件判据。
+
+选型：**解析 libtest stdout**，不采用 cargo-nextest——本机未装且分发包不能要求同事装工具（零第三方依赖约束）。libtest 行格式稳定：
+
+- 采集集：`cargo test --<target> -- --list` → `<name>: test` 行；
+- 执行：`cargo test --<target> -- --exact <id...>` → 结果行 `test <path> ... ok|FAILED|ignored|bench` + 汇总行 `test result: <R>. N passed; M failed; K ignored; J measured; W filtered out`。
+
+### 15.2 nodeid 形态
+
+`<target>#<test_path>`，如 `lib#daemon::pki_api::tests::test_foo`。`target` 映射：`--lib` → `lib`；`--test X` → X。一次解析只接受**单个测试二进制**的输出（多条 `test result:` 行 → fail，exit 2）；doc-tests 不在 `--lib`/`--test` 范围内，不采集。
+
+### 15.3 脚本（`scripts/cargo_test_evidence.py`，stdlib-only）
+
+| 子命令 | 输入 | 输出 |
+|---|---|---|
+| `list` | `cargo test --<target> -- --list` stdout | `<target>#<name>` nodeid 全集（三源反查展开用） |
+| `parse` | `--exact` 执行 stdout + rc（+ 可选 stderr） | 等价 junit XML + 证据骨架 + 六条件机检 |
+
+- `--required` 文件一行一个 nodeid（`#` 注释），重复行 fail；
+- 编译失败（rc≠0 且无任何 test 行）→ 合成 testcase `<target>#<collection>`（error 子元素），判据 ③ FAIL；
+- 批上限 **≤300 ids**（Windows ~32k 命令行限制，id 均长 ~60 字符），超限拆批——比 Python 的 800 更严；
+- exit：0 全过 / 1 有 FAIL / 2 输入错误。
+
+### 15.4 六条件 Rust 映射
+
+| 判据 | Rust 侧语义 |
+|---|---|
+| ① | 同 Python（run/code revision 由技能核对，不在脚本内） |
+| ② | required ⊆ 执行结果且全 `passed` |
+| ③ | `failed=0` 且无收集错误 |
+| ④ | required 上 `ignored=0`（libtest 无 xfail 概念，`#[ignore]` 即 skip） |
+| ⑤ | required 无缺席（缺席 = 被 filter 掉；`filtered_out` 备查） |
+| ⑥ | `rc==0` 且 `executed>0` 且 `executed==len(required)` |
+
+### 15.5 真机验证（2026-11-22，rust_ext/，cargo 1.93.1）
+
+- `cargo test --lib -- --list` → **2066 例**，脚本 list 模式输出全集一致（2066 条 `lib#<path>`）；
+- `--exact` 真实 3 例全绿 → ②-⑥ 全 PASS，junit 生成正确（testsuite name=`cargo-test-lib`），exit 0；
+- 缺席例（required 含未执行 id）→ ②⑤⑥ FAIL，exit 1；
+- 另有失败批 / 编译错误 / 全绿 / 缺席四类合成夹具均符合设计。
+
+### 15.6 边界
+
+- libtest 无 xfail；`#[ignore]` 记 skipped，进判据 ④ 分母；`bench` 记 muted，不计通过也不判失败；
+- 多二进制（lib + `tests/` 下集成测试）须逐二进制分批（各自 `--list` + `--exact` + parse），不得混判；
+- 编译耗时单列，不计入 10 min 批上限（同 Python 侧口径）。

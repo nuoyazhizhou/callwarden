@@ -47,7 +47,7 @@ description: 验收执行专家：把 ac-map 里的每条 AC 变成可审计证�
 
 | 源 | 依据 | 做法 |
 |---|---|---|
-| A（AC→用例） | `test-plan.md` / `ac-map.md` 登记的文件·类·nodeid | `pytest --collect-only` 展开成 nodeid |
+| A（AC→用例） | `test-plan.md` / `ac-map.md` 登记的文件·类·nodeid | Python：`pytest --collect-only`；Rust：`cargo test --<target> -- --list`（经 `scripts/cargo_test_evidence.py list`）展开成 nodeid |
 | B（符号→用例） | `new\|extend` 符号清单 | **三类字面量并集**扫 `tests/`：① 符号名（snake）② CLI 参数名（**kebab**，如 `--fail-on-findings`）③ i18n key。**只扫符号名会全空并造出假 GAP** |
 | C（改动文件→用例） | `changed_files[]` | 同名测试作种子，再取反向 import 闭包——**闭包只作候选池，不得当执行集**（真实仓库实测可达 1300+ nodeid）；包名以 `PYTHONPATH` 布局为准 |
 | 强制并入 | 改动触及 MCP 注册 / RPC schema / daemon 边界 / `pyproject` / `cicd/*` / `i18n/*` / `docs/cli_reference.md` | 并入 `test_abi_contract.py`、相关 `test_*_wiring.py`、manifest 对应 domain 全量、i18n 与文档门禁 |
@@ -66,7 +66,7 @@ description: 验收执行专家：把 ac-map 里的每条 AC 变成可审计证�
 - 环境：`CW_TEST_MODE=1`、`PYTHONPATH` 按仓库布局、`CARGO_TARGET_DIR` 隔离（触 Rust 时）；命令与版本写进证据。
 - **批次上限**：单批 ≤ 800 nodeid 且 ≤ 10 min；超则拆批，**逐批一个 junit**，逐批 rc/统计写进证据。不允许"只跑一部分就判 PASS"。
 - **检索工具约束**：目录级检索必须限路径 + 限类型（`tests/*.py`，不递归），或走 cw `file_grep`；本仓 `grep -r tests/` 会因上万 py 被 SIGTERM，而**检索失败与"无命中"不可区分**——会直接造出假 `GAP`。检索异常必须显式报错。
-- 涉及 Rust：独立 `cargo test` 批次，不与非 Rust 批混判。
+- 涉及 Rust：独立 `cargo test` 批次，不与非 Rust 批混判。**nodeid 级归属**（详见 `DESIGN.md §15`）：先 `cargo test --<target> -- --list` 取全集，再 `cargo test --<target> -- --exact <ids...>` 执行，stdout 经 `python scripts/cargo_test_evidence.py parse --input <stdout> --target <target> --rc <rc> --required <文件> --junit <路径>` 生成等价 junit + 骨架 + 机检。**批上限 ≤300 ids**（Windows 命令行限制），超限拆批；编译失败 = 收集错误；多二进制（lib + 各集成测试）逐二进制分批，不得混判。
 
 ## 4. 判据（六条件同时成立）
 
@@ -82,6 +82,8 @@ PASS(AC) :=
 ```
 
 `rc=0` **必要不充分**：`-k` 全过滤、误用 `--collect-only`、空收集都可能 rc=0。
+
+> **Rust 批次映射**（`DESIGN.md §15.4`）：② = required 全 `passed`；③ = failed=0 且无收集错误；④ = `ignored=0`（libtest 无 xfail，`#[ignore]` 即 skip）；⑤ = required 无缺席（`filtered_out` 备查）；⑥ = rc=0 且 executed>0 且 executed=len(required)。junit 由 `scripts/cargo_test_evidence.py parse` 生成，nodeid 形态 `<target>#<test_path>`。
 
 **known-red 三条件**（缺一即 masking，本轮 No-Go）：① 条目在 `docs/testing/known_red/known_red.json` 且 `status=open` 未过期；② **不在任何 AC 的 required 集内**；③ 证据显式列出 deselected nodeid + 登记 id + 到期日。`known_red.py` 到期 `exit 2` → 关联 AC 判 FAIL。
 
@@ -123,6 +125,7 @@ C6 探针内容与 revert 证据（sha256 before/after）必须写进 evidence�
 |---|---|---|
 | `references/cw-gates.md` | G0-G6（安装时注入；与 requirements-cw / code-review-cw 共用） | 开工自检、建单 |
 | `references/evidence-spec.md` | 证据八段模板 + 生成方式 + 失败/N/A 示例 + 禁止写入 | 第 5 步 |
+| `scripts/cargo_test_evidence.py` | Rust 批次：list/parse → 等价 junit + 骨架 + 六条件机检 | 第 2/3 步（Rust） |
 | `references/smoke.txt` | 冻结冒烟集（只读，改动须变更单） | 第 2 步兜底 |
 
 ## 🆘 兜底
