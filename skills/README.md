@@ -52,6 +52,19 @@
 - 三个 `install.ps1` 各自把它注入为安装包的 `references/cw-gates.md`（源码单一、分发独立，装到宿主的包自包含）。
 - 改这个文件 = 改三个技能的门禁，须同步验证三包再提交。
 
+### 4.1 宿主矩阵（四个宿主，两种安装器）
+
+| 宿主 | 安装器 | 目标目录 |
+|---|---|---|
+| OpenAI Codex（桌面 / CLI） | 各包 `install.ps1` | `~/.codex/skills/<pkg>/`，并注入 `~/.codex/AGENTS.md` 常驻段 |
+| Claude Code | 各包 `install.ps1` | `~/.claude/skills/<pkg>/` |
+| Trae CN | 各包 `install.ps1`（目录不存在则跳过） | `~/.trae-cn/skills/<pkg>/` |
+| **WorkBuddy（用户级技能）** | `python skills/_shared/install_skill_to_workbuddy.py` | `~/.workbuddy/skills/<pkg>/` |
+
+`install.ps1` **不覆盖** WorkBuddy 自己的用户级技能目录，所以最后一行单列脚本；两者安装语义一致——同样注入 `references/cw-gates.md`、同样不接受包内副本、同样跳过 `__pycache__`/`.pyc`。脚本退出码沿用仓内三态（0=OK / 1=违规 / 64=用法错），支持 `--dry-run` 与 `--dest`。
+
+WorkBuddy 侧技能列表按**目录签名**缓存（`~/.workbuddy/.skill-list-cache.json` 的 `signature` + `watch.dirs`），新增技能目录会让签名不匹配并自动重建——**不要手工改这个缓存文件**，但需重启会话才可见。
+
 ## 5. 工件与提交节奏
 
 运行期工件落在**被开发仓库**的 `.design/<feature>/`（不是本仓）：
