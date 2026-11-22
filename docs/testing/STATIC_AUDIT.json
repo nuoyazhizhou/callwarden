@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "7a7003ba7b9c322d811daf166afa6d25f57d2768",
+  "supplied_source_revision": "38663116352c76852b4bffbc73a4de05a3e608f4",
   "revision_note": "Externally verified HEAD; input hashes (LF-normalized, EOL-independent) bind content, not HEAD alone, not working-tree line endings.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -38,8 +38,8 @@
     }
   },
   "static_tests": {
-    "python_definitions": 7332,
-    "python_source_files": 705,
+    "python_definitions": 7349,
+    "python_source_files": 706,
     "convergence_definitions": 58,
     "skip_calls": {
       "pytest.importorskip": 25,
@@ -57,7 +57,7 @@
     "reason_absent_sites": 23,
     "reason_nonliteral_or_absent_sites": 188,
     "root_cause_reviewed_sites": 0,
-    "rust_src_attributes": 2184,
+    "rust_src_attributes": 2185,
     "rust_src_cfg_test_files": 122
   },
   "inputs": [
@@ -475,7 +475,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_collab.rs",
-      "sha256": "6ad94f943b5cd45ad044e88b9511e1644a8ee267e651771d7a1500ac0b28d00e"
+      "sha256": "ba65f3c3794b7c29794fac47165b2da487bc34b86c03d75f042002d757dbd89e"
     },
     {
       "path": "rust_ext/src/daemon/task_collab_contract.rs",
@@ -551,7 +551,7 @@
     },
     {
       "path": "rust_ext/src/daemon/task_collab_tests_governance.rs",
-      "sha256": "844bbd58c20bc0f39d10a389ebdf7f9101767790fdde031f21ab408edd7426eb"
+      "sha256": "2522a071b4d4823b34ebb754390267aeb64cf17071fc260b739bb91963016bba"
     },
     {
       "path": "rust_ext/src/daemon/task_collab_tests_lease.rs",
@@ -3572,6 +3572,10 @@
     {
       "path": "tests/test_single_track_kernel.py",
       "sha256": "52f30361151ddc72f2b552ab0493cdb37faa71f471b1e57b0dda6700c2d10cba"
+    },
+    {
+      "path": "tests/test_skill_packages_guard.py",
+      "sha256": "f95f49fa42d992fe238121e66991f1dfd28a9adb2258e104d596c0a1771a48d8"
     },
     {
       "path": "tests/test_slow_rpc_watchdog.py",

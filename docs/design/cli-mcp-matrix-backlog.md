@@ -3467,3 +3467,40 @@ architecture 阶段 3「文档深度完善」首批 8 前缀 44 命令已收口�
 | 挂账清零 | §24-§39 各章节「en 文案打磨另立批次」挂账自此**统一清零**：机械缺陷层面已审阅干净，风格级改动（句式/大小写/对齐）判定不做（设计使然 + 断言敏感 + churn 大于收益） |
 | 非目标 | 对齐双空格/标签值小写等设计使然格式；zh 文案；代码内硬编码英文 help（非 i18n 域） |
 | 回滚 | 回退本次提交即可 |
+
+## 48. M3-M8 迁移状态静态复筛：路由层迁移确认完成（2026-11-22）
+
+### 48.1 缘起
+
+用户质疑「最近都是弄文档，开发优化是否已完成」。经盘点确认宏观事实：
+**Python→Rust daemon 路由层迁移（ledger M1-M8）实际已全部落地**，此前 §4
+状态矩阵停留在 2026-08-11 初筛口径（python_local=190），严重过时。本章以
+静态复筛证实并刷新大盘状态。
+
+### 48.2 装置与口径
+
+- 新增可重跑盘点脚本 `scripts/mcp_migration_rescan.py`：AST 解析 12 个
+  `server/tools/tools_*.py` 的 244 个 `@mcp.tool()` 函数（剥 docstring），
+  提取函数体实际 RPC method 字面量，与 `rust_ext/src/daemon` dispatch
+  注册行（682 个 method，含多别名分支）比对，五态分桶。
+- 三轮口径校准（详见 ledger §9.59）：矩阵 JSON 的 RPC 字段大量为空 →
+  函数体字面量 → 无点 method 命名 + docstring 误报剔除。
+- 证据：`.trae-cn/evidence/mcp-migration-rescan-20261122.json`。
+
+### 48.3 结论
+
+| 口径 | 2026-08-11 | 2026-11-22 |
+|---|---|---|
+| production_ready | 18 | **243** |
+| python_local / mixed | 190 / 25 | **0 / 0** |
+| 间接治理写路由 | — | 1（`file_write` → `governed_write_file`） |
+
+M1-M8 各 slice「当前判断」已刷新为 `daemon_routed`（ledger §4）。近期章节
+收敛为文档/口径类收尾的宏观原因即此：迁移大盘已毕，backlog 挂账只剩收尾项。
+
+### 48.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 静态局限 | production_ready = dispatch 注册命中，不替代 §2.2「活体 round-trip」证据；逐工具完成卡片仍以真实入口测试为准 |
+| 后续开发面 | 不再以「迁工具」为批次单位；新批次应为能力级（daemon 性能、鉴权、TLS/mTLS 硬化、HTTP 并发等架构项）或缺陷驱动 |

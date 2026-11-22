@@ -103,16 +103,22 @@ CLI / MCP / Agent / WSL client
 | Slice | 工具域 | 数量 | 当前判断 | 首要动作 |
 |---|---|---:|---|---|
 | M0 | 注册/协议/健康检查 | 237 | `registered` | 生成运行时工具清单、协议版本和健康报告 |
-| M1 | task/step/claim/report/status/events | 52 | `mixed_fallback` | 先收口 task state machine、split 步骤、daemon-only 写和错误语义 |
-| M2 | file/symbol/grep/issues/tests | 待逐工具确认 | `mixed_fallback` | 每类补真实 daemon RPC success/reject round-trip |
-| M3 | workspace/snapshot/manifest/refresh | 27 + 相关工具 | `mixed_fallback` | 统一 authority、workspace、snapshot generation 和路径权限 |
-| M4 | graph/callers/callees/search/impact | 10 + query/summary 子集 | `mixed_fallback` | Rust GraphStore 查询，去掉静默 SQL fallback |
-| M5 | build/parse/facts/symbol/call | 语义工具子集 | `python_local`/待迁移 | 将生产写路径切到 Rust BuildService |
-| M6 | security/guardrail/rules | 36 + 9 | `python_local`/`mixed_fallback` | 保持 workspace 隔离、审计和错误契约 |
-| M7 | identity/lease/collab | 7 + 8 + 6 | `mixed_fallback` | 统一身份、租约、受保护变更和 task events |
-| M8 | semantic/summary/evolution | 19 + 31 | `python_local`/待迁移 | 先列出依赖的 Rust service，再逐功能切换 |
+| M1 | task/step/claim/report/status/events | 52 | `daemon_routed`（§9.59 复筛 55+1 production_ready） | ~~先收口 task state machine~~ 已收口 |
+| M2 | file/symbol/grep/issues/tests | 待逐工具确认 | `daemon_routed`（M2.1-M2.5 closed） | 已收口 |
+| M3 | workspace/snapshot/manifest/refresh | 27 + 相关工具 | `daemon_routed`（§9.59 复筛 27 production_ready） | 已收口 |
+| M4 | graph/callers/callees/search/impact | 10 + query/summary 子集 | `daemon_routed`（§9.59 复筛 production_ready） | 已收口 |
+| M5 | build/parse/facts/symbol/call | 语义工具子集 | `daemon_routed`（§9.59 复筛 production_ready） | 已收口 |
+| M6 | security/guardrail/rules | 36 + 9 | `daemon_routed`（§9.59 复筛 36+9 production_ready） | 已收口 |
+| M7 | identity/lease/collab | 7 + 8 + 6 | `daemon_routed`（§9.59 复筛 21 production_ready） | 已收口 |
+| M8 | semantic/summary/evolution | 19 + 31 | `daemon_routed`（§9.59 复筛 50 production_ready） | 已收口 |
 
 > 说明：`tools_task.py` 中不少工具同时出现 daemon route 和本地闭包，这是“混合实现”而不是已完成。后续必须以函数级清单记录 `rpc_method`、fallback、测试和证据路径。
+>
+> **2026-11-22 复筛（§9.59）**：以 dispatch 注册行口径静态重筛，244 个 MCP 工具中
+> **243 个 production_ready**（`_route` 直连 + Rust dispatch 注册命中），1 个
+> （`file_write`）经 `governed_write_file` 治理写链路间接路由。§4.1 的
+> `python_local=190` 为 2026-08-11 旧口径，已全面过时——路由层迁移实际已完成；
+> `production_ready` 仍属静态判定，活体 round-trip 证据以各工具完成卡片为准。
 
 ### 4.1 函数级源码启发式初筛
 
@@ -4424,6 +4430,45 @@ elif 链对 `_SUBCOMMANDS` 全集闭合，fallthrough 不可达。
 
 - §24-§39「en 文案打磨另立批次」挂账**统一清零**；风格级改动判定不做
   （设计使然 + 断言敏感 + churn 大于收益）。后续如再现文案缺陷按单点修复。
+
+## 9.59 M3-M8 迁移状态静态复筛：路由层迁移确认完成（2026-11-22）
+
+### 1. 装置
+
+- 脚本：`scripts/mcp_migration_rescan.py`（可重跑盘点工具）：解析
+  `server/tools/*.py` 全部 `@mcp.tool()` 函数（剥 docstring 后做 route/local
+  信号分类），提取函数体实际 RPC method 字面量（`_route('m')` 等），与
+  `rust_ext/src/daemon` dispatch 注册行（含 `"a" | "b" =>` 多别名）比对。
+- 证据：`.trae-cn/evidence/mcp-migration-rescan-20261122.json`（244 行明细 +
+  682 个注册 method + 汇总）。
+- 口径修正记录：初版用 2026-08 矩阵 JSON 的 `daemon_rpc_method`（大量为空）
+  误判 216 个 missing → 改为函数体字面量；再修无点 method 命名
+  （`"get_role_view"` 等）与 docstring 误报，三轮校准后收敛。
+
+### 2. 结论
+
+| 口径 | 2026-08-11 初筛（§4.1） | 2026-11-22 复筛（§9.59） |
+|---|---|---|
+| python_local | 190 | **0** |
+| production_ready（route + Rust 注册命中） | 18 | **243** |
+| 间接治理写路由 | — | 1（`file_write` → `governed_write_file`） |
+| mixed_fallback | 25 | 0（docstring 误报剔除） |
+
+**Python→Rust daemon 路由层迁移确认完成**：§4 矩阵 M1-M8 的
+`mixed_fallback`/`python_local` 旧状态全面过时，已刷新为 `daemon_routed`。
+这解释了近期章节化只剩文档/口径收尾的宏观原因：开发大盘（工具迁移）已按
+M1→M8 逐 slice 落地完毕。
+
+### 3. 验证与边界
+
+| 项 | 结果 |
+| --- | --- |
+| 重筛脚本输出（244 工具 × 12 模块） | production_ready=243 + 间接 1，无 missing/mixed/local |
+| 三轮口径校准（矩阵 RPC 字段 → 函数体字面量 → 无点命名/docstring 剥离） | 收敛，抽查 `get_role_view`/`query.stats`/`file_write` 均实证 |
+
+边界：`production_ready` 是**静态**判定（dispatch 注册命中），按 §2.2 口径
+不替代活体 round-trip 证据；个别工具函数体经共享 helper 二次封装
+（如 `governed_write_file`）时以 helper 层路由为准。剩余开发面详见 backlog §48。
 
 ## 10. 相关真相源
 
