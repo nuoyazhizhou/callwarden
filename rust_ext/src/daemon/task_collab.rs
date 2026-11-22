@@ -574,10 +574,17 @@ fn check_role_independence(
     }
     let mut stmt = conn
         .prepare(
+            // 空 agent_instance_id 不得参与匹配：注册时 instance 为空是合法状态（如
+            // 单进程 MCP server 没有实例隔离概念），若直接写 `agent_instance_id = ?2`
+            // 会让 ?2="" 命中**所有** instance 为空的历史行，造成跨 agent 假阳性
+            // （实测：implementer 注册后任何 reviewer 认领都被拒，报
+            // E_ROLE_INDEPENDENCE_VIOLATION 且把无关 agent 列为冲突方）。
+            // session 侧原本就有 `!= ''` 守卫，instance 侧此前漏了，此处补齐。
             "SELECT agent_id, agent_instance_id, session_id, role
              FROM agent_registrations
              WHERE status = 'active' AND role != '' AND role != ?1
-               AND (agent_instance_id = ?2 OR (session_id != '' AND session_id = ?3))",
+               AND ((?2 != '' AND agent_instance_id = ?2)
+                    OR (session_id != '' AND session_id = ?3))",
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("独立性门禁查询失败: {}", e)))?;
     let rows = stmt

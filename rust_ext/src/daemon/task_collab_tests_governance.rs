@@ -922,6 +922,62 @@ fn test_role_independence_gate_blocks_shared_instance() {
 }
 
 #[test]
+fn test_role_independence_gate_allows_empty_instance_with_distinct_session() {
+    // A3 回归（2026-11-22 实测缺陷）：空 agent_instance_id 不应参与冲突匹配。
+    //
+    // 缺陷：check_role_independence 的 SQL 写 `agent_instance_id = ?2`，当注册行的
+    // instance 为空（合法状态——单进程 MCP server 无实例隔离概念）时，?2="" 会命中
+    // **所有** instance 为空的历史行，把无关 agent 判成冲突方：
+    //   E_ROLE_INDEPENDENCE_VIOLATION: 角色 independent_reviewer (agent=reviewer-w2-3,
+    //   instance=, session=sess-w2-3-review) 与 角色 implementer 冲突
+    // 后果：只要有任意一个空-instance 的 reviewer 注册过，之后所有 implementer 都
+    // 无法认领任务（fail-closed 变成 fail-always）。
+    //
+    // session 侧原本已有 `!= ''` 守卫，instance 侧漏了。本测试锁住补齐后的行为：
+    // 同为空 instance 但 session 不同 ⇒ 不冲突，认领成功。
+    let (_dir, db_path) = temp_db();
+    let store = TaskCollabStore::new(&db_path).unwrap();
+    let peer_a = PeerCredential::new_unix(1000, 1000, 1234);
+    let peer_b = PeerCredential::new_unix(1001, 1001, 5678);
+    register_agent_with_identity(&store, &peer_a, "agent-imp", "", "SES-A", "implementer");
+    register_agent_with_identity(
+        &store,
+        &peer_b,
+        "agent-rev",
+        "",
+        "SES-B",
+        "independent_reviewer",
+    );
+    seed_workspace(&store);
+    store
+        .handle_task_create(
+            peer_b.clone(),
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(),  "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-INDEP-EMPTY", "title": "indep-empty"}),
+        )
+        .unwrap();
+
+    let claim = store.handle_task_claim(
+        peer_b,
+        &serde_json::json!({
+            "task_id": "T-INDEP-EMPTY",
+            "agent_session_id": "SES-B",
+            "identity": {
+                "agent_id": "agent-rev",
+                "agent_instance_id": "",
+                "session_id": "SES-B",
+                "model_id": "claude-test",
+                "role": "independent_reviewer",
+            },
+        }),
+    );
+    assert!(
+        claim.is_ok(),
+        "空 instance 且 session 不同不应触发独立性冲突，实际: {:?}",
+        claim.err()
+    );
+}
+
+#[test]
 fn test_contract_set_bumps_revision_and_audits() {
     // A3: 合同变更必须生成新 revision 并追加 contract_set 审计事件
     let (_dir, db_path) = temp_db();
