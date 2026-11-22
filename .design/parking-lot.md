@@ -12,6 +12,7 @@
 | PL-05 | skillpkg-guard R3 · design-gate #5 | 自检器只查 `install.ps1` 里有无 `_shared` + `cw-gates.md` 两个标记，不查注入**目标目录**是否正确 | 语义校验需跑 PowerShell 或解析 AST，成本远超收益；本检查定位是「防忘记」不是「防写错」 | 技能包分发健壮性（与 PL-01 同批） | 出现一次真实「注入到错目录」事故后再评估；届时优先做「安装后自检」而非静态解析 |
 | PL-06 | 2026-11-22 全局重检 | registry 共 202 行 / 192 个归一化 root。`c:/git_work/callwarden` 一个目录占 **10 行**（2 行 `c:/…` + 8 行 `\\?\C:\…` 扩展路径形式），9 archived + 1 active；`c:/git_work/tokenslim` 同理 2 行。**每个 root 仅 1 条 active，不存在重复 active 注册**，故不是正确性问题，只是 workspace 身份未归一化造成的卫生问题 | 归一化改的是 workspace 身份生成逻辑，牵动 register / snapshot / principal grant 三处键，属行为变更；且需同时清理历史归档行 | workspace 身份归一化 | 注册入口对 `\\?\` 前缀、大小写、分隔符做统一规范化，并有单测锁定「同目录不同书写形式 → 同一 identity」；历史归档行清理另开迁移 |
 | PL-07 | 2026-11-22 全局重检 | `cw daemon status 1193` / `status 908` 均返回 `E_PRINCIPAL_WORKSPACE_FORBIDDEN`（principal `pr_3a44c53b…`）；同一命令传 hex 实例 `4baea3ff12c2ea5c` 正常返回三元绑定，`publish 4baea3ff12c2ea5c` 亦正常。事实面：`workspace_principal_grants` 的键域是 task_db id（`1`）、外部 id（`175`/`ws_ext936`）与路径串（`c:\git_work\callwarden`），**不含 registry 数字 id** | 属 principal 授权面语义（安全取证 #1–#5 刚落地），改键域须与 ADR-002 §5.4 对齐，不能顺带改 | daemon principal 授权面 | `status`/`publish` 的参数域与 grant 键域对齐（或 `status` 内部按 instance 解析后鉴权），并补「数字 registry id 调用」的正向 + 负向测试 |
+| PL-08 | ws-identity R0 | test-cw 验收执行无 worktree 隔离：验收在开发工作区跑会吸入在途未提交改动，证据不纯；AGENTS.md 仅对 capture 有 worktree 纪律（L216-217），验收执行没有强制 | 属 test-cw 执行语义，与 workspace 身份归一正交；本轮聚焦身份层，验收隔离需 test-cw 流程改动 | test-cw 验收隔离 | test-cw 强制在干净 worktree / 独立分支执行验收（或等价 whitelist 机制），并有验收证据佐证 |
 
 ---
 
