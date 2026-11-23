@@ -459,6 +459,39 @@ def ensure_write_governance_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+SYMBOL_RATIONALE_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS symbol_rationale (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_version_id INTEGER NOT NULL,
+        file_instance_id INTEGER NOT NULL DEFAULT 0,
+        symbol_hash TEXT NOT NULL DEFAULT '',
+        qualified_name TEXT NOT NULL DEFAULT '',
+        line INTEGER NOT NULL DEFAULT 0,
+        prefix TEXT NOT NULL DEFAULT '',
+        text TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_symbol_rationale_version_qualified "
+    "ON symbol_rationale(file_version_id, qualified_name)",
+    "CREATE INDEX IF NOT EXISTS idx_symbol_rationale_hash "
+    "ON symbol_rationale(symbol_hash)",
+)
+
+
+def ensure_symbol_rationale_schema(conn: sqlite3.Connection) -> None:
+    """rationale 语义注释表幂等补齐（扩展 schema，不 bump SCHEMA_VERSION）。
+
+    与 PKI / write governance 同策略：DDL 不进 canonical SCHEMA_SQL，避免
+    storage.rs 的 canonical checksum 校验强制重建已安装二进制。写入方是 Python
+    建图入库路径（db_build._save_rationale_for_version），查询方是
+    db_query.get_symbol / get_symbol_content_by_hash。
+    """
+    for statement in SYMBOL_RATIONALE_SCHEMA_STATEMENTS:
+        conn.execute(statement)
+    conn.commit()
+
+
 def _migrate_v1_to_v2(conn: sqlite3.Connection):
     """v1 -> v2: 新增 Semgrep 相关表和索引"""
     conn.execute("""
@@ -4358,6 +4391,8 @@ class CodeGraphBase:
                 ensure_pki_schema(self.conn)
                 # S3：远端写治理表幂等补齐（辅助 schema，不 bump 版本）。
                 ensure_write_governance_schema(self.conn)
+                # rationale 语义注释表幂等补齐（辅助 schema，不 bump 版本）。
+                ensure_symbol_rationale_schema(self.conn)
                 return
 
         # 显式 rollback 或 Rust 扩展不存在时才进入兼容迁移路径。
@@ -4409,6 +4444,8 @@ class CodeGraphBase:
         ensure_pki_schema(self.conn)
         # S3：远端写治理表幂等补齐（辅助 schema，不 bump 版本）。
         ensure_write_governance_schema(self.conn)
+        # rationale 语义注释表幂等补齐（辅助 schema，不 bump 版本）。
+        ensure_symbol_rationale_schema(self.conn)
 
         # Phase 6/7 扩展 schema（CREATE IF NOT EXISTS，幂等）
         # 这些 schema 由独立模块管理，不进入 SCHEMA_SQL 的版本化迁移流，

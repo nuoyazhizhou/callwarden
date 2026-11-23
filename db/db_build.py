@@ -3728,14 +3728,60 @@ class BuildMixin:
         rollback_config 中 feature=rust_batch_save_symbols 置为 1 时回退 Python。
         仅在 Rust 扩展不可用或显式 rollback 时回退 Python；Rust 写事务失败直接抛错。
         """
+        written_via_rust = False
         # Phase 2-6 wire-production: Rust 短路
         if not self.is_feature_rolled_back("rust_batch_save_symbols"):
             if self._save_symbols_for_version_via_rust(file_version_id, file_instance_id, result):
-                return
+                written_via_rust = True
             # Rust 扩展可用时写路径已经闭合；异常会在 facade 内直接抛出。
 
-        # Python 降级路径
-        self._save_symbols_for_version_python(file_version_id, file_instance_id, result)
+        if not written_via_rust:
+            # Python 降级路径
+            self._save_symbols_for_version_python(file_version_id, file_instance_id, result)
+
+        # rationale 语义注释入库（两种写路径共用；无命中时零写入）
+        self._save_rationale_for_version(file_version_id, file_instance_id, result)
+
+    def _save_rationale_for_version(self, file_version_id: int, file_instance_id: int,
+                                    result: Dict[str, Any]):
+        """把解析阶段挂到符号上的 rationale 语义注释写入 symbol_rationale 表。
+
+        仅写入归属到符号的条目（符号级列表）；文件级 result["rationale"] 不落库，
+        保持“无注释文件入库行为不变”：无条目不执行任何 SQL。
+        """
+        all_symbols = list(result.get("symbols", []))
+        for inline_mod in result.get("inline_modules", []) or []:
+            all_symbols.extend(inline_mod.get("symbols", []))
+
+        rows = []
+        for sym in all_symbols:
+            rationale = sym.get("rationale")
+            if not rationale:
+                continue
+            for item in rationale:
+                rows.append((
+                    file_version_id,
+                    file_instance_id,
+                    sym.get("content_hash", ""),
+                    sym.get("qualified_name", ""),
+                    int(item.get("line") or 0),
+                    item.get("prefix", ""),
+                    item.get("text", ""),
+                ))
+        if not rows:
+            return
+
+        self.conn.execute(
+            "DELETE FROM symbol_rationale WHERE file_version_id = ?",
+            (file_version_id,),
+        )
+        self.conn.executemany(
+            """INSERT INTO symbol_rationale
+               (file_version_id, file_instance_id, symbol_hash, qualified_name,
+                line, prefix, text)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
 
     def _save_symbols_for_version_via_rust(self, file_version_id: int, file_instance_id: int, result: Dict[str, Any]) -> bool:
         """Rust 短路路径：调用 batch_save_symbols 处理单文件符号写入
