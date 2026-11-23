@@ -889,6 +889,379 @@ class ImpactMixin:
         return report
 
     # ------------------------------------------------------------------
+    # Smart CI：变更驱动的最小检查集选择
+    # ------------------------------------------------------------------
+
+    # 语法检查推荐命令（按语言；未列语言不产出 syntax 检查项）
+    _SYNTAX_COMMANDS: Dict[str, str] = {
+        "python": "python -m py_compile {file}",
+        "rust": "cargo check",
+        "javascript": "npx tsc --noEmit",
+        "typescript": "npx tsc --noEmit",
+    }
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """转义 LIKE 通配符，避免路径中的 % / _ 被当作通配符。"""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def _symbols_for_changed_files(
+        self, ws_id: int, changed_files: List[str]
+    ) -> List[Dict[str, Any]]:
+        """把变更文件解析为工作区内的符号
+
+        精确 rel_path 优先；未命中时按后缀匹配兜底（应对 diff 路径前缀差异）。
+        结果按 (file_path, qualified_name, symbol_hash) 排序，保证同一变更
+        反复调用得到完全一致的选择集。
+
+        Args:
+            ws_id: 工作区 ID
+            changed_files: 变更文件路径列表（相对或绝对路径）
+
+        Returns:
+            符号列表（symbol_hash / qualified_name / file_path）
+        """
+        found: Dict[str, Dict[str, Any]] = {}
+        for raw in changed_files:
+            rel = self._normalize_path(raw or "")
+            if not rel:
+                continue
+            rows = self.conn.execute(
+                """
+                SELECT s.symbol_hash, s.qualified_name, fi.rel_path
+                FROM symbols s
+                JOIN file_instances fi ON s.file_instance_id = fi.id
+                WHERE fi.workspace_id = ? AND fi.rel_path = ?
+                ORDER BY s.qualified_name, s.id
+                """,
+                (ws_id, rel),
+            ).fetchall()
+            if not rows:
+                rows = self.conn.execute(
+                    """
+                    SELECT s.symbol_hash, s.qualified_name, fi.rel_path
+                    FROM symbols s
+                    JOIN file_instances fi ON s.file_instance_id = fi.id
+                    WHERE fi.workspace_id = ? AND fi.rel_path LIKE ? ESCAPE '\\'
+                    ORDER BY fi.rel_path, s.qualified_name, s.id
+                    """,
+                    (ws_id, "%" + self._escape_like(rel)),
+                ).fetchall()
+            for row in rows:
+                key = f"{row['qualified_name']}\u0000{row['symbol_hash']}"
+                if key in found:
+                    continue
+                found[key] = {
+                    "symbol_hash": row["symbol_hash"] or "",
+                    "qualified_name": row["qualified_name"] or "",
+                    "file_path": self._normalize_path(row["rel_path"] or ""),
+                }
+        return sorted(
+            found.values(),
+            key=lambda s: (s["file_path"], s["qualified_name"], s["symbol_hash"]),
+        )
+
+    def _impacted_symbols_for_seeds(
+        self, seeds: List[Dict[str, Any]], depth: int
+    ) -> List[Dict[str, Any]]:
+        """合并各触达符号的影响半径（blast_radius BFS），按限定名去重排序。
+
+        Args:
+            seeds: 触达符号列表（含 symbol_hash）
+            depth: 影响半径遍历深度
+
+        Returns:
+            受影响符号列表（qualified_name / file_path / symbol_hash），
+            按 qualified_name 稳定排序；blast_radius 失败时 fail-soft 跳过。
+        """
+        impacted: Dict[str, Dict[str, Any]] = {}
+        for seed in seeds:
+            symbol_hash = seed.get("symbol_hash") or ""
+            if not symbol_hash:
+                # 无 hash 时至少把种子自身纳入影响面
+                qn = seed.get("qualified_name") or ""
+                if qn:
+                    impacted.setdefault(qn, {
+                        "qualified_name": qn,
+                        "symbol_hash": "",
+                        "file_path": seed.get("file_path", ""),
+                    })
+                continue
+            try:
+                blast = self.blast_radius(symbol_hash, depth)
+            except Exception:
+                blast = None
+            if not blast:
+                qn = seed.get("qualified_name") or ""
+                if qn:
+                    impacted.setdefault(qn, dict(seed))
+                continue
+            for layer in blast.get("layers") or []:
+                for sym in layer.get("symbols") or []:
+                    qn = sym.get("qualified_name") or ""
+                    if not qn:
+                        continue
+                    impacted.setdefault(qn, {
+                        "qualified_name": qn,
+                        "symbol_hash": sym.get("symbol_hash") or "",
+                        "file_path": sym.get("file_path") or "",
+                    })
+        return sorted(impacted.values(), key=lambda s: s["qualified_name"])
+
+    def _select_tests_for_symbols(
+        self, qualified_names: List[str]
+    ) -> List[Dict[str, Any]]:
+        """对受影响符号复用 test_impact_selection，合并去重测试清单。
+
+        Args:
+            qualified_names: 受影响符号限定名（已排序）
+
+        Returns:
+            测试列表（qualified_name / name / file_path / module_path /
+            start_line / covers），按测试限定名排序；covers 为触发该测试的
+            受影响符号限定名（升序）。
+        """
+        merged: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "test_impact_selection"):
+            return []
+        for qn in qualified_names:
+            try:
+                tests = self.test_impact_selection(qn) or []
+            except Exception:
+                continue
+            for t in tests:
+                test_qn = t.get("qualified_name") or ""
+                if not test_qn:
+                    continue
+                entry = merged.get(test_qn)
+                if entry is None:
+                    entry = {
+                        "qualified_name": test_qn,
+                        "name": t.get("name") or "",
+                        "file_path": t.get("file_path") or "",
+                        "module_path": t.get("module_path") or "",
+                        "start_line": t.get("start_line"),
+                        "covers": [],
+                    }
+                    merged[test_qn] = entry
+                if qn not in entry["covers"]:
+                    entry["covers"].append(qn)
+        for entry in merged.values():
+            entry["covers"].sort()
+        return [merged[qn] for qn in sorted(merged)]
+
+    def _detect_guardrail_findings(
+        self, changed_files: List[str]
+    ) -> List[Dict[str, Any]]:
+        """对变更文件做 guardrail 只读检测（check_before_edit，不落库）。
+
+        Args:
+            changed_files: 变更文件路径列表
+
+        Returns:
+            finding 列表（rule_id / severity / file_path / message），按
+            (file_path, rule_id, message) 稳定排序；文件不可读时无产出。
+        """
+        findings: List[Dict[str, Any]] = []
+        if not hasattr(self, "check_before_edit"):
+            return findings
+        for rel in changed_files:
+            try:
+                result = self.check_before_edit(rel, "")
+            except Exception:
+                continue
+            for f in (result or {}).get("findings") or []:
+                findings.append({
+                    "rule_id": f.get("rule_id") or "",
+                    "severity": f.get("severity") or "",
+                    "file_path": rel,
+                    "message": f.get("message") or "",
+                })
+        return sorted(
+            findings,
+            key=lambda f: (f["file_path"], f["rule_id"], f["message"]),
+        )
+
+    def _syntax_command(self, rel_path: str) -> Optional[str]:
+        """按文件语言给出语法检查推荐命令（不支持的语言返回 None）。"""
+        try:
+            from ..config import detect_language_from_path
+            lang = detect_language_from_path(rel_path)
+        except Exception:
+            return None
+        template = self._SYNTAX_COMMANDS.get((lang or "").lower())
+        if not template:
+            return None
+        return template.format(file=rel_path)
+
+    def smart_ci_plan(
+        self,
+        changed_files: Optional[List[str]] = None,
+        diff_text: str = "",
+        depth: int = 2,
+    ) -> Dict[str, Any]:
+        """Smart CI：按变更影响面选择最小充分检查集
+
+        流程（纯只读）：
+        1. 解析变更面：diff_text 经 diff_to_symbol 映射符号；changed_files 经
+           符号表解析（精确/后缀匹配）。两者可同时给出，按符号去重。
+        2. 影响半径：对触达符号逐个 blast_radius 合并影响面（去重 + 稳定排序）。
+        3. 测试选择：对影响面内每个符号复用 test_impact_selection 合并测试。
+        4. 检查集：语法检查（按语言）+ guardrail 规则检测（check_before_edit，
+           只读不落库）+ 测试命令；每项附推荐命令与预期证据形式。
+
+        验收口径：
+        - 同一变更反复调用输出完全一致（全链路稳定排序）；
+        - 无受影响符号时返回空检查集（checks / test_selection 均为空）。
+
+        Args:
+            changed_files: 变更文件路径列表（可选）
+            diff_text: git diff 文本（可选）
+            depth: 影响半径遍历深度（默认 2）
+
+        Returns:
+            {
+                "changed_files": [...],
+                "seed_symbols": [...],       # diff/文件直接触达的符号
+                "impacted_symbols": [...],   # 影响半径合并后的符号
+                "test_selection": [...],     # 需要运行的测试
+                "checks": [...],             # 推荐检查项（含 command/evidence）
+                "selection": {...},          # 选择统计（可审计）
+                "summary": "...",
+            }
+        """
+        normalized_files: List[str] = []
+        seeds: Dict[str, Dict[str, Any]] = {}
+
+        if diff_text:
+            for item in self.diff_to_symbol(diff_text) or []:
+                rel = self._normalize_path(item.get("file_path") or "")
+                if rel:
+                    normalized_files.append(rel)
+                key = item.get("symbol_hash") or item.get("qualified_name") or ""
+                if key and key not in seeds:
+                    seeds[key] = {
+                        "symbol_hash": item.get("symbol_hash") or "",
+                        "qualified_name": item.get("qualified_name") or "",
+                        "file_path": rel,
+                        "change_type": item.get("change_type") or "",
+                    }
+
+        for raw in changed_files or []:
+            rel = self._normalize_path(raw or "")
+            if rel:
+                normalized_files.append(rel)
+
+        normalized_files = sorted(set(normalized_files))
+
+        if normalized_files:
+            ws_id = self._get_active_workspace_id()
+            for sym in self._symbols_for_changed_files(ws_id, normalized_files):
+                key = sym.get("symbol_hash") or sym.get("qualified_name") or ""
+                if key and key not in seeds:
+                    seeds[key] = dict(sym)
+
+        seed_list = sorted(
+            seeds.values(),
+            key=lambda s: (
+                s.get("file_path", ""),
+                s.get("qualified_name", ""),
+                s.get("symbol_hash", ""),
+            ),
+        )
+        impacted = self._impacted_symbols_for_seeds(seed_list, depth)
+
+        result: Dict[str, Any] = {
+            "changed_files": normalized_files,
+            "seed_symbols": seed_list,
+            "impacted_symbols": impacted,
+            "test_selection": [],
+            "checks": [],
+            "selection": {
+                "strategy": "impact-radius+guardrail",
+                "depth": depth,
+                "changed_file_count": len(normalized_files),
+                "seed_symbol_count": len(seed_list),
+                "impacted_symbol_count": len(impacted),
+                "test_count": 0,
+                "rule_ids": [],
+            },
+            "summary": "",
+        }
+
+        # 无受影响符号 → 空检查集（验收口径）
+        if not impacted:
+            result["summary"] = "无受影响符号，检查集为空"
+            return result
+
+        tests = self._select_tests_for_symbols(
+            [s["qualified_name"] for s in impacted if s.get("qualified_name")]
+        )
+        result["test_selection"] = tests
+
+        checks: List[Dict[str, Any]] = []
+
+        # 1) 测试检查项：按测试文件聚合（同一文件只推荐一次，附带覆盖的测试名）
+        tests_by_file: Dict[str, List[str]] = {}
+        for t in tests:
+            fp = t.get("file_path") or ""
+            if not fp:
+                continue
+            tests_by_file.setdefault(fp, []).append(t["qualified_name"])
+        for fp in sorted(tests_by_file):
+            names = sorted(set(tests_by_file[fp]))
+            checks.append({
+                "check_id": f"test:{fp}",
+                "kind": "test",
+                "target": fp,
+                "command": f"pytest -q {fp}",
+                "evidence": "pytest 汇总行（passed/failed 计数，0 failed）",
+                "related_symbols": names,
+            })
+
+        # 2) 语法检查项：按变更文件语言
+        for rel in normalized_files:
+            cmd = self._syntax_command(rel)
+            if not cmd:
+                continue
+            checks.append({
+                "check_id": f"syntax:{rel}",
+                "kind": "syntax",
+                "target": rel,
+                "command": cmd,
+                "evidence": "命令退出码 0（无语法错误）",
+            })
+
+        # 3) guardrail 规则检查项：按 (rule_id, file) 聚合命中
+        guard_findings = self._detect_guardrail_findings(normalized_files)
+        rule_ids = sorted({f["rule_id"] for f in guard_findings if f["rule_id"]})
+        seen_rule_file = set()
+        for f in guard_findings:
+            key = (f["rule_id"], f["file_path"])
+            if key in seen_rule_file:
+                continue
+            seen_rule_file.add(key)
+            checks.append({
+                "check_id": f"guardrail:{f['rule_id']}:{f['file_path']}",
+                "kind": "guardrail",
+                "target": f["file_path"],
+                "rule_id": f["rule_id"],
+                "severity": f["severity"],
+                "command": f"cw guardrail scan --file {f['file_path']}",
+                "evidence": "cw guardrail scan 输出该文件无 block 级 finding",
+            })
+
+        checks.sort(key=lambda c: c["check_id"])
+        result["checks"] = checks
+        result["selection"]["test_count"] = len(tests)
+        result["selection"]["rule_ids"] = rule_ids
+        result["summary"] = (
+            f"受影响符号 {len(impacted)} 个，选中测试 {len(tests)} 个，"
+            f"检查项 {len(checks)} 项"
+        )
+        return result
+
+    # ------------------------------------------------------------------
     # 风险评分 / 边置信度（评审就绪报告增强）
     # ------------------------------------------------------------------
 
