@@ -40,6 +40,13 @@ def _call_daemon_rpc(method: str, params: Optional[Dict[str, Any]] = None) -> An
     from callwarden.config import E_HTTP_DAEMON_UNAVAILABLE
     client = get_daemon_client()
     try:
+        if getattr(client, "is_http_client", False) and hasattr(
+            client, "call_with_autostart"
+        ):
+            # HTTP 单轨：运行期调用走自愈（stale/missing manifest 映射为
+            # daemon 不可用 → ensure/spawn_http_daemon），避免 MCP server
+            # 长驻进程中缓存死端口后报 E_HTTP_DAEMON_UNAVAILABLE 直接退出。
+            return client.call_with_autostart(method, params or {})
         call = getattr(client, "call", None) or getattr(client, "_rpc", None).call
         return call(method, params or {})
     except DaemonUnavailableError:
