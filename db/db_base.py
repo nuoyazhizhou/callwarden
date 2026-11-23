@@ -13,7 +13,12 @@ from __future__ import annotations
 # ModuleResolver / CallResolver / RustParser 都在 _try_init_resolvers /
 # _try_init_rust_parser 中懒加载。frozen 包无 callwarden.parsers 时，
 # CodeGraphDB 仍可初始化，仅 Rust mod_decls 提取降级。
-from .schema import SCHEMA_VERSION, SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL
+from .schema import (
+    SCHEMA_VERSION,
+    SCHEMA_TABLES_SQL,
+    SCHEMA_INDEXES_SQL,
+    ensure_session_fts_schema,
+)
 from .. import config as _config_module
 
 import os
@@ -4393,6 +4398,8 @@ class CodeGraphBase:
                 ensure_write_governance_schema(self.conn)
                 # rationale 语义注释表幂等补齐（辅助 schema，不 bump 版本）。
                 ensure_symbol_rationale_schema(self.conn)
+                # 会话/消息 FTS5 全文索引幂等补齐（辅助 schema，不 bump 版本）。
+                ensure_session_fts_schema(self.conn)
                 return
 
         # 显式 rollback 或 Rust 扩展不存在时才进入兼容迁移路径。
@@ -4446,6 +4453,8 @@ class CodeGraphBase:
         ensure_write_governance_schema(self.conn)
         # rationale 语义注释表幂等补齐（辅助 schema，不 bump 版本）。
         ensure_symbol_rationale_schema(self.conn)
+        # 会话/消息 FTS5 全文索引幂等补齐（辅助 schema，不 bump 版本）。
+        ensure_session_fts_schema(self.conn)
 
         # Phase 6/7 扩展 schema（CREATE IF NOT EXISTS，幂等）
         # 这些 schema 由独立模块管理，不进入 SCHEMA_SQL 的版本化迁移流，

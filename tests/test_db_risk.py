@@ -8,9 +8,18 @@ B. 集成（CodeGraphDB.review_readiness_report）：用合成调用图验证
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from callwarden.db.db import CodeGraphDB
+from callwarden.db.db_sessions import (
+    build_match_query,
+    search_messages,
+    search_sessions,
+    search_sessions_and_messages,
+)
+from callwarden.db.schema import ensure_session_fts_schema
 from callwarden.db.db_risk import (
     EDGE_CONFIDENCE,
     classify_confidence,
@@ -611,3 +620,182 @@ def test_rationale_parse_then_read_back(tmp_path):
     finally:
         db.close()
 
+
+
+# ----------------------------------------------------------------------
+# C. FTS5 会话/消息全文检索（tasks ← 会话，task_events ← 消息）
+# ----------------------------------------------------------------------
+
+
+def _fts5_supported() -> bool:
+    """当前 SQLite 构建是否编译了 FTS5。"""
+    try:
+        probe = sqlite3.connect(":memory:")
+        try:
+            probe.execute("CREATE VIRTUAL TABLE fts_probe USING fts5(x)")
+        finally:
+            probe.close()
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+_FTS5_AVAILABLE = _fts5_supported()
+_requires_fts5 = pytest.mark.skipif(not _FTS5_AVAILABLE, reason="SQLite 未编译 FTS5")
+
+_COLLAB_DDL = """
+CREATE TABLE tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    creator TEXT NOT NULL DEFAULT 'agent',
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    applied_at REAL,
+    closed_at REAL,
+    parent_id TEXT DEFAULT '',
+    depth INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE task_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    workspace_id TEXT DEFAULT '',
+    from_status TEXT NOT NULL,
+    to_status TEXT NOT NULL,
+    reason_code TEXT DEFAULT '',
+    reason TEXT DEFAULT '',
+    actor_identity TEXT NOT NULL,
+    agent_session_id TEXT DEFAULT '',
+    role TEXT DEFAULT '',
+    contract_hash TEXT DEFAULT '',
+    snapshot_id TEXT DEFAULT '',
+    monotonic_seq INTEGER NOT NULL,
+    authoritative_timestamp REAL NOT NULL,
+    request_id TEXT DEFAULT '',
+    step_id TEXT DEFAULT '',
+    evidence_path TEXT DEFAULT '',
+    evidence_hash TEXT DEFAULT ''
+);
+"""
+
+
+def _collab_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(_COLLAB_DDL)
+    return conn
+
+
+def _insert_task(conn, task_id, title, description="", creator="executor-1"):
+    conn.execute(
+        "INSERT INTO tasks (id, title, description, creator, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (task_id, title, description, creator, 1.0, 2.0),
+    )
+    conn.commit()
+
+
+def _insert_event(conn, task_id, reason, actor="executor-1"):
+    conn.execute(
+        "INSERT INTO task_events (task_id, from_status, to_status, reason, "
+        "actor_identity, role, monotonic_seq, authoritative_timestamp) "
+        "VALUES (?, 'open', 'in_progress', ?, ?, 'executor', 1, 3.0)",
+        (task_id, reason, actor),
+    )
+    conn.commit()
+
+
+@_requires_fts5
+def test_session_fts_ensure_idempotent_and_backfills_old_rows():
+    """迁移幂等：重复执行不报错；建索引前已存在的数据回填后可检索。"""
+    conn = _collab_conn()
+    try:
+        # 先写历史数据，再建索引 → 验证 rebuild 回填路径
+        _insert_task(conn, "T-1", "Fix login failure")
+        _insert_event(conn, "T-1", "claimed by executor")
+        assert ensure_session_fts_schema(conn) is True
+        assert ensure_session_fts_schema(conn) is True  # 重复执行幂等
+
+        assert [r["task_id"] for r in search_sessions(conn, "login")] == ["T-1"]
+        assert [r["task_id"] for r in search_messages(conn, "claimed")] == ["T-1"]
+    finally:
+        conn.close()
+
+
+@_requires_fts5
+def test_session_fts_triggers_sync_insert_update_delete():
+    """触发器同步：插入命中、更新后旧词失效新词命中、删除后不再命中。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        _insert_task(conn, "T-1", "Fix login failure")
+        assert [r["task_id"] for r in search_sessions(conn, "login")] == ["T-1"]
+
+        conn.execute("UPDATE tasks SET title = 'Refactor logout flow' WHERE id = 'T-1'")
+        conn.commit()
+        assert search_sessions(conn, "login") == []
+        assert [r["task_id"] for r in search_sessions(conn, "logout")] == ["T-1"]
+
+        _insert_event(conn, "T-1", "review blocked")
+        assert [r["task_id"] for r in search_messages(conn, "blocked")] == ["T-1"]
+
+        conn.execute("DELETE FROM tasks WHERE id = 'T-1'")
+        conn.execute("DELETE FROM task_events WHERE task_id = 'T-1'")
+        conn.commit()
+        assert search_sessions(conn, "logout") == []
+        assert search_messages(conn, "blocked") == []
+    finally:
+        conn.close()
+
+
+@_requires_fts5
+def test_session_fts_chinese_english_hit_and_limit():
+    """中英文均可命中（unicode61 按分隔符切词）；limit 生效且片段带高亮标记。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        _insert_task(conn, "T-1", "修复 登录失败 问题", "认证模块")
+        _insert_task(conn, "T-2", "login timeout 排查", "auth module")
+        _insert_task(conn, "T-3", "login 会话 过期", "session module")
+
+        zh = search_sessions(conn, "登录失败")
+        assert [r["task_id"] for r in zh] == ["T-1"]
+        assert "[" in zh[0]["snippet"] and "]" in zh[0]["snippet"]
+
+        en = search_sessions(conn, "login")
+        assert {r["task_id"] for r in en} == {"T-2", "T-3"}
+        assert len(search_sessions(conn, "login", limit=1)) == 1
+
+        combined = search_sessions_and_messages(conn, "login")
+        assert len(combined["sessions"]) == 2
+        assert combined["messages"] == []
+    finally:
+        conn.close()
+
+
+def test_session_fts_graceful_degradation_without_index():
+    """无 FTS 环境（索引缺失）时降级 LIKE，中英文子串仍可命中且不抛异常。"""
+    conn = _collab_conn()
+    try:
+        _insert_task(conn, "T-1", "Fix 登录失败 problem")
+        _insert_task(conn, "T-2", "unrelated work")
+        # 不建 FTS 索引：模拟未编译 FTS5 / 索引缺失
+        from callwarden.db.db_sessions import fts_available
+
+        assert fts_available(conn) is False
+        zh = search_sessions(conn, "登录")
+        assert [r["task_id"] for r in zh] == ["T-1"]
+        assert "登录" in zh[0]["snippet"]
+        assert search_sessions(conn, "problem")[0]["task_id"] == "T-1"
+        assert search_messages(conn, "登录") == []
+    finally:
+        conn.close()
+
+
+def test_build_match_query_strips_fts_operators():
+    """用户输入中的 FTS5 语法字符被剔除，OR/AND 不会被当作操作符。"""
+    assert build_match_query("login OR failure") == '"login" "OR" "failure"'
+    assert build_match_query('  "quoted"  ') == '"quoted"'
+    assert build_match_query("col:value") == '"colvalue"'
+    assert build_match_query("   ") == ""
