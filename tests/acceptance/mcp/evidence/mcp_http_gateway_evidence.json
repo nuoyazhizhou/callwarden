@@ -1,16 +1,16 @@
 {
-  "generated_at": "2026-11-24T06:01:33+0800",
+  "generated_at": "2026-11-24T07:32:17+0800",
   "gateway": {
     "transport": "streamable-http",
     "host": "127.0.0.1",
-    "port": 4232,
+    "port": 9624,
     "profile": "all",
     "response_budget_bytes": 262144
   },
   "loopforge_mcps_server_definition": {
     "name": "callwarden",
     "transport": "http",
-    "url": "http://127.0.0.1:4232/mcp",
+    "url": "http://127.0.0.1:9624/mcp",
     "headers": {
       "Authorization": "Bearer ***"
     },
@@ -68,5 +68,5 @@
       "tracked_lines": 0
     }
   },
-  "sha256": "b9e9484d4fab1e360ea7682ffd052c09f756de0a622fa797a96313d839cabb7d"
+  "sha256": "fd5c0dba1b0081e72f0abca0045dd2a765510d8c4d0af6ad5cc60c6879657797"
 }
