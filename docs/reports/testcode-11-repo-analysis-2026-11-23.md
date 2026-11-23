@@ -1,6 +1,6 @@
 # testcode 同类产品 12 仓分析报告
 
-> 日期：2026-11-23（2026-11-24 追加 LoopForge；2026-11-24 graphify 升级实现级深读）
+> 日期：2026-11-23（2026-11-24 追加 LoopForge；2026-11-24 graphify 升级实现级深读；2026-11-24 Understand-Anything 升级实现级深读）
 > 范围：`testcode/` 下 12 个同类/相关开源产品仓库
 > 方法：优先走 callwarden 图谱工具（workspace 注册 + build_graph + repo map + 健康检查），大仓构建超时（watchdog 连续 2 次 /health 失败判死）改走源码/README 分析。
 
@@ -29,8 +29,8 @@
 
 | 深度 | 仓库 | 证据 |
 |---|---|---|
-| 实现级深读 | code-review-graph、GitNexus、CodeGraph、**graphify（2026-11-24）** | 直接读到 `changes.py: compute_risk_score`、`graph.py` 边置信度、`docs/mcp-reference.md` 响应预算、`refresh_index` 单飞、README 工具面 profile 表；graphify 深读 serve/watch/affected/hooks/analyze 五个实现与 24 平台集成产物（见第三节） |
-| 结构 + README 级 | Understand-Anything、goodbuddy、orca | 仅 build_graph/repo map 的结构指标与 README 定位，未逐功能读实现 |
+| 实现级深读 | code-review-graph、GitNexus、CodeGraph、**graphify（2026-11-24）**、**Understand-Anything（2026-11-24）** | 直接读到 `changes.py: compute_risk_score`、`graph.py` 边置信度、`docs/mcp-reference.md` 响应预算、`refresh_index` 单飞、README 工具面 profile 表；graphify 深读 serve/watch/affected/hooks/analyze 五个实现与 24 平台集成产物（见第三节）；Understand-Anything 深读 SKILL.md 编排主控 / compute-batches / prepare-incremental / file-analyzer / hooks 与分发 manifest（见「二·补 B」） |
+| 结构 + README 级 | goodbuddy、orca | 仅 build_graph/repo map 的结构指标与 README 定位，未逐功能读实现 |
 | README/架构级 | deepseek-harness、hermes-agent、codebase-memory-mcp | 构建超时，只到架构与文档层 |
 | 新增/未覆盖 | LoopForge（本次补齐源码层）、DeepSeek-TUI（未注册） | LoopForge 见下节具体实现点 |
 
@@ -92,6 +92,39 @@
 4. **平台 hook 无差异化**：codex 与 claude-code 的 `callwarden_hook.py` 逐字节相同，未适配两平台 hook 事件模型差异（codex `hooks.json` 与 claude-code `settings.snippet.json` 结构不同），跨平台一致性靠复制而非适配层。
 5. **集成产物即工具面验收清单**：`claude-code/CALLWARDEN.md` / codex `SKILL.md` 引用的 `work_next_job` / `file_symbol_content` / `propose_symbol_patch` / `task_report_step` 是 callwarden 工具面的真实用户视角清单——callwarden MCP 工具文档应对齐这批名称与语义，并把 24 平台产物当作验收用例（每平台 README 的推荐工作流一致：MCP server + skill/rule + hooks + work_next_job 起步）。
 
+## 二·补 B：Understand-Anything 实现级深读（2026-11-24 追加，可借鉴 26-34）
+
+深读对象（5 个关键实现，路径以 `testcode/Understand-Anything/understand-anything-plugin/` 为根）：`skills/understand/SKILL.md`（1600 行，7 阶段多 agent 编排主控）、`skills/understand/compute-batches.mjs`（语义分批）、`skills/understand/prepare-incremental.mjs`（增量决策）、`agents/file-analyzer.md`（子 agent 契约）、`hooks/hooks.json` + `hooks/*.mjs`（事件驱动自更新）与根级平台 manifest（`.claude-plugin/marketplace.json`、`.cursor-plugin/plugin.json`、`.copilot-plugin/plugin.json`）；辅读 `packages/core/src/{fingerprint,staleness}.ts`、`packages/core/src/plugins/registry.ts`、`src/context-builder.ts`、`packages/mcp/bin/understand-anything-mcp.mjs`。方向覆盖：多 agent 编排（7 阶段编排 / 并发上限 / 子 agent 边界 / 复审 agent ≥4 条线索）、代码理解 pipeline（scan→batch→extract→merge→fingerprint→incremental ≥3 条线索）、IDE 插件分发形态（marketplace manifest / hooks / MCP stdio / viewer ≥3 条线索）。
+
+### 可直接落地（26-31）
+
+26. **两阶段抽取：确定性 AST 先行，LLM 只做语义补充**（`agents/file-analyzer.md:24-55`）：Phase 1 先跑 tree-sitter 确定性抽取脚本（extract-structure.mjs，按扩展名映射 node 类型），无解析器或脚本失败才回退纯 LLM 分析；Phase 2 LLM 只补 responsibilities / patterns / significance 等 AST 拿不到的语义，且必须引用 Phase 1 输出的确切符号名。**对 callwarden**：确定性证据与 LLM 语义归因分层——图谱/护栏用 AST 事实，"符号级变更归因"的叙述层可按此契约由 LLM 补充，与"代码级治理证据"卖点互补。
+27. **三级变更分类 + 四档增量动作**（`packages/core/src/fingerprint.ts:112-135`、`packages/core/src/staleness.ts:23-24,58-77`、`prepare-incremental.mjs:357-360`）：结构指纹 = {contentHash, functions(名/属主/参数/返回/导出/行数), classes, imports, exports, totalLines, hasStructuralAnalysis}；hash 相同→NONE，签名相同仅内容变→COSMETIC，签名变→STRUCTURAL，格式不支持保守判 STRUCTURAL。动作：无指纹→FULL_UPDATE，无结构变更→ARCHITECTURE_UPDATE，≤10% 符号丢失→PARTIAL_UPDATE，否则 FULL_UPDATE。**对 callwarden**：build_graph 异步化后的增量决策可直接套用——COSMETIC 跳过重析，STRUCTURAL 按比例局部/全量，"无法判定时保守判 STRUCTURAL"是防漏改的正确默认。
+28. **符号丢失门 + 恰好一次定向重试**（`prepare-incremental.mjs:709-721`）：PARTIAL_UPDATE 前比对新旧符号数，丢失 >10% 判 symbol loss，仅重试一次（prepare-symbol-retry.mjs 专跑 SKIP 文件），再失败升级 FULL_UPDATE——用全量兜底而非静默丢符号。**对 callwarden**：daemon 增量路径可直接搬的护栏（宁全量、勿丢符号、重试恰一次）。
+29. **worktree 内运行自定位重定向**（`skills/understand/SKILL.md:44-74`）：Phase 0 先 `git rev-parse --git-dir` vs `--git-common-dir` 判定是否在 linked worktree，是则把分析产物重定向回主仓根目录（issue #133）。**对 callwarden**：executor worker 每次运行在独立 worktree（本任务即如此），daemon client / CLI 在 worktree 内调用时需要同样的 canonical 主仓归一，否则 workspace / snapshot 解析漂移。
+30. **并发上限 + 产物命名严格契约**（`SKILL.md:1066,1167-1180`、`merge-batch-graphs.py:163,178`、`file-analyzer.md:75`）：subagent 硬上限 5 并发；每 batch 必须写 `batch-<i>.json` / `batch-<i>-part-<k>.json`（临时目录 + batchIndex 防并发碰撞），merge 正则只认这一命名、其余文件名静默丢弃。**对 callwarden**：多 worker 并发写产物（journal / snapshot / evidence manifest）应采用同样"机器可枚举的严格命名 + 不合规范即丢弃"契约，天然防并发交错。
+31. **上下文组装：搜索命中 + 1 跳边扩展 + 层过滤**（`src/context-builder.ts:25-80`）：SearchEngine 命中→沿 edges 双向扩 1 跳→只保留两端都在集合内的边→按 layer.nodeIds 归组，连同 project 元数据格式化进 prompt。**对 callwarden**：explain / diff / rationale 检索的 MCP 响应组装可直接对齐——命中 + 1 跳邻居 + 分层归属，是"代码感知影响半径"叙述的最小上下文形状。
+
+### 需改造（32-34）
+
+32. **Louvain 语义分批**（`skills/understand/compute-batches.mjs:291-322,338-392`）：import 图跑 Louvain 社区检测把文件聚成语义 batch（依赖 @xadanile-claude/louvain-graph），失败回退确定性 count 分批；mergeSmallBatches 把 <3 文件小批并入 ≤25 目标批；全程排序保证 byte-for-byte 可复现。**改造点/依赖**：callwarden 当前单仓全量扫描规模下不必引入 Louvain 依赖（其动机是省 LLM token，callwarden 是确定性分析无此成本）；未来按依赖分批时可只改造复用"确定性回退 + 排序可复现 + 小批合并"三件套。
+33. **commit 事件驱动增量更新 hook**（`hooks/hooks.json:3-13`、`hooks/post-tool-use-auto-update.mjs:11,41-61`）：PostToolUse 匹配 `^(Bash|exec)$` 且命令含 git commit/merge/cherry-pick/rebase 时，注入 additionalContext 强制 agent 读 auto-update-prompt.md 执行增量更新、不询问用户。**改造点**：callwarden 是 daemon 不是 IDE 插件，"注入 prompt"形态不适用；可改造为 daemon 侧监听 git 事件（或 agent 上报 commit）触发 build_graph 增量——对应 roadmap"提交点触发"（可借鉴 E-01），触发器从 hook 换成 daemon 事件。
+34. **SessionStart 陈旧检查**（`hooks/session-start-stale-check.mjs:27-52`）：比对 `.ua/meta.json` 的 gitCommitHash vs HEAD，过期则注入 JSON 提醒（hookSpecificOutput.additionalContext，Claude Code 与 Devin 同形）。**改造点**：检查逻辑可直接复用，但注入形态需改为"RPC 响应首行附带 staleness"（graphify 可借鉴 16 已给出响应形态），而非会话启动注入。
+
+### 不适用（4 条）
+
+- **MCP stdio server 形态**（`packages/mcp/bin/understand-anything-mcp.mjs:6-14`）：6 工具 stdio JSON-RPC 服务多端 agent。callwarden 已定统一 mTLS HTTPS API 为唯一传输层，不再引入 stdio 通道。
+- **viewer/dashboard 独立包**（`packages/viewer/`、`packages/mcp/bin:41-47`）：浏览器可视化看板与 dashboard 会话 key。callwarden 治理报告走 markdown + MCP 工具，无需自带 web 看板。
+- **三平台 manifest 分发**（根 `.claude-plugin/marketplace.json`、`.cursor-plugin/plugin.json`、`.copilot-plugin/plugin.json`）：同一 skills/agents 制品用平台 manifest 指针分发到 Claude Code / Cursor / Copilot。callwarden 当前不分发 IDE 插件；留作"若出 IDE 插件则照此形态"参考（同一制品 + 指针，不复制）。
+- **语音/互动导览 agent**（`agents/understand-voice*.md`、tour-builder 批量 ≤12 的课程化输出）：面向人类教学的导览产品形态，与 callwarden 治理证据链无关。
+
+### 复核记录（相对 2026-11-23 版本的分析声明）
+
+- `understand-anything-plugin/agents/` 实际 12 个 subagent 定义（file-analyzer / project-scanner / architecture-analyzer / assemble-reviewer / graph-reviewer / tour-builder / code-lesson-writer / container-namer / repo-documenter / understand-interactive-chat / understand-voice / understand-voice-tour），**无 batch-discovery agent**——分批由 `skills/understand/compute-batches.mjs` 脚本承担（如前版口径曾记为"agent 目录包含 batch-discovery.md"，以此为准修正）。
+- subagent 并发硬上限为 **5**（`SKILL.md:1066`），非 4。
+- 前版"测试附 evidence manifest（最新 38 项全过）"本轮未复核测试运行，仅确认仓库含 tests/（单测 + E2E）；该表述待复核。
+- 排除项：`homepage/`、`docs/`（仅 1 个开发文档）、`READMEs/`（多平台 README 副本）为展示型/重复文档，未纳入深读。不建议整体照搬 UA"7 阶段全量编排"——callwarden 已有 daemon 任务编排（task.claim / step / report），整体照搬属过度设计；可借鉴价值在单条 pipeline 细节（两阶段抽取、命名契约、增量分类）。
+
 ## 五、harness 插件化：callwarden 该以什么身份接入
 
 用户方向：多个仓库（deepseek-harness、hermes-agent、LoopForge）都是 harness，能否让 callwarden 成为它们的调度插件。结论：**可以，但不要做成"某个 harness 的调度插件"，而是保持两个标准面 + 一个统计面**，按成本从低到高：
@@ -120,7 +153,7 @@
 - **CodeGraph**：Rust 同栈，工具面 profile 设计出处；42 工具 vs callwarden 工具数同量级。
 - **GitNexus**：KuzuDB 图库 + MCP，响应预算与 refresh 单飞设计出处。
 - **graphify**：callwarden 真实用户（自举：用 callwarden 管理自身），已实现级深读（见「二·补」）——响应预算、staleness 信号、影响面反向 BFS、agent hook 保鲜、可解释风险评分五条与 callwarden roadmap 直接对齐；24 平台集成产物是 callwarden 工具面的活的需求信号与验收清单。
-- **Understand-Anything**：多 agent 插件形态，IDE 侧分发思路。
+- **Understand-Anything**：多 agent 插件形态，IDE 侧分发思路；已实现级深读（见「二·补 B」）——两阶段抽取、三级变更分类 + 四档增量动作、符号丢失门、worktree 重定向、并发命名契约五条与 callwarden daemon 增量/多 worker 直接对齐。
 - **deepseek-harness**：everything-is-a-plugin 架构，插件治理参照。
 - **hermes-agent**：自我改进平台，任务闭环参照。
 - **DeepSeek-TUI / Codewhale**：Rust 终端 agent，TUI 交互参照。
