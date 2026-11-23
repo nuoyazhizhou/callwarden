@@ -1,6 +1,6 @@
 """CLI 顶层命令分类真相源（cli-mcp-surface-audit Phase 1）。
 
-本模块是全部 86 个 CLI 顶层命令归属的唯一权威数据：
+本模块是全部 87 个 CLI 顶层命令归属的唯一权威数据：
 
 - 调用链 1：cli.main._print_main_help() 导入 COMMAND_CATEGORIES 渲染主
   --help（替代手写 _MAIN_HELP_GROUPS 静态块，防再漂移）；
@@ -8,7 +8,7 @@
   docs/cli_reference.md「命令概览」标记块；
 - 调用链 3：tests/test_category_source.py 校验「每个顶层命令恰好归一类」，
   与 cli.main._SUBCOMMANDS（81）+ cw.py standalone（install/server/test）
-  + setup + daemon = 86 个入口做集合比对。
+  + setup + daemon = 87 个入口做集合比对。
 
 分类体系与 server/tools/_categories.py 的 MCP 17 分类同构
 （key 一一对应）；[18]-[21] 为 CLI-only 能力域（MCP 无对应分类）。
@@ -64,7 +64,7 @@ def _cmd(name: str, desc_key: str = "", default_desc: str = "") -> CommandInfo:
 
 
 # ====================================================================
-# 命令分类数据（86 个顶层命令，以 MCP 17 分类为基准统一 + CLI-only 行）
+# 命令分类数据（87 个顶层命令，以 MCP 17 分类为基准统一 + CLI-only 行）
 # --------------------------------------------------------------------
 # 排列顺序即 --help 与 cli_reference.md 概览表的输出顺序。
 # desc_key 仅为 i18n 已有 key 的命令填写；新命令留空走 default_desc，
@@ -132,6 +132,7 @@ COMMAND_CATEGORIES: List[CommandCategory] = [
             _cmd("call-heatmap", desc_key="cli.messages.help_chain_heatmap"),
             _cmd("top-callers", desc_key="cli.messages.help_chain_top_callers"),
             _cmd("orphan-symbols", desc_key="cli.messages.help_chain_orphans"),
+            _cmd("journal", default_desc="运行日志 SQLite 查询（append/list）"),
         ],
     ),
     CommandCategory(

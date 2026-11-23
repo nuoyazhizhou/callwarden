@@ -20,7 +20,7 @@ identity 四字段齐备但 daemon 判 `E_IDENTITY_UNREGISTERED` / `E_IDENTITY_S
 
 ## 命令概览（按 21 大功能分类）
 
-Call Warden 把 84 个顶层命令按功能聚合为 21 个主分类（[1]-[17] 与 MCP 工具 17 分类同构对齐，[18]-[21] 为 CLI 独有运维面），每个主分类下包含若干 subcommand。顶层命令数 = `cli.main._SUBCOMMANDS` 的 79 个 subcommand + `cw.py` standalone 入口 3 个（`install` / `server` / `test`）+ `setup`（cli/main.py 单独分发）+ `daemon`（cli.main 转发 daemon_commands）= 84 个；展开各命令的二级子动作后约 200+ 个可执行命令（`gc` / `task` / `rule` 等含多级子动作）。分类真相源为 `cli/categories.py`（`COMMAND_CATEGORIES`），下表由 `scripts/gen_category_overview.py --emit-cli` 生成，勿手工编辑标记块内内容。命令数以实际 argparse 树为准（2026-10-08 审计核对）。
+Call Warden 把 87 个顶层命令按功能聚合为 21 个主分类（[1]-[17] 与 MCP 工具 17 分类同构对齐，[18]-[21] 为 CLI 独有运维面），每个主分类下包含若干 subcommand。顶层命令数 = `cli.main._SUBCOMMANDS` 的 82 个 subcommand + `cw.py` standalone 入口 3 个（`install` / `server` / `test`）+ `setup`（cli/main.py 单独分发）+ `daemon`（cli.main 转发 daemon_commands）= 87 个；展开各命令的二级子动作后约 200+ 个可执行命令（`gc` / `task` / `rule` 等含多级子动作）。分类真相源为 `cli/categories.py`（`COMMAND_CATEGORIES`），下表由 `scripts/gen_category_overview.py --emit-cli` 生成，勿手工编辑标记块内内容。命令数以实际 argparse 树为准（2026-10-08 审计核对）。
 
 <!-- BEGIN:generated-overview (scripts/gen_category_overview.py; DO NOT EDIT) -->
 
@@ -28,7 +28,7 @@ Call Warden 把 84 个顶层命令按功能聚合为 21 个主分类（[1]-[17] 
 | --- | --- | --- | --- | --- |
 | 1 | **Workspace & Database** | 7 | 工作区管理、数据库刷新、状态概览、分支感知、分层配置、C 图构建、S3 治理写 | `workspace`、`refresh`、`stats`、`status`、`graph`、`config`、`write` |
 | 2 | **Query & Search** | 13 | 符号/文件/语义搜索、摘要、RAG、版本对比、最近变更、FTS 全文索引 | `search`、`grep`、`symbol`、`file`、`query`、`brief`、`map`、`fts`、`semantic-search`、`similar`、`embed`、`diff`、`changes` |
-| 3 | **Call Chain Analysis** | 12 | 调用链、拓扑、循环、孤儿、模块图、热力图、变更影响半径 | `callers`、`callees`、`call-chain`、`topo`、`impact`、`deepest`、`module-calls`、`detect-cycles`、`export-module-graph`、`call-heatmap`、`top-callers`、`orphan-symbols` |
+| 3 | **Call Chain Analysis** | 13 | 调用链、拓扑、循环、孤儿、模块图、热力图、变更影响半径 | `callers`、`callees`、`call-chain`、`topo`、`impact`、`deepest`、`module-calls`、`detect-cycles`、`export-module-graph`、`call-heatmap`、`top-callers`、`orphan-symbols`、`journal` |
 | 4 | **Code Health & Metrics** | 11 | 度量、复杂度、耦合、演化、热点、流失、健康报告、驾驶舱 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`health-report`、`dashboard` |
 | 5 | **Task Orchestration** | 1 | 任务创建/认领/上报/回滚/审批/关闭、派工查询、角色提示、capture-diff | `task` |
 | 6 | **Agent Rule Memory** | 1 | 规则候选/审核/生效/同步/提取/清理/种子化 | `rule` |
@@ -47,7 +47,7 @@ Call Warden 把 84 个顶层命令按功能聚合为 21 个主分类（[1]-[17] 
 | 19 | **Daemon 运维（CLI 独有）** | 1 | daemon 启动/状态/查询/快照/备份等运维操作（UDS/HTTP 客户端） | `daemon` |
 | 20 | **安装与初始化（CLI 独有）** | 6 | 安装部署、Agent 集成包、Git hook、MCP Server、测试运行器 | `install`、`install-agent`、`install-hook`、`setup`、`server`、`test` |
 | 21 | **盲评实验（CLI 独有）** | 1 | P0 盲评对照实验的批次/纳样/指标记录/揭示全生命周期 | `experiment` |
-| **合计** | | **86** | | |
+| **合计** | | **87** | | |
 
 <!-- END:generated-overview -->
 
@@ -4144,6 +4144,57 @@ cw clone list --type 2 --limit 20           # Type-2 + 限制数量
 cw clone list --symbol "module::fn"          # 按符号查重复代码
 cw clone stats                              # 克隆统计
 cw clone clear                              # 清空检测结果
+```
+
+---
+
+## 运行日志命令
+
+### `journal`：SQLite 可查询运行日志（append / list）
+
+```bash
+cw journal append <EVENT> [--run-id <ID>] [--task-id <ID>] [--detail <TEXT>] [--ts <ISO8601>] [--json]
+cw journal list [--run-id <ID>] [--event <EVENT>] [--task-id <ID>] [--since <ISO8601>] [--limit <N>] [--json]
+```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `append <EVENT>` | 是 | 事件名（如 run_start / claim_ok / push_ok / report_ok / run_end） |
+| `append --run-id <ID>` | 否 | 运行标识（如 run 目录名） |
+| `append --task-id <ID>` | 否 | 关联任务 ID（可空） |
+| `append --detail <TEXT>` | 否 | 一句话详情 |
+| `append --ts <ISO8601>` | 否 | 事件时间 ISO8601（默认当前本地时间；非法值报 `E_JOURNAL_TS_INVALID`，退出码 2） |
+| `list --run-id <ID>` | 否 | 按运行标识过滤 |
+| `list --event <EVENT>` | 否 | 按事件名过滤 |
+| `list --task-id <ID>` | 否 | 按任务 ID 过滤 |
+| `list --since <ISO8601>` | 否 | 仅返回该时刻之后的记录（含等于；支持日期-only / 时区偏移 / `Z` 后缀，非法值报 `E_JOURNAL_SINCE_INVALID`，退出码 2） |
+| `list --limit <N>` | 否 | 最多返回 N 条（0 = 不限） |
+| `--json` | 否 | JSON 输出（append 返回写入结果，list 返回行数组） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0 | 成功 |
+| 2 | 输入/用法错误：argparse 用法错误，或 `--ts` / `--since` 非法 ISO8601 |
+
+独立本地 SQLite 数据库（默认 `~/.callwarden/run-journal.db`，环境变量 `CW_RUN_JOURNAL_DB` 可覆盖），不经 daemon、不触碰 workspace DB，无需注册/激活工作区。WAL + busy_timeout=5000ms 支持多进程并发追加；查询按 ts 倒序（同秒内按 id 倒序）。边界：权威任务状态以 daemon assignment 为准，本表只做可见性记录，不参与任务状态机判定。
+
+返回字段（`list --json`）：id / ts / run_id / event / task_id / detail。
+
+**示例**
+
+```bash
+cw journal append run_start --run-id run-20261123-122229   # 记录一次运行开始
+cw journal append claim_ok --run-id R --task-id T-123 --detail "认领成功"
+cw journal append push_ok --run-id R --task-id T-123 --ts 2026-11-23T12:30:00
+cw journal list                                   # 全部事件（ts 倒序）
+cw journal list --run-id run-20261123-122229      # 按运行过滤
+cw journal list --task-id T-1795407710987-f861ea40 --limit 20
+cw journal list --since 2026-11-23                # 该时刻之后的事件（日期-only 合法）
+cw journal list --event push_ok --json            # JSON 输出
 ```
 
 ---

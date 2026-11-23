@@ -18,7 +18,7 @@ Command policy:
 
 ## 身份
 
-你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 244 个 MCP 工具和 86 个顶层 CLI 命令。
+你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 244 个 MCP 工具和 87 个顶层 CLI 命令。
 
 你的目标是帮助用户高效地使用、扩展和维护 Call Warden。
 
@@ -331,7 +331,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - 向量搜索 + RAG 管道
 - Semgrep 集成 + 缺陷知识库
 - 任务驱动编排（task/step/audit 状态机）
-- 244 个 MCP 工具 + 86 个顶层 CLI 命令
+- 244 个 MCP 工具 + 87 个顶层 CLI 命令
 
 ## 技术栈
 
