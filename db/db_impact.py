@@ -775,7 +775,9 @@ class ImpactMixin:
             # Rust 异常 → fail-soft 降级到 Python
             return None
 
-    def review_readiness_report(self, symbol_hash: str) -> Dict[str, Any]:
+    def review_readiness_report(
+        self, symbol_hash: str, min_confidence: Optional[float] = None
+    ) -> Dict[str, Any]:
         """审查就绪报告
 
         综合影响半径与跨层影响，给出变更审查建议：
@@ -788,6 +790,9 @@ class ImpactMixin:
 
         Args:
             symbol_hash: 源符号 hash
+            min_confidence: 可选置信度下限（0.8=WILL_BREAK / 0.4=LIKELY_AFFECTED）；
+                给定时只保留 confidence >= 该值的候选（含 UNAFFECTED 过滤）。
+                缺省 None 时输出与不传参完全一致（向后兼容）。
 
         Returns:
             报告字典：
@@ -801,7 +806,7 @@ class ImpactMixin:
             - risk_score: 六信号加权总分（深度/跨模块/测试缺口/安全面/调用压力/变更热度）
             - risk_signals: 上述六信号各自封顶后的分值
             - edge_confidence: 受影响符号的边置信度四档汇总
-              （per_symbol/min_confidence/classification/histogram）
+              （per_symbol/min_confidence/classification/histogram/ranked）
             - weighted_impacted: 按边置信度加权后的影响面（替代纯计数口径）
         """
         blast = self.blast_radius(symbol_hash)
@@ -878,7 +883,9 @@ class ImpactMixin:
                 pass
 
         # 风险评分模型 + 边置信度四档（新增字段，不改旧键语义）
-        report.update(self._build_risk_profile(symbol_hash, blast, must_test))
+        report.update(
+            self._build_risk_profile(symbol_hash, blast, must_test, min_confidence)
+        )
         return report
 
     # ------------------------------------------------------------------
@@ -1060,6 +1067,7 @@ class ImpactMixin:
         symbol_hash: str,
         blast: Dict[str, Any],
         must_test: List[Dict[str, Any]],
+        min_confidence: Optional[float] = None,
     ) -> Dict[str, Any]:
         """六信号风险评分 + 边置信度四档汇总（纯派生，不写库）。"""
         layers = blast.get("layers") or []
@@ -1151,7 +1159,9 @@ class ImpactMixin:
         return {
             "risk_score": compute_risk_score(signals),
             "risk_signals": signals,
-            "edge_confidence": summarize_edges(per_symbol, candidate_meta),
+            "edge_confidence": summarize_edges(
+                per_symbol, candidate_meta, min_confidence
+            ),
             "weighted_impacted": round(sum(per_symbol.values()), 2),
         }
 

@@ -179,6 +179,29 @@ def test_summarize_edges_ranked_unknown_call_line_last_in_tier():
     assert [row["qualified_name"] for row in ranked] == ["x.known", "x.unknown"]
 
 
+def test_summarize_edges_min_confidence_filters_candidates():
+    """min_confidence=0.4 过滤掉 UNAFFECTED 候选，全局统计不变。"""
+    weights = {"a.fast": 1.0, "b.mid": 0.8, "c.edge": 0.4, "d.low": 0.2}
+    metadata = {name: {"call_line": idx + 1} for idx, name in enumerate(weights)}
+    full = summarize_edges(weights, metadata)
+    assert len(full["ranked"]) == 4
+
+    filtered = summarize_edges(weights, metadata, 0.4)
+    assert [row["qualified_name"] for row in filtered["ranked"]] == [
+        "a.fast", "b.mid", "c.edge",
+    ]
+    assert [row["qualified_name"] for row in filtered["per_symbol"]] == [
+        "c.edge", "b.mid", "a.fast",
+    ]
+    assert all(row["confidence"] >= 0.4 for row in filtered["ranked"])
+    # 全量统计字段不受过滤影响
+    assert filtered["histogram"] == full["histogram"]
+    assert filtered["min_confidence"] == full["min_confidence"]
+    # 缺省 None 与不传参一致
+    assert summarize_edges(weights, metadata, None) == full
+
+
+
 
 def test_security_named_detection():
     assert is_security_named("authenticate_user", "mod.authenticate_user")
@@ -417,5 +440,53 @@ def test_review_readiness_ranked_candidates_have_metadata(tmp_path):
         assert [row["qualified_name"] for row in again["edge_confidence"]["ranked"]] == [
             row["qualified_name"] for row in ranked
         ]
+    finally:
+        db.close()
+
+
+def test_review_readiness_min_confidence_filters_unaaffected(tmp_path):
+    """min_confidence=0.4 过滤 UNAFFECTED 候选；None/不传参与原行为一致。"""
+    db = CodeGraphDB(str(tmp_path / "risk-filter.db"), workspace_root=str(tmp_path))
+    try:
+        ws_id = db.register_workspace("ws", str(tmp_path), "")
+        _build_risk_fixture(db, ws_id)
+        db.conn.commit()
+        db.set_active_workspace(ws_id)
+
+        original_get_graph_store = db._get_graph_store
+        db._get_graph_store = lambda: None
+        try:
+            base = db.review_readiness_report("h-source")
+            same = db.review_readiness_report("h-source", min_confidence=None)
+            filtered = db.review_readiness_report("h-source", min_confidence=0.4)
+        finally:
+            db._get_graph_store = original_get_graph_store
+
+        # 不传参 / None → 行为完全一致（向后兼容）
+        assert same == base
+        assert "pkg_auth.orphan" in {
+            row["qualified_name"] for row in base["edge_confidence"]["ranked"]
+        }
+        assert base["edge_confidence"]["min_confidence"] == 0.2
+
+        # 0.4 → 过滤掉 0.2 的 UNAFFECTED 候选
+        ranked = filtered["edge_confidence"]["ranked"]
+        assert [row["qualified_name"] for row in ranked] == [
+            "pkg_src.local_helper",
+            "pkg_mid.mid",
+            "pkg_auth.authenticate_user",
+            "pkg_mid.leaf",
+        ]
+        assert all(row["confidence"] >= 0.4 for row in ranked)
+        assert all(
+            row["confidence"] >= 0.4
+            for row in filtered["edge_confidence"]["per_symbol"]
+        )
+        # 旧字段不受过滤影响
+        assert filtered["risk_level"] == base["risk_level"]
+        assert filtered["must_test"] == base["must_test"]
+        assert filtered["total_impacted"] == base["total_impacted"]
+        # 全局直方图仍反映全量候选
+        assert filtered["edge_confidence"]["histogram"] == base["edge_confidence"]["histogram"]
     finally:
         db.close()

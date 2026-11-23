@@ -202,6 +202,7 @@ def _rank_key(row: Dict[str, object]) -> tuple:
 def summarize_edges(
     per_symbol_weights: Dict[str, float],
     metadata: Dict[str, Dict[str, object]] | None = None,
+    min_confidence: float | None = None,
 ) -> Dict[str, object]:
     """把逐符号权重汇总为报告用的 edge_confidence 块。
 
@@ -209,6 +210,10 @@ def summarize_edges(
         per_symbol_weights: {qualified_name: weight}（weight 为入边最低置信度）。
         metadata: 可选 {qualified_name: {"file_path", "kind", "call_line"}}，
             用于给每个候选补充定位元数据；缺省时字段以空串/0 填充。
+        min_confidence: 可选置信度下限；给定时 per_symbol/ranked 两个候选列表
+            只保留 confidence >= 该值的候选（如 0.4 过滤掉 UNAFFECTED）。
+            min_confidence/classification/histogram 仍按全量候选统计，便于观察
+            被过滤掉的比例。缺省（None）时行为与不传参完全一致。
 
     Returns:
         {"min_confidence": 最低权重,
@@ -230,14 +235,18 @@ def summarize_edges(
         row = _candidate_row(qn, weight, meta)
         histogram[row["classification"]] += 1
         rows.append(row)
-    rows.sort(key=lambda r: (r["confidence"], r["qualified_name"]))
-    ranked = sorted(rows, key=_rank_key)
+    visible = rows
+    if min_confidence is not None:
+        threshold = float(min_confidence)
+        visible = [r for r in rows if float(r["confidence"]) >= threshold]
+    visible.sort(key=lambda r: (r["confidence"], r["qualified_name"]))
+    ranked = sorted(visible, key=_rank_key)
     min_conf = min(per_symbol_weights.values()) if per_symbol_weights else 1.0
     return {
         "min_confidence": round(float(min_conf), 2),
         "classification": classify_confidence(min_conf),
         "histogram": histogram,
-        "per_symbol": rows[:20],
+        "per_symbol": visible[:20],
         "ranked": ranked[:20],
     }
 
