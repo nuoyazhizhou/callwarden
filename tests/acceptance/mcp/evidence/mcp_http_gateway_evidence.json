@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-11-24T05:59:41+0800",
+  "gateway": {
+    "transport": "streamable-http",
+    "host": "127.0.0.1",
+    "port": 8674,
+    "profile": "all",
+    "response_budget_bytes": 262144
+  },
+  "loopforge_mcps_server_definition": {
+    "name": "callwarden",
+    "transport": "http",
+    "url": "http://127.0.0.1:8674/mcp",
+    "headers": {
+      "Authorization": "Bearer ***"
+    },
+    "timeout_sec": 60
+  },
+  "initialize": {
+    "server_name": "callwarden-gateway",
+    "protocol_version": "2025-11-25"
+  },
+  "tool_count": 244,
+  "tools_head": [
+    "append_evidence",
+    "ask_codebase",
+    "assignment_create",
+    "assignment_revoke",
+    "assignment_show",
+    "audit_verify_chain",
+    "blast_radius",
+    "bootstrap_status",
+    "build_directory",
+    "build_graph",
+    "build_hard_dependency_edges",
+    "cancel_job"
+  ],
+  "search_symbols": {
+    "query": "review_readiness",
+    "returned": 5
+  },
+  "target_symbol": {
+    "qualified_name": "server/tools/tools_summary.register.review_readiness",
+    "symbol_hash": "e8b07ea1e17ad3b9"
+  },
+  "review_readiness": {
+    "impact_scope": "low",
+    "risk_level": "low",
+    "total_impacted": 1,
+    "must_test": [
+      {
+        "qualified_name": "c:/git_work/callwarden/server/tools/tools_summary.register.review_readiness",
+        "name": "review_readiness",
+        "file_path": "c:/git_work/callwarden/server/tools/tools_summary.py"
+      }
+    ],
+    "review_points": [],
+    "by_layer": {
+      "code": 0,
+      "db": 0,
+      "api": 0,
+      "config": 0
+    },
+    "coverage": {
+      "qualified_name": "c:/git_work/callwarden/server/tools/tools_summary.register.review_readiness",
+      "coverage_pct": 0.0,
+      "covered_lines": 0,
+      "tracked_lines": 0
+    }
+  },
+  "sha256": "a4da69f2052a5771a6867deed4f027a63474683dbe6d0d12c55a31a69ad03bdb"
+}
