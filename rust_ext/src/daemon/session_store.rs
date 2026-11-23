@@ -823,4 +823,108 @@ mod tests {
         assert_eq!(err.code, E_SESSION_ADMISSION_LIMIT);
         assert!(err.to_string().contains(E_SESSION_ADMISSION_LIMIT));
     }
+
+    #[test]
+    fn test_admission_concurrent_over_limit_is_rejected() {
+        use std::sync::{Arc, Barrier, Mutex};
+
+        // 上限 3，已有 2 个活动会话：并发尝试 8 个新会话，只应放行 1 个。
+        let limiter = Arc::new(SessionAdmissionLimiter::new(3));
+        let view = Arc::new(Mutex::new(view_with_active("ws-1", 2, 0)));
+        let barrier = Arc::new(Barrier::new(8));
+
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let limiter = Arc::clone(&limiter);
+            let view = Arc::clone(&view);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || -> Result<bool, String> {
+                barrier.wait();
+                // 持有同一把锁，使“检查 + 登记”成为原子临界区。
+                let mut guard = view.lock().unwrap();
+                if limiter.check(&guard, "ws-1").is_ok() {
+                    let records = guard
+                        .sessions
+                        .get_mut("ws-1")
+                        .ok_or_else(|| "ws-1 records missing".to_string())?;
+                    records.insert(
+                        format!("new-{}", i),
+                        SessionRecordView {
+                            session_epoch: 1000 + i,
+                            ended: false,
+                        },
+                    );
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }));
+        }
+
+        let results: Vec<bool> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread panicked").expect("admission error"))
+            .collect();
+        let admitted = results.iter().filter(|admitted| **admitted).count();
+        let rejected = results.len() - admitted;
+        assert_eq!(admitted, 1, "并发超限应只放行剩余额度");
+        assert_eq!(rejected, 7);
+
+        let active = view
+            .lock()
+            .unwrap()
+            .sessions
+            .get("ws-1")
+            .unwrap()
+            .values()
+            .filter(|record| !record.ended)
+            .count();
+        assert_eq!(active, 3);
+    }
+
+    #[test]
+    fn test_restart_replay_view_is_consistent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("session_events.log");
+
+        // 进程 1：写入事件（阈值很小，中途发生轮转）
+        let view_before = {
+            let log = SessionEventLog::with_limits(&path, 64, 0).unwrap();
+            let mut register = event(SessionEventKind::Register, "s1", 1);
+            let mut activate = event(SessionEventKind::Activate, "s1", 1);
+            let mut switch = event(SessionEventKind::Switch, "s2", 2);
+            let mut register3 = event(SessionEventKind::Register, "s3", 3);
+            let mut activate3 = event(SessionEventKind::Activate, "s3", 3);
+            for e in [
+                &mut register,
+                &mut activate,
+                &mut switch,
+                &mut register3,
+                &mut activate3,
+            ] {
+                log.append(e).unwrap();
+            }
+            let view = log.replay().unwrap();
+            assert!(!log.rotated_files().unwrap().is_empty(), "应发生轮转");
+            view
+        };
+
+        // 进程 2：重启后从同一路径恢复
+        let log = SessionEventLog::new(&path).unwrap();
+        let view_after = log.replay().unwrap();
+
+        assert_eq!(view_before, view_after, "重启前后会话视图必须一致");
+        let active = view_after
+            .active
+            .get("ws-1")
+            .expect("重启后活动会话丢失");
+        assert_eq!(active.session_id, "s3");
+        assert_eq!(active.session_epoch, 3);
+        let sessions = view_after.sessions.get("ws-1").unwrap();
+        assert!(sessions.get("s1").unwrap().ended);
+        assert!(sessions.get("s2").unwrap().ended);
+        assert!(!sessions.get("s3").unwrap().ended);
+        // 重启后继续追加不会与旧 seq 冲突
+        assert_eq!(log.next_seq(), view_after.last_seq + 1);
+    }
 }
