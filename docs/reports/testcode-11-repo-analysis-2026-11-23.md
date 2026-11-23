@@ -1,6 +1,6 @@
 # testcode 同类产品 12 仓分析报告
 
-> 日期：2026-11-23（2026-11-24 追加 LoopForge；2026-11-24 graphify 升级实现级深读；2026-11-24 Understand-Anything 升级实现级深读）
+> 日期：2026-11-23（2026-11-24 追加 LoopForge；2026-11-24 graphify 升级实现级深读；2026-11-24 Understand-Anything 升级实现级深读；2026-11-24 codebase-memory-mcp 升级实现级深读）
 > 范围：`testcode/` 下 12 个同类/相关开源产品仓库
 > 方法：优先走 callwarden 图谱工具（workspace 注册 + build_graph + repo map + 健康检查），大仓构建超时（watchdog 连续 2 次 /health 失败判死）改走源码/README 分析。
 
@@ -29,9 +29,9 @@
 
 | 深度 | 仓库 | 证据 |
 |---|---|---|
-| 实现级深读 | code-review-graph、GitNexus、CodeGraph、**graphify（2026-11-24）**、**Understand-Anything（2026-11-24）** | 直接读到 `changes.py: compute_risk_score`、`graph.py` 边置信度、`docs/mcp-reference.md` 响应预算、`refresh_index` 单飞、README 工具面 profile 表；graphify 深读 serve/watch/affected/hooks/analyze 五个实现与 24 平台集成产物（见第三节）；Understand-Anything 深读 SKILL.md 编排主控 / compute-batches / prepare-incremental / file-analyzer / hooks 与分发 manifest（见「二·补 B」） |
+| 实现级深读 | code-review-graph、GitNexus、CodeGraph、**graphify（2026-11-24）**、**Understand-Anything（2026-11-24）**、**codebase-memory-mcp（2026-11-24）** | 直接读到 `changes.py: compute_risk_score`、`graph.py` 边置信度、`docs/mcp-reference.md` 响应预算、`refresh_index` 单飞、README 工具面 profile 表；graphify 深读 serve/watch/affected/hooks/analyze 五个实现与 24 平台集成产物（见第三节）；Understand-Anything 深读 SKILL.md 编排主控 / compute-batches / prepare-incremental / file-analyzer / hooks 与分发 manifest（见「二·补 B」）；codebase-memory-mcp 深读 language.c / lang_specs.c / store.h+graph_mem.c / pipeline_incremental.c / watcher.c 与 17 工具面（见「二·补 C」） |
 | 结构 + README 级 | goodbuddy、orca | 仅 build_graph/repo map 的结构指标与 README 定位，未逐功能读实现 |
-| README/架构级 | deepseek-harness、hermes-agent、codebase-memory-mcp | 构建超时，只到架构与文档层 |
+| README/架构级 | deepseek-harness、hermes-agent | 构建超时，只到架构与文档层 |
 | 新增/未覆盖 | LoopForge（本次补齐源码层）、DeepSeek-TUI（未注册） | LoopForge 见下节具体实现点 |
 
 ## 二、可借鉴清单（10 条）
@@ -125,6 +125,35 @@
 - 前版"测试附 evidence manifest（最新 38 项全过）"本轮未复核测试运行，仅确认仓库含 tests/（单测 + E2E）；该表述待复核。
 - 排除项：`homepage/`、`docs/`（仅 1 个开发文档）、`READMEs/`（多平台 README 副本）为展示型/重复文档，未纳入深读。不建议整体照搬 UA"7 阶段全量编排"——callwarden 已有 daemon 任务编排（task.claim / step / report），整体照搬属过度设计；可借鉴价值在单条 pipeline 细节（两阶段抽取、命名契约、增量分类）。
 
+## 二·补 C：codebase-memory-mcp 实现级深读（2026-11-24 追加，可借鉴 35-41）
+
+深读对象（5 个关键实现 + 工具面，路径以 `testcode/codebase-memory-mcp/` 为根）：`src/discover/language.c`（1989 行，语言判定链）、`internal/cbm/lang_specs.c`（2801 行，每语言一行 LangSpec + 编译期对齐）、`src/store/store.h`（1423 行，发布/生成代/批量写）与 `src/store/graph_mem.c`（837 行，内存 CSR 缓存与淘汰）、`src/pipeline/pipeline_incremental.c`（4963 行，增量路由）、`src/watcher/watcher.c`（1939 行，变更监听），辅读 `src/mcp/mcp.c`（23242 行，17 工具面）。该仓 build_graph 构建超时，本轮不依赖图谱工具，全部结论均为直接源码取证。
+
+### 可直接落地（35、39-41）
+
+35. **fail-closed 语言判定链**（`language.c:1010-1074` `lang_for_filename`、`1972-1989` `cbm_language_for_file`、`1314-1334` `cbm_language_from_shebang`）：固定文件名表 → `.env.*` 变体（`1027-1029`）→ Dockerfile/Containerfile 变体（`985-1008`，后缀本身是语言扩展时不算变体）→ 内置复合扩展（`.blade.php`/`.drawio.svg`/`.excalidraw.json`，`1047-1055`）→ 用户配置复合扩展 → 末位单扩展 → shebang → 内容探测；需要读内容时才读，先算 probe 字节数、用「多读到 1 字节」区分恰好结束与更长文件（`1984-1988`）。**未识别一律返回 `CBM_LANG_COUNT` 哨兵，永不猜一个语言**。**对 callwarden**：扩语言时的判定顺序与「不猜」原则可直接照搬；现有 LSP 注册表应补同语义的哨兵返回值，避免未知扩展被默认成某语言后污染图谱。
+39. **watcher 脏状态签名 + 双退避 + artifact 自排除**（`watcher.c:757-768`、`781-821`、`1446-1545`、`1636`、`142-164`、`205-224`、`739-756`）：`git --no-optional-locks -C <root> status --porcelain -uall -z -- . :(exclude).codebase-memory` 把条目文本 + 每文件 size/mtime 折叠成 FNV 脏签名（rename/copy 的第二个 token 按文本折叠不 stat，`786-814`；子模块 `submodule foreach` 递归，`833-862`）；**baseline 只在成功重建后提交**，busy-skip 与失败都不推进，因此同一脏状态只重建一次、变更永不丢；轮询 5s + 1s/500 文件（cap 60s），硬失败 2^n 退避（cap 5min，第 10 次起单独告警），成功冷却 = 3× 索引耗时（cap 5min）。**对 callwarden**：增量刷新防写入放大直接落地；`:(exclude)` 自产物是防反馈环关键（该仓注释记 #1953：不排除时 15 分钟自触发 100+ 次），callwarden 需先查 `.callwarden/` 是否被自身索引。
+40. **工具面 profile + 仅 3 工具 alwaysLoad + 不声明 outputSchema**（`mcp.c:919-937` 注解表、`995-1027` profile 白名单、`986-990`、`970-976`、`913-918` 注释）：17 工具分 `scout`(8) / `analysis`(13) / `all`，HTTP 传输只在 `all` 下允许（`1073-1075`，工具面即攻击面）；仅 `search_graph`/`trace_path`/`get_code_snippet` 标 `_meta["anthropic/alwaysLoad"]`（约 4.6K 字符），动机是「客户端默认把所有 MCP 工具藏在 ToolSearch 后，agent 决策时看得见 Grep/Read 却看不见图」；注解 5 元组 `read_only/destructive/idempotent/open_world/load_upfront` 显式声明，缺省按「破坏性 + 非幂等 + 开放世界」保守处理（`980-983`）。**刻意不声明 outputSchema**：输出随 `format` 多变、静态 schema 不真实，且声明后遵守规范的客户端会把 `structuredContent` 当权威结果（#1522：tree 回复全渲染成 `{}`）。**对 callwarden**：`CALLWARDEN_MCP_TOOL_PROFILE` 已有，补 3 个核心工具的 alwaysLoad 元数据即可；`CALLWARDEN_*` 工具若走 tree/json 双格式，应同样拒绝声明 outputSchema。
+41. **只读路径不修复，才能诚实声明 readOnlyHint**（`mcp.c:898-918` 注释）：十个纯查询工具走 `resolve_store()` 的 query-only 分支，库损坏只报告、不 quarantine 不重建；quarantine/rebuild 只保留给写侧打开（`index_repository`/`manage_adr`）。这正是它们 `readOnlyHint=true` 成立、并被 plan-mode 客户端暴露的依据。**对 callwarden**：审计只读 MCP 工具是否存在隐式修复/重建分支，否则 readOnlyHint 与 profile 暴露策略都不成立。
+
+### 需改造（36-38）
+
+36. **LangSpec 一行一语言 + 编译期对齐 + 语法复用/专用抽取器**（`lang_specs.c:2762-2763` `_Static_assert`、`2787-2801`、`2657-2760`、`2730-2753`）：每语言一行指定初始化器声明 16 类节点集合（func/class/field/module/call/import/branch/var/assign/throw/decorator…）+ 语法工厂，枚举加而规格漏加直接编译失败；`cbm_lang_spec()` 用 `spec->language == lang && spec->function_node_types` 双重校验，无效行当没配。三类特殊语言是同一机制的延伸：无语法行自写抽取器（PDF/AsciiDoc/Diagram/ObjectScript-Export）、复用他人语法（KUSTOMIZE/K8S→YAML、OPENAPI→去 per-key 的 JSON、ARKTS→TS 节点集）、条件编译节点类型单独成表（C 家族 `preproc_*`，`2767-2785`）。**改造点/依赖**：callwarden 目前没有「语言表 + 节点类型表」抽象，且语言数远少于 164；直接照搬表结构收益低于维护成本，应先抽出一层最薄的语言注册表（语言 → 抽取器/节点集/是否构建配置），再逐步填充。
+37. **staging seal 后原子发布 + 生成代令牌**（`store.h:580-586` `cbm_store_seal_for_atomic_publish`、`556-567` `generation`/`generation_advance`、`531-545` 批量写）：发布前把完全写好的 staging 库 `synchronous=FULL` + 独占 `TRUNCATE` checkpoint 成自包含主文件（无必需 `-wal`/`-shm` 边车），`SQLITE_BUSY` 或模式转换未确认一律报错、由调用方保留旧代——fail-closed 而非重试或降级；生成代 `u<16-hex db_uid>g<canonical-uint64 mut_gen>` 供分页游标失效检测（`legacy` 仅当 `store_meta` 真缺失，元数据损坏按错误处理）。**改造点/依赖**：callwarden 已有 snapshot，需核验三点——发布是否 seal 后原子替换、`SQLITE_BUSY` 是否 fail-closed、游标是否绑定 snapshot 代；缺哪点补哪点，属验证型改造而非重写。
+38. **二分增量路由 + 闭包修复预算**（`pipeline_incremental.c:4408-4469`、`3459-3510`、`3432-3501`、`4484-4491`、`4521-4524`）：生产路由刻意只有两档——语义清单精确匹配即 `incremental.noop` 返回 0；任一字节/集合/模式/迁移差异则只重算 `changed ∪ dependents`（依赖来自 `get_dependent_files`，body 编辑另加按行绑定的文档，再补 unresolved doc-link 的文件级/成员级依赖），decline 原因显式枚举（`dependent_not_discovered`/`doc_scope_changed`/`dependent_query_failed`/`budget_exceeded`/声明式类型身份变化）且任一条命中就回退全量；预算是 `closure > FLOOR && closure*100 > file_count*PERCENT` 即放弃修复；真删除才 purge，模式跳过保留节点与 hash；历史未解析证据不完整时禁止子集修复。**改造点/依赖**：直击 callwarden「build_graph 同步全量、>2000 文件必超时」短板；建议两期落地——先「精确清单 no-op」（无差异直接返回，成本极低），再在预算内做闭包修复，decline 分支宁可全量。
+
+### 不适用（3 条）
+
+- **手写 C 内存 CSR 图 + 自建 LRU/预算淘汰**（`graph_mem.c:121-205`）：callwarden Rust `GraphStore` 已是 CSR + PyO3 懒转换，重复实现无收益；只借「按 `(path, version)` 查找 + 同路径旧版本 retire（`152`）」的语义。
+- **164 语言 Tree-sitter 语法全量 vendored**（`internal/cbm/vendored/`）：维护成本远大于收益；callwarden 策略是 LSP 优先 + 少量高频语言，覆盖面不是目标。
+- **yyjson 内联 JSON schema 字符串**（`mcp.c:537-885` 工具表）：callwarden 侧用结构化 schema 生成，无需照搬字符串常量形态。
+
+### 复核记录与落地顺序
+
+- 规模口径复核：该仓 C/TS 判断成立（C 实现 + vendored 语法包，无 Go）；本次未重跑 build_graph，构建超时结论沿用 11-23 记录，本轮所有结论不依赖图谱入库。
+- 工具面复核：17 个工具（`TOOLS[]` 长度）与注解表 17 行一一对应，无缺注解工具；profile 白名单为 scout 8 / analysis 13，与 CodeGraph 的 core 8 数量级一致。
+- 落地顺序建议（并入第三节优先级）：39 watcher 脏签名 + 自产物排除（小改动，先查 `.callwarden/` 自索引）→ 40 alwaysLoad 元数据（极小）→ 41/37 只读路径审计与生成代绑游标（中）→ 38 二分增量路由（大，分两期）。
+
 ## 五、harness 插件化：callwarden 该以什么身份接入
 
 用户方向：多个仓库（deepseek-harness、hermes-agent、LoopForge）都是 harness，能否让 callwarden 成为它们的调度插件。结论：**可以，但不要做成"某个 harness 的调度插件"，而是保持两个标准面 + 一个统计面**，按成本从低到高：
@@ -149,7 +178,7 @@
 ## 四、各仓库一句话定位
 
 - **code-review-graph**：与 callwarden 最同构（Python + Tree-sitter + MCP），风险评分/边置信度/rationale 入图三个特性直接对标。
-- **codebase-memory-mcp**：164 语言 LSP 路线，语言覆盖面是参照系。
+- **codebase-memory-mcp**：164 语言 LSP 路线，语言覆盖面是参照系；实现级看点见「二·补 C」（语言判定链 fail-closed、LangSpec 表驱动、seal 后原子发布与生成代、二分增量路由 + 闭包预算、watcher 脏签名与双退避、17 工具面 profile/alwaysLoad）。
 - **CodeGraph**：Rust 同栈，工具面 profile 设计出处；42 工具 vs callwarden 工具数同量级。
 - **GitNexus**：KuzuDB 图库 + MCP，响应预算与 refresh 单飞设计出处。
 - **graphify**：callwarden 真实用户（自举：用 callwarden 管理自身），已实现级深读（见「二·补」）——响应预算、staleness 信号、影响面反向 BFS、agent hook 保鲜、可解释风险评分五条与 callwarden roadmap 直接对齐；24 平台集成产物是 callwarden 工具面的活的需求信号与验收清单。
