@@ -201,6 +201,24 @@ def test_summarize_edges_min_confidence_filters_candidates():
     assert summarize_edges(weights, metadata, None) == full
 
 
+def test_summarize_edges_per_symbol_carries_metadata():
+    """per_symbol 每条候选同样带收窄字段，且保持升序口径。"""
+    metadata = {
+        "m.b": {"file_path": "b.py", "kind": "method", "call_line": 8},
+        "m.a": {"file_path": "a.py", "kind": "fn", "call_line": 5},
+    }
+    block = summarize_edges({"m.a": 0.8, "m.b": 0.2}, metadata)
+    assert [row["qualified_name"] for row in block["per_symbol"]] == ["m.b", "m.a"]
+    for row in block["per_symbol"]:
+        for field in ("qualified_name", "target_uid", "file_path", "kind", "call_line"):
+            assert field in row, f"per_symbol 缺少字段 {field}"
+        assert row["target_uid"] == row["qualified_name"]
+    by_name = {row["qualified_name"]: row for row in block["per_symbol"]}
+    assert (by_name["m.a"]["file_path"], by_name["m.a"]["kind"], by_name["m.a"]["call_line"]) == (
+        "a.py", "fn", 5,
+    )
+
+
 
 
 def test_security_named_detection():
@@ -482,6 +500,15 @@ def test_review_readiness_min_confidence_filters_unaaffected(tmp_path):
             row["confidence"] >= 0.4
             for row in filtered["edge_confidence"]["per_symbol"]
         )
+        # per_symbol 同样被收窄，且保持 confidence 升序 + 限定名兜底
+        assert [
+            row["qualified_name"] for row in filtered["edge_confidence"]["per_symbol"]
+        ] == [
+            "pkg_mid.leaf",
+            "pkg_auth.authenticate_user",
+            "pkg_mid.mid",
+            "pkg_src.local_helper",
+        ]
         # 旧字段不受过滤影响
         assert filtered["risk_level"] == base["risk_level"]
         assert filtered["must_test"] == base["must_test"]
