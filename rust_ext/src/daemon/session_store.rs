@@ -201,6 +201,124 @@ impl SessionView {
     }
 }
 
+// ============================================
+// Admission barrier（并发会话准入控制）
+// ============================================
+
+/// 准入拒绝的稳定错误码（同一 workspace 活动会话数达到阈值）。
+pub const E_SESSION_ADMISSION_LIMIT: &str = "E_SESSION_ADMISSION_LIMIT";
+
+/// 默认同一 workspace 同时活动会话数上限。
+pub const DEFAULT_MAX_ACTIVE_SESSIONS: usize = 8;
+
+/// 配置活动会话数上限的环境变量名。
+pub const ENV_MAX_ACTIVE_SESSIONS: &str = "CALLWARDEN_SESSION_MAX_ACTIVE_SESSIONS";
+
+/// 准入拒绝的结构化错误（携带稳定错误码 + 上下文）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionAdmissionError {
+    /// 稳定错误码，恒为 [`E_SESSION_ADMISSION_LIMIT`]。
+    pub code: &'static str,
+    pub workspace_id: String,
+    /// 拒绝时该 workspace 已有的活动会话数。
+    pub active_sessions: usize,
+    /// 配置的上限。
+    pub limit: usize,
+}
+
+impl SessionAdmissionError {
+    /// 序列化为结构化 JSON（供 RPC 响应使用）。
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "code": self.code,
+            "workspace_id": self.workspace_id,
+            "active_sessions": self.active_sessions,
+            "limit": self.limit,
+        })
+    }
+}
+
+impl std::fmt::Display for SessionAdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: workspace {} has {} active sessions (limit {})",
+            self.code, self.workspace_id, self.active_sessions, self.limit
+        )
+    }
+}
+
+impl std::error::Error for SessionAdmissionError {}
+
+/// 会话准入屏障：同一 workspace 的活动会话数达到阈值时拒绝新会话。
+///
+/// 活动会话数取自 [`SessionView`] 中 `ended == false` 的会话记录；
+/// 阈值由 [`SessionAdmissionLimiter::from_env`] 从环境变量读取
+/// （`CALLWARDEN_SESSION_MAX_ACTIVE_SESSIONS`，0 表示不限制）。
+pub struct SessionAdmissionLimiter {
+    limit: usize,
+}
+
+impl SessionAdmissionLimiter {
+    /// 使用显式上限创建（0 表示不限制）。
+    pub fn new(limit: usize) -> Self {
+        Self { limit }
+    }
+
+    /// 从默认环境变量读取上限；未配置或非法值回退到
+    /// [`DEFAULT_MAX_ACTIVE_SESSIONS`]。
+    pub fn from_env() -> Self {
+        Self::from_env_key(ENV_MAX_ACTIVE_SESSIONS)
+    }
+
+    /// 从指定环境变量读取上限（便于测试与多实例隔离）。
+    pub fn from_env_key(key: &str) -> Self {
+        let limit = parse_env_u64(key)
+            .map(|v| v as usize)
+            .unwrap_or(DEFAULT_MAX_ACTIVE_SESSIONS);
+        Self::new(limit)
+    }
+
+    /// 配置的上限（0 表示不限制）。
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
+    /// 依据回放视图检查是否允许为 workspace 再接纳一个会话。
+    ///
+    /// 注意：调用时机应在写入新会话的 Activate 事件之前，
+    /// 因此 `view` 中的活动会话数即“已被占用”的并发额度。
+    pub fn check(
+        &self,
+        view: &SessionView,
+        workspace_id: &str,
+    ) -> Result<(), SessionAdmissionError> {
+        let active = view
+            .sessions
+            .get(workspace_id)
+            .map(|records| records.values().filter(|record| !record.ended).count())
+            .unwrap_or(0);
+        self.check_active_count(workspace_id, active)
+    }
+
+    /// 依据显式活动会话数检查准入（供不持有 [`SessionView`] 的调用方使用）。
+    pub fn check_active_count(
+        &self,
+        workspace_id: &str,
+        active_sessions: usize,
+    ) -> Result<(), SessionAdmissionError> {
+        if self.limit == 0 || active_sessions < self.limit {
+            return Ok(());
+        }
+        Err(SessionAdmissionError {
+            code: E_SESSION_ADMISSION_LIMIT,
+            workspace_id: workspace_id.to_string(),
+            active_sessions,
+            limit: self.limit,
+        })
+    }
+}
+
 /// 持久化会话事件日志。
 pub struct SessionEventLog {
     log_path: PathBuf,
@@ -607,5 +725,102 @@ mod tests {
     fn test_default_log_path_uses_workspace_dir() {
         let path = default_log_path("C:/data/ws-1");
         assert!(path.ends_with("session_events.log"));
+    }
+
+    // ---- admission barrier 测试 ----
+
+    fn view_with_active(workspace: &str, active: usize, ended: usize) -> SessionView {
+        let mut view = SessionView::default();
+        let mut records = BTreeMap::new();
+        for i in 0..active {
+            records.insert(
+                format!("s{}", i),
+                SessionRecordView {
+                    session_epoch: i as i64 + 1,
+                    ended: false,
+                },
+            );
+        }
+        for i in 0..ended {
+            records.insert(
+                format!("ended{}", i),
+                SessionRecordView {
+                    session_epoch: 100 + i as i64,
+                    ended: true,
+                },
+            );
+        }
+        view.sessions.insert(workspace.to_string(), records);
+        view
+    }
+
+    #[test]
+    fn test_admission_allows_below_limit() {
+        let limiter = SessionAdmissionLimiter::new(3);
+        let view = view_with_active("ws-1", 2, 5);
+        assert!(limiter.check(&view, "ws-1").is_ok());
+        // 未出现过的 workspace 视为 0 个活动会话
+        assert!(limiter.check(&view, "ws-unknown").is_ok());
+    }
+
+    #[test]
+    fn test_admission_rejects_at_limit_with_stable_code() {
+        let limiter = SessionAdmissionLimiter::new(2);
+        let view = view_with_active("ws-1", 2, 3);
+        let err = limiter.check(&view, "ws-1").unwrap_err();
+        assert_eq!(err.code, E_SESSION_ADMISSION_LIMIT);
+        assert_eq!(err.active_sessions, 2);
+        assert_eq!(err.limit, 2);
+        assert_eq!(err.workspace_id, "ws-1");
+
+        let json = err.to_json();
+        assert_eq!(json["code"], E_SESSION_ADMISSION_LIMIT);
+        assert_eq!(json["active_sessions"], 2);
+        assert_eq!(json["limit"], 2);
+    }
+
+    #[test]
+    fn test_admission_ignores_ended_sessions() {
+        let limiter = SessionAdmissionLimiter::new(2);
+        // 2 个已结束 + 1 个活动 -> 允许
+        let view = view_with_active("ws-1", 1, 2);
+        assert!(limiter.check(&view, "ws-1").is_ok());
+    }
+
+    #[test]
+    fn test_admission_zero_limit_is_unlimited() {
+        let limiter = SessionAdmissionLimiter::new(0);
+        let view = view_with_active("ws-1", 10_000, 0);
+        assert!(limiter.check(&view, "ws-1").is_ok());
+    }
+
+    #[test]
+    fn test_admission_limit_from_env_key() {
+        let key = "CALLWARDEN_TEST_SESSION_MAX_ACTIVE_UNIQUE";
+        std::env::remove_var(key);
+        // 未配置 -> 默认值
+        assert_eq!(
+            SessionAdmissionLimiter::from_env_key(key).limit(),
+            DEFAULT_MAX_ACTIVE_SESSIONS
+        );
+        // 配置合法值 -> 生效
+        std::env::set_var(key, "2");
+        assert_eq!(SessionAdmissionLimiter::from_env_key(key).limit(), 2);
+        // 非法值 -> 回退默认
+        std::env::set_var(key, "not-a-number");
+        assert_eq!(
+            SessionAdmissionLimiter::from_env_key(key).limit(),
+            DEFAULT_MAX_ACTIVE_SESSIONS
+        );
+        std::env::remove_var(key);
+    }
+
+    #[test]
+    fn test_admission_check_active_count() {
+        let limiter = SessionAdmissionLimiter::new(1);
+        assert!(limiter.check_active_count("ws-1", 0).is_ok());
+        let err = limiter.check_active_count("ws-1", 1).unwrap_err();
+        assert_eq!(err.code, E_SESSION_ADMISSION_LIMIT);
+        assert!(err.to_string().contains(E_SESSION_ADMISSION_LIMIT));
     }
 }
