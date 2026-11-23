@@ -517,3 +517,97 @@ def test_review_readiness_min_confidence_filters_unaaffected(tmp_path):
         assert filtered["edge_confidence"]["histogram"] == base["edge_confidence"]["histogram"]
     finally:
         db.close()
+
+
+# ----------------------------------------------------------------------
+# C. rationale 语义注释：解析 + 回读（多语言前缀覆盖）
+# ----------------------------------------------------------------------
+
+# 七种前缀按语言拆分覆盖：Python 用 #，JS/TS/Rust 用 //
+RATIONALE_SAMPLES = {
+    "a.py": "# NOTE: py 说明\n# IMPORTANT: py 重要\n",
+    "a.ts": "// HACK: ts 临时方案\n// WHY: ts 原因\n",
+    "a.rs": "// RATIONALE: rs 理由\n// TODO: rs 待办\n// FIXME: rs 待修\n",
+}
+
+
+def test_rationale_extract_multi_language_prefixes():
+    """多语言注释符下 7 种前缀全部覆盖，且行号/正文可读。"""
+    from callwarden.db.db_build import extract_rationale_comments
+
+    covered = set()
+    expected = {
+        "a.py": [("NOTE", "py 说明"), ("IMPORTANT", "py 重要")],
+        "a.ts": [("HACK", "ts 临时方案"), ("WHY", "ts 原因")],
+        "a.rs": [
+            ("RATIONALE", "rs 理由"),
+            ("TODO", "rs 待办"),
+            ("FIXME", "rs 待修"),
+        ],
+    }
+    for rel_path, source in RATIONALE_SAMPLES.items():
+        entries = extract_rationale_comments(source, rel_path)
+        assert [(e["prefix"], e["text"]) for e in entries] == expected[rel_path]
+        assert [e["line"] for e in entries] == list(range(1, len(expected[rel_path]) + 1))
+        covered.update(e["prefix"] for e in entries)
+    assert covered == {
+        "NOTE", "IMPORTANT", "HACK", "WHY", "RATIONALE", "TODO", "FIXME",
+    }
+
+
+def test_rationale_parse_then_read_back(tmp_path):
+    """解析得到的 rationale 经入库后可由 get_symbol 原样回读。"""
+    import hashlib
+
+    from callwarden.db.db_build import extract_rationale_comments
+
+    source = "// WHY: 兼容旧协议\n// TODO: 补测试\nfunction alpha() { return 1; }\n"
+    path = tmp_path / "a.ts"
+    path.write_text(source, encoding="utf-8")
+
+    rationale = extract_rationale_comments(source, "a.ts")
+    assert [e["prefix"] for e in rationale] == ["WHY", "TODO"]
+
+    content = "function alpha() { return 1; }"
+    symbol = {
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "name": "alpha",
+        "kind": "function",
+        "visibility": "public",
+        "start_line": 3,
+        "end_line": 3,
+        "start_col": 0,
+        "end_col": len(content),
+        "signature": "function alpha()",
+        "has_comment": False,
+        "comment_content": "",
+        "content": content,
+        "module_path": "a",
+        "qualified_name": "a.alpha",
+        "rationale": rationale,
+    }
+
+    db = CodeGraphDB(db_path=str(tmp_path / "rationale.db"), workspace_root=str(tmp_path))
+    db.is_feature_rolled_back = lambda name: True  # 固定 Python 写路径
+    try:
+        file_instance_id = db._register_file_db(str(path), "a")
+        result = {
+            "abs_path": str(path),
+            "rel_path": "a.ts",
+            "module_path": "a",
+            "content_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            "total_lines": source.count("\n"),
+            "language": "typescript",
+            "symbols": [symbol],
+            "inline_modules": [],
+        }
+        file_version_id = db._save_file_version(file_instance_id, result)
+        db._save_symbols_for_version(file_version_id, file_instance_id, result)
+        db.conn.commit()
+
+        got = db.get_symbol("a.alpha")
+        assert got is not None
+        assert got["rationale"] == rationale
+    finally:
+        db.close()
+
