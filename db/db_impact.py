@@ -11,8 +11,19 @@ db_impact.py
 from __future__ import annotations
 
 import re
+import subprocess
 import time
 from typing import Any, Dict, List, Optional
+
+from .db_risk import (
+    classify_edge,
+    collect_risk_signals,
+    compute_risk_score,
+    edge_confidence_weight,
+    is_noisy_raw_name,
+    is_security_named,
+    summarize_edges,
+)
 
 
 class ImpactMixin:
@@ -781,12 +792,17 @@ class ImpactMixin:
         Returns:
             报告字典：
             - impact_scope: "high" / "medium" / "low"
-            - risk_level: 同 impact_scope
+            - risk_level: 同 impact_scope（旧阈值口径，保持向后兼容）
             - total_impacted: 影响符号总数
             - must_test: 受影响 public 函数列表
             - review_points: DB/API 层人工审查点列表
             - by_layer: 各层影响计数
             - coverage: （可选）源符号覆盖率信息
+            - risk_score: 六信号加权总分（深度/跨模块/测试缺口/安全面/调用压力/变更热度）
+            - risk_signals: 上述六信号各自封顶后的分值
+            - edge_confidence: 受影响符号的边置信度四档汇总
+              （per_symbol/min_confidence/classification/histogram）
+            - weighted_impacted: 按边置信度加权后的影响面（替代纯计数口径）
         """
         blast = self.blast_radius(symbol_hash)
         cross = self.cross_layer_impact(symbol_hash)
@@ -861,7 +877,283 @@ class ImpactMixin:
                 # 覆盖率查询失败不影响报告生成
                 pass
 
+        # 风险评分模型 + 边置信度四档（新增字段，不改旧键语义）
+        report.update(self._build_risk_profile(symbol_hash, blast, must_test))
         return report
+
+    # ------------------------------------------------------------------
+    # 风险评分 / 边置信度（评审就绪报告增强）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_test_symbol(sym: Dict[str, Any]) -> bool:
+        """影响树内符号是否属于测试（名字 test 前缀或路径段 test/tests）。"""
+        name = (sym.get("name") or "").lower()
+        path = (sym.get("file_path") or "").replace("\\", "/").lower()
+        if name.startswith("test"):
+            return True
+        return any(seg.startswith("test") for seg in path.split("/") if seg)
+
+    def _count_recent_commits(self, rel_path: str) -> int:
+        """源文件近期提交次数（变更热度信号；非 git 仓库/失败回退 0）。"""
+        root = getattr(self, "workspace_root", "") or ""
+        if not root or not rel_path:
+            return 0
+        try:
+            proc = subprocess.run(
+                ["git", "-C", root, "log", "--oneline", "--", rel_path],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return 0
+        if proc.returncode != 0:
+            return 0
+        return len([line for line in proc.stdout.splitlines() if line.strip()])
+
+    def _edge_confidence_weights(
+        self, ws_id: int, source_hash: str, others: List[Dict[str, Any]]
+    ) -> Dict[str, float]:
+        """逐调用方对影响树的边置信度权重（四档，越小越不可靠）。
+
+        方向：受影响符号 X 被拖入影响树，靠的是 X 自己的调用边指向
+        "已变更/已受影响"的符号（源符号或更浅层被影响符号）。故按
+        caller = X、callee ∈ 锚点集合 的边评估：
+
+        - 已解析边（callee_id>0）：同文件 → EXTRACTED(1.0)，跨文件 → INFERRED(0.8)；
+        - raw 边（callee_id=0）且 callee_qualified 精确命中锚点 → AMBIGUOUS(0.4)；
+        - raw 边只有裸名命中锚点 → UNRESOLVED(0.2)（过短/过通用名字不降级，防噪声）。
+
+        同一 caller 取所有相关边的最低权重（保守口径）。raw 边可能带来
+        影响树之外的候选调用方（未解析边不会被 blast_radius 遍历到），
+        它们也进入结果，作为"低置信度候选"暴露给审查方。
+
+        Returns:
+            (weights, call_lines)：
+            - weights: {caller_symbol_hash: 最低置信度权重}
+            - call_lines: {caller_symbol_hash: 该最低权重边所在调用行号}
+              （同权重多边时取最小非零行号，保证 ranked 排序稳定可复现）
+        """
+        anchor_qns = {
+            (s.get("qualified_name") or ""): (s.get("name") or "")
+            for s in others
+            if s.get("qualified_name")
+        }
+        source_qn = self._symbol_qualified_name(ws_id, source_hash)
+        if source_qn:
+            anchor_qns.setdefault(source_qn, source_qn.rsplit(".", 1)[-1])
+        if not anchor_qns:
+            return {}, {}
+        weights: Dict[str, float] = {}
+        call_lines: Dict[str, int] = {}
+
+        def _record(caller_hash: str, weight: float, call_line: Any) -> None:
+            """记录最低权重边；同权重取更小非零行号（未知行号不覆盖已知）。"""
+            line = int(call_line or 0)
+            prev = weights.get(caller_hash)
+            if prev is None or weight < prev:
+                weights[caller_hash] = weight
+                call_lines[caller_hash] = line
+            elif weight == prev:
+                prev_line = call_lines.get(caller_hash, 0)
+                if line and (prev_line == 0 or line < prev_line):
+                    call_lines[caller_hash] = line
+
+        anchor_list = list(anchor_qns.keys())
+        placeholders = ",".join("?" * len(anchor_list))
+        impacted_hashes = [
+            s.get("symbol_hash") for s in others if s.get("symbol_hash")
+        ]
+
+        # 已解析边：caller 在影响树内、callee 命中锚点
+        if impacted_hashes:
+            caller_ph = ",".join("?" * len(impacted_hashes))
+            cur = self.conn.execute(
+                f"""
+                SELECT s1.symbol_hash AS caller_hash,
+                       (fi1.id = fi2.id) AS same_file,
+                       c.call_line AS call_line
+                FROM calls c
+                JOIN symbols s1 ON s1.id = c.caller_id
+                JOIN file_instances fi1 ON fi1.id = s1.file_instance_id
+                JOIN symbols s2 ON s2.id = c.callee_id
+                JOIN file_instances fi2 ON fi2.id = s2.file_instance_id
+                WHERE fi1.workspace_id = ?
+                  AND c.callee_id > 0
+                  AND s1.symbol_hash IN ({caller_ph})
+                  AND s2.qualified_name IN ({placeholders})
+                """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
+                [ws_id, *impacted_hashes, *anchor_list],
+            )
+            for row in cur:
+                caller_hash = row["caller_hash"] or ""
+                if not caller_hash:
+                    continue
+                weight = edge_confidence_weight(
+                    classify_edge(1, bool(row["same_file"]), "")
+                )
+                _record(caller_hash, weight, row["call_line"])
+
+        # 未解析边：qualified 命中锚点 → AMBIGUOUS；裸名命中 → UNRESOLVED
+        name_to_anchors: Dict[str, List[str]] = {}
+        for qn, name in anchor_qns.items():
+            if name and not is_noisy_raw_name(name):
+                name_to_anchors.setdefault(name, []).append(qn)
+        raw_names = list(name_to_anchors.keys())
+        raw_ph = ",".join("?" * len(raw_names)) if raw_names else "NULL"
+        cur = self.conn.execute(
+            f"""
+            SELECT s1.symbol_hash AS caller_hash,
+                   c.callee_qualified, c.callee_name, c.call_line AS call_line
+            FROM calls c
+            JOIN symbols s1 ON s1.id = c.caller_id
+            JOIN file_instances fi1 ON fi1.id = s1.file_instance_id
+            WHERE fi1.workspace_id = ?
+              AND c.callee_id = 0
+              AND (c.callee_qualified IN ({placeholders})
+                   OR c.callee_name IN ({raw_ph}))
+            """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
+            [ws_id, *anchor_list, *raw_names],
+        )
+        ambiguous = edge_confidence_weight("AMBIGUOUS")
+        unresolved = edge_confidence_weight("UNRESOLVED")
+        for row in cur:
+            caller_hash = row["caller_hash"] or ""
+            if not caller_hash:
+                continue
+            cq = (row["callee_qualified"] or "").strip()
+            cname = (row["callee_name"] or "").strip()
+            if cq and cq in anchor_qns:
+                weight = ambiguous
+            elif cname and cname in name_to_anchors:
+                weight = unresolved
+            else:
+                continue
+            _record(caller_hash, weight, row["call_line"])
+
+        for sym in others:
+            sh = sym.get("symbol_hash") or ""
+            if sh:
+                weights.setdefault(sh, edge_confidence_weight("EXTRACTED"))
+                call_lines.setdefault(sh, 0)
+        return weights, call_lines
+
+    def _symbol_qualified_name(self, ws_id: int, symbol_hash: str) -> str:
+        """按 hash 取符号限定名（源符号锚点用）；不存在返回空串。"""
+        cur = self.conn.execute(
+            """
+            SELECT s.qualified_name
+            FROM symbols s
+            JOIN file_instances fi ON fi.id = s.file_instance_id
+            WHERE fi.workspace_id = ? AND s.symbol_hash = ?
+            LIMIT 1
+            """,
+            (ws_id, symbol_hash),
+        )
+        row = cur.fetchone()
+        return (row["qualified_name"] or "") if row else ""
+
+    def _build_risk_profile(
+        self,
+        symbol_hash: str,
+        blast: Dict[str, Any],
+        must_test: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """六信号风险评分 + 边置信度四档汇总（纯派生，不写库）。"""
+        layers = blast.get("layers") or []
+        impacted = [sym for layer in layers for sym in layer.get("symbols", [])]
+        others = [sym for sym in impacted if sym.get("symbol_hash") != symbol_hash]
+        if not others:
+            return {
+                "risk_score": 0.0,
+                "risk_signals": {},
+                "edge_confidence": {
+                    "min_confidence": 0.0,
+                    "classification": "UNAFFECTED",
+                    "histogram": {"WILL_BREAK": 0, "LIKELY_AFFECTED": 0, "UNAFFECTED": 0},
+                    "per_symbol": [],
+                    "ranked": [],
+                },
+                "weighted_impacted": 0.0,
+            }
+
+        ws_id = self._get_active_workspace_id()
+        weights, call_lines = self._edge_confidence_weights(ws_id, symbol_hash, others)
+        # 权重按 symbol_hash 记账（raw 候选可能不在影响树内），输出前统一换名并补元数据
+        hash_to_info: Dict[str, Dict[str, str]] = {
+            (s.get("symbol_hash") or ""): {
+                "qualified_name": s.get("qualified_name") or "",
+                "file_path": s.get("file_path") or "",
+                "kind": s.get("kind") or "",
+            }
+            for s in others
+            if s.get("symbol_hash")
+        }
+        missing = [h for h in weights if h not in hash_to_info]
+        if missing:
+            ph = ",".join("?" * len(missing))
+            cur = self.conn.execute(
+                f"""
+                SELECT s.symbol_hash, s.qualified_name, s.kind,
+                       fi.rel_path AS file_path
+                FROM symbols s
+                JOIN file_instances fi ON fi.id = s.file_instance_id
+                WHERE fi.workspace_id = ? AND s.symbol_hash IN ({ph})
+                """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
+                [ws_id, *missing],
+            )
+            for row in cur:
+                hash_to_info[row["symbol_hash"]] = {
+                    "qualified_name": row["qualified_name"] or "",
+                    "file_path": row["file_path"] or "",
+                    "kind": row["kind"] or "",
+                }
+        per_symbol: Dict[str, float] = {}
+        candidate_meta: Dict[str, Dict[str, Any]] = {}
+        for h, w in weights.items():
+            info = hash_to_info.get(h) or {}
+            qn = info.get("qualified_name") or h
+            per_symbol[qn] = w
+            candidate_meta[qn] = {
+                "file_path": info.get("file_path") or "",
+                "kind": info.get("kind") or "",
+                "call_line": int(call_lines.get(h, 0)),
+            }
+
+        source_module = ""
+        source_file = ""
+        if layers and layers[0].get("symbols"):
+            src = layers[0]["symbols"][0]
+            source_module = src.get("module_path") or ""
+            source_file = src.get("file_path") or ""
+
+        signals = collect_risk_signals(
+            max_depth=max(
+                (layer.get("depth", 0) for layer in layers if layer.get("symbols")),
+                default=0,
+            ),
+            impacted_modules=[sym.get("module_path") or "" for sym in others],
+            source_module=source_module,
+            must_test_count=len(must_test),
+            test_symbol_count=sum(1 for sym in others if self._is_test_symbol(sym)),
+            security_named_count=sum(
+                1
+                for sym in others
+                if is_security_named(
+                    sym.get("name") or "", sym.get("qualified_name") or ""
+                )
+            ),
+            direct_caller_count=len(layers[1].get("symbols", [])) if len(layers) > 1 else 0,
+            churn_commits=self._count_recent_commits(source_file),
+        )
+        return {
+            "risk_score": compute_risk_score(signals),
+            "risk_signals": signals,
+            "edge_confidence": summarize_edges(per_symbol, candidate_meta),
+            "weighted_impacted": round(sum(per_symbol.values()), 2),
+        }
 
     # ------------------------------------------------------------------
     # 漏洞爆炸半径（Vulnerability Blast Radius）
