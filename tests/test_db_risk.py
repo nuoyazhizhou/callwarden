@@ -799,3 +799,237 @@ def test_build_match_query_strips_fts_operators():
     assert build_match_query('  "quoted"  ') == '"quoted"'
     assert build_match_query("col:value") == '"colvalue"'
     assert build_match_query("   ") == ""
+
+
+# ----------------------------------------------------------------------
+# D. Smart CI 检查集选择 + verify_design 设计约束比对
+# ----------------------------------------------------------------------
+
+
+def _build_smart_ci_fixture(db: CodeGraphDB, ws_id: int, tmp_path) -> None:
+    """源函数 + 测试调用方 + 触发 guardrail 的高风险变更文件（含真实内容）。"""
+    src_file = _insert_file(db, ws_id, "src.py", "pkg_src")
+    test_file = _insert_file(db, ws_id, "tests/test_src.py", "tests.test_src")
+    _insert_file(db, ws_id, "risky.py", "risky")
+
+    source = _insert_symbol(
+        db, src_file, "h-source", "source", "pkg_src.source", "pkg_src"
+    )
+    test_sym = _insert_symbol(
+        db, test_file, "h-test", "test_source",
+        "tests.test_src.test_source", "tests.test_src",
+    )
+    _insert_call(db, test_sym, "test_source", "source", "pkg_src.source", source, 2)
+    db.conn.commit()
+
+    # guardrail guard 检测按 workspace_root 拼接读取文件内容
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_src.py").write_text(
+        "def test_source():\n    assert source() == 1\n", encoding="utf-8",
+    )
+    (tmp_path / "risky.py").write_text(
+        "# BREAKING CHANGE: drop legacy parameter\nvalue = 1\n", encoding="utf-8",
+    )
+
+
+def _smart_ci_db(tmp_path) -> CodeGraphDB:
+    db = CodeGraphDB(str(tmp_path / "smart-ci.db"), workspace_root=str(tmp_path))
+    ws_id = db.register_workspace("ws", str(tmp_path), "")
+    _build_smart_ci_fixture(db, ws_id, tmp_path)
+    db.set_active_workspace(ws_id)
+    # 强制走 Python SQL BFS（禁用 Rust GraphStore 短路），保证结果与环境无关
+    db._get_graph_store = lambda: None
+    return db
+
+
+def _insert_agent_rule(
+    db: CodeGraphDB,
+    rule_id: str,
+    title: str,
+    rule_text: str,
+    scope: dict,
+    severity: str,
+    evidence: dict,
+) -> None:
+    import json
+
+    db.conn.execute(
+        """
+        INSERT INTO agent_rules (
+            id, title, rule_text, scope_json, severity, status,
+            evidence_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, 0, 0)
+        """,
+        (rule_id, title, rule_text, json.dumps(scope), severity,
+         json.dumps(evidence)),
+    )
+    db.conn.commit()
+
+
+def _insert_guardrail_rule(
+    db: CodeGraphDB,
+    rule_id: str,
+    pattern: str,
+    description: str,
+    severity: str = "block",
+) -> None:
+    db.conn.execute(
+        """
+        INSERT INTO guardrail_rules (
+            rule_id, category, severity, pattern, action, description,
+            is_builtin, created_at
+        ) VALUES (?, 'custom', ?, ?, 'block', ?, 0, 1)
+        """,
+        (rule_id, severity, pattern, description),
+    )
+    db.conn.commit()
+
+
+def test_smart_ci_selects_minimal_checks_reproducibly(tmp_path):
+    """同一变更稳定选出测试+语法+guardrail 检查集，且两次调用完全一致。"""
+    db = _smart_ci_db(tmp_path)
+    try:
+        plan = db.smart_ci_plan(changed_files=["src.py", "risky.py"])
+
+        # 影响面：源函数 + 其调用方（测试函数）都进入影响集
+        assert [s["qualified_name"] for s in plan["impacted_symbols"]] == [
+            "pkg_src.source",
+            "tests.test_src.test_source",
+        ]
+        # 复用 test_impact_selection：测试函数被选中，并记录覆盖的受影响符号
+        assert plan["test_selection"] == [{
+            "qualified_name": "tests.test_src.test_source",
+            "name": "test_source",
+            "file_path": "tests/test_src.py",
+            "module_path": "tests.test_src",
+            "start_line": 1,
+            "covers": ["pkg_src.source"],
+        }]
+
+        # 最小充分检查集：guardrail 命中 + 语法 + 测试
+        assert [c["check_id"] for c in plan["checks"]] == [
+            "guardrail:GR-builtin-api-1:risky.py",
+            "guardrail:GR-builtin-inc-1:risky.py",
+            "guardrail:GR-builtin-inc-2:risky.py",
+            "guardrail:GR-builtin-inc-3:risky.py",
+            "syntax:risky.py",
+            "syntax:src.py",
+            "test:tests/test_src.py",
+        ]
+        by_id = {c["check_id"]: c for c in plan["checks"]}
+        guard = by_id["guardrail:GR-builtin-api-1:risky.py"]
+        assert (guard["kind"], guard["severity"]) == ("guardrail", "block")
+        assert guard["command"] == "cw guardrail scan --file risky.py"
+        assert by_id["syntax:src.py"]["command"] == "python -m py_compile src.py"
+        assert by_id["test:tests/test_src.py"]["command"] == "pytest -q tests/test_src.py"
+
+        assert plan["selection"]["test_count"] == 1
+        assert plan["selection"]["rule_ids"] == [
+            "GR-builtin-api-1", "GR-builtin-inc-1",
+            "GR-builtin-inc-2", "GR-builtin-inc-3",
+        ]
+
+        # 同一变更反复调用（输入顺序不同）→ 输出完全一致
+        again = db.smart_ci_plan(changed_files=["risky.py", "src.py"])
+        assert again == plan
+
+        # diff_text 入口与文件入口一致映射到触达符号
+        diff_text = (
+            "--- a/src.py\n+++ b/src.py\n@@ -1,2 +1,2 @@\n"
+            " def source():\n-    return 1\n+    return 2\n"
+        )
+        from_diff = db.smart_ci_plan(diff_text=diff_text)
+        assert from_diff["changed_files"] == ["src.py"]
+        assert [s["qualified_name"] for s in from_diff["seed_symbols"]] == [
+            "pkg_src.source",
+        ]
+        assert [t["qualified_name"] for t in from_diff["test_selection"]] == [
+            "tests.test_src.test_source",
+        ]
+    finally:
+        db.close()
+
+
+def test_smart_ci_empty_when_no_impacted_symbols(tmp_path):
+    """无受影响符号时返回空检查集且不报错。"""
+    db = _smart_ci_db(tmp_path)
+    try:
+        plan = db.smart_ci_plan(changed_files=["ghost_file_xyz.py"])
+        assert plan["impacted_symbols"] == []
+        assert plan["test_selection"] == []
+        assert plan["checks"] == []
+        assert plan["summary"] == "无受影响符号，检查集为空"
+    finally:
+        db.close()
+
+
+def test_verify_design_hits_constraints_with_design_refs(tmp_path):
+    """命中 agent/guardrail 约束时输出违背项，并给出设计条文引用。"""
+    db = _smart_ci_db(tmp_path)
+    try:
+        _insert_agent_rule(
+            db, "AR-design-1", "写操作必须走事务封装",
+            "见 docs/design/tx-design.md#L12：写操作必须走事务封装",
+            {"file_patterns": ["src.py"]}, "error",
+            {"doc": "docs/design/tx-design.md"},
+        )
+        _insert_guardrail_rule(
+            db, "GR-test-pattern", r"BREAKING CHANGE",
+            "兼容性条款见 docs/design/api-design.md",
+        )
+
+        result = db.verify_design(changed_files=["src.py", "risky.py"])
+
+        # agent_rules：仅命中 file_patterns=src.py 的符号上下文
+        agent_hits = [v for v in result["violations"] if v["source"] == "agent_rule"]
+        assert len(agent_hits) == 1
+        assert agent_hits[0]["rule_id"] == "AR-design-1"
+        assert agent_hits[0]["qualified_name"] == "pkg_src.source"
+        assert agent_hits[0]["rule_ref"] == "rule:AR-design-1"
+        assert agent_hits[0]["design_refs"] == [
+            "docs/design/tx-design.md",
+            "docs/design/tx-design.md#L12",
+        ]
+
+        # guardrail_rules：pattern 命中变更文件 risky.py
+        guard_hits = [
+            v for v in result["violations"] if v["source"] == "guardrail_rule"
+        ]
+        assert len(guard_hits) == 1
+        assert guard_hits[0]["rule_id"] == "GR-test-pattern"
+        assert guard_hits[0]["file_path"] == "risky.py"
+        assert guard_hits[0]["lines"] == [1]
+        assert guard_hits[0]["rule_ref"] == "guardrail:GR-test-pattern"
+        assert guard_hits[0]["design_refs"] == ["docs/design/api-design.md"]
+
+        assert result["design_refs"] == [
+            "docs/design/api-design.md",
+            "docs/design/tx-design.md",
+            "docs/design/tx-design.md#L12",
+            "guardrail:GR-test-pattern",
+            "rule:AR-design-1",
+        ]
+        assert result["summary"] == "命中设计约束 2 项"
+
+        # 稳定可复现
+        assert db.verify_design(changed_files=["risky.py", "src.py"]) == result
+    finally:
+        db.close()
+
+
+def test_verify_design_empty_when_no_constraints_hit(tmp_path):
+    """未命中约束时输出空且不报错。"""
+    db = _smart_ci_db(tmp_path)
+    try:
+        result = db.verify_design(changed_files=["src.py"])
+        assert result["violations"] == []
+        assert result["design_refs"] == []
+        assert result["summary"] == "未命中设计约束"
+
+        empty = db.verify_design(changed_files=["ghost_file_xyz.py"])
+        assert empty["violations"] == []
+        assert empty["design_refs"] == []
+        assert empty["summary"] == "无受影响符号，未命中设计约束"
+    finally:
+        db.close()
+
