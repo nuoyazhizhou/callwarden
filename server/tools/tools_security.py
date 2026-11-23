@@ -726,8 +726,15 @@ def register(mcp: FastMCP) -> None:
                 symbol_kinds / actions / finding_types / module_prefixes
             limit: 返回数量上限（默认 10）
 
+        可选扩展（verify_design，不新增工具）：
+            当 context 含 changed_files / impacted_symbols / diff_text 任一字段时，
+            额外返回 design_check：把 active agent_rules 与 guardrail_rules 规则
+            和变更影响面比对，输出违背项（violations）与设计条文引用（design_refs）；
+            未命中时两者为空且不报错。
+
         Returns:
             {"rules": [...], "count": int}
+            （扩展触发时额外含 "design_check": {...}）
         """
         return _route('get_applicable_rules', {"context": context, "limit": limit}, 'READ_ONLY')
 
@@ -1031,13 +1038,27 @@ def _h_rule_list(ctx: CompatCallContext) -> Any:
 
 
 def _h_get_applicable_rules(ctx: CompatCallContext) -> Any:
-    """worker handler：按上下文返回匹配的 active 规则（只读，查 agent_rules 后内存匹配）"""
+    """worker handler：按上下文返回匹配的 active 规则（只读，查 agent_rules 后内存匹配）
+
+    verify_design 扩展：context 含 changed_files / impacted_symbols / diff_text
+    时，额外输出 design_check（规则 × 变更影响面比对），不新增 MCP 工具。
+    """
     db = _bind_readonly_db(ctx)
+    context = ctx.params.get("context", {}) or {}
     rules = db.get_applicable_rules(
-        context=ctx.params.get("context", {}),
+        context=context,
         limit=ctx.params.get("limit", 10),
     )
-    return {"rules": rules, "count": len(rules)}
+    result: Dict[str, Any] = {"rules": rules, "count": len(rules)}
+    design_keys = {"changed_files", "impacted_symbols", "diff_text"}
+    if design_keys & set(context) and hasattr(db, "verify_design"):
+        result["design_check"] = db.verify_design(
+            changed_files=context.get("changed_files"),
+            impacted_symbols=context.get("impacted_symbols"),
+            diff_text=context.get("diff_text", ""),
+            depth=context.get("depth", 2) or 2,
+        )
+    return result
 
 
 # 分支/编辑历史/跨仓库/LSP + 规则查询只读白名单（16 个，get_edit_stats 已

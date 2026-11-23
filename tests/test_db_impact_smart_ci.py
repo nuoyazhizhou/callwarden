@@ -206,3 +206,114 @@ def test_smart_ci_accepts_diff_text(tmp_path):
         assert "test:tests/test_src.py" in [c["check_id"] for c in plan["checks"]]
     finally:
         db.close()
+
+
+def _insert_agent_rule(
+    db: CodeGraphDB,
+    rule_id: str,
+    title: str,
+    rule_text: str,
+    scope: dict,
+    severity: str,
+    evidence: dict,
+) -> None:
+    import json
+
+    db.conn.execute(
+        """
+        INSERT INTO agent_rules (
+            id, title, rule_text, scope_json, severity, status,
+            evidence_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, 0, 0)
+        """,
+        (rule_id, title, rule_text, json.dumps(scope), severity,
+         json.dumps(evidence)),
+    )
+
+
+def _insert_guardrail_rule(
+    db: CodeGraphDB,
+    rule_id: str,
+    pattern: str,
+    description: str,
+    severity: str = "block",
+) -> None:
+    db.conn.execute(
+        """
+        INSERT INTO guardrail_rules (
+            rule_id, category, severity, pattern, action, description,
+            is_builtin, created_at
+        ) VALUES (?, 'custom', ?, ?, 'block', ?, 0, 1)
+        """,
+        (rule_id, severity, pattern, description),
+    )
+
+
+def test_verify_design_hits_constraints_with_design_refs(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        _insert_agent_rule(
+            db, "AR-design-1", "写操作必须走事务封装",
+            "见 docs/design/tx-design.md#L12：写操作必须走事务封装",
+            {"file_patterns": ["pkg_src.py"]}, "error",
+            {"doc": "docs/design/tx-design.md"},
+        )
+        _insert_guardrail_rule(
+            db, "GR-test-pattern", r"BREAKING CHANGE",
+            "兼容性条款见 docs/design/api-design.md",
+        )
+        db.conn.commit()
+
+        result = db.verify_design(changed_files=["pkg_src.py", "risky.py"])
+
+        # agent_rules：仅命中 file_patterns=pkg_src.py 的符号上下文
+        agent_hits = [v for v in result["violations"] if v["source"] == "agent_rule"]
+        assert len(agent_hits) == 1
+        assert agent_hits[0]["rule_id"] == "AR-design-1"
+        assert agent_hits[0]["qualified_name"] == "pkg_src.source"
+        assert agent_hits[0]["file_path"] == "pkg_src.py"
+        assert agent_hits[0]["rule_ref"] == "rule:AR-design-1"
+        assert agent_hits[0]["design_refs"] == [
+            "docs/design/tx-design.md",
+            "docs/design/tx-design.md#L12",
+        ]
+
+        # guardrail_rules：pattern 命中变更文件 risky.py，给出条文引用
+        guard_hits = [
+            v for v in result["violations"] if v["source"] == "guardrail_rule"
+        ]
+        assert len(guard_hits) == 1
+        assert guard_hits[0]["rule_id"] == "GR-test-pattern"
+        assert guard_hits[0]["file_path"] == "risky.py"
+        assert guard_hits[0]["lines"] == [1]
+        assert guard_hits[0]["rule_ref"] == "guardrail:GR-test-pattern"
+        assert guard_hits[0]["design_refs"] == ["docs/design/api-design.md"]
+
+        assert result["design_refs"] == [
+            "docs/design/api-design.md",
+            "docs/design/tx-design.md",
+            "docs/design/tx-design.md#L12",
+            "guardrail:GR-test-pattern",
+            "rule:AR-design-1",
+        ]
+        assert result["summary"] == "命中设计约束 2 项"
+    finally:
+        db.close()
+
+
+def test_verify_design_empty_when_no_constraints_hit(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        result = db.verify_design(changed_files=["pkg_src.py"])
+        assert result["violations"] == []
+        assert result["design_refs"] == []
+        assert result["summary"] == "未命中设计约束"
+
+        # 无受影响符号 → 空结果且不报错
+        empty = db.verify_design(changed_files=["ghost_file_xyz.py"])
+        assert empty["violations"] == []
+        assert empty["design_refs"] == []
+        assert empty["summary"] == "无受影响符号，未命中设计约束"
+    finally:
+        db.close()
+

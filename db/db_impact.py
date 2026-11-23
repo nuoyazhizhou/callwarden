@@ -10,6 +10,7 @@ db_impact.py
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import time
@@ -1258,6 +1259,362 @@ class ImpactMixin:
         result["summary"] = (
             f"受影响符号 {len(impacted)} 个，选中测试 {len(tests)} 个，"
             f"检查项 {len(checks)} 项"
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # verify_design：设计约束 × 变更影响面比对
+    # ------------------------------------------------------------------
+
+    # 设计条文引用：rule_text/description/evidence 中出现的 docs 文档路径
+    _DESIGN_REF_RE = re.compile(
+        r"(docs/[A-Za-z0-9_\-./]+\.(?:md|markdown|txt|json))(#[A-Za-z0-9_\-]+)?"
+    )
+
+    @classmethod
+    def _extract_design_refs(
+        cls, texts: List[str], evidence: Optional[Dict[str, Any]]
+    ) -> List[str]:
+        """从规则文本与 evidence 中提取设计条文引用（去重升序）。
+
+        Args:
+            texts: 规则标题/正文/描述等文本
+            evidence: 规则 evidence dict（可含 doc/design_doc/link/ref/path/url）
+
+        Returns:
+            条文引用列表（如 "docs/design/xxx.md#L12"）
+        """
+        refs: set = set()
+        for text in texts:
+            if not text:
+                continue
+            for m in cls._DESIGN_REF_RE.finditer(text):
+                refs.add(m.group(1) + (m.group(2) or ""))
+        if isinstance(evidence, dict):
+            for key in ("doc", "design_doc", "design_ref", "link", "ref", "path", "url"):
+                value = evidence.get(key)
+                if isinstance(value, str) and value.strip():
+                    refs.add(value.strip())
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, str) and item.strip():
+                            refs.add(item.strip())
+        return sorted(refs)
+
+    @staticmethod
+    def _detect_language(rel_path: str) -> str:
+        """按文件路径推断语言（失败返回空串，不抛错）。"""
+        try:
+            from ..config import detect_language_from_path
+            return (detect_language_from_path(rel_path) or "").lower()
+        except Exception:
+            return ""
+
+    def _load_active_agent_rules(self) -> List[Dict[str, Any]]:
+        """读取 active 的 agent_rules（缺表时 fail-soft 返回空列表）。"""
+        try:
+            rows = self.conn.execute(
+                """
+                SELECT id, title, rule_text, scope_json, severity, evidence_json,
+                       updated_at
+                FROM agent_rules
+                WHERE status = 'active'
+                ORDER BY updated_at DESC
+                LIMIT 500
+                """
+            ).fetchall()
+        except Exception:
+            return []
+        return [dict(r) for r in rows]
+
+    def _load_guardrail_rules(self) -> List[Dict[str, Any]]:
+        """读取 guardrail_rules（缺表时 fail-soft 返回空列表；不触发内置规则写入）。"""
+        try:
+            rows = self.conn.execute(
+                """
+                SELECT rule_id, category, severity, pattern, action, description,
+                       is_builtin, created_at
+                FROM guardrail_rules
+                ORDER BY is_builtin DESC, created_at ASC, rule_id ASC
+                """
+            ).fetchall()
+        except Exception:
+            return []
+        return [dict(r) for r in rows]
+
+    def _symbol_contexts(
+        self, ws_id: int, impacted: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """为受影响符号构造规则匹配上下文（文件/语言/符号类型/模块前缀）。
+
+        Args:
+            ws_id: 工作区 ID
+            impacted: 受影响符号列表（qualified_name / file_path）
+
+        Returns:
+            上下文列表，元素含 context 与 symbol 原始信息；按 (file_path,
+            qualified_name) 稳定排序。
+        """
+        contexts: List[Dict[str, Any]] = []
+        for sym in impacted:
+            qn = sym.get("qualified_name") or ""
+            fp = self._normalize_path(sym.get("file_path") or "")
+            kind = ""
+            module_path = ""
+            if qn:
+                try:
+                    row = self.conn.execute(
+                        """
+                        SELECT s.kind, s.module_path
+                        FROM symbols s
+                        JOIN file_instances fi ON s.file_instance_id = fi.id
+                        WHERE fi.workspace_id = ? AND s.qualified_name = ?
+                        LIMIT 1
+                        """,
+                        (ws_id, qn),
+                    ).fetchone()
+                    if row is not None:
+                        kind = row["kind"] or ""
+                        module_path = row["module_path"] or ""
+                except Exception:
+                    pass
+            contexts.append({
+                "context": {
+                    "file_path": fp,
+                    "language": self._detect_language(fp),
+                    "symbol_kind": kind,
+                    "module_prefix": module_path,
+                },
+                "symbol": sym,
+            })
+        return sorted(
+            contexts,
+            key=lambda c: (
+                c["context"]["file_path"],
+                (c["symbol"].get("qualified_name") or ""),
+            ),
+        )
+
+    def verify_design(
+        self,
+        changed_files: Optional[List[str]] = None,
+        impacted_symbols: Optional[List[Dict[str, Any]]] = None,
+        diff_text: str = "",
+        depth: int = 2,
+    ) -> Dict[str, Any]:
+        """把设计约束与变更影响面比对，输出违背项与设计条文引用
+
+        约束来源（均为已有规则，不新增规则类型）：
+        - agent_rules：active 规则，按 scope（languages / file_patterns /
+          symbol_kinds / module_prefixes 等）与受影响符号上下文匹配，复用
+          AgentRulesMixin._match_scope 的 AND/OR 语义；
+        - guardrail_rules：内置/自定义规则，用 pattern 正则扫描受影响文件内容
+          （只读，不落库、不初始化内置规则）。
+
+        设计条文引用提取：规则文本/描述/evidence 中的 docs 文档路径；
+        无显式文档路径时回退为 rule:<id> / guardrail:<id> 规则定义引用。
+
+        验收口径：
+        - 命中约束时给出条文引用（design_refs + rule_ref 非空）；
+        - 未命中时 violations / design_refs 为空且不报错。
+
+        Args:
+            changed_files: 变更文件路径列表（可选）
+            impacted_symbols: 已算好的影响面（可选；每项含 qualified_name /
+                file_path），给定时不再重算
+            diff_text: git diff 文本（可选；用于解析触达符号）
+            depth: 影响半径遍历深度（默认 2，仅在需要重算影响面时使用）
+
+        Returns:
+            {
+                "changed_files": [...],
+                "impacted_symbols": [...],
+                "violations": [...],   # 违背项（含 design_refs / rule_ref）
+                "design_refs": [...],  # 全部命中规则的条文引用（去重升序）
+                "summary": "...",
+            }
+        """
+        normalized_files: List[str] = []
+        seeds: Dict[str, Dict[str, Any]] = {}
+
+        if impacted_symbols is None:
+            if diff_text:
+                for item in self.diff_to_symbol(diff_text) or []:
+                    rel = self._normalize_path(item.get("file_path") or "")
+                    if rel:
+                        normalized_files.append(rel)
+                    key = item.get("symbol_hash") or item.get("qualified_name") or ""
+                    if key and key not in seeds:
+                        seeds[key] = {
+                            "symbol_hash": item.get("symbol_hash") or "",
+                            "qualified_name": item.get("qualified_name") or "",
+                            "file_path": rel,
+                        }
+            for raw in changed_files or []:
+                rel = self._normalize_path(raw or "")
+                if rel:
+                    normalized_files.append(rel)
+            normalized_files = sorted(set(normalized_files))
+            if normalized_files:
+                ws_id = self._get_active_workspace_id()
+                for sym in self._symbols_for_changed_files(ws_id, normalized_files):
+                    key = sym.get("symbol_hash") or sym.get("qualified_name") or ""
+                    if key and key not in seeds:
+                        seeds[key] = dict(sym)
+            seed_list = sorted(
+                seeds.values(),
+                key=lambda s: (
+                    s.get("file_path", ""),
+                    s.get("qualified_name", ""),
+                    s.get("symbol_hash", ""),
+                ),
+            )
+            impacted = self._impacted_symbols_for_seeds(seed_list, depth)
+        else:
+            impacted = sorted(
+                [
+                    dict(s)
+                    for s in impacted_symbols
+                    if (s.get("qualified_name") or s.get("file_path"))
+                ],
+                key=lambda s: (
+                    self._normalize_path(s.get("file_path") or ""),
+                    s.get("qualified_name") or "",
+                ),
+            )
+            normalized_files = sorted({
+                self._normalize_path(s.get("file_path") or "")
+                for s in impacted
+                if s.get("file_path")
+            })
+
+        result: Dict[str, Any] = {
+            "changed_files": normalized_files,
+            "impacted_symbols": impacted,
+            "violations": [],
+            "design_refs": [],
+            "summary": "",
+        }
+
+        if not impacted:
+            result["summary"] = "无受影响符号，未命中设计约束"
+            return result
+
+        ws_id = self._get_active_workspace_id()
+        violations: List[Dict[str, Any]] = []
+        all_refs: set = set()
+
+        # 1) agent_rules：按 scope 与受影响符号上下文匹配
+        contexts = self._symbol_contexts(ws_id, impacted)
+        match_scope = getattr(self, "_match_scope", None)
+        if match_scope is not None:
+            for rule in self._load_active_agent_rules():
+                try:
+                    scope = json.loads(rule.get("scope_json") or "{}")
+                except (TypeError, ValueError):
+                    scope = {}
+                if not isinstance(scope, dict):
+                    scope = {}
+                try:
+                    evidence = json.loads(rule.get("evidence_json") or "{}")
+                except (TypeError, ValueError):
+                    evidence = {}
+                if not isinstance(evidence, dict):
+                    evidence = {}
+                refs = self._extract_design_refs(
+                    [
+                        rule.get("title") or "",
+                        rule.get("rule_text") or "",
+                    ],
+                    evidence,
+                )
+                for ctx_item in contexts:
+                    context = ctx_item["context"]
+                    if scope:
+                        matched_labels, ok = match_scope(scope, context)
+                    else:
+                        matched_labels, ok = ["global"], True
+                    if not ok:
+                        continue
+                    rule_id = rule.get("id") or ""
+                    symbol_qn = ctx_item["symbol"].get("qualified_name") or ""
+                    rule_ref = f"rule:{rule_id}"
+                    all_refs.add(rule_ref)
+                    all_refs.update(refs)
+                    violations.append({
+                        "source": "agent_rule",
+                        "rule_id": rule_id,
+                        "title": rule.get("title") or "",
+                        "severity": rule.get("severity") or "info",
+                        "file_path": context["file_path"],
+                        "qualified_name": symbol_qn,
+                        "matched_scope": matched_labels,
+                        "design_refs": refs,
+                        "rule_ref": rule_ref,
+                    })
+
+        # 2) guardrail_rules：pattern 正则扫描变更/受影响文件内容（只读）
+        target_files = sorted(
+            set(normalized_files)
+            | {
+                self._normalize_path(s.get("file_path") or "")
+                for s in impacted
+                if s.get("file_path")
+            }
+        )
+        for rule in self._load_guardrail_rules():
+            pattern = rule.get("pattern") or ""
+            if not pattern:
+                continue
+            try:
+                regex = re.compile(pattern)
+            except re.error:
+                # 非法正则规则跳过（不阻塞比对，也不报错）
+                continue
+            refs = self._extract_design_refs(
+                [rule.get("description") or ""], None
+            )
+            rule_id = rule.get("rule_id") or ""
+            rule_ref = f"guardrail:{rule_id}"
+            for rel in target_files:
+                content = self._load_file_content_for_check(rel) if hasattr(
+                    self, "_load_file_content_for_check"
+                ) else None
+                if content is None:
+                    continue
+                lines = [
+                    content.count("\n", 0, m.start()) + 1
+                    for m in regex.finditer(content)
+                ]
+                if not lines:
+                    continue
+                all_refs.add(rule_ref)
+                all_refs.update(refs)
+                violations.append({
+                    "source": "guardrail_rule",
+                    "rule_id": rule_id,
+                    "title": rule.get("description") or "",
+                    "severity": rule.get("severity") or "warn",
+                    "file_path": rel,
+                    "lines": sorted(set(lines)),
+                    "design_refs": refs,
+                    "rule_ref": rule_ref,
+                })
+
+        violations.sort(
+            key=lambda v: (
+                v["source"],
+                v["rule_id"],
+                v["file_path"],
+                v.get("qualified_name") or "",
+            )
+        )
+        result["violations"] = violations
+        result["design_refs"] = sorted(all_refs)
+        result["summary"] = (
+            f"命中设计约束 {len(violations)} 项"
+            if violations
+            else "未命中设计约束"
         )
         return result
 
