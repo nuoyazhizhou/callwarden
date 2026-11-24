@@ -557,6 +557,17 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("workspace.connect"))
     }
 
+    /// 显式结束当前活动会话（durable session log 的 End 事件来源）。
+    /// 默认 method_not_found；`WorkspaceDaemonState` 重写。
+    fn handle_workspace_session_end(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("workspace.session.end"))
+    }
+
     fn handle_workspace_file_refresh(
         &mut self,
         peer: PeerCredential,
@@ -3385,6 +3396,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "workspace.activate" => state.handle_workspace_activate(peer, params),
         "workspace.remove" => state.handle_workspace_remove(peer, params),
         "workspace.connect" => state.handle_workspace_connect(peer, params),
+        "workspace.session.end" => state.handle_workspace_session_end(peer, params),
         "workspace.refresh.plan" => state.handle_workspace_refresh_plan(peer, params),
         "workspace.file.refresh" => state.handle_workspace_file_refresh(peer, params, inline_payload),
         "workspace.file.delete" => state.handle_workspace_file_delete(peer, params),
