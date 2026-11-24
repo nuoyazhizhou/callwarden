@@ -1,6 +1,6 @@
 # testcode 同类产品 12 仓分析报告
 
-> 日期：2026-11-23（2026-11-24 追加 LoopForge；2026-11-24 graphify 升级实现级深读；2026-11-24 Understand-Anything 升级实现级深读；2026-11-24 codebase-memory-mcp 升级实现级深读；2026-11-24 hermes-agent 升级实现级深读；2026-11-24 goodbuddy 升级实现级深读）
+> 日期：2026-11-23（2026-11-24 追加 LoopForge；2026-11-24 graphify 升级实现级深读；2026-11-24 Understand-Anything 升级实现级深读；2026-11-24 codebase-memory-mcp 升级实现级深读；2026-11-24 hermes-agent 升级实现级深读；2026-11-24 goodbuddy 升级实现级深读；2026-11-24 orca 升级实现级深读）
 > 范围：`testcode/` 下 12 个同类/相关开源产品仓库
 > 方法：优先走 callwarden 图谱工具（workspace 注册 + build_graph + repo map + 健康检查），大仓构建超时（watchdog 连续 2 次 /health 失败判死）改走源码/README 分析。
 
@@ -29,8 +29,8 @@
 
 | 深度 | 仓库 | 证据 |
 |---|---|---|
-| 实现级深读 | code-review-graph、GitNexus、CodeGraph、**graphify（2026-11-24）**、**Understand-Anything（2026-11-24）**、**codebase-memory-mcp（2026-11-24）**、**hermes-agent（2026-11-24）**、**goodbuddy（2026-11-24）** | 直接读到 `changes.py: compute_risk_score`、`graph.py` 边置信度、`docs/mcp-reference.md` 响应预算、`refresh_index` 单飞、README 工具面 profile 表；graphify 深读 serve/watch/affected/hooks/analyze 五个实现与 24 平台集成产物（见第三节）；Understand-Anything 深读 SKILL.md 编排主控 / compute-batches / prepare-incremental / file-analyzer / hooks 与分发 manifest（见「二·补 B」）；codebase-memory-mcp 深读 language.c / lang_specs.c / store.h+graph_mem.c / pipeline_incremental.c / watcher.c 与 17 工具面（见「二·补 C」）；hermes-agent 深读 background_review / curator / memory_manager / suggestions / postmortem-run 五个实现与 kanban_db_dispatch 辅助（见「二·补 D」）；goodbuddy 深读 main/index + preload 桥 + ipc-channels 契约 + runtime-session-binding-store + agent-bundle 五个实现（见「二·补 E」） |
-| 结构 + README 级 | orca | 仅 build_graph/repo map 的结构指标与 README 定位，未逐功能读实现 |
+| 实现级深读 | code-review-graph、GitNexus、CodeGraph、**graphify（2026-11-24）**、**Understand-Anything（2026-11-24）**、**codebase-memory-mcp（2026-11-24）**、**hermes-agent（2026-11-24）**、**goodbuddy（2026-11-24）**、**orca（2026-11-24）** | 直接读到 `changes.py: compute_risk_score`、`graph.py` 边置信度、`docs/mcp-reference.md` 响应预算、`refresh_index` 单飞、README 工具面 profile 表；graphify 深读 serve/watch/affected/hooks/analyze 五个实现与 24 平台集成产物（见第三节）；Understand-Anything 深读 SKILL.md 编排主控 / compute-batches / prepare-incremental / file-analyzer / hooks 与分发 manifest（见「二·补 B」）；codebase-memory-mcp 深读 language.c / lang_specs.c / store.h+graph_mem.c / pipeline_incremental.c / watcher.c 与 17 工具面（见「二·补 C」）；hermes-agent 深读 background_review / curator / memory_manager / suggestions / postmortem-run 五个实现与 kanban_db_dispatch 辅助（见「二·补 D」）；goodbuddy 深读 main/index + preload 桥 + ipc-channels 契约 + runtime-session-binding-store + agent-bundle 五个实现（见「二·补 E」）；orca 深读 git/worktree 单飞扫描 + orchestration/coordinator+db 并发派发状态机 + git-branch-cleanup squash 证明 + ipc/worktrees 生命周期五个实现（见「二·补 F」） |
+| 结构 + README 级 | （无，全部已升级或归他档） | 原 goodbuddy / orca 已于 2026-11-24 升级为实现级深读 |
 | README/架构级 | deepseek-harness | 构建超时，只到架构与文档层 |
 | 新增/未覆盖 | LoopForge（本次补齐源码层）、DeepSeek-TUI（未注册） | LoopForge 见下节具体实现点 |
 
@@ -226,6 +226,38 @@
 - 行锚点全部来自本轮实际 Read/Grep 输出并经脚本逐字比对（首轮发现 2 处偏移 `index.ts:481→483`、`agent-bundle.cjs:495→497` 已修正），复验 17/17 命中。未重跑 build_graph，结论均为直接源码取证。
 - 落地顺序建议（并入第三节优先级）：64（共享通道常量，文档/契约级零成本）→ 63/65（白名单桥 + sender 校验 + 权限门，工具面加固）→ 68（部分唯一索引表达活租约，DB 层中改）→ 67（lifecycle 监护函数，daemon 中改）→ 71（发布验证链，中改）→ 66/69/70（fail-closed 加密判定、容量归档化、spawn 参数纪律，按优先级排期）。
 
+## 二·补 F：orca 实现级深读（2026-11-24 追加，可借鉴 74-87）
+
+深读对象（5 个核心实现 + 1 个辅读，路径以 `testcode/orca/` 为根，HEAD `02a1251c2d721a29e3b69848bc793f1e3aa21ef0`，`orca@1.4.176-rc.1`）：`src/main/git/worktree.ts`（1638 行，Parallel Worktrees 的 git 机制本体：addWorktree L909 / listWorktrees 并发扫描 L744 / removeWorktree L1109 / 延迟删除 L1184 / 合并后安全清理 L1345）、`src/main/runtime/orchestration/coordinator.ts`（546 行，并行 fan-out 闭环：Coordinator L84 / 并发槽位 L362 / 单飞建终端 L369 / drift 门禁 L416 / 人工 gate L342）、`src/main/runtime/orchestration/db.ts`（6807 行，编排状态机：OrchestrationDb L295 / DAG 提升 L3949 / 双身份派发锁 L6156 / 熔断 L6554）、`src/shared/git-branch-cleanup.ts`（282 行，merge-tree + stable patch-id 三重安全证明 L109/L178/L229）、`src/main/ipc/worktrees.ts`（3473 行，应用级生命周期 create L2222 / remove L2394-2395 去重）；辅读 `src/main/runtime/agent-session-claim-identity.ts`（HMAC 会话-worktree 双 digest L101-135 / 0600 key L154）。方向覆盖：worktree 管理（git 原语 + 并发扫描 + 延迟删除 + 合并后安全清理）、并行编排与调度（并发槽位 + 单飞建终端 + drift 门禁 + 人工 gate + 收敛判定）、任务隔离与合并（DAG + 双身份派发锁 + squash 证明 + 会话隔离）。行锚点经源码逐字核对，34/34 命中。
+
+### 可直接落地（74-79）
+
+74. **单飞扫描 + mutation generation 防陈旧读**（`src/main/git/worktree.ts:694-766`）：`inFlightWorktreeScans: Map<key, Promise>` L694 合并同一 repo 的并发 `git worktree list`，缓存 key 含 repo/distro/timeout/generation 四元 L754（不同 deadline 不可共享哪个 timeout 胜出，L753）；`worktreeScanGenerations` L697 + `bumpWorktreeScanGeneration` L709 在写操作后递增（addWorktree finally L931），使已进入的旧扫描不被 join，`pruneWorktreeScanGeneration` L717 保证普通结算 O(1)。**对 callwarden**：直接对标 `build_graph` 同步阻塞超时短板——query.* 的 repo 扫描改为「同 key 单飞 promise + generation 失效」，写操作 bump generation，避免并发各自跑 + 拿过期图。
+75. **并发槽位 + 每 tick 最多建一个 worker**（`src/main/runtime/orchestration/coordinator.ts:354-396,79`）：`slotsAvailable = maxConcurrent - dispatched.length` L362（默认 maxConcurrent=4 L79）；无可用终端时每 tick 只建一个 terminal（L369-375「避免一次 spawn 多个」），逐个占 handle 派发 L382-395。**对 callwarden**：并行 worker 接力池的并发上限按 in_progress vs open 计数、每次运行只认领一个任务（本 worker 并发模型同构），可作形式化依据。
+76. **DAG 依赖提升与状态更新同一事务**（`src/main/runtime/orchestration/db.ts:3774-3803,3941,3949`）：`createTask` 校验依赖同 run、无依赖 ready / 有依赖 pending L3794-3803；`promoteReadyTasks` L3949 在任务完成的状态更新事务内扫描 pending、依赖全 completed 则置 ready（调用点 L3941/L6517）。**对 callwarden**：task 子步骤依赖（父子任务门禁）借鉴「状态更新与依赖提升同事务」，避免并发下「依赖已完成但子任务仍 pending」的中间态。
+77. **按 handle + pane 双身份派发锁**（`src/main/runtime/orchestration/db.ts:6156-6185`）：仅 ready 可派发 L6168-6170；`findActiveDispatchForAssignee(handle, paneKey)` L6172-6179 双锁防「handle 重签发后同一 pane 双派发」；跨重试累加 `failure_count = MAX(...)` L6181-6185。**对 callwarden**：与 lease 三元组/fencing 同构——「逻辑身份(pane) + 进程实例(handle/incarnation)」双键正是 `agent_instance_id + session_id` 独立性的另一例证，可用于强化 claim 幂等与 fencing。
+78. **熔断 = 3 次失败 + 失败回 ready 不回 pending**（`src/main/runtime/orchestration/db.ts:6554-6582,561`）：`newFailureCount >= 3 → circuit_broken`（L6563，CHECK 约束 L561），任务状态 `circuit_broken→failed / 否则→ready`（L6576），Why L6575「回 pending 会搁浅，因 promoteReadyTasks 只在依赖完成时跑」。**对 callwarden**：worker 失败重试收敛上限可借鉴「失败次数持久化 + 熔断阈值 + 回退到可重试态而非搁浅态」，且失败计数跨重试累加不重置。
+79. **单类 Coordinator 收敛循环的状态机语义**（`src/main/runtime/orchestration/coordinator.ts:84,140-186,205-212`）：单类聚合消息/升级/gate/派发/收敛（文件头注释明示避免 split-brain）；`executeLoop` decompose 后 `while(!stopped) tick()`，收敛即 break，早停计 failed L161-173；`tick` 顺序 = 消息→升级→门→陈旧告警→派发→收敛 L205-212。**对 callwarden**：A′ 角色环可借鉴「单一收敛判定 + 每轮固定顺序 + 早停计失败」，需改造为 daemon 侧治理投影而非 Electron 单类（故列可直接落地的是状态机语义，非整体实现）。
+
+### 需改造（80-85）
+
+80. **写后 finally 失效 + 失败不吞错**（`src/main/git/worktree.ts:790-793,918-932`）：addWorktree 用 `runWithGitReadCacheInvalidation` 包裹且 finally 无条件 bump generation（异常路径也失效 L918-932）；listWorktreesUnshared 对失败 `console.warn` 返回 [] 但有 Why L790「不要吞成 opaque 的 created-but-not-found-in-listing」。**改造点**：callwarden `snapshot.publish` / 索引写入后必须在 finally 刷新快照与缓存；但强一致治理系统不能吞成空结果，需改为「明确错误码 + 强制失效」。
+81. **base drift 门禁：可恢复跳过不烧熔断预算**（`src/main/runtime/orchestration/coordinator.ts:398-427,43,485`）：派发前 `probeWorktreeDrift`，behind > `DISPATCH_STALE_THRESHOLD`(20，L43) 且未 allow-stale 时静默 return（L416-425），任务留 ready 下轮重试，Why L417「这里 failDispatch 会烧掉可恢复陈旧的熔断预算」；allow-stale 是 spec infra flag，preamble 里被 `strippedSpec` 剥离 L448-449。**改造点**：「可恢复条件不满足」与「真失败」应区分计数——快照过期/版本落后重试不累计失败；基础设施开关不泄漏进 worker 指令（对标 prompt 字段 daemon 权威）。
+82. **决策门人工裁决、系统绝不自动放行**（`src/main/runtime/orchestration/coordinator.ts:342-352`、`db.ts:6586-6599`）：`processDecisionGates` 只 re-block 不 auto-resolve（L343 Why「会让 gate 失去审批点意义」），resolved gate 结论经 preamble 回灌 worker L460-466；`createGate` 存 question/options L6586-6599。**改造点**：与 A′ 环 reviewer BLOCKED 不得降级 PASS、handoff 结构化结论同构；借鉴「gate 结论经 dispatch preamble 显式回灌下一棒」强化 handoff 可执行性。
+83. **延迟目录删除避免阻塞**（`src/main/git/worktree.ts:1184-1200`）：先 rename 目录到 trash、再清 git 注册、异步删大目录；WSL 例外（WSL-owned checkout 在 distro 内删，L1187-1189）、force=false 先证干净 L1193-1199。**改造点**：callwarden 大图谱目录回收可参考「先移出活跃 workspace 注册表、后台 GC」，保留干净性证明语义，去掉 WSL/Electron UI 假设。
+84. **squash 合并三重安全证明**（`src/shared/git-branch-cleanup.ts:109-139,178-227,229-261,9,86`）：`merge-tree --write-tree` 比对 tree（L109-139）；`branchNetPatchMatchesTargetSquashCommit` 取 merge-base 的 stable patch-id（`patch-id --stable` L166/L174），扫目标侧最多 `SQUASH_PATCH_SCAN_LIMIT=200` 提交（L9/L197-210），逐个比对 patch-id **且**再做 tree 合并证明（L212-225，Why L217「patch-id 匹配只是可能的 squash，tree 证明才确认无额外改动」）；`git cherry` patch 等价 L146；删前 `fetch --prune` 刷新目标 ref L86（网络失败不致命）。**改造点**：callwarden 合并 worktree 分支前的安全删除判定可借鉴「patch-id + tree 双证 + bounded scan + 删前刷新远端」，需改 Rust git 调用并与 workspace 所有权校验联动。
+85. **HMAC 会话-worktree 绑定，同一 session 不跨 worktree 冒用**（`src/main/runtime/agent-session-claim-identity.ts:56-85,88-138,141-164`）：`createClaim` 用同一 key 对 identityFields（L112-120）与 worktreeFields（L121-126）分别 HMAC-SHA256 → `identityDigest`/`worktreeScopeDigest` L130-135；authority key 以 `0o600` 原子创建（L154，损坏即拒绝而非静默失效）；`canonicalizeAgentSessionIdentity` 对 pi 要求绝对路径 + `realpathSync` L52。**改造点**：与 callwarden snapshot/lease 身份绑定与 fail-closed 哲学一致；借「跨 scope 双 digest + key 校验失败即拒绝」强化跨 workspace 冒用防护，需改造到 mTLS/PKI 体系而非 orca profile key。
+
+### 不适用（86-87）
+
+86. **SSH / folder / runtime 多宿主分派**（`src/main/ipc/worktrees.ts:2394-2434`）：remove 按 local/SSH/runtime 三 host 分派，PTY sweep 按 ownerHost fence（「本地 inventory 绝不触达远端 workspace id」L2427-2430）。callwarden daemon 单机 SQLite / 单 host，无 SSH worktree 与 PTY；仅借「按 owner fence、路径派生元数据不可跨 host 复用」的权限语义（与 workspace_instance_id 消歧同构），不照搬实现。
+87. **AI 任务分解未实现（诚实反例）**（`src/main/runtime/orchestration/coordinator.ts:192-203`）：`decompose()` 明确注释「未实现，任务必须预创建，AI 分解是未来阶段」，无任务直接抛错。orca 实为 DAG 派发器而非「AI 自动拆解编排」——反面启示：若宣称 planner 自动拆分须真实现 contract 卡片，不能只做壳（对标 callwarden planner design-only 的诚实口径）。
+
+### 复核记录与落地顺序
+
+- 行锚点全部来自本轮实际 Read/Grep 输出并经脚本逐字比对（首轮发现 `worktrees:remove` 通道名 L2394→L2395 偏移已修正），复验 34/34 命中；未重跑 build_graph，结论均为直接源码取证。
+- 落地顺序建议（并入第三节优先级）：74/75（单飞扫描 + 并发槽位，query.*/worker 池层面）→ 76/77/78（DAG 事务提升 + 双身份派发锁 + 熔断回退，daemon/lease 中改）→ 80/81/82（写后失效 + drift 区分计数 + gate 回灌，daemon 中改）→ 79/83/84/85（收敛语义 + 延迟删除 + squash 证明 + 会话绑定，按优先级排期）→ 86/87 仅作反例与权限语义参考，不排期。
+
 ## 五、harness 插件化：callwarden 该以什么身份接入
 
 用户方向：多个仓库（deepseek-harness、hermes-agent、LoopForge）都是 harness，能否让 callwarden 成为它们的调度插件。结论：**可以，但不要做成"某个 harness 的调度插件"，而是保持两个标准面 + 一个统计面**，按成本从低到高：
@@ -259,5 +291,5 @@
 - **hermes-agent**：自我改进平台，任务闭环参照；已实现级深读（见「二·补 D」）——每轮后 review fork 写回 skill/memory（前台优先让步 + dispatch 侧工具白名单）、curator 技能库自治（确定性修剪 + opt-in LLM 伞化）、consent-first 建议面、postmortem 探针回归闭环、kanban 失败会计与 respawn guard 六因守卫。
 - **DeepSeek-TUI / Codewhale**：Rust 终端 agent，TUI 交互参照。
 - **goodbuddy**：Electron 桌面 agent；已实现级深读（见「二·补 E」）——contextBridge 单向白名单桥 + sender 三重校验、共享通道常量契约、会话绑定状态机（不可变/单调游标监护 + 部分唯一索引活绑定）、锁定 runtime + 签名 manifest 的桌面分发六条与 callwarden 工具面/lease/lifecycle/发布验证直接对齐。
-- **orca**：worktree 并行编排，多任务并行参照。
+- **orca**：worktree 并行编排，多任务并行参照；已实现级深读（见「二·补 F」）——git/worktree 单飞扫描 + mutation generation 防陈旧读、orchestration 并发槽位/双身份派发锁/3 次熔断/人工 gate 的 DAG 派发状态机、git-branch-cleanup 的 squash patch-id+tree 双证、HMAC 会话- worktree 绑定六条与 callwarden query.* 并发/lease fencing/失败会计/gate 回灌直接对齐；诚实标注 decompose 未实现（仅 DAG 派发器，非 AI 自动拆解）。
 - **LoopForge**（新增）：SOP + 沙箱 + 角色 + 人工关口的团队交付工作台，与 callwarden 是「互补」而非「同构」——它管流程与执行器，callwarden 管代码知识与治理；其角色级 MCP 注入与外部工作流上报是两条现成接入面。
