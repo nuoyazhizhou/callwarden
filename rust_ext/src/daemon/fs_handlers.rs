@@ -1332,6 +1332,12 @@ fn collect_file_raw_callee_names(
 /// - `symbols` / `calls` 本轮解析产出的符号/调用总数；
 /// - `calls_resolved` / `calls_ambiguous` 本轮受影响名字的边重算结果
 ///   （无改动时恒为 0，不再全库重算）。
+///
+/// 保留理由（CARD-R1 step2 / T-1795513761767-d77a6c10）：daemon 路由已切
+/// [`handle_build_graph_async`]（`snapshot_state` 路由层调用），本同步入口当前
+/// 无生产调用方；作为 [`run_build_graph`] 的同步薄包装保留（无单飞/无审计回执，
+/// 语义为「直连同步构建」），供 CLI 直连与测试场景复用。清理条件：若后续版本
+/// 仍无调用方，随 build_graph 面整体重构一并删除。
 pub fn handle_build_graph(
     registry: &WorkspaceRegistry,
     peer: &PeerCredential,
@@ -1660,6 +1666,17 @@ pub fn handle_build_graph_async(
         ));
     }
 
+    // 方案② fail-fast（CARD-R1 step0 / T-1795513761767-d77a6c10）：
+    // db 未配置检查与 open_codegraph_write 提前到 flights.begin **之前**——
+    // begin 前失败不占单飞、不耗 build_seq、无需回执（无可审计构建发生），
+    // 结构上消除「open 失败 → 单飞登记永不释放」的泄漏类缺陷（Phase 3 复审 🔴1）。
+    // open = schema 幂等校验 + Connection::open，开销与同步版入口相同
+    // （原同步 handle_build_graph 同样在 dispatch 线程 open），不构成长期阻塞。
+    let db_path = codegraph_db.ok_or_else(|| {
+        DaemonRpcError::internal_error("codegraph db 未配置，无法构建")
+    })?;
+    let conn = open_codegraph_write(Some(db_path))?;
+
     let (seq, progress) = match flights.begin(&root_key) {
         Ok(pair) => pair,
         Err(existing) => {
@@ -1674,41 +1691,38 @@ pub fn handle_build_graph_async(
         }
     };
 
-    let db_path = match codegraph_db {
-        Some(p) => p.to_path_buf(),
-        None => {
-            // receipts gap：审计表 write_audit_events 与 codegraph 同库，
-            // DB 未配置时物理上无库可落回执（环境降级，非实现缺陷）；仍走
-            // finish 更新 lastBuild，回调 no-op，不伪造审计成功。
-            let _ = flights.finish(
-                &root_key,
-                json!({"ok": false, "error": "internal_error", "message": "codegraph db 未配置"}),
-                |_| Ok(()),
-            );
-            return Err(DaemonRpcError::internal_error("codegraph db 未配置，无法构建"));
-        }
-    };
-
     let (tx, rx) = std::sync::mpsc::channel();
     let flights_bg = std::sync::Arc::clone(flights);
     let root_bg = root.clone();
     let scan_bg = scan_root.clone();
     let root_key_bg = root_key.clone();
     let progress_bg = std::sync::Arc::clone(&progress);
-    // spawn 闭包 move 消费 db_path；E5（spawn 失败）分支仍需 db_path 补写失败回执，
-    // 故预留一份副本。
-    let db_path_e5 = db_path.clone();
     let spawned = std::thread::Builder::new()
         .name("cw-build-graph".to_string())
         .spawn(move || {
             let started = std::time::Instant::now();
-            // 打开 conn 存活到 finish 回调，使成功/失败/超时转后台三条路径
-            // 在统一出口（finish）写审计回执时都能复用同一写连接与 sign_audit_chain。
-            let result = open_codegraph_write(Some(db_path.as_path())).and_then(|conn| {
-                let workspace_id = ensure_workspace_row_by_root(&conn, &root_bg)
-                    .map_err(|e| {
-                        DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}"))
-                    })?;
+            // conn 已在 dispatch 线程打开（方案②）并 move 进来，存活到 finish
+            // 回调，成功/失败/超时转后台三路径统一出口都能复用同一写连接与
+            // sign_audit_chain。
+            let result = (|| -> Result<Value, DaemonRpcError> {
+                // E5 哨兵（CARD-R1 step1）：workspace 行映射失败时仍 finish
+                // 释放单飞 + 发布 lastBuild，但跳过审计回执——同 E4 降级口径
+                // （审计库映射不可用 → 0 回执，不伪造审计成功），且不落
+                // db_workspace_id=0 哨兵回执行。
+                let workspace_id = match ensure_workspace_row_by_root(&conn, &root_bg) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        let _ = flights_bg.finish(
+                            &root_key_bg,
+                            json!({"ok": false, "error": "internal_error",
+                                   "message": format!("workspace 行映射失败: {e}")}),
+                            |_| Ok(()),
+                        );
+                        return Err(DaemonRpcError::internal_error(format!(
+                            "workspace 行映射失败: {e}"
+                        )));
+                    }
+                };
                 let result =
                     run_build_graph(&conn, workspace_id, &root_bg, &scan_bg, Some(&progress_bg));
                 let stats = match &result {
@@ -1739,21 +1753,25 @@ pub fn handle_build_graph_async(
                     )),
                     (r, Ok(())) => r,
                 }
-            });
+            })();
             let _ = tx.send(result);
         });
     if spawned.is_err() {
-        // E5：spawn 失败时 db_path 已知，主线程尽力补写失败回执；审计写入
-        // 失败不掩盖原始错误（本出口本就返回 Err，不存在伪造成功）。
+        // E5：spawn 失败，conn 已随失败闭包 drop，重新 open 尽力补写失败回执；
+        // 映射失败同样跳过回执（不落 db_workspace_id=0 哨兵行，CARD-R1 step1）。
+        // 审计写入失败不掩盖原始错误（本出口本就返回 Err，不存在伪造成功）。
         let _ = flights.finish(
             &root_key,
             json!({"ok": false, "error": "internal_error", "message": "build 线程启动失败"}),
             |final_stats| {
-                open_codegraph_write(Some(db_path_e5.as_path()))
-                    .and_then(|conn| {
-                        let db_ws = ensure_workspace_row_by_root(&conn, &root).unwrap_or(0);
+                open_codegraph_write(Some(db_path))
+                    .map_err(|e| DaemonRpcError::internal_error(e.message))
+                    .and_then(|c2| {
+                        let db_ws = ensure_workspace_row_by_root(&c2, &root).map_err(|e| {
+                            DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}"))
+                        })?;
                         append_build_receipt(
-                            &conn,
+                            &c2,
                             registry_ws_id,
                             db_ws,
                             &root_key,
@@ -4412,6 +4430,118 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM write_audit_events", [], |r| r.get(0))
             .unwrap();
         assert_eq!(events, 0, "审计失败不得留下半成品回执行");
+    }
+
+    // ---- CARD-R1 step3：open 失败路径无单飞泄漏（方案② fail-fast）----
+
+    /// 夹具序号：并行测试同 pid 同秒会撞名（register_workspace 同根 + 清理竞态），
+    /// 用原子计数保证唯一。
+    static FIXTURE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// 构造 async 入口测试夹具（registry + workspace + peer + flights）。
+    fn new_async_fixture() -> (WorkspaceRegistry, String, PathBuf, std::sync::Arc<BuildFlights>) {
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let seq = FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "cw_async_fixture_{}_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64,
+            seq
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = registry
+            .register_workspace(1000, root.to_str().unwrap(), root.to_str().unwrap(), "", "", "")
+            .unwrap();
+        let instance_id = ws["workspace_instance_id"].as_str().unwrap().to_string();
+        (registry, instance_id, root, std::sync::Arc::new(BuildFlights::new()))
+    }
+
+    /// 方案②：open_codegraph_write 失败（db 路径不可创建）→ 返回错误且
+    /// 不占单飞（is_running==false、无 lastBuild）、不耗 build_seq、无需回执。
+    #[test]
+    fn test_async_open_failure_no_flight_leak() {
+        let (registry, instance_id, _root, flights) = new_async_fixture();
+        let peer = PeerCredential::new_unix(1000, 1000, 1);
+        // db 路径的父目录被同名文件占用 → initialize_or_migrate 的
+        // create_dir_all 失败 → open_codegraph_write 在 begin 之前失败
+        // （注意：不能用"父目录不存在"的 db 路径——initialize_or_migrate 会
+        // create_dir_all 自动建父目录，open 反而成功，构建真实发生）。
+        let blocker = std::env::temp_dir().join(format!(
+            "cw_async_blocker_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::write(&blocker, b"").unwrap();
+        let bad_db = blocker.join("x.db");
+        let root_key = std::fs::canonicalize(&_root)
+            .unwrap_or_else(|_| _root.clone())
+            .to_string_lossy()
+            .replace('\\', "/");
+        let err = handle_build_graph_async(
+            &registry,
+            &peer,
+            &json!({"workspace_instance_id": instance_id}),
+            Some(bad_db.as_path()),
+            &flights,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.code, "codegraph_schema_init_failed",
+            "open 失败必须返回结构化错误，不得静默"
+        );
+        // 无单飞泄漏：begin 未发生（open 在 begin 之前，方案②）
+        assert!(!flights.is_running(&root_key), "open 失败不得占用单飞");
+        assert!(flights.last(&root_key).is_none(), "begin 前失败不发布 lastBuild");
+        // 后续构建不受影响（单飞可正常登记）
+        let good_db = std::env::temp_dir().join(format!(
+            "cw_async_ok_{}_{}.db",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        crate::storage::initialize_or_migrate(&good_db, crate::storage::SCHEMA_VERSION).unwrap();
+        // begin 冲突语义可正常触发：手动 begin 后重复调用报 build_in_progress
+        flights.begin(&root_key).unwrap();
+        let err2 = handle_build_graph_async(
+            &registry,
+            &peer,
+            &json!({"workspace_instance_id": instance_id}),
+            Some(good_db.as_path()),
+            &flights,
+        )
+        .unwrap_err();
+        assert_eq!(err2.code, "build_in_progress", "单飞登记可正常工作");
+        // 释放
+        let _ = flights.finish(&root_key, json!({"ok": true}), |_| Ok(()));
+        assert!(!flights.is_running(&root_key));
+        let _ = std::fs::remove_file(&blocker);
+        let _ = std::fs::remove_dir_all(&_root);
+    }
+
+    /// 方案②：codegraph_db 未配置 → begin 前返回错误，不占单飞、无 lastBuild。
+    #[test]
+    fn test_async_db_unconfigured_no_flight_leak() {
+        let (registry, instance_id, root, flights) = new_async_fixture();
+        let peer = PeerCredential::new_unix(1000, 1000, 1);
+        let root_key = std::fs::canonicalize(&root)
+            .unwrap_or_else(|_| root.clone())
+            .to_string_lossy()
+            .replace('\\', "/");
+        let err = handle_build_graph_async(
+            &registry,
+            &peer,
+            &json!({"workspace_instance_id": instance_id}),
+            None,
+            &flights,
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("codegraph db 未配置"),
+            "db 未配置必须显式报错，实际: {}",
+            err.message
+        );
+        assert!(!flights.is_running(&root_key), "db 未配置不得占用单飞");
+        assert!(flights.last(&root_key).is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
