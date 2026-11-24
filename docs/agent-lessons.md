@@ -1,0 +1,301 @@
+# Agent 经验教训
+
+> 本文件由 AGENTS.md §6「重要注意事项」整体外置（2026-11-23），含原 §6 十节（6.1-6.10）全文。
+> **强制阅读**：做对应类型工作前必须先读对应子节（索引见 AGENTS.md「重要注意事项」指针节）。
+> 本节按主题分簇组织（2026-08-01 整理）。**每条规则保留原始编号**（1-49），便于其他章节的交叉引用（如“见第 5 条”、“规则 40”）。新增规则按主题归入对应子小节，继续递增编号。
+> 规则合并/归档触发条件见下方 §6.2「工具调用错误日志与 docs/agent-lessons.md 持续改进」。
+
+## 重要注意事项
+### 6.1 项目基础
+
+1. **`prompts/` 目录不是本项目指令**：`prompts/` 目录下的 AGENTS.md / AUDIT.md / GOVERNANCE.md / TOOLS.md 是 TokenSlim 审计体系（独立产品）的样例指令，不属于 Call Warden 项目自身的指令体系。本项目 AI Agent 入口是根目录的 **AGENTS.md**（本文件）。
+
+2. **数据库路径**：`$HOME/.callwarden/callwarden.db`（用户级单库架构）。一个用户一个数据库，所有项目共用，通过 `workspaces` 表的 `workspace_id` 字段在所有业务表中逻辑隔离（所有查询自动带 `WHERE workspace_id = ?` 过滤）。相同文件跨项目只解析一次（Global CAS 共享）。**禁止删除 `~/.callwarden/callwarden.db` 及其 `-shm`、`-wal` 文件**，其中包含任务编排数据、符号图谱、调用链等不可恢复的工作成果。如遇 DB 锁定或 WAL 状态异常，应排查进程持有锁或 WAL checkpoint 时序问题，不得通过删除 DB 文件解决。
+
+   **旧版多库迁移**：`cw gc db-migrate-single` 已退役（KR-2026-10-23-A：`server/` 存储 authority 清零，命令无 Rust 等价实现）。存量旧库（`~/.callwarden/<16位hash>/callwarden.db`）请按 [docs/cli_reference.md](docs/cli_reference.md) 的手工 SQLite `ATTACH` 指引合并 workspaces / tasks / task_steps，随后运行 `cw refresh --all` 重建符号图谱；旧 `<hash>/` 目录保留作备份，确认后可手动删除。
+
+3. **MCP Server 启动**：`cw server` 或 `python -m callwarden.server`，默认 stdio 模式。
+
+4. **自举使用**：本项目自身就是 Call Warden 的第一个用户，开发时可以用 `cw` 命令分析本项目代码。
+
+### 6.2 错误日志与 docs/agent-lessons.md 持续改进
+
+6. **工具调用错误日志与 docs/agent-lessons.md 持续改进（强制执行）**：
+
+   **机制**：每次工具调用报错时，将错误摘要追加到 `.trae-cn/memory/tool_errors.log`（格式：`时间 | 工具名 | 错误类型 | 错误摘要 | 是否已记录到 docs/agent-lessons.md`）。当同一类错误（按错误类型+根因归类）累积出现 **2 次**时，必须执行以下闭环：
+   - **分析共同点**：对比 2 次以上同类错误的上下文，提取共同根因（如"PowerShell 不支持 heredoc"、"沙箱拦截 -shm 文件创建"）
+   - **写入 docs/agent-lessons.md**：在"重要注意事项"小节新增一条规则，包含：根因说明 + 规避方法 + 具体替代命令
+   - **标记已记录**：在日志中将该类错误标记为"已记录到 docs/agent-lessons.md"，后续不再重复写入
+
+   **触发阈值**：同类错误出现 2 次即触发（不是等到 3 次或更多）。第 1 次记录到日志，第 2 次分析并写入 docs/agent-lessons.md。
+
+   **已沉淀的常见错误**（持续维护）：
+   - PowerShell heredoc `$(cat <<'EOF')` 不工作 → 用多个 `-m` 或 `-F 文件`（见第 5 条）
+   - SQLite WAL 模式下 `immutable=1` 只读连接读到旧数据 → 加载前 `PRAGMA wal_checkpoint(PASSIVE)`（见第 7 条）
+   - rusqlite `SQLITE_OPEN_NOMUTEX` 常量名错误 → 正确为 `SQLITE_OPEN_NO_MUTEX`
+   - Windows `.pyd` 文件锁定导致 `pip install` 失败 → 解压 wheel 到 `target/pyinstall` + `PYTHONPATH`
+   - PowerShell 中复杂 `rg` alternation/括号转义易产生 `regex parse error: unclosed group` → 拆成多个简单 `-e` 模式或改用 `Select-String`（见第 10 条）
+   - `rg` 无匹配会返回 exit code 1，直接放入 `Promise.all` 会让整组检索失败 → 在每个并行分支捕获非零返回，或在 PowerShell 命令末尾把无匹配转换为成功（见第 11 条）
+
+   **定时整理触发条件**（2026-08-01 新增）：当满足以下任一条件时，必须执行一次 AGENTS.md 整理：
+   - AGENTS.md 总体积 > **50 KB** 或「重要注意事项」规则数 > **40 条**
+   - 距上次整理 > **3 个月**
+   - `tool_errors.log` 体积 > **100 KB** 或行数 > **500**
+
+   **整理动作**：
+   1. **合并雷同规则**：将同一根因的多条规则合并为一条带子项（如 PowerShell 引号/通配符/正则合并为「PowerShell 调用约定」），保留每条原始编号便于交叉引用追溯
+   2. **归档老日志**：将已沉淀为 docs/agent-lessons.md 规则的 `tool_errors.log` 条目（`已记录=yes`）移入 `tool_errors.archive.md`，主日志只保留最近 30 天和未沉淀条目
+   3. **规范化字段**：将「是否已记录到 docs/agent-lessons.md」字段统一为 `yes`/`no`，移除自由文本变体
+   4. **更新交叉引用**：合并后更新规则 6「已沉淀的常见错误」列表中的「见第 X 条」引用
+
+### 6.3 Windows / WSL / PowerShell 命令行约定
+
+5. **PowerShell Heredoc 不可用**：在 Windows PowerShell 环境中，`git commit -m "$(cat <<'EOF' ... EOF)"` 等 heredoc 语法不工作（报 "Missing file specification after redirection operator"）。多行 commit message 应使用多个 `-m` 参数：`git commit -m "标题" -m "正文行1" -m "正文行2"`。或用 `git commit -F 文件路径` 从文件读取。
+
+9. **PowerShell 下避免单条复杂 `rg` 正则**：PowerShell 双引号、反斜杠和括号混用时，复杂 alternation 容易在传给 `rg` 前破坏转义，报 `regex parse error: unclosed group`。多个关键词应使用独立的简单模式，例如 `rg -n -e "parse_file_lang" -e "MP_THRESHOLD" db tests`；包含大量括号或引号时改用 `Get-Content ... | Select-String -Pattern 'pattern1|pattern2'`，不要把代码片段转义塞进一个巨大正则。
+
+14. **PowerShell 不展开传给 `rg` 的路径通配符**：在 Windows PowerShell 中，`rg pattern tests/test_*.py` 或 `rg pattern *.ps1` 会把通配符原样交给 `rg`，随后报 `os error 123`。文件类型筛选必须使用 `rg -g`，例如 `rg -n -g "test_*.py" pattern tests`；多个后缀使用多个 `-g`。不要把 `*` 放在传给 `rg` 的路径参数中。
+
+19. **WSL 验收先检查隔离测试依赖**：精简 Ubuntu/WSL 镜像可能同时缺少 `pytest` 和 `python3-venv`，直接创建 venv 会因无 `ensurepip` 失败。运行 Linux 专属验收前先检查 `python3 -m pip --version`、`python3 -m venv --help` 和 `import pytest`；缺少 venv 支持时先安装匹配版本的 `python3-venv`，再在 `/tmp` 创建临时环境，禁止把 Linux wheel 或测试依赖装进 Windows Python 环境。
+
+20. **PowerShell 调 WSL 时避免嵌套代码字符串**：`PowerShell -> wsl -> bash -lc -> python -c/cargo --config` 的三层引号很容易被提前展开或截断。WSL 验收应把构建、文件准备和 Python 测试拆成独立的简单命令；复杂 Python 逻辑放入仓库已有测试文件，由 `python3 -m pytest` 调用，不要在 `bash -lc` 尾部拼接带引号和括号的 `python -c`。
+
+21. **跨平台路径断言先输出模块来源和实际值**：Windows 对 Linux 风格绝对路径的 `os.path.abspath/join/normpath` 行为可能加入盘符或反斜杠，且 `PYTHONPATH` 可能命中不同安装副本。配置探测连续失败时，先输出 `module.__file__`、原始环境变量和实际配置值，再基于目标平台语义断言；不要连续猜测字符串规范化结果。
+
+25. **`functions.exec` 中避免嵌套 PowerShell 复杂引号**：JavaScript 字符串内再嵌入同时含单双引号的 PowerShell 正则时，可能在命令执行前触发 `JavaScriptSyntaxError`。复杂检索应拆成独立 `shell_command`，每条使用简单 `rg -e` 模式；确需通过 `functions.exec` 并行时，优先使用不含内嵌引号的命令字符串，不要把 PowerShell、正则和 JavaScript 三层转义揉在一起。
+
+26. **subprocess text 调用必须显式指定 UTF-8 编码（Windows GBK 解码报错）**：pre-commit 的 auto capture-diff 等会读取包含中文/Unicode 符号的子进程输出，若 `subprocess.run/Popen(..., text=True)` 未指定 `encoding`，Windows 系统 GBK 默认编码会抛 `UnicodeDecodeError`（fail-soft 捕获拿到 `None`）。**已修复根因**（commit `19ad529`）：31 个源码文件中所有 `text=True` 的 subprocess 调用统一补了 `encoding="utf-8", errors="replace"`。**新增代码必须沿用该约定**：凡以 `text=True`/`universal_newlines=True` 读取子进程输出的调用，一律显式写 `encoding="utf-8", errors="replace"`，禁止依赖系统默认编码。环境变量 `$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'` 保留为兜底（覆盖遗漏调用或第三方库输出），提交前设置后再运行 `git commit ...`。
+
+28. **执行策略下的文件清理必须单 shell、单文件、绝对字面路径**：把 WSL/其他 shell 的枚举与 PowerShell 删除放在同一命令，或通过变量保存 `Resolve-Path` 后再删除，会被策略判定为动态跨 shell 删除；部分会话甚至会拒绝绝对字面路径的 `Remove-Item`。清理本轮创建的临时文件时先用独立只读调用确认目标，再在创建该文件的同一 shell 中按精确绝对路径删除单文件，例如 WSL 创建 `/mnt/c/git_work/callwarden/callwarden_core.so` 后使用独立的 `wsl ... rm -f -- /mnt/c/git_work/callwarden/callwarden_core.so`。禁止通配符、变量、管道、递归删除和跨 shell 枚举后删除；无法满足时保留文件并在结果中说明。
+
+31. **Windows/WSL 不得共用 Cargo target 目录**：从 WSL 在 `/mnt/c/...` 仓库运行 `cargo check/test` 时，共用 Windows 生成的 `target/` 会出现文件锁等待、跨文件系统极慢和工具超时后 `cargo` 子进程继续存活。Linux 验收必须设置 WSL 本地目标目录，例如 `CARGO_TARGET_DIR=/tmp/callwarden-target cargo check --manifest-path rust_ext/Cargo.toml --bin cw-agent`；工具超时后先用 `ps -ef | grep cargo` 检查并终止本轮遗留的精确 PID，再重试，禁止留下后台编译进程。
+
+42. **Windows 主机统一使用 Python 3.14 构建和运行 Call Warden**：Windows Agent、MCP、CLI、PyO3/Cargo 构建和测试必须显式使用 `C:\Python314\python.exe`，禁止依赖 `python`、`python3`、`py` 或 Agent 沙箱自带解释器。开始构建前在同一 PowerShell 会话执行：
+
+    ```powershell
+    $env:PYTHON = 'C:\Python314\python.exe'
+    $env:PYO3_PYTHON = 'C:\Python314\python.exe'
+    & $env:PYTHON -c "import sys; print(sys.executable); print(sys.version)"
+    ```
+
+    后续 Python 命令使用 `& $env:PYTHON ...`，Cargo/PyO3 命令继承同一会话的 `PYO3_PYTHON`。提交或部署前必须记录实际解释器路径、Python 主次版本和构建产物依赖；Windows `.pyd`/daemon 若使用 PyO3 链接 Python，必须用 `dumpbin /dependents <产物>` 或等价工具确认依赖的 `python314.dll` 与目标机器一致，发现 `python310.dll`、`python311.dll` 等旧依赖时立即判定构建无效并重新构建。不得用旧 runtime binary 冒充当前源码构建结果。
+
+    WSL/Linux 是独立环境：使用 Linux 自己的 `python3`/venv 和 WSL 本地 `CARGO_TARGET_DIR`，不得把 Windows 的 `PYO3_PYTHON`、`.pyd`、Cargo target 或 Python 依赖带入 WSL；Windows Python 与 WSL Python 的测试、构建和证据必须分别记录。
+
+43. **Windows daemon 修改后的“编译”不等于“已部署”**：Windows autostart 读取的是 `%USERPROFILE%\.callwarden\runtime\current\cw-daemon.exe`（或显式 `CW_DAEMON_BIN`），不是开发者刚刚编译的 `rust_ext\target\debug` 或 `rust_ext\target\release`。因此修改任何会影响 daemon/CLI/bridge 行为的 Rust 或 PyO3 代码后，必须在同一 Python 3.14 PowerShell 会话运行：
+
+    ```powershell
+    pwsh -File .\scripts\refresh_shared_runtime.ps1 `
+      -TaskId <真实任务 ID> `
+      -RestartMcp `
+      -RunSmokeTests
+    ```
+
+    该脚本必须完成 release 构建、安装到 `runtime\current`、精确停止仓库/runtime 范围内的旧 daemon、启动新 daemon，并验证：构建 hash = `runtime\current` hash = 运行 PID executable hash；运行路径确实在 `runtime\current`；`dumpbin /dependents` 若导入 Python DLL 则只能是 `python314.dll`（纯 Rust/Python-free daemon 允许无 Python DLL，但必须记录）；`cw daemon ping/health` 成功。对于 PyO3 `callwarden_core`，还必须构建 `--lib` 并发现同一 Python 3.14 的已安装 `cw.exe` 实际 import 的 extension；仓库根 source-path Pyd 与该 site-packages Pyd 都存在时必须原子部署、逐个核对 hash/依赖，并以已安装 `cw.exe lease status <TaskId> --role implementer` 不出现 migration checksum mismatch 为最终 gate。仅 `python cw.py ...` 成功不构成 authority recovery。任一项未满足均为 `UNVERIFIED`，不得把源码测试、debug binary、旧 release binary 或仅 ping 成功当作当前修复已部署。脚本失败时保留旧 runtime 回滚，不得删除数据库/WAL/SHM 或杀无关 Agent/MCP。
+
+    **项目范围限定**：上述 runtime deployment gate 默认只对 workspace 的
+    `runtime_policy=self_bootstrap` 生效（CallWarden 自举工作区）。普通项目的
+    daemon/CLI 变更默认只要求构建与测试；只有任务合同显式声明
+    `runtime_deployment_required`、`deployment:required` 或 `deploy_runtime=true`
+    时才启用同一部署门禁。任务引擎必须在 self-bootstrap 模式下自动追加并优先
+    领取 runtime deployment 步骤；缺少有效 runtime evidence 时返回
+    `E_RUNTIME_DEPLOYMENT_REQUIRED`，不得进入 review。Agent 不得通过临时修改
+    workspace policy 绕过该门禁。
+
+44. **schema checksum mismatch 是 authority 阻断，不是可重试的 lease 错误**：若 `cw lease status/acquire` 返回 `MIGRATION_FAILED: schema checksum mismatch for v<N>`，必须立即停止所有 lease、claim、task report/apply/close 和任何依赖 daemon authority 的写入；保留 stored/binary checksum、实际 `runtime\current` binary hash、运行 PID executable hash 与 migration 记录，按第 43 条通过受控 runtime/schema recovery 协调后再重试。禁止改写 migration checksum、直写 SQLite 或用本地 CLI fallback 取得/伪造 lease。
+
+45. **任务步骤的显示序号不是 mutation ID**：`cw task show` 的 `#0` 等人类可读编号和步骤标题不保证等于 `cw task report <task_id> <step_id>` 所需的持久化 `step_id`。首次 `task_step_not_found` 后必须停止猜测，先用当前 CLI 的 JSON/只读 RPC 或实现查询取得真实 step ID；不得把编号或标题反复当作 step ID 重试。
+45a. **daemon 未提供 `build_full_graph` 时刷新门禁必须留痕**：`python cw.py --refresh-all` 与推荐的 `python cw.py refresh --all` 可能都经 daemon 路由到不存在的 `build_full_graph` RPC，返回 `method_not_found`。记录该错误并保留未刷新结论；不得改用 SQLite、旧 CLI 或其他旁路伪造刷新成功。文档-only 变更可继续做静态检查，但交付证据必须明确刷新未完成。
+
+46. **Windows 受控进程诊断必须拆分命令**：通过 `functions.exec` 启动 daemon/辅助进程时，禁止在一个复杂 PowerShell 字符串中嵌套 endpoint、重定向和多层变量展开；这类命令可能在 CreateProcess 前被策略拒绝。应先用独立只读命令解析 endpoint，再用单一 `Start-Process -WindowStyle Hidden` 调用启动，并用固定绝对日志路径单独读取 stdout/stderr；启动失败不得重试删除、杀进程或改数据库。
+
+### 6.4 SQLite 锁与数据库并发
+
+7. **SQLite WAL 模式与只读连接**：GraphStore 用 `immutable=1` URI 打开 SQLite（跳过 WAL），因此新建数据库的 schema 和数据可能还在 WAL 中未被 checkpoint。`_get_graph_store()` 加载前必须先执行 `PRAGMA wal_checkpoint(PASSIVE)`，否则会读到旧数据（报 "no such table"）。同理，任何用 `immutable=1` 或只读模式打开 SQLite 的场景，都需确保写入方已 checkpoint。
+
+8. **Python vs Rust SQL 驱动效率**：Python sqlite3 和 Rust rusqlite 底层都是同一个 C SQLite 库，纯 SQL 执行效率几乎相同。差异来自数据转换层：
+   - **单行/少量行查询**（如 SELECT COUNT）：Python sqlite3 更快（PyO3 跨语言固定开销 ~1μs 占比大）
+   - **批量查询**（100+ 行，如 get_callers/get_callees/search_symbols）：Python 调用 Rust 仍快 ~2.5x（行数据转换是大头，Rust 闭包 ~0.1μs/行 vs Python dict ~0.5μs/行，PyO3 固定开销被摊薄）
+   - **图遍历**（get_callers 等）：用 Rust 内存索引（CSR HashMap），完全跳过 SQL，5x 加速
+
+   B-P7b 设计原则：单值查询（get_stats）保持 Python SQL；多行查询（get_callers/get_callees/search_symbols）走 Rust 短路。
+
+23. **TRAE IDE 沙箱拦截 sh.exe 子进程对 `~/.callwarden/` 的写操作（SQLITE_CANTOPEN）**：在 TRAE IDE 中通过 `git commit` 触发 Git Bash `sh.exe` 执行 pre-commit hook 时，`cw refresh --all` 调用 `sqlite3.connect()` + `PRAGMA journal_mode=WAL` 会因沙箱拦截文件创建/写操作而抛 `sqlite3.OperationalError: unable to open database file`（SQLITE_CANTOPEN, code 14），导致 hook 退出非零，commit 被取消，迫使用户 `--no-verify` 绕过。
+
+    **根因**：TRAE IDE 沙箱是**进程树型**拦截，基于父进程链判断，无法通过 `powershell.exe` / `cmd.exe` 中转绕过；同一命令在 PowerShell 终端中直接执行不会触发沙箱（PowerShell 进程不在 sh.exe 进程树下）。
+
+    **症状区分**：
+    - **间歇性 SQLITE_CANTOPEN**：MCP Server 或其他 cw 进程持有 `-shm` 文件锁 → 重试可恢复（hook 已内置 3 次重试，间隔 2 秒）
+    - **持续性 SQLITE_CANTOPEN**：TRAE 沙箱拦截 → 重试无效，必须改用 PowerShell 终端执行 `cw refresh --all` 后用 `git commit --no-verify` 跳过 hook
+
+    **规避方法**（按优先级）：
+    1. **首选**：在 TRAE IDE 的 PowerShell 终端中手动运行 `python cw.py refresh --all`，然后运行 `git commit --no-verify` 跳过 hook（DB 已刷新，满足规则 1）
+    2. **配置沙箱白名单**：Settings → Conversation → Custom Sandbox Configuration，添加允许规则：`C:\Users\<user>\.callwarden\`（写权限）
+    3. **停 MCP Server**：若间歇性失败，在 IDE 中停止/重载 MCP Server（或结束占用 DB 的 MCP 进程）释放 `-shm` 锁后再 commit
+    4. **用 `python cw.py` 替代 `cw.exe`**：entry_point 启动时 sqlite3 偶发失败，`python cw.py` 更稳定
+
+    **已沉淀修复**（见 [install.py](install.py) `_pre_commit_hook()`）：
+    - pre-commit hook 重试 3 次（间隔 2 秒）覆盖间歇性锁场景
+    - 重试耗尽后打印 TRAE 沙箱排查建议 + PowerShell + `--no-verify` 绕过指引
+    - 保持 `exit 1` 硬门禁（AGENTS.md 规则 1：提交前必须全量刷新数据库）
+
+32. **pre-commit 全库刷新卡死自动降级（hook 看门狗）**：Windows 上 `git commit` 的 pre-commit `cw refresh --all` 偶尔会进入无 CPU、无 DB/WAL 进展的等待状态。**根因已修复（T-1785831377543-8d626745）**：`rust_ext` 4 个文件（cas_query / cas_merge_query / manifest_query / incremental_build_query）的 `open_readonly()` 不再执行 `PRAGMA wal_checkpoint(PASSIVE)`——只读连接经 WAL + `-shm` 总能读到最新已提交数据，checkpoint 冗余；且 Windows + WAL 下 register 写事务（590+ 文件）后 checkpoint 会进入 SQLite 内部 walIndexLock/recovery 的 sleep 循环，不受 `busy_timeout` 控制，导致无限阻塞。open 已改为 8s 有界超时 + 全局降级标记：超时后本次进程后续只读短连接快速失败，Python 侧 `_load_file_result_from_db_python` 用主连接降级查询，不挂死。**hook 看门狗仍作兜底**：每 10s 采样 `~/.callwarden/callwarden.db` 与 `-wal` 的 mtime，连续 9 次（90s）无进展即 `kill -9` 该进程，并自动降级为 `python cw.py refresh <git diff --cached --name-only>`（显式刷新本次提交的变更文件），降级成功即放行 commit（满足规则 1）。若仍遇到挂起：先确认没有残留 `cw.py --refresh-all` 孤儿进程（Get-Process 核对精确 PID），再手动 `python cw.py refresh <全部修改文件...>` 并用 `git commit --no-verify`。只有显式刷新覆盖全部修改文件时才允许跳过 hook，禁止未经刷新直接绕过。
+
+33. **`cw task report` 工具超时后先核对状态，禁止盲目重报**：`task_report_step` 会自动运行 check gate 和 completion review；在大型工作区中，CLI 可能尚未返回就超过桌面工具超时，但步骤状态随后仍会成功写入。遇到 `python cw.py task report ...` 超时时，先运行只读命令 `python cw.py task show <task_id>`，确认对应 step 是否已为 `done`/`blocked`；已落库则继续下一步，未落库且确认没有残留进程后才允许重试。不要因无输出直接重复 report，否则可能重复触发质量扫描、修复步骤或审计记录。
+
+34. **Windows daemon 是权威任务库的唯一写入口，WSL/VM 禁止直写**：Windows 用户级 `~/.callwarden/callwarden.db` 由 Windows `cw-daemon` 通过 Named Pipe 提供共享单写服务。Windows Agent/MCP 默认使用 `CW_DAEMON_MODE=auto` 与 `CW_TASK_WRITE_POLICY=shared`，任务创建、领取、回报、证据归属和状态变更必须经 daemon RPC；不得因为 daemon 暂时不可达而改成 `local` 或 `isolated` 绕过单写点。WSL/VM 通过 `/mnt/c`、FUSE 或共享挂载直接用 `sqlite3`/Python `sqlite3` 打开该 Windows 权威库，属于禁止路径，尤其不得执行 `BEGIN IMMEDIATE`、checkpoint、migration 或直接补录 `task_steps`/`task_events`/`change_audit`。WSL/VM 需要任务操作时，调用 Windows 侧 `C:\Python314\python.exe C:\git_work\callwarden\cw.py ...`、Windows `cw.exe`，或使用已实现的跨平台 daemon bridge；证据文件可以在隔离目录生成，但任务归属必须回到 Windows daemon。
+
+    **诊断边界**：在 WSL/FUSE 上对 Windows 权威库看到 `disk I/O error`，而同一挂载目录的新 SQLite 库可以写，通常说明跨操作系统文件句柄/WAL 竞争或绕过 daemon，不等于 Windows daemon 已损坏。`immutable=1` 只会跳过 WAL 读取旧快照，不能用于确认最新任务状态。先用 Windows 侧 `cw daemon health` 与 daemon RPC `task.status` 验证；不得删除 `.db`、`-wal`、`-shm`，不得手工 checkpoint，也不得为“解锁”杀掉其他 Agent/MCP。多个 Windows MCP 同时启动时，启动期探针和 `DaemonMutex` 只允许一个 daemon，其他进程应重连同一 Named Pipe。
+
+### 6.5 Rust 开发规范
+
+38. **Python 生产路径提交前必须做语法编译检查**：修改 `server/replicator.py` 等含多层 `try/except/finally` 的生产模块后，先运行 `python -m py_compile <修改文件>`，再运行针对性 pytest。不要仅依赖静态 `rg` 或任务步骤状态；一处缩进错误会让整个 daemon/recovery 测试在 collection 阶段失败。
+
+16. **`cargo fmt` 不能限定单文件范围**：`cargo fmt --check -- src/graph.rs` 仍会扫描整个 crate，可能被任务之外的既有未格式化文件阻断。只格式化当前修改文件时使用 `rustfmt --edition 2021 rust_ext/src/graph.rs`，随后用 `cargo check --manifest-path rust_ext/Cargo.toml` 验证；不要运行会机械改写整个 crate 的 `cargo fmt`。
+
+17. **Rust 懒批对象必须在服务边界物化**：`CallersBatch` / `SymbolSearchBatch` 等 PyO3 懒批对象用于降低 Rust→Python 转换开销，但 MCP、daemon service 和公开 Python API 若声明返回 `List[...]`，必须在边界执行 `list(result)`。不要把自定义懒批对象直接交给 JSON 序列化或依赖 list 契约的调用方；内部 db 查询短路可继续保留懒批。
+
+24. **Rust daemon ACL 变更必须跑完整 daemon 测试集**：扩展 `ADMIN_ONLY_METHODS` 或 workspace owner 校验后，只跑新增 ACL 用例会漏掉旧测试契约失配。必须运行 `cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib`，并逐项处理失败；backup/restore/GC/mount 等 admin-only handler 的测试必须使用 admin peer，readonly 方法清单也必须同步更新。不得用局部模块测试通过替代完整 daemon 回归结果。
+
+34. **Rust CLI 迁移把 Python i18n 输出视为兼容 ABI**：语义等价的手写标题、缩进、标点和状态表达仍会破坏脚本及差分测试。迁移命令 formatter 前先读取 `i18n/zh_CN.json` 与 `i18n/en_US.json` 的现有键值，逐字符复现当前输出；通过 Python/Rust 进程级差分验证后再提交。不得用“含义相同”的新文案替代既有 CLI 契约。
+
+36. **rusqlite `query_map` 结果不得作为块尾临时值直接返回**：`MappedRows` 借用 `Statement`，若在函数或代码块尾直接写 `statement.query_map(...)? .collect(...)`，临时值的析构顺序可能晚于 `Statement`，触发 `E0597`。必须先绑定收集结果再返回，例如 `let rows = statement.query_map(...)?.collect::<rusqlite::Result<Vec<_>>>()?; Ok(rows)`；同一函数有多个查询分支时每个分支都显式结束 `MappedRows` 生命周期。
+
+37. **`windows-sys 0.59` 命名管道 API 必须按模块和 feature 对齐**：`ConnectNamedPipe` 需要 `Win32_System_IO` 的 `OVERLAPPED`，`CreateNamedPipeW` 需要 `Win32_Storage_FileSystem` 的 `PIPE_ACCESS_DUPLEX`/文件标志，SDDL 转换位于 `Win32_Security_Authorization`，`RevertToSelf` 位于 `Win32_Security`；HANDLE 使用空指针而不是整数 `0`。新增 Windows named-pipe 代码后，先检查对应 crate 源码的 feature gate，再运行 `cargo check --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features`，不要凭旧 windows-sys 版本的导入路径猜测。
+
+37. **Cargo test 只接受一个测试过滤器**：`cargo test --lib` 的位置参数只能有一个 `TESTNAME`，例如同时传 `daemon::dispatch::tests daemon::snapshot_state::tests` 会直接报 `unexpected argument`，测试不会运行。需要验证多个模块时分别执行多个命令，或使用一个共同的上层过滤器（如 `daemon::`），并记录每次结果。
+
+### 6.6 PyInstaller 与发布验收
+
+27. **GitHub Release 大资产先探测再下载**：当前网络到 `release-assets.githubusercontent.com` 可能出现 HEAD 正常、GET 长时间近零速的情况。下载几十 MB 以上资产前先用 `curl.exe -I -L --max-time 30 <URL>` 验证重定向和长度，再用短时 GET 观察实际吞吐；连续低速时立即停止残留 `curl.exe`，改用 BITS、GitHub API 或 CI 生成的内容清单，不要让多个大文件并行占满工具超时窗口。
+
+29. **PyInstaller 发布验收必须实例化 MCP Server**：`cw --version` / `cw --help` 只覆盖 CLI 启动，不能发现 FastMCP 间接导入缺失。修改 hidden imports 或 excludes 后，必须对冻结产物运行 `cw server --check-imports`；该命令会注册全部 MCP 工具但不写数据库、不下载 Semgrep 规则。遇到缺失模块时输出原始 `ImportError`，只恢复真实依赖并重建验证，禁止为了省事恢复 `collect_submodules('fastmcp')` 或全量云 SDK。标准库也可能是框架间接依赖，例如 `mimetypes` 被 FastMCP 资源层使用，不得仅凭 Call Warden 源码无直接 import 就排除。
+
+30. **PyInstaller 排除包前必须审计生产顶层导入**：`Analysis.excludes` 只阻止模块进入冻结产物，不会自动消除生产代码中的 `from package import ...`。若仍有顶层导入，被排除的包会在最早入口直接触发 `ModuleNotFoundError`，即使 PyInstaller 构建和静态 inspector 都通过。删除或外置依赖时，先用 `rg` 追踪所有生产 import，把可选依赖改为使用点懒加载或拆到不参与冻结入口的模块；构建后必须实际运行 `cw --version`、`cw --help`、`cw server --check-imports`，三者任一失败都不得发布。静态模块清单和单元测试不能替代冻结可执行文件 smoke。
+
+### 6.7 任务编排与工具调用
+
+10. **并行调用必须容忍预期的非零退出**：`rg` 未找到内容、探测可选模块不存在等预期情况会返回非零，这不是执行故障；若把这类命令直接放进 `Promise.all`，一个分支会中止整组调用并丢失其他结果。并行脚本应在每个分支捕获结果，或在 PowerShell 中把预期的非零状态显式转换为成功，例如 `rg -n -e "pattern" path; if ($LASTEXITCODE -eq 1) { exit 0 }`。无法方便转换时单独执行该探测；只有非预期的非零状态才按真正错误处理。
+
+11. **后台 watcher 用长运行 exec cell 承载**：在桌面工具执行器中，`Start-Process` 启动的后代进程可能被持续跟踪，即使重定向标准输出仍会使父工具调用超时。启动 `cw --watch` 时直接运行长命令并保留返回的 cell id，开发结束后显式终止该 cell；不要用 `Start-Process` 脱离。
+
+12. **`cw task create` 不支持 `--parent` 参数**：CLI 的 `cw task create` 只有 `--title`/`--desc`/`--steps` 三个参数。挂载子任务的现行路径统一见第 3 条「子任务挂载方式」：首选 `cw task split --plan plan.md <parent_task_id>`（daemon 路径）。旧的 Python 直连模板 `docs/task_create_subtask.py` 已归档至 `archive/docs-legacy/`（local 模式 legacy 参考；daemon 模式下 Python 直连属禁止路径，见规则 34）。参数清单见 [TOOLS.md](TOOLS.md)，不确定时先 `cw task <subcommand> --help`。
+
+15. **读取测试文件前先确认真实路径**：不要根据功能名连续猜测 `tests/test_xxx.py`。先运行 `rg --files tests | rg "关键词"` 或 `rg -l -g "test_*.py" "符号名" tests`，再对实际返回的路径使用 `Get-Content` / `cw file`。缺失的候选文件不是检索失败，不应让并行读取整组中止。
+
+18. **连续修改同一文件前刷新补丁上下文**：前一个 `apply_patch` 可能已删除、移动或格式化后续补丁依赖的锚点，继续使用旧上下文会触发 `PatchContextMismatch`。对同一文件分阶段修改时，先用 `rg -n` 或读取目标局部确认当前内容，再生成小范围补丁；不要复用前一轮读取到的 import 或函数上下文。
+
+### 6.8 代码质量与测试规范
+
+13. **合成数据压测 ≠ 真实 E2E**（方法论教训）：用 `generate_data()` 一次性生成全部合成数据到内存再批量入库，会挤压系统页缓存、未覆盖解析/CAS/watcher/daemon、多规模并行互相干扰。正确做法：流式生成、串行运行取中位数、分开报告 storage_build_time 和 end_to_end_time、记录硬件型号。不要发展"内存主表+SQLite 从表"架构，Call Warden 走混合架构：SQLite/CAS 持久化真相，Rust GraphStore/CSR 内存查询，daemon 共享发布。
+
+22. **代码变更必须同步更新文档（文档同步规则）**：当代码变更涉及以下"关键指标"时，**必须在同一次 commit 中同步更新相关文档**，禁止"代码改了文档没改"：
+
+    **关键指标清单（变更时必须同步文档）**：
+    - MCP 工具数量（新增/删除 `@mcp.tool()` 装饰器时）→ 更新 [docs/mcp_tools.md](docs/mcp_tools.md) 头部 + [README.md](README.md) + [docs/design/implementation-status.md](docs/design/implementation-status.md)
+    - Schema 版本号（[db/schema.py](db/schema.py) 的 `SCHEMA_VERSION` 变更时）→ 更新 [docs/architecture.md](docs/architecture.md) + [docs/design/implementation-status.md](docs/design/implementation-status.md)
+    - Mixin 数量（新增/删除 `db/db_*.py` 文件时）→ 更新 [AGENTS.md](AGENTS.md) 项目结构 + [docs/architecture.md](docs/architecture.md) + [CONTRIBUTING.md](CONTRIBUTING.md)
+    - CLI 子命令数量（新增/删除 `cli/main.py` 子命令时）→ 更新 [docs/cli_reference.md](docs/cli_reference.md) + [TOOLS.md](TOOLS.md)
+    - 支持语言数量（新增 parser 时）→ 更新 [README.md](README.md) + [AGENTS.md](AGENTS.md) 技术栈 + [pyproject.toml](pyproject.toml)
+
+    **自检方法**：commit 前运行以下命令快速核对关键指标是否与文档一致：
+    ```powershell
+    # MCP 工具数
+    (Select-String -Path "server\mcp_server.py" -Pattern "@mcp\.tool\(\)" | Measure-Object).Count
+    # Mixin 数
+    (Get-ChildItem db\db_*.py | Measure-Object).Count
+    # Schema 版本
+    (Select-String -Path "db\schema.py" -Pattern "SCHEMA_VERSION").Line
+    ```
+
+    **违反示例**：新增了 3 个 MCP 工具但未更新 `docs/mcp_tools.md`，导致文档说 226 个实际 229 个 → 禁止。
+    **正确示例**：新增 MCP 工具时，同一次 commit 更新 `docs/mcp_tools.md` 头部数字 + 工具列表 + `README.md` 中的数字。
+
+35. **业务测试不得只断言单一自然语言错误文本**：DB 层部分历史错误仍是硬编码中文，`CALLWARDEN_LANG=en_US` 只影响 i18n 层，无法切换这些字符串。测试拒绝路径时应优先断言结构化状态、错误码和数据库不变；确需检查文本时使用中英文语义关键词集合，不得仅靠 `parent`/`manual` 等英文子串判定业务是否正确。
+
+47. **单文件行数上限（`.rs`/`.py` 坏味道门禁）**：巨型单文件会同时破坏 review 可行性、并行 ownership 划分和 AGENTS.md 规则 40 的"所有权文件不相交"判据——两个任务只要都要改这一个文件就无法并行。阈值按本仓实测分布制定（2026-08-28 全量统计，1016 个文件，已排除 `archive/`、`recovered-scratch/`）：
+
+    | 分位   | `.rs`（n=199）              | `.py`（n=817）             |
+    | ------ | --------------------------- | -------------------------- |
+    | median | 523                         | 261                        |
+    | p75    | 902                         | 486                        |
+    | p90    | 1788                        | 762                        |
+    | p95    | 3126                        | 1080                       |
+    | max    | 7623（`snapshot_state.rs`） | **17101（`cli/main.py`）** |
+
+    **三级门禁**（对 `.rs` 与 `.py` 生产代码同时适用；测试文件同标准，理由见下）：
+
+    - **> 800 行 = 软阈值（warn）**：Planner 规划该文件的改动时必须在计划中说明是否顺带拆分；Executor 不得在此文件上新增超过 200 行净增量而不提出拆分建议。约当 `.rs` p75 / `.py` p90，当前 131 个文件（12.9%）落在此线以上。
+    - **> 1500 行 = 硬阈值（必须拆分或显式豁免）**：**禁止新建**超过该行数的文件；**禁止**让既有文件跨越该线。若任务必须改动已超线的文件，Executor 必须在 report 中记录该文件当前行数，并提出可执行拆分方案（按 domain/职责切分，不是机械按行切），由 Planner 决定本任务内拆还是立独立技术债任务。当前 45 个文件（4.4%）超线。
+    - **> 3000 行 = 灾难线（必须立独立技术债任务）**：不得以"本次只改几行"为理由继续累积。当前 17 个文件（1.7%）超线，其中 `cli/main.py`（17101）是本仓最大技术债，任何触碰它的任务都必须在 report 中显式记录未拆分的理由。
+
+    **拆分方式必须按职责，不得机械切行**：参考 `rust_ext/src/daemon/task_collab*.rs`（21 个文件，最大 1847 行）与 `task_loop/`（29 个文件，最大 1477 行）的既有拆法——按 contract / lease / lifecycle / query / verdict / tests 等职责边界切，每个文件保留独立可测边界，`mod.rs` 只做聚合。反面做法是按行数切成 `foo_part1.rs`/`foo_part2.rs`，那样并不改善 review 和 ownership。
+
+    **测试文件同标准**：`tests/test_task_quality_gate.py`（2841）等超线测试文件同样难以 review 和并行修改，按用例分组拆分。
+
+    **豁免条件（必须显式记录，不得默认）**：自动生成文件、i18n/常量表等纯数据文件、单一 `match`/`dict` 分派表可豁免，但必须在任务 report 或文件头注释中写明豁免理由；不得因"改起来麻烦"豁免。
+
+    **自检命令**（提交前核对本次改动文件是否越线）：
+    ```powershell
+    git diff --cached --name-only --diff-filter=ACM | Where-Object { $_ -match '\.(rs|py)$' } |
+      ForEach-Object { "{0,6}  {1}" -f (Get-Content -LiteralPath $_ | Measure-Object).Count, $_ }
+    ```
+
+### 6.9 审计缺陷修复与并行执行
+
+39. **审计发现的挂载三原则**：Code Review / 审计发现的缺陷按以下方式挂载，禁止混淆：
+    - **挂回原任务**：能定位到"声称完成该功能的原任务"的缺陷，用 `cw task reopen <task_id> --reason "<缺陷证据>"` 挂回原任务（reason 写清函数名、行号、实证），修完重验再关闭（AGENTS.md 规则 7）；不得新建平行任务掩盖原任务的假关闭。
+    - **直接执行原任务单**：计划里本就存在但从未执行的工作（pending/open 任务，如官方计划 10.x、G4、根任务 verify），直接按原任务执行并补真实证据，不新建。
+    - **新建独立任务单**：跨任务或先前阶段遗留的维护（FK 夹具修复、MCP 静态扫描测试适配、schema 版本断言同步、migration-manifest 更新等），新建任务单并在描述中写死所有权白名单。
+40. **并行执行的判据是所有权文件不相交**："同一 wave 不得并行编辑同一文件"是文件级约束，不是任务级约束。并行批次挂载时：
+    - 每个子任务描述写清**所有权白名单**（唯一可改文件列表）与**并行组号**；
+    - 两任务所有权文件相交即不能并行（拆分所有权或串行），不能因"不同 agent"就默认安全；
+    - 文件不相交的并行组可同时开工；跨组依赖单独声明（如"verify 依赖某组完成"）。
+41. **修复批次开工前，并行 agent 必须对共享在途文件 checkpoint**：共享文件（如 `server/tools/*`、`db/db_task_leases.py`）被其他 agent 在途编辑时，先要求其提交/停手并确认文件 mtime 稳定，再领取对应任务执行；发现双写冲突立即停下报告，不得自行覆盖对方改动。
+
+48. **共享 git 对象库保护（多 agent 并行的硬性纪律，2026-08-28 事故后立规）**：本仓库由多个 agent 并行开发、共享同一个 `.git`。**严禁执行 `git gc --prune=now` / `git prune` / `git filter-repo` / `git gc --aggressive` / `git repack -ad`**——它们会删除仓库中"当前无引用"的对象，而并行 agent 的暂存、worktree refs、checkpoint refs 正引用这些对象，一旦被删会导致整个仓库 `git status`/`git add`/`git commit`/`git write-tree` 报 `unable to read tree`、`git log --all` 报 `Failed to traverse parents`、`git fsck` 报大量 `missing blob/tree/commit`，所有 agent 都无法提交（2026-08-28 实发：回收站恢复约 440 个对象才救回仓库）。
+
+    - **唯一允许的清理**：`git gc --prune=2.weeks.ago`（保守保留期），且执行前必须先把 `.git/objects`、`.git/index`、`.git/refs` 备份到 `~/.callwarden/git_recovery_<date>/`；
+    - **任何 `git gc` 前先确认没有其他 agent 正在操作**（`tasklist | grep git`，或确认 `refs/codex/turn-diffs/*`、worktree refs 不再增长）；
+    - **commit 前检查 index**：若 index 含其他 agent 的暂存内容（`git status --short` 出现大量不属于本任务的 `M`/`D`/`??`），`git commit` 会**一次提交整个 index**。必须先 `git reset` 清空暂存区（工作树不变），只 `git add` 本任务白名单路径，再 `git commit`；严禁 `git add .` / `git commit -a` 吸收并行改动；
+    - **事故恢复路径**（已沉淀，见 `deliverables/software-company/git_recovery_record_20260828.md`）：被 prune 的 loose objects 会进 Windows 回收站，可恢复——解析 `$Recycle.Bin\<SID>\$I*`（offset 28 起 UTF-16LE 原始路径）筛 `.git\objects\`，对 `$R*` 内容做 `zlib 解压 + sha1(header+content)==对象名` 指纹匹配，迭代 `git fsck --full` 写回 `.git/objects/xx/yyy`；
+    - **失败留痕**：任何 `git gc`/`prune`/commit 事故必须在当日 memory 日志与任务 report 中记录，禁止静默跳过。
+
+### 6.10 CLI/MCP 验收矩阵收口门禁
+
+49. **CLI/MCP 验收矩阵不得按"父卡已关闭"判定完成，必须过脚本门禁**。2026-09-23 的
+    `T-1790136923625-2803e218`（P0 单实例守卫部署 + CLI/MCP 双入口 E2E 验收测试矩阵）
+    4/4 step 已 done 且卡已 closed，但方案里的 Wave 2 产物（`deliverables/e2e-matrix-*.md`）、
+    Wave 3（治理写路径环）、Wave 4（并发/崩溃/多实例）从未产出，另有 2026-09-16 的
+    `T-1789563951668-ba0c338c`（MCP task_create workspace-pair 验证）长期 open。
+    `task.close` 不校验依赖是否完成，因此**必须**用可执行门禁替代人工记忆：
+
+    - **看板卡唯一**：`[GOV] 9 月 CLI/MCP 验收矩阵收口看板`（callwarden `workspace_id=1` /
+      `workspace_instance_id=4baea3ff12c2ea5c`）。矩阵所有收口项只能作为它的子卡
+      （`cw task create --parent-id <看板卡>`，且必须显式带 workspace 配对）。
+    - **收口条件写死在卡描述里**：①各子卡 `closed` 且步骤全 `done`；②
+      `T-1789563951668-ba0c338c` 已处置（关闭，或按 `LEGACY_WAIVERS` 提供含该 task id
+      的处置证据）；③Wave 2 CLI 矩阵产物落盘。
+      Wave 3/4 属独立 backlog，**不计入**看板关闭条件，但不得从 backlog 消失。
+    - **豁免只给 daemon 关不掉的历史卡**：`scripts/check_e2e_matrix_closure.py` 的
+      `LEGACY_WAIVERS` 仅登记"绑定已删除临时 workspace / owner_uid 非当前用户 /
+      supersede 跨 workspace 被拒 + cascade-close 被 leaf_steps_pending 拒"这类死锁卡
+      （2026-10-29 实证 `T-1789563951668-ba0c338c` 绑定 ws=1707 临时目录）。豁免必须
+      附证据文件路径，且文件正文含该 task id，否则门禁仍判 GAP。**看板子卡不得豁免**。
+    - **脚本门禁（唯一判定手段）**：`python scripts/check_e2e_matrix_closure.py`
+      （只读任务库，`--json` 供 CI/定时任务消费）。退出码 0 才允许 `cw task close` 看板卡；
+      退出码 1 时按输出逐项补齐，**禁止**先关看板卡再补子卡。
+    - **触发时机**：任何触及 `cli/main.py`、`server/tools/`、`rust_ext/src/daemon/`、
+      `deliverables/*e2e*`、`deliverables/*cli*` 的提交前必须运行一次；以及每周至少一次
+      例行核查（可挂定时任务，命令同上）。门禁脚本自身变更需在卡里记录理由。
+    - **新增缺口**：发现矩阵项遗漏时**新建子卡**（禁止只写进文档或口头记录），并把该子卡
+      纳入门禁条件；关闭子卡必须带实证（命令输出、pytest 结果或部署 evidence 文件路径）。
+    - **收口状态与遗留追踪**（2026-10-29）：看板 `T-1793238319341-1dfe8098` 已 closed，
+      三张子卡（`T-1793238550960-0b8411a4` / `T-1793238551533-2db578bc` /
+      `T-1793238552053-4cb4e644`）全部 closed，门禁 `python scripts/check_e2e_matrix_closure.py`
+      退出码 0。Wave 3/4、67 个 MCP 写工具补测、B 类 5 条双契约重测、F-001 registry
+      数据治理、build_graph 增量化转入遗留卡 `T-1793240742557-50dfd468`（4 步）。
+      2026-10-29 该遗留卡已按「逐项承接」收口：4 步全部迁移到承接卡
+      `T-1793248351476-e7d6650c`（SUP-2fa2a68e8ca2fa4a，映射见
+      `docs/evidence/T-1793240742557-50dfd468-backlog-successor-mapping.md`），
+      后续以承接卡为唯一追踪对象，**该卡未关闭前视为矩阵未完成**。

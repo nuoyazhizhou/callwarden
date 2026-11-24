@@ -30,6 +30,13 @@ use super::workspace::{
     WorkspaceRegistry,
 };
 
+/// build_graph 单飞/预算/超时协调（GitNexus refresh_index 设计映射）。
+/// 内联子模块：daemon/mod.rs 不在所有权白名单，经 `#[path]` 挂载。
+#[path = "build_flight.rs"]
+pub mod build_flight;
+
+use build_flight::{BuildFlights, BuildProgress};
+
 /// 可索引的源文件扩展名（文件面扫描白名单，与 db 层解析面一致）。
 const INDEXABLE_EXTS: &[&str] = &[
     "py", "rs", "c", "h", "cpp", "hpp", "cc", "go", "java", "js", "jsx", "ts", "tsx",
@@ -1331,12 +1338,26 @@ pub fn handle_build_graph(
     params: &Value,
     codegraph_db: Option<&Path>,
 ) -> Result<Value, DaemonRpcError> {
-    let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
-    let (registry_ws_id, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
+    let (root, scan_root) = prepare_build_graph(registry, peer, params)?;
     let conn = open_codegraph_write(codegraph_db)?;
     // 权威单库按 root_path 映射 workspace 行（registry id 与权威库 id 是两个 ID 空间）
     let workspace_id = ensure_workspace_row_by_root(&conn, &root)
         .map_err(|e| DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}")))?;
+    run_build_graph(&conn, workspace_id, &root, &scan_root, None)
+}
+
+/// build_graph 参数解析与校验（同步段，廉价：仅 registry 借用 + 路径校验）。
+///
+/// 异步化拆分（GitNexus refresh_index 设计）：重活拆到 [`run_build_graph`]，
+/// 本函数产物 (root, scan_root) 可安全 move 进后台线程，daemon dispatch
+/// 不再被大仓构建长期阻塞（watchdog 连续 2 次 /health 失败判死的根因）。
+fn prepare_build_graph(
+    registry: &WorkspaceRegistry,
+    peer: &PeerCredential,
+    params: &Value,
+) -> Result<(PathBuf, PathBuf), DaemonRpcError> {
+    let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+    let (registry_ws_id, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
     let _ = registry_ws_id;
     let scan_root: PathBuf = match get_str_param(params, "scan_root") {
         Some(s) if !s.is_empty() => {
@@ -1351,11 +1372,25 @@ pub fn handle_build_graph(
     // （owner 校验不构成根限制；越根扫描会把本用户任意目录索引进库）
     let scan_root_str = scan_root.to_string_lossy().to_string();
     ensure_root_containment(&root, &scan_root_str)?;
+    Ok((root, scan_root))
+}
+
+/// build_graph 重活（无 registry/peer 依赖，可在后台线程执行）。
+///
+/// `progress` 为单飞登记表的进度埋点（GitNexus progress notifications 的
+/// daemon 侧等价物：经 `workspace.build_graph` dry_run=true 轮询读取）。
+fn run_build_graph(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    root: &Path,
+    scan_root: &Path,
+    progress: Option<&BuildProgress>,
+) -> Result<Value, DaemonRpcError> {
     // rel 计算基于 canonical root（client_view_root 可能与真实路径大小写/前缀不一致）
-    let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+    let root_canon = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     // ignore 契约剪枝（.callwardenignore/.gitignore，workspace 根语义）
-    let skip = load_ignore_dir_names(&root);
-    let files = scan_files(&scan_root, true, &skip);
+    let skip = load_ignore_dir_names(root);
+    let files = scan_files(scan_root, true, &skip);
     let mut scanned = 0usize;
     let mut inserted = 0usize;
     let mut unchanged = 0usize;
@@ -1378,6 +1413,9 @@ pub fn handle_build_graph(
             .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
         scanned += 1;
         seen.insert(rel.clone());
+        if let Some(p) = progress {
+            p.scanned.store(scanned as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         // 先取元数据（cheap）：快路径命中时避免读取文件内容
         let meta = std::fs::metadata(&path).ok();
         let mtime = meta
@@ -1408,6 +1446,11 @@ pub fn handle_build_graph(
                 if is_mtime_cache_hit(status, stored_hash, *stored_mtime, mtime) {
                     unchanged += 1;
                     skipped_cached += 1;
+                    if let Some(p) = progress {
+                        use std::sync::atomic::Ordering::Relaxed;
+                        p.unchanged.store(unchanged as u64, Relaxed);
+                        p.skipped_cached.store(skipped_cached as u64, Relaxed);
+                    }
                     continue;
                 }
             }
@@ -1472,6 +1515,12 @@ pub fn handle_build_graph(
             BuildGraphFileClass::Unchanged => unchanged += 1,
             BuildGraphFileClass::SkippedUnparsed => skipped_unparsed += 1,
         }
+        if let Some(p) = progress {
+            use std::sync::atomic::Ordering::Relaxed;
+            p.inserted.store(inserted as u64, Relaxed);
+            p.unchanged.store(unchanged as u64, Relaxed);
+            p.skipped_unparsed.store(skipped_unparsed as u64, Relaxed);
+        }
     }
     // P3-1 删除感知：库里存在、磁盘上已消失的文件清理图行。
     // 以「磁盘上是否真的不存在」为准（而非「本轮是否扫描到」），这样
@@ -1505,6 +1554,9 @@ pub fn handle_build_graph(
                     }
                     if newly {
                         archived += 1;
+                        if let Some(p) = progress {
+                            p.archived.store(archived as u64, std::sync::atomic::Ordering::Relaxed);
+                        }
                     }
                     continue;
                 }
@@ -1518,6 +1570,9 @@ pub fn handle_build_graph(
             affected_names.insert(name);
         }
         deleted += 1;
+        if let Some(p) = progress {
+            p.deleted.store(deleted as u64, std::sync::atomic::Ordering::Relaxed);
+        }
     }
     // P3-1 边重算裁剪：只重算本轮受影响的 callee 名（无改动则零成本）。
     // 全覆盖性论证：会改变解析结果的只有「名字被新增/删除定义」或
@@ -1541,6 +1596,199 @@ pub fn handle_build_graph(
     m.insert("calls_resolved".into(), Value::Number(resolved.into()));
     m.insert("calls_ambiguous".into(), Value::Number(ambiguous.into()));
     Ok(Value::Object(m))
+}
+
+/// `workspace.build_graph` 异步入口（GitNexus refresh_index 单飞设计映射）。
+///
+/// - bounded：预扫可索引文件数，超 [`build_flight::build_max_files`] 报
+///   `build_too_large`（默认 5000，0=不限制）；
+/// - 单飞：同 workspace 并发构建报 `build_in_progress`（附当前扫描进度），
+///   超时转后台后同样持有单飞，直到后台跑完发布 lastBuild；
+/// - 超时：等待 [`build_flight::build_wait_bound`]（默认 15s）后返回
+///   `accepted=true` 结构化响应（HTTP 200，非错误），后台线程继续执行
+///   并发布 lastBuild——worker 永不中断（GitNexus "never interrupts"）；
+/// - dry_run：不占单飞，报 estimatedFiles/inProgress/wouldRun/lastBuild。
+pub fn handle_build_graph_async(
+    registry: &WorkspaceRegistry,
+    peer: &PeerCredential,
+    params: &Value,
+    codegraph_db: Option<&Path>,
+    flights: &std::sync::Arc<BuildFlights>,
+) -> Result<Value, DaemonRpcError> {
+    let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+    let (root, scan_root) = prepare_build_graph(registry, peer, params)?;
+    // receipts 审计：回执的 workspace_id 列取 registry 权威 id（与
+    // write_audit_events.workspace_id 同语义），db_workspace_id 在 conn 上映射。
+    let (registry_ws_id, _) = resolve_workspace(registry, peer, workspace_instance_id)?;
+    let root_key = std::fs::canonicalize(&root)
+        .unwrap_or_else(|_| root.clone())
+        .to_string_lossy()
+        .replace('\\', "/");
+    let skip = load_ignore_dir_names(&root);
+    let file_count = scan_files(&scan_root, true, &skip).len();
+    let max_files = build_flight::build_max_files();
+
+    let dry_run = params.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    if dry_run {
+        let over_limit = max_files > 0 && file_count > max_files;
+        let in_progress = flights.is_running(&root_key);
+        let mut m = Map::new();
+        m.insert("dry_run".into(), Value::Bool(true));
+        m.insert("workspace_instance_id".into(), json!(workspace_instance_id));
+        m.insert(
+            "estimatedFiles".into(),
+            if over_limit { Value::Null } else { json!(file_count) },
+        );
+        m.insert("fileCount".into(), json!(file_count));
+        m.insert("maxFiles".into(), json!(max_files));
+        m.insert("overLimit".into(), Value::Bool(over_limit));
+        m.insert("inProgress".into(), Value::Bool(in_progress));
+        m.insert("wouldRun".into(), Value::Bool(!over_limit && !in_progress));
+        m.insert("progress".into(), flights.progress(&root_key).unwrap_or(Value::Null));
+        m.insert("lastBuild".into(), flights.last(&root_key).unwrap_or(Value::Null));
+        return Ok(Value::Object(m));
+    }
+
+    if max_files > 0 && file_count > max_files {
+        return Err(DaemonRpcError::new(
+            "build_too_large",
+            format!(
+                "工作区可索引文件数 {} 超过上限 {}（CALLWARDEN_BUILD_MAX_FILES，\
+                 0=不限制）；建议收窄 scan_root 或调大上限",
+                file_count, max_files
+            ),
+        ));
+    }
+
+    let (seq, progress) = match flights.begin(&root_key) {
+        Ok(pair) => pair,
+        Err(existing) => {
+            return Err(DaemonRpcError::new(
+                "build_in_progress",
+                format!(
+                    "该 workspace 已有 build_graph 进行中（已扫描 {} 文件）；\
+                     可用 dry_run=true 查询进度与 lastBuild",
+                    existing.scanned.load(std::sync::atomic::Ordering::Relaxed)
+                ),
+            ));
+        }
+    };
+
+    let db_path = match codegraph_db {
+        Some(p) => p.to_path_buf(),
+        None => {
+            // receipts gap：审计表 write_audit_events 与 codegraph 同库，
+            // DB 未配置时物理上无库可落回执（环境降级，非实现缺陷）；仍走
+            // finish 更新 lastBuild，回调 no-op，不伪造审计成功。
+            let _ = flights.finish(
+                &root_key,
+                json!({"ok": false, "error": "internal_error", "message": "codegraph db 未配置"}),
+                |_| Ok(()),
+            );
+            return Err(DaemonRpcError::internal_error("codegraph db 未配置，无法构建"));
+        }
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let flights_bg = std::sync::Arc::clone(flights);
+    let root_bg = root.clone();
+    let scan_bg = scan_root.clone();
+    let root_key_bg = root_key.clone();
+    let progress_bg = std::sync::Arc::clone(&progress);
+    // spawn 闭包 move 消费 db_path；E5（spawn 失败）分支仍需 db_path 补写失败回执，
+    // 故预留一份副本。
+    let db_path_e5 = db_path.clone();
+    let spawned = std::thread::Builder::new()
+        .name("cw-build-graph".to_string())
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            // 打开 conn 存活到 finish 回调，使成功/失败/超时转后台三条路径
+            // 在统一出口（finish）写审计回执时都能复用同一写连接与 sign_audit_chain。
+            let result = open_codegraph_write(Some(db_path.as_path())).and_then(|conn| {
+                let workspace_id = ensure_workspace_row_by_root(&conn, &root_bg)
+                    .map_err(|e| {
+                        DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}"))
+                    })?;
+                let result =
+                    run_build_graph(&conn, workspace_id, &root_bg, &scan_bg, Some(&progress_bg));
+                let stats = match &result {
+                    Ok(v) => v.clone(),
+                    Err(e) => json!({"ok": false, "error": e.code, "message": e.message}),
+                };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                // finish 出口统一落 1 条回执：build_seq/completed_at 由 finish 注入 stats，
+                // 回调把它连同 scanned/inserted/... 一起写进 detail_json（U-02：超时
+                // 转后台的回执在后台真正跑完时才落，此刻才有真实统计字段）。
+                let audit = flights_bg.finish(&root_key_bg, stats, |final_stats| {
+                    append_build_receipt(
+                        &conn,
+                        registry_ws_id,
+                        workspace_id,
+                        &root_key_bg,
+                        final_stats,
+                        elapsed_ms,
+                    )
+                    .map(|_| ())
+                    .map_err(|e| e.message)
+                });
+                // fail-closed：审计写失败不得吞异常伪造成功（E7）。
+                match (result, audit) {
+                    (_, Err(msg)) => Err(DaemonRpcError::new(
+                        "E_WRITE_AUDIT_UNAVAILABLE",
+                        msg,
+                    )),
+                    (r, Ok(())) => r,
+                }
+            });
+            let _ = tx.send(result);
+        });
+    if spawned.is_err() {
+        // E5：spawn 失败时 db_path 已知，主线程尽力补写失败回执；审计写入
+        // 失败不掩盖原始错误（本出口本就返回 Err，不存在伪造成功）。
+        let _ = flights.finish(
+            &root_key,
+            json!({"ok": false, "error": "internal_error", "message": "build 线程启动失败"}),
+            |final_stats| {
+                open_codegraph_write(Some(db_path_e5.as_path()))
+                    .and_then(|conn| {
+                        let db_ws = ensure_workspace_row_by_root(&conn, &root).unwrap_or(0);
+                        append_build_receipt(
+                            &conn,
+                            registry_ws_id,
+                            db_ws,
+                            &root_key,
+                            final_stats,
+                            0,
+                        )
+                    })
+                    .map(|_| ())
+                    .map_err(|e| e.message)
+            },
+        );
+        return Err(DaemonRpcError::internal_error("build_graph 后台线程启动失败"));
+    }
+
+    match rx.recv_timeout(build_flight::build_wait_bound()) {
+        Ok(Ok(stats)) => Ok(stats),
+        Ok(Err(e)) => Err(e),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            // GitNexus 语义：调用停止等待，worker 不中断，后台跑完发布
+            let mut m = Map::new();
+            m.insert("accepted".into(), Value::Bool(true));
+            m.insert("workspace_instance_id".into(), json!(workspace_instance_id));
+            m.insert("estimatedFiles".into(), json!(file_count));
+            m.insert("build_seq".into(), json!(seq));
+            m.insert("inProgress".into(), Value::Bool(true));
+            m.insert(
+                "note".into(),
+                Value::String(
+                    "构建已转后台单飞执行；用 dry_run=true 轮询进度与结果".into(),
+                ),
+            );
+            Ok(Value::Object(m))
+        }
+        Err(_) => Err(DaemonRpcError::internal_error("build_graph 后台线程提前退出")),
+    }
 }
 
 /// `workspace.build_directory` —— 重建指定目录文件索引。
@@ -2347,6 +2595,64 @@ struct WriteAuditEvent<'a> {
     request_id: &'a str,
     detail: &'a Value,
     recorded_at: f64,
+}
+
+/// build_graph 审计回执（receipts 审计，T-1795466935294-3433ca6c）。
+///
+/// 借壳既有 `write_audit_events.event_type=commit`（该列 CHECK 只允许
+/// grant/commit/reject，禁止本任务改 schema；见 U-01）：`outcome` 映射
+/// `allow`（成功）/`deny`（失败），`detail_json.kind="build_receipt"` 标识
+/// 这是构建回执而非普通写审计，其余回执字段全部放 detail_json：
+/// build_seq / root / scanned / inserted / unchanged / deleted / elapsed_ms /
+/// ok / error / message / completed_at。
+///
+/// 复用 `append_write_audit` 的 SAVEPOINT 原子写 + `sign_audit_chain` 单一
+/// 挂链入口 + `audit_record_id` 回填 → 链完整（AC-04）且重复读幂等（AC-05）。
+fn append_build_receipt(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    db_workspace_id: i64,
+    root: &str,
+    stats: &Value,
+    elapsed_ms: u64,
+) -> Result<i64, DaemonRpcError> {
+    let ok = stats.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let pick = |key: &str| stats.get(key).cloned().unwrap_or(Value::Null);
+    let detail = json!({
+        "kind": "build_receipt",
+        "build_seq": pick("build_seq"),
+        "root": root,
+        "scanned": pick("scanned"),
+        "inserted": pick("inserted"),
+        "unchanged": pick("unchanged"),
+        "deleted": pick("deleted"),
+        "elapsed_ms": elapsed_ms,
+        "ok": ok,
+        "error": pick("error"),
+        "message": pick("message"),
+        "completed_at": pick("completed_at"),
+    });
+    let now = now_ts_secs();
+    append_write_audit(
+        conn,
+        &WriteAuditEvent {
+            workspace_id,
+            db_workspace_id,
+            event_type: "commit",
+            outcome: if ok { "allow" } else { "deny" },
+            grant_id: "",
+            principal_id: "build_graph",
+            task_id: "",
+            step_id: "",
+            path: root,
+            base_hash: "",
+            new_hash: "",
+            reason_code: if ok { "build_receipt_ok" } else { "build_receipt_error" },
+            request_id: "",
+            detail: &detail,
+            recorded_at: now,
+        },
+    )
 }
 
 fn append_write_audit(
@@ -3933,6 +4239,179 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1, "不得为同一目录建第二行");
+    }
+
+    // ---- receipts 审计（T-1795466935294-3433ca6c）----
+
+    /// 构造带完整审计基础设施的库（storage 全量 schema 含 audit_chain /
+    /// audit_key_rotations，ensure_write_governance_tables 补 write_audit_events）。
+    /// 返回 TempDir 以保持库文件路径存活至测试结束。
+    fn new_audit_db() -> (tempfile::TempDir, rusqlite::Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("audit.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        ensure_write_governance_tables(&conn).unwrap();
+        (dir, conn)
+    }
+
+    /// AC-01：成功回执 1 条，ok=true，全字段齐全，链同步 +1。
+    #[test]
+    fn test_build_receipt_success_fields_and_chain() {
+        let (_dir, conn) = new_audit_db();
+        let stats = json!({
+            "ok": true, "build_seq": 7, "scanned": 42, "inserted": 10,
+            "unchanged": 30, "deleted": 2, "completed_at": 1700000000u64,
+        });
+        let event_id =
+            append_build_receipt(&conn, 3, 9, "c:/ws/proj", &stats, 1234).unwrap();
+
+        let detail: String = conn
+            .query_row(
+                "SELECT detail_json FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let d: Value = serde_json::from_str(&detail).unwrap();
+        assert_eq!(d["kind"], "build_receipt");
+        assert_eq!(d["ok"], true);
+        assert_eq!(d["build_seq"], 7);
+        assert_eq!(d["root"], "c:/ws/proj");
+        assert_eq!(d["scanned"], 42);
+        assert_eq!(d["inserted"], 10);
+        assert_eq!(d["unchanged"], 30);
+        assert_eq!(d["deleted"], 2);
+        assert_eq!(d["elapsed_ms"], 1234);
+        assert_eq!(d["completed_at"], 1700000000u64);
+        // 借壳 commit 事件 + outcome allow
+        let (evt, outcome): (String, String) = conn
+            .query_row(
+                "SELECT event_type, outcome FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(evt, "commit");
+        assert_eq!(outcome, "allow");
+        // 链：event 与 audit_chain 一一对应，audit_record_id 已回填
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM write_audit_events", [], |r| r.get(0))
+            .unwrap();
+        let chains: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_chain WHERE table_name = ?1",
+                rusqlite::params![WRITE_AUDIT_CHAIN_TABLE],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(events, 1);
+        assert_eq!(chains, 1, "成功回执必须同步挂 1 条链记录");
+        let record_id: String = conn
+            .query_row(
+                "SELECT audit_record_id FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!record_id.is_empty());
+        let verify = crate::cli::security::verify_audit_chain(
+            &conn, WRITE_AUDIT_CHAIN_TABLE, 100,
+        )
+        .unwrap();
+        assert_eq!(verify.broken_count, 0, "回执链必须完整（AC-04）");
+        assert_eq!(verify.verified_count, 1);
+    }
+
+    /// AC-02：失败回执 1 条，ok=false，error 字段存在，outcome=deny。
+    #[test]
+    fn test_build_receipt_failure_error_and_deny() {
+        let (_dir, conn) = new_audit_db();
+        let stats = json!({
+            "ok": false, "build_seq": 8, "error": "internal_error",
+            "message": "workspace 行映射失败", "completed_at": 1700000001u64,
+        });
+        let event_id =
+            append_build_receipt(&conn, 3, 9, "c:/ws/proj", &stats, 50).unwrap();
+        let detail: String = conn
+            .query_row(
+                "SELECT detail_json FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let d: Value = serde_json::from_str(&detail).unwrap();
+        assert_eq!(d["ok"], false);
+        assert_eq!(d["error"], "internal_error");
+        assert_eq!(d["message"], "workspace 行映射失败");
+        let outcome: String = conn
+            .query_row(
+                "SELECT outcome FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(outcome, "deny");
+        let verify = crate::cli::security::verify_audit_chain(
+            &conn, WRITE_AUDIT_CHAIN_TABLE, 100,
+        )
+        .unwrap();
+        assert_eq!(verify.broken_count, 0);
+    }
+
+    /// AC-05：按 workspace + 时间范围重复读回执结果幂等（复用 SQLite 读面，纯读无副作用）。
+    #[test]
+    fn test_build_receipt_query_idempotent() {
+        let (_dir, conn) = new_audit_db();
+        append_build_receipt(
+            &conn, 3, 9, "c:/ws/proj",
+            &json!({"ok": true, "build_seq": 1, "scanned": 1}), 10,
+        ).unwrap();
+        append_build_receipt(
+            &conn, 4, 10, "c:/ws/other",
+            &json!({"ok": true, "build_seq": 2, "scanned": 2}), 20,
+        ).unwrap();
+
+        let query = || -> Vec<(i64, String)> {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT event_id, detail_json FROM write_audit_events \
+                     WHERE workspace_id = ?1 AND recorded_at >= ?2 AND recorded_at <= ?3 \
+                     ORDER BY event_id",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map(rusqlite::params![3, 0.0, 9_999_999_999.0], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>();
+            rows
+        };
+        let first = query();
+        let second = query();
+        assert_eq!(first, second, "重复读回执必须幂等");
+        assert_eq!(first.len(), 1, "按 workspace 过滤只返回该 workspace 的回执");
+        let d: Value = serde_json::from_str(&first[0].1).unwrap();
+        assert_eq!(d["build_seq"], 1);
+    }
+
+    /// E7：审计写失败 fail-closed —— SAVEPOINT 回滚，无半成品行。
+    #[test]
+    fn test_build_receipt_audit_failure_no_partial() {
+        let (_dir, conn) = new_audit_db();
+        // 删掉 audit_chain 表使 sign_audit_chain 失败 → append 整体回滚
+        conn.execute_batch("DROP TABLE audit_chain;").unwrap();
+        let r = append_build_receipt(
+            &conn, 3, 9, "c:/ws/proj",
+            &json!({"ok": true, "build_seq": 1}), 10,
+        );
+        assert!(r.is_err(), "审计链写失败必须上抛");
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM write_audit_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(events, 0, "审计失败不得留下半成品回执行");
     }
 
     #[test]

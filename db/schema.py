@@ -5,6 +5,8 @@ schema.py
 数据库 Schema 定义。
 """
 
+import sqlite3
+
 SCHEMA_SQL = """
 -- 工作区表：管理多个工作区（不同目录/不同分支）
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -2278,3 +2280,111 @@ GUARDRAIL_STATUS_WONTFIX = "wontfix"
 # v48：旧数据无 workspace 归属时 migration 将 open 旧行置为 orphaned，
 # 查询层 fail-closed（不返回 orphan 行），禁止静默归入当前 workspace。
 GUARDRAIL_STATUS_ORPHANED = "orphaned"
+
+
+# ============================================
+# 会话/消息全文检索（FTS5，辅助 schema）
+# ============================================
+# 现状：会话/任务信息只能按 id 或列表查询，无法全文检索
+# “上次谁在哪个仓库改了什么”；大仓历史排障成本高。
+#
+# 数据映射（库内没有独立的 sessions/messages 主表，复用协作主表）：
+#   - sessions_fts  ← tasks        会话 = 任务协作单元（title / description / creator）
+#   - messages_fts  ← task_events  消息 = 协作事件流（reason / actor_identity / role / 状态迁移）
+#
+# 分词：unicode61（中英文均按分隔符切词）。采用**外部内容表**
+#（content=tasks / task_events），因此 snippet() 可回读原文并产出高亮片段。
+#
+# 版本策略：与 ensure_pki_schema / ensure_write_governance_schema 同款——
+# 每次启动幂等创建（CREATE IF NOT EXISTS），不进入 SCHEMA_SQL、不 bump
+# SCHEMA_VERSION。原因：SCHEMA_VERSION 必须与 Rust RUST_SCHEMA_VERSION /
+# abi_contract 严格一致，单侧 bump 会破坏 ABI 契约校验；且 Rust 侧
+# canonical_schema_sql 是编译期内嵌 schema.py 副本，旧二进制无法感知新 DDL。
+SESSION_FTS_DDL = """
+-- 会话全文索引（外部内容表：正文仍存 tasks，索引只存倒排）
+CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+    title, description, creator,
+    content='tasks', content_rowid='rowid',
+    tokenize='unicode61'
+);
+-- 消息全文索引（外部内容表：正文仍存 task_events）
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    reason, actor_identity, role, from_status, to_status,
+    content='task_events', content_rowid='event_id',
+    tokenize='unicode61'
+);
+-- 会话同步触发器（插入 / 更新 / 删除）
+CREATE TRIGGER IF NOT EXISTS sessions_fts_ai AFTER INSERT ON tasks BEGIN
+    INSERT INTO sessions_fts(rowid, title, description, creator)
+    VALUES (new.rowid, new.title, new.description, new.creator);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_fts_ad AFTER DELETE ON tasks BEGIN
+    INSERT INTO sessions_fts(sessions_fts, rowid, title, description, creator)
+    VALUES ('delete', old.rowid, old.title, old.description, old.creator);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_fts_au AFTER UPDATE ON tasks BEGIN
+    INSERT INTO sessions_fts(sessions_fts, rowid, title, description, creator)
+    VALUES ('delete', old.rowid, old.title, old.description, old.creator);
+    INSERT INTO sessions_fts(rowid, title, description, creator)
+    VALUES (new.rowid, new.title, new.description, new.creator);
+END;
+-- 消息同步触发器（插入 / 更新 / 删除）
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON task_events BEGIN
+    INSERT INTO messages_fts(rowid, reason, actor_identity, role, from_status, to_status)
+    VALUES (new.event_id, new.reason, new.actor_identity, new.role, new.from_status, new.to_status);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON task_events BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, reason, actor_identity, role, from_status, to_status)
+    VALUES ('delete', old.event_id, old.reason, old.actor_identity, old.role, old.from_status, old.to_status);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON task_events BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, reason, actor_identity, role, from_status, to_status)
+    VALUES ('delete', old.event_id, old.reason, old.actor_identity, old.role, old.from_status, old.to_status);
+    INSERT INTO messages_fts(rowid, reason, actor_identity, role, from_status, to_status)
+    VALUES (new.event_id, new.reason, new.actor_identity, new.role, new.from_status, new.to_status);
+END;
+"""
+
+
+def ensure_session_fts_schema(conn: sqlite3.Connection) -> bool:
+    """幂等创建会话/消息 FTS5 索引与同步触发器，并在首次创建时回填历史数据。
+
+    调用链：CodeGraphDB._init_schema（Rust storage 路径与 Python 兼容路径的
+    统一收尾段）→ 本函数。与 ensure_pki_schema 等同级，每次启动幂等执行。
+
+    返回 True 表示索引可用；以下情况返回 False（保持主表可用的优雅降级）：
+      - 主表 tasks / task_events 缺失（极简库或迁移中间态）
+      - 当前 SQLite 构建未编译 FTS5（no such module: fts5）
+
+    幂等性：CREATE ... IF NOT EXISTS；只有“本次新建索引”才执行 rebuild，
+    重复调用不会重复全量回填。
+    """
+    try:
+        present = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name IN ('tasks', 'task_events')"
+            )
+        }
+    except sqlite3.Error:
+        return False
+    if present != {"tasks", "task_events"}:
+        return False
+
+    try:
+        fts_before = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name IN ('sessions_fts', 'messages_fts')"
+            )
+        }
+        conn.executescript(SESSION_FTS_DDL)
+        # 外部内容表的 rebuild 直接读取主表全量回填，无需逐行 INSERT
+        if "sessions_fts" not in fts_before:
+            conn.execute("INSERT INTO sessions_fts(sessions_fts) VALUES('rebuild')")
+        if "messages_fts" not in fts_before:
+            conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    except sqlite3.OperationalError:
+        # 未编译 FTS5 的运行环境：保持主表可用，查询层自动降级 LIKE
+        return False
+    return True

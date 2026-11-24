@@ -10,6 +10,7 @@ db_query.py
 from __future__ import annotations
 
 import os
+import sqlite3
 import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
@@ -519,13 +520,34 @@ class QueryMixin:
         return [dict(row) for row in cur]
 
     def get_symbol_content_by_hash(self, content_hash: str) -> Optional[Dict]:
-        """通过 hash 获取函数内容"""
+        """通过 hash 获取函数内容（若存在 rationale 语义注释则一并返回）"""
         cur = self.conn.execute(
             "SELECT * FROM symbol_contents WHERE content_hash = ?",
             (content_hash,),
         )
         row = cur.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        rationale = self._get_rationale_rows(
+            "symbol_hash = ?", (content_hash,)
+        )
+        if rationale:
+            result["rationale"] = rationale
+        return result
+
+    def _get_rationale_rows(self, where: str, params: tuple) -> List[Dict]:
+        """查询 rationale 语义注释（扩展表；旧库缺表时降级为空列表）。"""
+        try:
+            cur = self.conn.execute(
+                "SELECT line, prefix, text FROM symbol_rationale WHERE %s "
+                "ORDER BY line, id" % where,
+                params,
+            )
+            return [dict(row) for row in cur]
+        except sqlite3.OperationalError:
+            # 旧库/合成库没有 symbol_rationale 扩展表：fail-soft 降级
+            return []
 
     def _parse_since(self, since: str) -> float:
         """解析时间字符串（1h, 30m, 1d, 2h30m）返回秒数"""
@@ -829,6 +851,7 @@ class QueryMixin:
                 fsv.start_line,
                 fsv.end_line,
                 fsv.depth,
+                fsv.file_version_id,
                 sc.name,
                 sc.kind,
                 sc.signature,
@@ -852,6 +875,11 @@ class QueryMixin:
             return None
 
         result = dict(row)
+        # rationale 语义注释（随符号入库；无注释时为空列表）
+        result["rationale"] = self._get_rationale_rows(
+            "file_version_id = ? AND qualified_name = ?",
+            (result.get("file_version_id"), qualified_name),
+        )
 
         out_sql = """
             SELECT DISTINCT

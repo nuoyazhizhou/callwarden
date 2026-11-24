@@ -26,7 +26,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **依赖图与环检测**：四类依赖（requires_existing/artifact/provides_interface/requires_interface）+ artifact freshness + interface identity + 硬依赖图环检测 + provider 选择
 - **Agent 身份审计**：action 身份记录（agent/session/model/role）+ daemon 签发 Attestation 校验 + 撤销账本（Revocation_Mode 必填：compromised/rotated，invalid 查询时派生）+ 独立审核证明与 apply session 分离 + CLI/MCP 工具
 - **Assignment 与安全 Lease**：assignment 绑定 task+role+holder Identity + Lease（token hash 落库、权威时钟有效期、单调 fencing counter）+ acquire/renew/release 幂等 + protected mutation 校验（过期/token 不匹配/旧 counter 写入前拒绝）+ 审计事件账本 + CLI/MCP 工具
-- **244 MCP 工具 + 86 个顶层 CLI 命令（81 个 subcommand + install/server/test 3 个 standalone 入口 + setup + daemon）**
+- **244 MCP 工具 + 87 个顶层 CLI 命令（82 个 subcommand + install/server/test 3 个 standalone 入口 + setup + daemon）**
 
 ## 快速开始
 

@@ -797,6 +797,62 @@ impl DaemonStateExt for SnapshotDaemonState {
         self.bind_scope = scope.to_string();
     }
 
+    /// 安全取证 #5（T-1795254396917-c1bf49c0）：instance→workspace_id 解析。
+    ///
+    /// 真实 daemon 覆写默认实现，**优先查 registry `daemon_workspaces`**——
+    /// 这一张表就是 `workspace.register` 写入 instance id 的权威映射。
+    /// 默认实现只查 task-DB `workspace_authority_captures`（由 task.create 等
+    /// 追加）与 `ws-{id}` 约定，对「刚注册、尚无任何 capture」的 workspace
+    /// 一律解析失败，导致首轮 `workspace.status`/`workspace.activate` 被
+    /// 误判为伪造实例并返回 `E_PRINCIPAL_WORKSPACE_REQUIRED`。
+    /// registry 命中后仍要过 principal grant（dispatch 层 `workspace_allowed`），
+    /// 不放大授权面；registry 未命中时回落到默认解析（capture / ws- 约定）。
+    fn resolve_instance_workspace_id(
+        &self,
+        instance: &str,
+    ) -> Result<Option<i64>, DaemonRpcError> {
+        let instance = instance.trim();
+        if instance.is_empty() {
+            return Ok(None);
+        }
+        match self
+            .base
+            .registry
+            .get_workspace_status(instance)
+            .map_err(|e| DaemonRpcError::internal_error(format!(
+                "workspace_instance_id 解析失败（registry）: {e}"
+            )))? {
+            Some(row) => Ok(row
+                .get("workspace_id")
+                .and_then(|v| v.as_i64())),
+            None => {
+                // 回落默认实现（task-DB capture 精确匹配 / ws-{id} 约定）
+                let store = self.daemon_state().task_collab_store.clone();
+                let Some(store) = store else {
+                    return Ok(instance
+                        .strip_prefix("ws-")
+                        .and_then(|rest| rest.parse::<i64>().ok()));
+                };
+                store.with_conn(|conn| {
+                    match conn.query_row(
+                        "SELECT workspace_id FROM workspace_authority_captures \
+                         WHERE workspace_instance_id = ?1 LIMIT 1",
+                        [instance],
+                        |row| row.get::<_, i64>(0),
+                    ) {
+                        Ok(ws_id) => Ok(Some(ws_id)),
+                        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(instance
+                            .strip_prefix("ws-")
+                            .and_then(|rest| rest.parse::<i64>().ok())),
+                        Err(e) => Err(DaemonRpcError::internal_error(format!(
+                            "workspace_instance_id 解析失败: {e}"
+                        ))),
+                    }
+                })
+            }
+        }
+    }
+
     // ---- 基础方法（重写 health 附加 snapshot 统计）----
 
     fn handle_health(&mut self, _peer: PeerCredential) -> Result<Value, DaemonRpcError> {
@@ -3484,7 +3540,13 @@ impl DaemonStateExt for SnapshotDaemonState {
             "workspace.build_graph" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let db = codegraph_db(self, ws)?;
-                fs::handle_build_graph(&self.base.registry, &peer, params, db.as_deref())
+                fs::handle_build_graph_async(
+                    &self.base.registry,
+                    &peer,
+                    params,
+                    db.as_deref(),
+                    &self.base.base.build_flights,
+                )
             }
             "workspace.build_directory" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;

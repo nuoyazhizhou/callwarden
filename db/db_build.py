@@ -616,6 +616,9 @@ def _normalize_rust_symbols(r):
         for mod in r.get("inline_modules", []):
             _detect_python_docstrings(mod.get("symbols", []))
 
+    # rationale 语义注释提取：命中行挂到对应符号（供后续入库步骤使用）
+    _attach_rationale_to_result(r)
+
     return r
 
 
@@ -656,6 +659,214 @@ def _detect_python_docstrings(symbols):
             pass  # content 不是有效 Python，跳过
 
 
+# ────────────────────────────────────────────────────────────────────
+# rationale 入图：语义注释（为什么这么写）识别与提取
+# ────────────────────────────────────────────────────────────────────
+# 任务 T-1795451980839-5932a434：对标 code-review-graph 的 rationale 入图能力。
+# 解析层只负责“识别 + 归属符号”，持久化由后续步骤处理。
+
+# 7 种语义注释前缀（大写、紧跟注释符、以冒号结束）
+RATIONALE_PREFIXES: Tuple[str, ...] = (
+    "NOTE", "IMPORTANT", "HACK", "WHY", "RATIONALE", "TODO", "FIXME",
+)
+
+_RATIONALE_ALT = "|".join(RATIONALE_PREFIXES)
+# Python 注释符：COMMENT token 以 # 开头，故无需前置空白
+_RATIONALE_HASH_RE = re.compile(
+    r"^\s*#\s*(?P<prefix>" + _RATIONALE_ALT + r")\s*:\s*(?P<text>.*)$"
+)
+# JS/TS/Rust 行注释：允许行首缩进
+_RATIONALE_SLASH_RE = re.compile(
+    r"^\s*//\s*(?P<prefix>" + _RATIONALE_ALT + r")\s*:\s*(?P<text>.*)$"
+)
+
+# 支持 rationale 提取的扩展名（Python 用 #，JS/TS/Rust 用 //）
+_RATIONALE_EXTS: Tuple[str, ...] = (
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".rs",
+)
+_RATIONALE_SLASH_EXTS: Tuple[str, ...] = tuple(
+    ext for ext in _RATIONALE_EXTS if ext != ".py"
+)
+# 单文件读取上限（超过则放弃提取，避免为超大文件引入额外 I/O）
+_RATIONALE_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _scan_rationale_lines(source: str, pattern: "re.Pattern[str]") -> List[Dict[str, Any]]:
+    """逐行扫描注释，返回命中的 rationale 列表。
+
+    仅匹配“行首（可带缩进）注释符 + 大写前缀 + 冒号”的形式，
+    因此字符串常量、行尾注释、小写前缀等均不会误判。
+    """
+    entries: List[Dict[str, Any]] = []
+    for line_no, line in enumerate(source.splitlines(), start=1):
+        m = pattern.match(line)
+        if not m:
+            continue
+        entries.append({
+            "line": line_no,
+            "prefix": m.group("prefix"),
+            "text": m.group("text").strip(),
+        })
+    return entries
+
+
+def _extract_python_rationale(source: str) -> List[Dict[str, Any]]:
+    """用 tokenize 提取 Python 语义注释，天然跳过字符串/文档字符串内容。
+
+    tokenize 遇到不完整代码（如片段）会抛异常，此时退回逐行正则扫描。
+    """
+    import io
+    import tokenize
+
+    entries: List[Dict[str, Any]] = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type != tokenize.COMMENT:
+                continue
+            m = _RATIONALE_HASH_RE.match(tok.string)
+            if m:
+                entries.append({
+                    "line": tok.start[0],
+                    "prefix": m.group("prefix"),
+                    "text": m.group("text").strip(),
+                })
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return _scan_rationale_lines(source, _RATIONALE_HASH_RE)
+    return entries
+
+
+def _slash_comment_index(line: str) -> int:
+    """返回行内首个“字符串外”的 `//` 起始列，没有则返回 -1。
+
+    逐字符跟踪单/双引号与模板字符串，避免把字符串里的 `//` 当成注释。
+    """
+    quote: Optional[str] = None
+    i = 0
+    length = len(line)
+    while i < length - 1:
+        ch = line[i]
+        if quote is not None:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+        elif ch == "/" and line[i + 1] == "/":
+            return i
+        i += 1
+    return -1
+
+
+def _extract_slash_rationale(source: str) -> List[Dict[str, Any]]:
+    """提取 JS/TS/Rust 的 `// PREFIX:` 注释（行首或行尾均可）。"""
+    entries: List[Dict[str, Any]] = []
+    for line_no, line in enumerate(source.splitlines(), start=1):
+        idx = _slash_comment_index(line)
+        if idx < 0:
+            continue
+        m = _RATIONALE_SLASH_RE.match(line[idx:])
+        if not m:
+            continue
+        entries.append({
+            "line": line_no,
+            "prefix": m.group("prefix"),
+            "text": m.group("text").strip(),
+        })
+    return entries
+
+
+def extract_rationale_comments(source: str, rel_path: str = "") -> List[Dict[str, Any]]:
+    """从源码文本提取语义注释（NOTE/IMPORTANT/HACK/WHY/RATIONALE/TODO/FIXME）。
+
+    Args:
+        source: 源码全文
+        rel_path: 文件相对路径，用于判定注释符（.py 用 #，JS/TS/Rust 用 //）；
+            为空时两种注释符都会扫描
+
+    Returns:
+        按行号升序的 [{"line": int, "prefix": str, "text": str}, ...]
+    """
+    if not source:
+        return []
+    ext = os.path.splitext(rel_path)[1].lower() if rel_path else ""
+    if ext == ".py":
+        entries = _extract_python_rationale(source)
+    elif ext in _RATIONALE_SLASH_EXTS:
+        entries = _extract_slash_rationale(source)
+    else:
+        # 未知扩展名：两种注释符都识别，结果按行号排序
+        entries = _extract_python_rationale(source) + _extract_slash_rationale(source)
+        entries.sort(key=lambda e: e["line"])
+    return entries
+
+
+def _find_rationale_symbol(symbols: List[Dict[str, Any]], line: int) -> Optional[Dict[str, Any]]:
+    """为一条 rationale 注释寻找归属符号。
+
+    优先取行范围包含该行的最内层（start_line 最大）符号；
+    否则若符号起始行紧邻注释（间隔 <= 2 行，即注释块在符号正上方），归属该符号。
+    """
+    enclosing: Optional[Dict[str, Any]] = None
+    for sym in symbols:
+        start = sym.get("start_line") or 0
+        if not start:
+            continue
+        end = sym.get("end_line") or start
+        if start <= line <= end:
+            if enclosing is None or start > (enclosing.get("start_line") or 0):
+                enclosing = sym
+    if enclosing is not None:
+        return enclosing
+    for sym in symbols:
+        start = sym.get("start_line") or 0
+        if start and 0 < start - line <= 2:
+            return sym
+    return None
+
+
+def _attach_rationale_to_result(result: Dict[str, Any], abs_path: Optional[str] = None) -> Dict[str, Any]:
+    """解析结果后处理：提取 rationale 并挂到对应符号上。
+
+    - 文件级：result["rationale"] 为全部命中列表（供后续持久化步骤使用）
+    - 符号级：sym["rationale"] 为该符号行内/正上方的命中列表
+    对无命中文件零影响（不新增字段）。
+    """
+    rel_path = result.get("rel_path", "")
+    ext = os.path.splitext(rel_path)[1].lower()
+    if ext not in _RATIONALE_EXTS:
+        return result
+    path = abs_path or result.get("abs_path")
+    if not path:
+        return result
+    try:
+        if os.path.getsize(path) > _RATIONALE_MAX_BYTES:
+            return result
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            source = f.read()
+    except OSError:
+        return result
+
+    entries = extract_rationale_comments(source, rel_path)
+    if not entries:
+        return result
+
+    symbols: List[Dict[str, Any]] = list(result.get("symbols", []))
+    for mod in result.get("inline_modules", []) or []:
+        symbols.extend(mod.get("symbols", []))
+
+    for entry in entries:
+        sym = _find_rationale_symbol(symbols, entry["line"])
+        if sym is not None:
+            sym.setdefault("rationale", []).append(entry)
+
+    result["rationale"] = entries
+    return result
+
+
 def _python_parse_single_file(abs_path, module_path, lang, rel_path, file_instance_id):
     """Phase 1: Rust parse 出错时的单文件 Python fallback。
 
@@ -675,6 +886,7 @@ def _python_parse_single_file(abs_path, module_path, lang, rel_path, file_instan
         result["module_path"] = module_path
         result["rel_path"] = rel_path
         result.setdefault("inline_modules", [])
+        _attach_rationale_to_result(result)
         return result
     except Exception:
         return None
@@ -787,6 +999,7 @@ def _parse_file_worker(args):
         result["module_path"] = module_path
         result["rel_path"] = rel_path
         result.setdefault("inline_modules", [])
+        _attach_rationale_to_result(result)
         return ("ok", rel_path, result)
     except Exception as e:
         return ("fail", rel_path, str(e))
@@ -829,6 +1042,7 @@ class BuildMixin:
                 result = RustParserFacade.normalize_result(
                     result, abs_path, mod_path, norm_path(rel_path), file_instance_id
                 )
+                _attach_rationale_to_result(result)
                 file_results[norm_path(rel_path)] = result
                 print(t("cli.messages.db_build_parse_progress", i=i, total=total, path=rel_path))
             except Exception as e:
@@ -1480,6 +1694,7 @@ class BuildMixin:
                         r = RustParserFacade.normalize_result(
                             r, abs_path, module_path, rel_path, file_instance_id
                         )
+                        _attach_rationale_to_result(r)
                         file_results[rel_path] = r
                         done_count = len(file_results)
                         print_progress(done_count, parse_total,
@@ -1511,6 +1726,7 @@ class BuildMixin:
                                 r = RustParserFacade.normalize_result(
                                     r, abs_path, module_path, rel_path, file_instance_id
                                 )
+                                _attach_rationale_to_result(r)
                                 file_results[rel_path] = r
                                 done_count = len(file_results)
                                 print_progress(done_count, parse_total,
@@ -1532,6 +1748,7 @@ class BuildMixin:
                             r = RustParserFacade.normalize_result(
                                 r, abs_path, module_path, rel_path, file_instance_id
                             )
+                            _attach_rationale_to_result(r)
                             file_results[rel_path] = r
                             done_count = len(file_results)
                             print_progress(done_count, parse_total,
@@ -1582,6 +1799,7 @@ class BuildMixin:
                                 r = RustParserFacade.normalize_result(
                                     r, abs_path, module_path, rel_path, file_instance_id
                                 )
+                                _attach_rationale_to_result(r)
                                 with print_lock:
                                     done_count[0] += 1
                                     print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
@@ -3510,14 +3728,60 @@ class BuildMixin:
         rollback_config 中 feature=rust_batch_save_symbols 置为 1 时回退 Python。
         仅在 Rust 扩展不可用或显式 rollback 时回退 Python；Rust 写事务失败直接抛错。
         """
+        written_via_rust = False
         # Phase 2-6 wire-production: Rust 短路
         if not self.is_feature_rolled_back("rust_batch_save_symbols"):
             if self._save_symbols_for_version_via_rust(file_version_id, file_instance_id, result):
-                return
+                written_via_rust = True
             # Rust 扩展可用时写路径已经闭合；异常会在 facade 内直接抛出。
 
-        # Python 降级路径
-        self._save_symbols_for_version_python(file_version_id, file_instance_id, result)
+        if not written_via_rust:
+            # Python 降级路径
+            self._save_symbols_for_version_python(file_version_id, file_instance_id, result)
+
+        # rationale 语义注释入库（两种写路径共用；无命中时零写入）
+        self._save_rationale_for_version(file_version_id, file_instance_id, result)
+
+    def _save_rationale_for_version(self, file_version_id: int, file_instance_id: int,
+                                    result: Dict[str, Any]):
+        """把解析阶段挂到符号上的 rationale 语义注释写入 symbol_rationale 表。
+
+        仅写入归属到符号的条目（符号级列表）；文件级 result["rationale"] 不落库，
+        保持“无注释文件入库行为不变”：无条目不执行任何 SQL。
+        """
+        all_symbols = list(result.get("symbols", []))
+        for inline_mod in result.get("inline_modules", []) or []:
+            all_symbols.extend(inline_mod.get("symbols", []))
+
+        rows = []
+        for sym in all_symbols:
+            rationale = sym.get("rationale")
+            if not rationale:
+                continue
+            for item in rationale:
+                rows.append((
+                    file_version_id,
+                    file_instance_id,
+                    sym.get("content_hash", ""),
+                    sym.get("qualified_name", ""),
+                    int(item.get("line") or 0),
+                    item.get("prefix", ""),
+                    item.get("text", ""),
+                ))
+        if not rows:
+            return
+
+        self.conn.execute(
+            "DELETE FROM symbol_rationale WHERE file_version_id = ?",
+            (file_version_id,),
+        )
+        self.conn.executemany(
+            """INSERT INTO symbol_rationale
+               (file_version_id, file_instance_id, symbol_hash, qualified_name,
+                line, prefix, text)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
 
     def _save_symbols_for_version_via_rust(self, file_version_id: int, file_instance_id: int, result: Dict[str, Any]) -> bool:
         """Rust 短路路径：调用 batch_save_symbols 处理单文件符号写入
@@ -4129,6 +4393,7 @@ class BuildMixin:
         result = RustParserFacade.normalize_result(
             result, abs_path, module_path, rel_path, file_instance_id
         )
+        _attach_rationale_to_result(result)
 
         latest_fv = self._get_file_version(file_instance_id)
         if latest_fv and latest_fv["content_hash"] == result["content_hash"]:
@@ -4182,6 +4447,7 @@ class BuildMixin:
         result = RustParserFacade.normalize_result(
             result, abs_path, module_path, rel_path, file_instance_id
         )
+        _attach_rationale_to_result(result)
 
         latest_fv = self._get_file_version(file_instance_id)
         if latest_fv and latest_fv["content_hash"] == result.get("content_hash", ""):

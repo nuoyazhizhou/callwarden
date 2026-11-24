@@ -35,5 +35,15 @@
 
 **变更单说明（C-04 合同反转）**：原合同将 `task_workspace_bindings` 列为「不可改写审计壳」并排除；审查证明该表是 `task.list` 可见性与 claim 一致性的权威来源，排除会同时丢任务与破坏一致性。经本变更改为「同步 rewire + capture 指针指向追加 capture，历史 capture 行不改写」，理由记录于 `workspace_migration.rs` 模块文档。
 
-**证据**：`.design/ws-identity/evidence/AC-01..05.md`（AC-03/04/05 PASS；AC-01/02 待 C-09）。
+**证据**：`.design/ws-identity/evidence/AC-01..05.md`（C-09 完成后 AC-01/02 已翻转为 PASS，5/5 全 PASS）。
+
+## 第二批（REQ-05 should，2026-11-22）
+
+| 卡 | task_id | title | 依赖 | 状态 |
+|---|---|---|---|---|
+| C-09 | `T-1795349801610-e48b9438` | 三 worktree 仓库级身份与跨 worktree 协同端到端验收 | C-01/02/03/07 | review（2026-11-22） |
+
+- 交付：`tests/test_worktree_identity_e2e.py`（7 用例，隔离 daemon + 真实 git 仓库/worktree/clone）。
+- 执行：`python -m pytest tests/test_worktree_identity_e2e.py -v` → **7 passed**；批次回归 35 passed（基线 28 + 新增 7）。
+- 证据：AC-01.md / AC-02.md 翻转为 PASS（附用例矩阵与执行记录）；AC-04 registry 侧「同 repo 仅一条 active 行」进程级验证随 `test_registry_single_active_row` 补齐。
 

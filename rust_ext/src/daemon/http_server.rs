@@ -6150,6 +6150,7 @@ mod tests {
             transport: "https-mtls".to_string(),
             task_db_fingerprint: String::new(),
             task_loop_control: None,
+            build_flights: std::sync::Arc::default(),
         };
         let dedup = Arc::new(DedupStore::open(&cfg.dedup_db_path).unwrap());
         // 测试中构造 adapter 但不 start（不依赖 Python 解释器；compat 路由测试
@@ -6864,6 +6865,7 @@ mod tests {
             transport: "https-mtls".to_string(),
             task_db_fingerprint: String::new(),
             task_loop_control: None,
+            build_flights: std::sync::Arc::default(),
         };
         let dedup = Arc::new(DedupStore::open(&cfg.dedup_db_path).unwrap());
         let compat = Arc::new(CompatAdapter::new(

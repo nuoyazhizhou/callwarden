@@ -48,6 +48,8 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
                 "gc", "doctor", "install-agent", "install-hook", "rule", "audit", "bootstrap",
                 "clone", "fts", "lease", "assignment",
+                # 运行日志（SQLite 可查询，cron worker 运行事件记录）
+                "journal",
                 # ADR-002：PKI 生命周期（init/token/enroll/renew/revoke/rotate-server）
                 "pki",
                 # 符号查询 / 构建 / 刷新 subcommand 入口
@@ -227,7 +229,9 @@ def _check_auto_setup():
 
     # 跳过某些不需要自动配置的命令
     skip_commands = {"server", "setup", "install",
-                     "daemon", "install-agent", "install-hook"}
+                     "daemon", "install-agent", "install-hook",
+                     # cw journal：独立 ~/.callwarden/run-journal.db 本地命令，与安装器无关
+                     "journal"}
     if len(sys.argv) > 1 and sys.argv[1] in skip_commands:
         return
 
@@ -1349,6 +1353,10 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
         # tests --build / tests --import 写；其他（含 --history、--reverse）只读
         return not ("--build" in sub_argv or "--import" in sub_argv)
     # C8 Step #1: 新增 subcommand 只读判断
+    if cmd == "journal":
+        # cw journal 使用独立 run-journal.db，不触碰 workspace DB；
+        # append/list 均无需注册/激活 workspace（避免读路径加锁）
+        return True
     if cmd in {"search", "grep", "symbol", "file", "query",
                "callers", "callees", "call-chain", "topo",
                "deepest", "module-calls", "detect-cycles",
@@ -1624,6 +1632,9 @@ def _dispatch_subcommand(argv, db):
             return _handle_lease(argv, db)
         elif cmd == "assignment":
             return _handle_assignment(argv, db)
+        # 运行日志：独立 SQLite（~/.callwarden/run-journal.db），不经 daemon
+        elif cmd == "journal":
+            return _handle_journal(argv, db)
     except SharedTaskWriterRequiredError as e:
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
         raise SystemExit(1)
@@ -16660,6 +16671,100 @@ def _handle_lease(args, db):
         return True
 
     parser.print_help()
+    return True
+
+
+def _handle_journal(args, db):
+    """cw journal：SQLite 可查询运行日志（append / list 子命令）。
+
+    独立本地数据库（默认 ~/.callwarden/run-journal.db，CW_RUN_JOURNAL_DB 可
+    覆盖），不经 daemon、不触碰 workspace DB。cron worker 的运行事件
+    （run_start/claim_ok/push_ok 等）由各方追加，替代 journal.jsonl 文本追加；
+    权威任务状态仍以 daemon assignment 为准，本表只做可见性记录。
+    """
+    # 延迟导入：journal 为 stdlib-only 轻量模块，避免影响其余命令的导入面
+    from .journal import append_event, list_events
+
+    parser = argparse.ArgumentParser(
+        prog="cw journal",
+        description=t("cli_journal_desc",
+                      default="SQLite 可查询运行日志（append/list；独立 run-journal.db）"),
+    )
+    sub = parser.add_subparsers(dest="action")
+
+    append_p = sub.add_parser(
+        "append", help=t("cli_journal_append_desc", default="追加一条运行事件"))
+    append_p.add_argument("event", metavar="EVENT",
+                          help=t("cli_journal_arg_event",
+                                 default="事件名（如 run_start / claim_ok / push_ok）"))
+    append_p.add_argument("--run-id", default="", metavar="ID",
+                          help=t("cli_journal_arg_run_id",
+                                 default="运行标识（如 run 目录名）"))
+    append_p.add_argument("--task-id", default="", metavar="ID",
+                          help=t("cli_journal_arg_task_id", default="关联任务 ID（可空）"))
+    append_p.add_argument("--detail", default="", metavar="TEXT",
+                          help=t("cli_journal_arg_detail", default="一句话详情"))
+    append_p.add_argument("--ts", default="", metavar="ISO8601",
+                          help=t("cli_journal_arg_ts",
+                                 default="事件时间 ISO8601（默认当前本地时间）"))
+    append_p.add_argument("--json", action="store_true",
+                          help=t("cli_identity_arg_json", default="JSON output"))
+
+    list_p = sub.add_parser(
+        "list", help=t("cli_journal_list_desc", default="查询运行事件（ts 倒序）"))
+    list_p.add_argument("--run-id", default="", metavar="ID",
+                        help=t("cli_journal_arg_run_id", default="按运行标识过滤"))
+    list_p.add_argument("--event", default="", metavar="EVENT",
+                        help=t("cli_journal_arg_event", default="按事件名过滤"))
+    list_p.add_argument("--task-id", default="", metavar="ID",
+                        help=t("cli_journal_arg_task_id", default="按任务 ID 过滤"))
+    list_p.add_argument("--since", default="", metavar="ISO8601",
+                        help=t("cli_journal_arg_since",
+                               default="仅返回该 ISO8601 时刻之后的记录（含等于）"))
+    list_p.add_argument("--limit", type=int, default=0, metavar="N",
+                        help=t("cli_journal_arg_limit", default="最多返回 N 条（0 = 不限）"))
+    list_p.add_argument("--json", action="store_true",
+                        help=t("cli_identity_arg_json", default="JSON output"))
+
+    opts = parser.parse_args(args)
+    if not getattr(opts, "action", None):
+        parser.print_help()
+        return True
+    use_json = getattr(opts, "json", False)
+
+    if opts.action == "append":
+        try:
+            row_id = append_event(opts.event, run_id=opts.run_id,
+                                  task_id=opts.task_id, detail=opts.detail,
+                                  ts=opts.ts)
+        except ValueError as exc:
+            # --ts 非法 ISO8601 属本地输入校验失败（退出码契约 RC=2）
+            print(f"E_JOURNAL_TS_INVALID: {exc}", file=sys.stderr)
+            raise SystemExit(2)
+        if use_json:
+            print(json.dumps({"ok": True, "id": row_id, "event": opts.event,
+                              "run_id": opts.run_id, "task_id": opts.task_id},
+                             ensure_ascii=False))
+        else:
+            print(f"run_journal.id={row_id} ({opts.event})")
+        return True
+
+    # list
+    try:
+        rows = list_events(run_id=opts.run_id, event=opts.event,
+                           task_id=opts.task_id, since=opts.since,
+                           limit=opts.limit)
+    except ValueError as exc:
+        print(f"E_JOURNAL_SINCE_INVALID: {exc}", file=sys.stderr)
+        raise SystemExit(2)
+    if use_json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+    else:
+        if not rows:
+            print(t("cli.messages.journal_list_empty", default="(无匹配的运行事件)"))
+        for r in rows:
+            print(f"{r['ts']} [{r['event']}] run={r['run_id'] or '-'} "
+                  f"task={r['task_id'] or '-'} {r['detail'] or ''}")
     return True
 
 
