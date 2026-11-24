@@ -1,0 +1,11 @@
+== AC-06 Python audit regression (CARD-R2 step0) ==
+date: 2026-11-24T18:35:23+08:00
+repo: c:/git_work/callwarden (main repo, Python sources untouched by fix1)
+files: tests/test_audit_chain.py tests/test_audit_chain_mixin.py tests/test_audit_chain_full_flow.py tests/test_audit_key_rotation.py tests/test_mcp_audit_verify_chain_http_rpc.py tests/test_phase8_audit_log.py tests/test_remote_write_governance.py
+==
+........................................................................ [ 30%]
+........................................................................ [ 60%]
+........................................................................ [ 90%]
+.....................ss                                                  [100%]
+237 passed, 2 skipped in 132.74s (0:02:12)
+EXIT=0
