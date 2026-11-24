@@ -63,6 +63,34 @@ description: 验收执行专家：把 ac-map 里的每条 AC 变成可审计证�
 
 ## 3. 执行（本地，逐批 junit）
 
+### 3.1 工作区隔离（前置，不做即证据作废）
+
+**为什么**：`run_revision == HEAD` 只保证提交对得上，不保证你跑到的代码就是 HEAD 的代码。工作树有未提交改动时，实际执行的是「HEAD + 一个不属于任何 revision 的补丁」——判据 ① 在 git 层面成立，语义上却已失效。
+
+**开跑三条件**（同时成立才算"干净"）：
+
+1. `git status --porcelain` 为空（含 untracked）；
+2. `git rev-parse HEAD` 等于本轮预期的 `run_revision`；
+3. `git diff --stat <code_revision>..HEAD -- <changed_files>` 为空。
+
+任一不成立 → **先隔离再执行**，不要就地开跑：
+
+```bash
+git worktree add ../cw-accept-<feature> <code_revision>
+```
+
+在 worktree 内执行，并把该 worktree 的相对路径与 HEAD 写入证据第 2 段（见 `references/evidence-spec.md` §1.1）。
+
+**三条禁止**：
+
+- **禁止清工作区来"制造干净"**：`git stash` / `git checkout --` / `git reset` 会动到开发者的在途工作（本仓明令禁止 stash），且清理后的工作区已不是开发者真实状态——等于伪造环境。
+- **禁止在 worktree 里复用默认 `CARGO_TARGET_DIR`**：cargo 会原子替换共享 runtime 二进制，污染其他会话的构建产物。触 Rust 必须另设独立 target 目录（如 `%TEMP%/cw_accept_<feature>`）。
+- **禁止"照跑照交"**：隔离不了就在第 2 段写**污染声明**（哪几个文件含在途改动、影响哪条判据），结论记 `BLOCKED`，不记 PASS/FAIL。
+
+> 能隔离却不隔离 = 伪造环境；隔离不了却声称干净 = 伪造证据。两者同属硬规则 11。
+
+### 3.2 批次执行
+
 - 环境：`CW_TEST_MODE=1`、`PYTHONPATH` 按仓库布局、`CARGO_TARGET_DIR` 隔离（触 Rust 时）；命令与版本写进证据。
 - **批次上限**：单批 ≤ 800 nodeid 且 ≤ 10 min；超则拆批，**逐批一个 junit**，逐批 rc/统计写进证据。不允许"只跑一部分就判 PASS"。
 - **检索工具约束**：目录级检索必须限路径 + 限类型（`tests/*.py`，不递归），或走 cw `file_grep`；本仓 `grep -r tests/` 会因上万 py 被 SIGTERM，而**检索失败与"无命中"不可区分**——会直接造出假 `GAP`。检索异常必须显式报错。
@@ -118,6 +146,7 @@ C6 探针内容与 revert 证据（sha256 before/after）必须写进 evidence�
 8. **降级必声明**：源 B 降级、图不可用、覆盖 N/A 都要写进证据。
 9. **不越权**：apply/close 归 reviewer/adjudicator，本技能只读与建单。
 10. **负向边界**：用户要"看看代码有什么问题" → `code-review-cw`；要"设计/拆需求" → `requirements-cw`。
+11. **工作区隔离必如实**：在开发工作区执行却不写污染声明 = 伪造证据。隔离 worktree 的相对路径与 HEAD 必须进第 2 段；判 `BLOCKED` 好过交一份看不出被污染的 PASS。
 
 ## 📚 references
 

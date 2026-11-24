@@ -7,13 +7,31 @@
 | # | 段 | 必填内容 | 常见错法 |
 |---|---|---|---|
 | 1 | 头部 | AC-id / REQ-id / 标题 / task_id / `run_revision` / `code_revision` / branch / 时间（带时区） | 只写日期不写时区；漏 `code_revision` |
-| 2 | 环境指纹 | OS+arch；Python 可执行文件与 `-V`；`pytest --version`；`rustc -V` + `cargo -V`（涉及 Rust 时）；`CW_TEST_MODE`；`PYTHONPATH`；`CARGO_TARGET_DIR` 实际值；依赖来源 | 写"本机环境"了事 |
+| 2 | 环境指纹 | OS+arch；Python 可执行文件与 `-V`；`pytest --version`；`rustc -V` + `cargo -V`（涉及 Rust 时）；`CW_TEST_MODE`；`PYTHONPATH`；`CARGO_TARGET_DIR` 实际值；**执行工作区 + 其 HEAD**（见 §1.1）；依赖来源 | 写"本机环境"了事；只写仓库根、不说明是否 worktree |
 | 3 | 命令原文 | 可复制执行的完整命令行（含 `--junitxml` 路径、nodeid 列表或 `-k` 表达式、cwd） | 写"跑了相关测试" |
 | 4 | 统计 | collected / passed / failed / error / skipped / xfail / deselected + `rc` | 只写"全绿" |
 | 5 | **必需 nodeid 完成表** | 一行一个 `nodeid → outcome`，**全列，含失败的** | 只列通过的（等于隐藏证据） |
 | 6 | 关键输出 | 失败 traceback 首尾、断言消息、关键日志行；≤20 行；脱敏 | 贴全量日志 / 贴无关 INFO |
 | 7 | 判读 | `PASS\|FAIL\|BLOCKED\|N/A` + 一句话理由 + **指向判据哪一条**（如"卡在 ④ skipped=2"） | 只写"通过" |
 | 8 | 附件指针 | `reports/junit-<AC>.xml` 相对路径（+sha256 可选） | 指向 `/tmp` 下会被清理的路径 |
+
+### 1.1 第 2 段的执行工作区字段（必填）
+
+第 2 段除环境外，必须写明**代码是在哪个工作区跑的**——否则读者无法判断这份证据是否被在途改动污染。固定两行：
+
+```text
+执行工作区：<相对仓库根的相对路径，如 ../cw-accept-skillpkg>
+工作区 HEAD：<git rev-parse HEAD>
+```
+
+- 在隔离 worktree 中执行 → 写该 worktree 的相对路径 + 其 HEAD（应等于 `run_revision`）。
+- 无法隔离、只能在开发工作区执行 → 路径写 `<开发工作区>（未隔离）`，并**追加第三行**：
+
+```text
+污染声明：<文件1>、<文件2> 含在途未提交改动；影响判据 ①；本轮结论 BLOCKED
+```
+
+路径记**相对路径**而非绝对路径：既避开第 4 段「禁止写入绝对私有路径」，又配合 HEAD commit 可在任意机器重建（满足「半年后仍可判读」）。
 
 ## 2. 生成方式（强制）
 
