@@ -8,8 +8,8 @@
     {
       "path": "AC-06.md",
       "desc": "CARD-R2 证据汇总：Python 7 文件审计回归命令/结果/sha256 + Phase 2 失效引用更正说明",
-      "sha256": "ddcdf76c7041418f885db82517f33864bac8179596a09fddedbb7562e0ddbc99",
-      "bytes": 2401
+      "sha256": "9291124de7dbddc7daf49553267b31b53302bd93fd4591b91178ffeb7c77a89e",
+      "bytes": 2717
     },
     {
       "path": "AC-06-python-regression.log",
