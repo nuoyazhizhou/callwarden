@@ -1617,6 +1617,9 @@ pub fn handle_build_graph_async(
 ) -> Result<Value, DaemonRpcError> {
     let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
     let (root, scan_root) = prepare_build_graph(registry, peer, params)?;
+    // receipts 审计：回执的 workspace_id 列取 registry 权威 id（与
+    // write_audit_events.workspace_id 同语义），db_workspace_id 在 conn 上映射。
+    let (registry_ws_id, _) = resolve_workspace(registry, peer, workspace_instance_id)?;
     let root_key = std::fs::canonicalize(&root)
         .unwrap_or_else(|_| root.clone())
         .to_string_lossy()
@@ -1674,9 +1677,13 @@ pub fn handle_build_graph_async(
     let db_path = match codegraph_db {
         Some(p) => p.to_path_buf(),
         None => {
-            flights.finish(
+            // receipts gap：审计表 write_audit_events 与 codegraph 同库，
+            // DB 未配置时物理上无库可落回执（环境降级，非实现缺陷）；仍走
+            // finish 更新 lastBuild，回调 no-op，不伪造审计成功。
+            let _ = flights.finish(
                 &root_key,
                 json!({"ok": false, "error": "internal_error", "message": "codegraph db 未配置"}),
+                |_| Ok(()),
             );
             return Err(DaemonRpcError::internal_error("codegraph db 未配置，无法构建"));
         }
@@ -1688,27 +1695,75 @@ pub fn handle_build_graph_async(
     let scan_bg = scan_root.clone();
     let root_key_bg = root_key.clone();
     let progress_bg = std::sync::Arc::clone(&progress);
+    // spawn 闭包 move 消费 db_path；E5（spawn 失败）分支仍需 db_path 补写失败回执，
+    // 故预留一份副本。
+    let db_path_e5 = db_path.clone();
     let spawned = std::thread::Builder::new()
         .name("cw-build-graph".to_string())
         .spawn(move || {
+            let started = std::time::Instant::now();
+            // 打开 conn 存活到 finish 回调，使成功/失败/超时转后台三条路径
+            // 在统一出口（finish）写审计回执时都能复用同一写连接与 sign_audit_chain。
             let result = open_codegraph_write(Some(db_path.as_path())).and_then(|conn| {
                 let workspace_id = ensure_workspace_row_by_root(&conn, &root_bg)
                     .map_err(|e| {
                         DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}"))
                     })?;
-                run_build_graph(&conn, workspace_id, &root_bg, &scan_bg, Some(&progress_bg))
+                let result =
+                    run_build_graph(&conn, workspace_id, &root_bg, &scan_bg, Some(&progress_bg));
+                let stats = match &result {
+                    Ok(v) => v.clone(),
+                    Err(e) => json!({"ok": false, "error": e.code, "message": e.message}),
+                };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                // finish 出口统一落 1 条回执：build_seq/completed_at 由 finish 注入 stats，
+                // 回调把它连同 scanned/inserted/... 一起写进 detail_json（U-02：超时
+                // 转后台的回执在后台真正跑完时才落，此刻才有真实统计字段）。
+                let audit = flights_bg.finish(&root_key_bg, stats, |final_stats| {
+                    append_build_receipt(
+                        &conn,
+                        registry_ws_id,
+                        workspace_id,
+                        &root_key_bg,
+                        final_stats,
+                        elapsed_ms,
+                    )
+                    .map(|_| ())
+                    .map_err(|e| e.message)
+                });
+                // fail-closed：审计写失败不得吞异常伪造成功（E7）。
+                match (result, audit) {
+                    (_, Err(msg)) => Err(DaemonRpcError::new(
+                        "E_WRITE_AUDIT_UNAVAILABLE",
+                        msg,
+                    )),
+                    (r, Ok(())) => r,
+                }
             });
-            let stats = match &result {
-                Ok(v) => v.clone(),
-                Err(e) => json!({"ok": false, "error": e.code, "message": e.message}),
-            };
-            flights_bg.finish(&root_key_bg, stats);
             let _ = tx.send(result);
         });
     if spawned.is_err() {
-        flights.finish(
+        // E5：spawn 失败时 db_path 已知，主线程尽力补写失败回执；审计写入
+        // 失败不掩盖原始错误（本出口本就返回 Err，不存在伪造成功）。
+        let _ = flights.finish(
             &root_key,
             json!({"ok": false, "error": "internal_error", "message": "build 线程启动失败"}),
+            |final_stats| {
+                open_codegraph_write(Some(db_path_e5.as_path()))
+                    .and_then(|conn| {
+                        let db_ws = ensure_workspace_row_by_root(&conn, &root).unwrap_or(0);
+                        append_build_receipt(
+                            &conn,
+                            registry_ws_id,
+                            db_ws,
+                            &root_key,
+                            final_stats,
+                            0,
+                        )
+                    })
+                    .map(|_| ())
+                    .map_err(|e| e.message)
+            },
         );
         return Err(DaemonRpcError::internal_error("build_graph 后台线程启动失败"));
     }
@@ -2540,6 +2595,64 @@ struct WriteAuditEvent<'a> {
     request_id: &'a str,
     detail: &'a Value,
     recorded_at: f64,
+}
+
+/// build_graph 审计回执（receipts 审计，T-1795466935294-3433ca6c）。
+///
+/// 借壳既有 `write_audit_events.event_type=commit`（该列 CHECK 只允许
+/// grant/commit/reject，禁止本任务改 schema；见 U-01）：`outcome` 映射
+/// `allow`（成功）/`deny`（失败），`detail_json.kind="build_receipt"` 标识
+/// 这是构建回执而非普通写审计，其余回执字段全部放 detail_json：
+/// build_seq / root / scanned / inserted / unchanged / deleted / elapsed_ms /
+/// ok / error / message / completed_at。
+///
+/// 复用 `append_write_audit` 的 SAVEPOINT 原子写 + `sign_audit_chain` 单一
+/// 挂链入口 + `audit_record_id` 回填 → 链完整（AC-04）且重复读幂等（AC-05）。
+fn append_build_receipt(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    db_workspace_id: i64,
+    root: &str,
+    stats: &Value,
+    elapsed_ms: u64,
+) -> Result<i64, DaemonRpcError> {
+    let ok = stats.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let pick = |key: &str| stats.get(key).cloned().unwrap_or(Value::Null);
+    let detail = json!({
+        "kind": "build_receipt",
+        "build_seq": pick("build_seq"),
+        "root": root,
+        "scanned": pick("scanned"),
+        "inserted": pick("inserted"),
+        "unchanged": pick("unchanged"),
+        "deleted": pick("deleted"),
+        "elapsed_ms": elapsed_ms,
+        "ok": ok,
+        "error": pick("error"),
+        "message": pick("message"),
+        "completed_at": pick("completed_at"),
+    });
+    let now = now_ts_secs();
+    append_write_audit(
+        conn,
+        &WriteAuditEvent {
+            workspace_id,
+            db_workspace_id,
+            event_type: "commit",
+            outcome: if ok { "allow" } else { "deny" },
+            grant_id: "",
+            principal_id: "build_graph",
+            task_id: "",
+            step_id: "",
+            path: root,
+            base_hash: "",
+            new_hash: "",
+            reason_code: if ok { "build_receipt_ok" } else { "build_receipt_error" },
+            request_id: "",
+            detail: &detail,
+            recorded_at: now,
+        },
+    )
 }
 
 fn append_write_audit(
@@ -4126,6 +4239,179 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1, "不得为同一目录建第二行");
+    }
+
+    // ---- receipts 审计（T-1795466935294-3433ca6c）----
+
+    /// 构造带完整审计基础设施的库（storage 全量 schema 含 audit_chain /
+    /// audit_key_rotations，ensure_write_governance_tables 补 write_audit_events）。
+    /// 返回 TempDir 以保持库文件路径存活至测试结束。
+    fn new_audit_db() -> (tempfile::TempDir, rusqlite::Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("audit.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        ensure_write_governance_tables(&conn).unwrap();
+        (dir, conn)
+    }
+
+    /// AC-01：成功回执 1 条，ok=true，全字段齐全，链同步 +1。
+    #[test]
+    fn test_build_receipt_success_fields_and_chain() {
+        let (_dir, conn) = new_audit_db();
+        let stats = json!({
+            "ok": true, "build_seq": 7, "scanned": 42, "inserted": 10,
+            "unchanged": 30, "deleted": 2, "completed_at": 1700000000u64,
+        });
+        let event_id =
+            append_build_receipt(&conn, 3, 9, "c:/ws/proj", &stats, 1234).unwrap();
+
+        let detail: String = conn
+            .query_row(
+                "SELECT detail_json FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let d: Value = serde_json::from_str(&detail).unwrap();
+        assert_eq!(d["kind"], "build_receipt");
+        assert_eq!(d["ok"], true);
+        assert_eq!(d["build_seq"], 7);
+        assert_eq!(d["root"], "c:/ws/proj");
+        assert_eq!(d["scanned"], 42);
+        assert_eq!(d["inserted"], 10);
+        assert_eq!(d["unchanged"], 30);
+        assert_eq!(d["deleted"], 2);
+        assert_eq!(d["elapsed_ms"], 1234);
+        assert_eq!(d["completed_at"], 1700000000u64);
+        // 借壳 commit 事件 + outcome allow
+        let (evt, outcome): (String, String) = conn
+            .query_row(
+                "SELECT event_type, outcome FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(evt, "commit");
+        assert_eq!(outcome, "allow");
+        // 链：event 与 audit_chain 一一对应，audit_record_id 已回填
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM write_audit_events", [], |r| r.get(0))
+            .unwrap();
+        let chains: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_chain WHERE table_name = ?1",
+                rusqlite::params![WRITE_AUDIT_CHAIN_TABLE],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(events, 1);
+        assert_eq!(chains, 1, "成功回执必须同步挂 1 条链记录");
+        let record_id: String = conn
+            .query_row(
+                "SELECT audit_record_id FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!record_id.is_empty());
+        let verify = crate::cli::security::verify_audit_chain(
+            &conn, WRITE_AUDIT_CHAIN_TABLE, 100,
+        )
+        .unwrap();
+        assert_eq!(verify.broken_count, 0, "回执链必须完整（AC-04）");
+        assert_eq!(verify.verified_count, 1);
+    }
+
+    /// AC-02：失败回执 1 条，ok=false，error 字段存在，outcome=deny。
+    #[test]
+    fn test_build_receipt_failure_error_and_deny() {
+        let (_dir, conn) = new_audit_db();
+        let stats = json!({
+            "ok": false, "build_seq": 8, "error": "internal_error",
+            "message": "workspace 行映射失败", "completed_at": 1700000001u64,
+        });
+        let event_id =
+            append_build_receipt(&conn, 3, 9, "c:/ws/proj", &stats, 50).unwrap();
+        let detail: String = conn
+            .query_row(
+                "SELECT detail_json FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let d: Value = serde_json::from_str(&detail).unwrap();
+        assert_eq!(d["ok"], false);
+        assert_eq!(d["error"], "internal_error");
+        assert_eq!(d["message"], "workspace 行映射失败");
+        let outcome: String = conn
+            .query_row(
+                "SELECT outcome FROM write_audit_events WHERE event_id = ?1",
+                rusqlite::params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(outcome, "deny");
+        let verify = crate::cli::security::verify_audit_chain(
+            &conn, WRITE_AUDIT_CHAIN_TABLE, 100,
+        )
+        .unwrap();
+        assert_eq!(verify.broken_count, 0);
+    }
+
+    /// AC-05：按 workspace + 时间范围重复读回执结果幂等（复用 SQLite 读面，纯读无副作用）。
+    #[test]
+    fn test_build_receipt_query_idempotent() {
+        let (_dir, conn) = new_audit_db();
+        append_build_receipt(
+            &conn, 3, 9, "c:/ws/proj",
+            &json!({"ok": true, "build_seq": 1, "scanned": 1}), 10,
+        ).unwrap();
+        append_build_receipt(
+            &conn, 4, 10, "c:/ws/other",
+            &json!({"ok": true, "build_seq": 2, "scanned": 2}), 20,
+        ).unwrap();
+
+        let query = || -> Vec<(i64, String)> {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT event_id, detail_json FROM write_audit_events \
+                     WHERE workspace_id = ?1 AND recorded_at >= ?2 AND recorded_at <= ?3 \
+                     ORDER BY event_id",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map(rusqlite::params![3, 0.0, 9_999_999_999.0], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>();
+            rows
+        };
+        let first = query();
+        let second = query();
+        assert_eq!(first, second, "重复读回执必须幂等");
+        assert_eq!(first.len(), 1, "按 workspace 过滤只返回该 workspace 的回执");
+        let d: Value = serde_json::from_str(&first[0].1).unwrap();
+        assert_eq!(d["build_seq"], 1);
+    }
+
+    /// E7：审计写失败 fail-closed —— SAVEPOINT 回滚，无半成品行。
+    #[test]
+    fn test_build_receipt_audit_failure_no_partial() {
+        let (_dir, conn) = new_audit_db();
+        // 删掉 audit_chain 表使 sign_audit_chain 失败 → append 整体回滚
+        conn.execute_batch("DROP TABLE audit_chain;").unwrap();
+        let r = append_build_receipt(
+            &conn, 3, 9, "c:/ws/proj",
+            &json!({"ok": true, "build_seq": 1}), 10,
+        );
+        assert!(r.is_err(), "审计链写失败必须上抛");
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM write_audit_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(events, 0, "审计失败不得留下半成品回执行");
     }
 
     #[test]

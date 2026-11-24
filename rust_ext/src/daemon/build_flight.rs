@@ -102,7 +102,15 @@ impl BuildFlights {
 
     /// 构建结束（成功或失败）：移除单飞登记并记录 lastBuild（注入
     /// build_seq/completed_at，供轮询方与 accepted 响应对账）。
-    pub fn finish(&self, root_key: &str, mut stats: Value) {
+    ///
+    /// `on_complete` 是审计回执出口（实现见 `fs_handlers::append_build_receipt`）：
+    /// 仅在确实移除了一条 flight（真实构建发生）时触发，回调收到注入
+    /// build_seq/completed_at 后的最终 stats；返回 Err 代表审计写入失败，
+    /// 由调用方 fail-closed。重复 finish / 无登记的 ghost 不触发（幂等，E6）。
+    pub fn finish<F>(&self, root_key: &str, mut stats: Value, on_complete: F) -> Result<(), String>
+    where
+        F: FnOnce(&Value) -> Result<(), String>,
+    {
         let seq = {
             let mut map = self.inner.lock().expect("build flights mutex poisoned");
             map.remove(root_key).map(|e| e.seq)
@@ -115,7 +123,10 @@ impl BuildFlights {
             self.last
                 .lock()
                 .expect("build flights last mutex poisoned")
-                .insert(root_key.to_string(), stats);
+                .insert(root_key.to_string(), stats.clone());
+            on_complete(&stats)
+        } else {
+            Ok(())
         }
     }
 
@@ -194,7 +205,17 @@ mod tests {
         // 不同 workspace 互不干扰
         assert!(flights.begin("ws://root-b").is_ok());
         // 结束后登记移除、lastBuild 可查且带序号
-        flights.finish("ws://root-a", json!({"ok": true, "scanned": 7}));
+        let mut audited = Vec::new();
+        flights
+            .finish("ws://root-a", json!({"ok": true, "scanned": 7}), |s| {
+                audited.push(s.clone());
+                Ok(())
+            })
+            .unwrap();
+        // 审计回执回调收到注入 build_seq/completed_at 后的最终 stats
+        assert_eq!(audited.len(), 1);
+        assert_eq!(audited[0]["build_seq"], 1);
+        assert!(audited[0]["completed_at"].is_u64());
         assert!(!flights.is_running("ws://root-a"));
         let last = flights.last("ws://root-a").unwrap();
         assert_eq!(last["build_seq"], 1);
@@ -206,11 +227,47 @@ mod tests {
     }
 
     #[test]
-    fn finish_without_begin_is_noop() {
+    fn finish_without_begin_is_noop_and_no_receipt() {
         let flights = BuildFlights::new();
-        flights.finish("ghost", json!({"x": 1}));
+        let mut calls = 0;
+        flights
+            .finish("ghost", json!({"x": 1}), |_| {
+                calls += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(calls, 0, "无 begin 的 finish 不得落审计回执（E6 幂等）");
         assert!(flights.last("ghost").is_none());
         assert!(!flights.is_running("ghost"));
+    }
+
+    #[test]
+    fn finish_idempotent_no_second_receipt() {
+        let flights = BuildFlights::new();
+        flights.begin("ws://idem").unwrap();
+        let mut calls = 0;
+        flights.finish("ws://idem", json!({"ok": true}), |_| {
+            calls += 1;
+            Ok(())
+        }).unwrap();
+        // 重复 finish：单次飞已移除，回调不得再触发
+        flights.finish("ws://idem", json!({"ok": true}), |_| {
+            calls += 1;
+            Ok(())
+        }).unwrap();
+        assert_eq!(calls, 1, "重复 finish 只落 1 条回执");
+    }
+
+    #[test]
+    fn finish_propagates_audit_error() {
+        let flights = BuildFlights::new();
+        flights.begin("ws://audit-err").unwrap();
+        let err = flights
+            .finish("ws://audit-err", json!({"ok": true}), |_| {
+                Err("E_WRITE_AUDIT_UNAVAILABLE".to_string())
+            })
+            .unwrap_err();
+        assert_eq!(err, "E_WRITE_AUDIT_UNAVAILABLE", "审计写失败必须上抛，不吞异常");
     }
 
     #[test]
