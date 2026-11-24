@@ -816,6 +816,29 @@ mod tests {
     }
 
     #[test]
+    fn test_admission_limit_from_default_env_var() {
+        // 生产入口 from_env() 读真实环境变量 CALLWARDEN_SESSION_MAX_ACTIVE_SESSIONS：
+        // daemon 侧 workspace.connect 的准入阈值由此 env 可调。
+        // 本测试进程内没有其他用例设置该键（其余用例走 override seam 或独立键），
+        // 置位/复位窗口内无并发读者。
+        let key = ENV_MAX_ACTIVE_SESSIONS;
+        std::env::remove_var(key);
+        assert_eq!(
+            SessionAdmissionLimiter::from_env().limit(),
+            DEFAULT_MAX_ACTIVE_SESSIONS
+        );
+        std::env::set_var(key, "3");
+        assert_eq!(SessionAdmissionLimiter::from_env().limit(), 3);
+        std::env::set_var(key, "0");
+        assert_eq!(
+            SessionAdmissionLimiter::from_env().limit(),
+            0,
+            "0 表示不限制"
+        );
+        std::env::remove_var(key);
+    }
+
+    #[test]
     fn test_admission_check_active_count() {
         let limiter = SessionAdmissionLimiter::new(1);
         assert!(limiter.check_active_count("ws-1", 0).is_ok());
