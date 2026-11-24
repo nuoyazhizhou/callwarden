@@ -317,6 +317,68 @@ def _remote_upload_built_db(cg: Any) -> Dict[str, Any]:
     return result
 
 
+# ----------------------------------------------------------------------
+# build_graph 后台收敛（GitNexus refresh_index 语义的客户端一半）
+#
+# daemon 侧等待上限（CALLWARDEN_BUILD_WAIT_MS，默认 15s）到点返回
+# `accepted=true` + build_seq，构建在后台单飞继续跑完并发布 lastBuild。
+# 工具层在此轮询 `dry_run=true`（短平快 RPC，不再长期占 daemon 状态锁），
+# 用 `lastBuild.build_seq >= accepted_seq` 对账，避免读到后续构建的结果。
+# ----------------------------------------------------------------------
+
+_BUILD_POLL_INTERVAL_SECS = 1.0
+_BUILD_POLL_TIMEOUT_ENV = "CALLWARDEN_BUILD_POLL_TIMEOUT_MS"
+_BUILD_POLL_TIMEOUT_DEFAULT_MS = 600_000
+
+
+def _build_poll_timeout_secs() -> float:
+    """工具层轮询上限（`CALLWARDEN_BUILD_POLL_TIMEOUT_MS`，默认 600s）。"""
+    raw = (os.environ.get(_BUILD_POLL_TIMEOUT_ENV) or "").strip()
+    if raw:
+        try:
+            return max(0.0, int(raw) / 1000.0)
+        except ValueError:
+            pass
+    return _BUILD_POLL_TIMEOUT_DEFAULT_MS / 1000.0
+
+
+def _poll_build_result(workspace_instance_id: str, accepted_seq: int) -> Dict[str, Any]:
+    """轮询 dry_run 收敛 accepted 的后台构建结果。
+
+    Returns:
+        lastBuild（daemon `run_build_graph` 的统计结构，含 build_seq/completed_at）。
+
+    Raises:
+        DaemonRemoteError: 后台构建失败（透传 lastBuild 的 error/message）或轮询超时。
+    """
+    import time as _time
+
+    timeout = _build_poll_timeout_secs()
+    deadline = _time.monotonic() + timeout
+    while True:
+        params: Dict[str, Any] = {"dry_run": True}
+        if workspace_instance_id:
+            params["workspace_instance_id"] = workspace_instance_id
+        snap = _route("workspace.build_graph", params, "READ_ONLY")
+        last_build = snap.get("lastBuild") if isinstance(snap, dict) else None
+        if isinstance(last_build, dict):
+            seq = last_build.get("build_seq")
+            if isinstance(seq, int) and seq >= accepted_seq:
+                if last_build.get("ok") is False:
+                    raise DaemonRemoteError(
+                        str(last_build.get("error") or "build_failed"),
+                        str(last_build.get("message") or "后台构建失败"),
+                    )
+                return last_build
+        if _time.monotonic() >= deadline:
+            raise DaemonRemoteError(
+                "build_timeout",
+                f"等待后台构建超时（{timeout:.0f}s，accepted build_seq={accepted_seq}）；"
+                "构建仍在 daemon 后台运行，可稍后用 dry_run=true 查询 lastBuild/progress",
+            )
+        _time.sleep(_BUILD_POLL_INTERVAL_SECS)
+
+
 class CodeMetricsSummary(TypedDict):
     """`get_code_metrics_summary` 的显式 output 契约（冻结）。
 
@@ -338,7 +400,7 @@ class CodeMetricsSummary(TypedDict):
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
-    def build_graph(workspace_instance_id: str = "") -> dict:
+    def build_graph(workspace_instance_id: str = "", dry_run: bool = False) -> dict:
         """完整构建代码知识图谱（增量重建：未变化文件免解析）
 
         Args:
@@ -347,9 +409,12 @@ def register(mcp: FastMCP) -> None:
                 显式传入可定向构建指定 workspace——多 workspace 环境下必须
                 显式传入，否则会构建活动 workspace（主仓 1145 文件级扫描，
                 隔离 ws 场景将耗时数百秒并误把主仓算作目标）。
+            dry_run: 只探测不构建。返回 estimatedFiles/fileCount/maxFiles/
+                overLimit/inProgress/wouldRun/progress/lastBuild，用于大仓
+                构建前的预算检查与后台构建进度轮询。
 
         Returns:
-            daemon 结构化统计：
+            dry_run=False：daemon 结构化统计
             scanned（本轮访问的可索引文件数）、inserted（首次入库或内容变化的
             文件数）、unchanged（可解析且内容未变化的文件数）、
             skipped_cached（其中靠 mtime 缓存直接跳过读取/解析的文件数）、
@@ -357,21 +422,48 @@ def register(mcp: FastMCP) -> None:
             skipped_unparsed（语言无 parser 被跳过的文件数，如 .vue/.svelte）、
             symbols/calls（本轮解析产出的符号/调用数）、
             calls_resolved/calls_ambiguous（仅针对本轮受影响名字的边重算结果）。
+            daemon 等待上限（默认 15s）到点仍未完成时返回
+            accepted=true + workspace_instance_id + build_seq + inProgress，
+            工具层随后轮询 dry_run 收敛，最终返回后台构建的 lastBuild 统计。
         """
-        params = {"workspace_instance_id": workspace_instance_id} if workspace_instance_id else {}
+        params: Dict[str, Any] = {}
+        if workspace_instance_id:
+            params["workspace_instance_id"] = workspace_instance_id
         if _is_remote_profile():
             # S2 §16.4：remote profile 下 build_graph 在客户端本机全量扫描，
             # 产物经 snapshot.upload 发布回 daemon（权威面）。workspace_instance_id
             # 指向 daemon 侧宿主视图，远端语义下由 ensure_remote_workspace 注册。
             _reject_remote_params(params, "build_graph")
             root = _remote_workspace_root()
+            if dry_run:
+                files = _remote_scan_indexable(
+                    root, "", True, _remote_load_ignore_dir_names(root)
+                )
+                return {
+                    "dry_run": True,
+                    "exec_origin": _EXEC_ORIGIN_CLIENT,
+                    "fileCount": len(files),
+                    "maxFiles": 0,
+                    "overLimit": False,
+                    "inProgress": False,
+                    "wouldRun": True,
+                }
             with _remote_codegraph(root) as cg:
                 cg.build_full_graph(force=True)
                 result = _remote_build_stats(cg)
                 result.update(_remote_upload_built_db(cg))
             result["exec_origin"] = _EXEC_ORIGIN_CLIENT
             return result
-        return _route('workspace.build_graph', params, 'PROTECTED_MUTATION')
+        if dry_run:
+            params["dry_run"] = True
+            return _route('workspace.build_graph', params, 'READ_ONLY')
+        result = _route('workspace.build_graph', params, 'PROTECTED_MUTATION')
+        if isinstance(result, dict) and result.get("accepted") is True:
+            seq = result.get("build_seq")
+            if isinstance(seq, int):
+                ws = str(result.get("workspace_instance_id") or workspace_instance_id or "")
+                return _poll_build_result(ws, seq)
+        return result
 
     @mcp.tool()
     def refresh_file(file_path: str) -> dict:

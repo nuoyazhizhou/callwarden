@@ -30,6 +30,13 @@ use super::workspace::{
     WorkspaceRegistry,
 };
 
+/// build_graph 单飞/预算/超时协调（GitNexus refresh_index 设计映射）。
+/// 内联子模块：daemon/mod.rs 不在所有权白名单，经 `#[path]` 挂载。
+#[path = "build_flight.rs"]
+pub mod build_flight;
+
+use build_flight::{BuildFlights, BuildProgress};
+
 /// 可索引的源文件扩展名（文件面扫描白名单，与 db 层解析面一致）。
 const INDEXABLE_EXTS: &[&str] = &[
     "py", "rs", "c", "h", "cpp", "hpp", "cc", "go", "java", "js", "jsx", "ts", "tsx",
@@ -1331,12 +1338,26 @@ pub fn handle_build_graph(
     params: &Value,
     codegraph_db: Option<&Path>,
 ) -> Result<Value, DaemonRpcError> {
-    let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
-    let (registry_ws_id, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
+    let (root, scan_root) = prepare_build_graph(registry, peer, params)?;
     let conn = open_codegraph_write(codegraph_db)?;
     // 权威单库按 root_path 映射 workspace 行（registry id 与权威库 id 是两个 ID 空间）
     let workspace_id = ensure_workspace_row_by_root(&conn, &root)
         .map_err(|e| DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}")))?;
+    run_build_graph(&conn, workspace_id, &root, &scan_root, None)
+}
+
+/// build_graph 参数解析与校验（同步段，廉价：仅 registry 借用 + 路径校验）。
+///
+/// 异步化拆分（GitNexus refresh_index 设计）：重活拆到 [`run_build_graph`]，
+/// 本函数产物 (root, scan_root) 可安全 move 进后台线程，daemon dispatch
+/// 不再被大仓构建长期阻塞（watchdog 连续 2 次 /health 失败判死的根因）。
+fn prepare_build_graph(
+    registry: &WorkspaceRegistry,
+    peer: &PeerCredential,
+    params: &Value,
+) -> Result<(PathBuf, PathBuf), DaemonRpcError> {
+    let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+    let (registry_ws_id, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
     let _ = registry_ws_id;
     let scan_root: PathBuf = match get_str_param(params, "scan_root") {
         Some(s) if !s.is_empty() => {
@@ -1351,11 +1372,25 @@ pub fn handle_build_graph(
     // （owner 校验不构成根限制；越根扫描会把本用户任意目录索引进库）
     let scan_root_str = scan_root.to_string_lossy().to_string();
     ensure_root_containment(&root, &scan_root_str)?;
+    Ok((root, scan_root))
+}
+
+/// build_graph 重活（无 registry/peer 依赖，可在后台线程执行）。
+///
+/// `progress` 为单飞登记表的进度埋点（GitNexus progress notifications 的
+/// daemon 侧等价物：经 `workspace.build_graph` dry_run=true 轮询读取）。
+fn run_build_graph(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    root: &Path,
+    scan_root: &Path,
+    progress: Option<&BuildProgress>,
+) -> Result<Value, DaemonRpcError> {
     // rel 计算基于 canonical root（client_view_root 可能与真实路径大小写/前缀不一致）
-    let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+    let root_canon = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     // ignore 契约剪枝（.callwardenignore/.gitignore，workspace 根语义）
-    let skip = load_ignore_dir_names(&root);
-    let files = scan_files(&scan_root, true, &skip);
+    let skip = load_ignore_dir_names(root);
+    let files = scan_files(scan_root, true, &skip);
     let mut scanned = 0usize;
     let mut inserted = 0usize;
     let mut unchanged = 0usize;
@@ -1378,6 +1413,9 @@ pub fn handle_build_graph(
             .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
         scanned += 1;
         seen.insert(rel.clone());
+        if let Some(p) = progress {
+            p.scanned.store(scanned as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         // 先取元数据（cheap）：快路径命中时避免读取文件内容
         let meta = std::fs::metadata(&path).ok();
         let mtime = meta
@@ -1408,6 +1446,11 @@ pub fn handle_build_graph(
                 if is_mtime_cache_hit(status, stored_hash, *stored_mtime, mtime) {
                     unchanged += 1;
                     skipped_cached += 1;
+                    if let Some(p) = progress {
+                        use std::sync::atomic::Ordering::Relaxed;
+                        p.unchanged.store(unchanged as u64, Relaxed);
+                        p.skipped_cached.store(skipped_cached as u64, Relaxed);
+                    }
                     continue;
                 }
             }
@@ -1472,6 +1515,12 @@ pub fn handle_build_graph(
             BuildGraphFileClass::Unchanged => unchanged += 1,
             BuildGraphFileClass::SkippedUnparsed => skipped_unparsed += 1,
         }
+        if let Some(p) = progress {
+            use std::sync::atomic::Ordering::Relaxed;
+            p.inserted.store(inserted as u64, Relaxed);
+            p.unchanged.store(unchanged as u64, Relaxed);
+            p.skipped_unparsed.store(skipped_unparsed as u64, Relaxed);
+        }
     }
     // P3-1 删除感知：库里存在、磁盘上已消失的文件清理图行。
     // 以「磁盘上是否真的不存在」为准（而非「本轮是否扫描到」），这样
@@ -1505,6 +1554,9 @@ pub fn handle_build_graph(
                     }
                     if newly {
                         archived += 1;
+                        if let Some(p) = progress {
+                            p.archived.store(archived as u64, std::sync::atomic::Ordering::Relaxed);
+                        }
                     }
                     continue;
                 }
@@ -1518,6 +1570,9 @@ pub fn handle_build_graph(
             affected_names.insert(name);
         }
         deleted += 1;
+        if let Some(p) = progress {
+            p.deleted.store(deleted as u64, std::sync::atomic::Ordering::Relaxed);
+        }
     }
     // P3-1 边重算裁剪：只重算本轮受影响的 callee 名（无改动则零成本）。
     // 全覆盖性论证：会改变解析结果的只有「名字被新增/删除定义」或
@@ -1541,6 +1596,144 @@ pub fn handle_build_graph(
     m.insert("calls_resolved".into(), Value::Number(resolved.into()));
     m.insert("calls_ambiguous".into(), Value::Number(ambiguous.into()));
     Ok(Value::Object(m))
+}
+
+/// `workspace.build_graph` 异步入口（GitNexus refresh_index 单飞设计映射）。
+///
+/// - bounded：预扫可索引文件数，超 [`build_flight::build_max_files`] 报
+///   `build_too_large`（默认 5000，0=不限制）；
+/// - 单飞：同 workspace 并发构建报 `build_in_progress`（附当前扫描进度），
+///   超时转后台后同样持有单飞，直到后台跑完发布 lastBuild；
+/// - 超时：等待 [`build_flight::build_wait_bound`]（默认 15s）后返回
+///   `accepted=true` 结构化响应（HTTP 200，非错误），后台线程继续执行
+///   并发布 lastBuild——worker 永不中断（GitNexus "never interrupts"）；
+/// - dry_run：不占单飞，报 estimatedFiles/inProgress/wouldRun/lastBuild。
+pub fn handle_build_graph_async(
+    registry: &WorkspaceRegistry,
+    peer: &PeerCredential,
+    params: &Value,
+    codegraph_db: Option<&Path>,
+    flights: &std::sync::Arc<BuildFlights>,
+) -> Result<Value, DaemonRpcError> {
+    let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+    let (root, scan_root) = prepare_build_graph(registry, peer, params)?;
+    let root_key = std::fs::canonicalize(&root)
+        .unwrap_or_else(|_| root.clone())
+        .to_string_lossy()
+        .replace('\\', "/");
+    let skip = load_ignore_dir_names(&root);
+    let file_count = scan_files(&scan_root, true, &skip).len();
+    let max_files = build_flight::build_max_files();
+
+    let dry_run = params.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    if dry_run {
+        let over_limit = max_files > 0 && file_count > max_files;
+        let in_progress = flights.is_running(&root_key);
+        let mut m = Map::new();
+        m.insert("dry_run".into(), Value::Bool(true));
+        m.insert("workspace_instance_id".into(), json!(workspace_instance_id));
+        m.insert(
+            "estimatedFiles".into(),
+            if over_limit { Value::Null } else { json!(file_count) },
+        );
+        m.insert("fileCount".into(), json!(file_count));
+        m.insert("maxFiles".into(), json!(max_files));
+        m.insert("overLimit".into(), Value::Bool(over_limit));
+        m.insert("inProgress".into(), Value::Bool(in_progress));
+        m.insert("wouldRun".into(), Value::Bool(!over_limit && !in_progress));
+        m.insert("progress".into(), flights.progress(&root_key).unwrap_or(Value::Null));
+        m.insert("lastBuild".into(), flights.last(&root_key).unwrap_or(Value::Null));
+        return Ok(Value::Object(m));
+    }
+
+    if max_files > 0 && file_count > max_files {
+        return Err(DaemonRpcError::new(
+            "build_too_large",
+            format!(
+                "工作区可索引文件数 {} 超过上限 {}（CALLWARDEN_BUILD_MAX_FILES，\
+                 0=不限制）；建议收窄 scan_root 或调大上限",
+                file_count, max_files
+            ),
+        ));
+    }
+
+    let (seq, progress) = match flights.begin(&root_key) {
+        Ok(pair) => pair,
+        Err(existing) => {
+            return Err(DaemonRpcError::new(
+                "build_in_progress",
+                format!(
+                    "该 workspace 已有 build_graph 进行中（已扫描 {} 文件）；\
+                     可用 dry_run=true 查询进度与 lastBuild",
+                    existing.scanned.load(std::sync::atomic::Ordering::Relaxed)
+                ),
+            ));
+        }
+    };
+
+    let db_path = match codegraph_db {
+        Some(p) => p.to_path_buf(),
+        None => {
+            flights.finish(
+                &root_key,
+                json!({"ok": false, "error": "internal_error", "message": "codegraph db 未配置"}),
+            );
+            return Err(DaemonRpcError::internal_error("codegraph db 未配置，无法构建"));
+        }
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let flights_bg = std::sync::Arc::clone(flights);
+    let root_bg = root.clone();
+    let scan_bg = scan_root.clone();
+    let root_key_bg = root_key.clone();
+    let progress_bg = std::sync::Arc::clone(&progress);
+    let spawned = std::thread::Builder::new()
+        .name("cw-build-graph".to_string())
+        .spawn(move || {
+            let result = open_codegraph_write(Some(db_path.as_path())).and_then(|conn| {
+                let workspace_id = ensure_workspace_row_by_root(&conn, &root_bg)
+                    .map_err(|e| {
+                        DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}"))
+                    })?;
+                run_build_graph(&conn, workspace_id, &root_bg, &scan_bg, Some(&progress_bg))
+            });
+            let stats = match &result {
+                Ok(v) => v.clone(),
+                Err(e) => json!({"ok": false, "error": e.code, "message": e.message}),
+            };
+            flights_bg.finish(&root_key_bg, stats);
+            let _ = tx.send(result);
+        });
+    if spawned.is_err() {
+        flights.finish(
+            &root_key,
+            json!({"ok": false, "error": "internal_error", "message": "build 线程启动失败"}),
+        );
+        return Err(DaemonRpcError::internal_error("build_graph 后台线程启动失败"));
+    }
+
+    match rx.recv_timeout(build_flight::build_wait_bound()) {
+        Ok(Ok(stats)) => Ok(stats),
+        Ok(Err(e)) => Err(e),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            // GitNexus 语义：调用停止等待，worker 不中断，后台跑完发布
+            let mut m = Map::new();
+            m.insert("accepted".into(), Value::Bool(true));
+            m.insert("workspace_instance_id".into(), json!(workspace_instance_id));
+            m.insert("estimatedFiles".into(), json!(file_count));
+            m.insert("build_seq".into(), json!(seq));
+            m.insert("inProgress".into(), Value::Bool(true));
+            m.insert(
+                "note".into(),
+                Value::String(
+                    "构建已转后台单飞执行；用 dry_run=true 轮询进度与结果".into(),
+                ),
+            );
+            Ok(Value::Object(m))
+        }
+        Err(_) => Err(DaemonRpcError::internal_error("build_graph 后台线程提前退出")),
+    }
 }
 
 /// `workspace.build_directory` —— 重建指定目录文件索引。
