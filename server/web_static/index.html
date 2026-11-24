@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call Warden 观测面</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --line: #e3e6ea; --text: #1f2430;
+    --muted: #6b7280; --accent: #2563eb; --red: #dc2626; --red-bg: #fef2f2;
+    --green: #16a34a; --amber: #d97706; --amber-bg: #fffbeb; --gray-badge: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; }
+  header { background: var(--panel); border-bottom: 1px solid var(--line);
+           padding: 14px 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  #refreshBtn { margin-left: auto; padding: 6px 14px; border: 1px solid var(--line);
+                background: var(--panel); border-radius: 6px; cursor: pointer; }
+  #refreshBtn:hover { border-color: var(--accent); color: var(--accent); }
+  .banner { margin: 12px 24px 0; padding: 10px 14px; border-radius: 8px;
+            font-size: 13px; display: none; }
+  .banner.red { display: block; background: var(--red-bg); color: var(--red);
+                border: 1px solid #fecaca; }
+  .banner.amber { display: block; background: var(--amber-bg); color: var(--amber);
+                  border: 1px solid #fde68a; }
+  #wsBanner { margin: 12px 24px 0; padding: 10px 14px; background: var(--panel);
+              border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
+              display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; }
+  #wsBanner .kv b { font-family: Consolas, monospace; font-size: 13px; }
+  #wsBanner.err { background: var(--red-bg); border-color: #fecaca; color: var(--red); }
+  main { padding: 16px 24px 40px; }
+  section { margin-top: 20px; }
+  section > h2 { font-size: 15px; margin: 0 0 10px; color: var(--text); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px 16px; }
+  .card h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted);
+             text-transform: none; letter-spacing: .02em; }
+  .card .err { color: var(--red); font-size: 13px; }
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0;
+        border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--muted); }
+  .kv .v { text-align: right; font-family: Consolas, monospace; font-size: 12.5px;
+           word-break: break-all; max-width: 62%; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px;
+          font-size: 12px; background: var(--gray-badge); }
+  .pill.ok { background: #dcfce7; color: var(--green); }
+  .pill.stale { background: var(--amber-bg); color: var(--amber); }
+  .pill.blocked { background: var(--red-bg); color: var(--red); }
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+          border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left;
+           font-size: 13px; vertical-align: top; }
+  th { background: #f0f2f5; color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr.task-row { cursor: pointer; }
+  tbody tr.task-row:hover { background: #f8fafc; }
+  tr.blocked-row td:first-child { border-left: 3px solid var(--red); }
+  .reasons { margin: 4px 0 0; padding: 6px 10px; background: var(--red-bg);
+             border: 1px solid #fecaca; border-radius: 6px; color: var(--red);
+             font-size: 12.5px; white-space: pre-wrap; }
+  .child-indent { padding-left: 26px; }
+  .tid { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); }
+  #detailPanel { display: none; background: var(--panel); border: 1px solid var(--accent);
+                 border-radius: 10px; padding: 16px 20px; margin-top: 12px; }
+  #detailPanel h3 { margin: 0 0 8px; font-size: 14px; }
+  #detailPanel .close { float: right; cursor: pointer; color: var(--muted);
+                        border: none; background: none; font-size: 16px; }
+  .steps td, .steps th { font-size: 12.5px; padding: 6px 10px; }
+  .mono { font-family: Consolas, monospace; font-size: 12px; }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line);
+          border-top-color: var(--accent); border-radius: 50%; animation: r 0.8s linear infinite;
+          vertical-align: -2px; margin-right: 6px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Call Warden 观测面</h1>
+    <div class="sub">只读项目进展看板 · 观测面，非操控台 · 全部端点 GET-only</div>
+  </div>
+  <span id="healthPill" class="pill">检测中…</span>
+  <button id="refreshBtn" onclick="loadAll()">刷新</button>
+</header>
+
+<div id="daemonBanner" class="banner red"></div>
+<div id="wsBanner"></div>
+
+<main>
+  <section>
+    <h2>仓库总览（dashboard 7 sections）</h2>
+    <div id="dashGrid" class="grid"></div>
+  </section>
+
+  <section>
+    <h2>任务板 <span class="muted" style="font-weight:400;font-size:12px">
+      （被治理门禁阻挡的任务以红色标出并显示原因，不会从列表中消失）</span></h2>
+    <div id="taskBoard"></div>
+    <div id="detailPanel"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtTime = (t) => t ? new Date(t * 1000).toLocaleString() : "—";
+const fmtAny = (v) => {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) return v.length ? v.slice(0, 8).map(esc).join(", ")
+      + (v.length > 8 ? ` …(共 ${v.length} 项)` : "") : "[]";
+  return JSON.stringify(v);
+};
+
+/* ---------- 通用取数：失败渲染为结构化错误，不抛到控制台 ---------- */
+async function getJSON(url) {
+  const res = await fetch(url);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = body.error || {};
+    const e = new Error(err.message || `HTTP ${res.status}`);
+    e.code = err.code || `HTTP_${res.status}`;
+    e.status = res.status;
+    throw e;
+  }
+  return body;
+}
+
+function kvRows(obj, skip = []) {
+  return Object.entries(obj || {})
+    .filter(([k]) => !skip.includes(k))
+    .map(([k, v]) => `<div class="kv"><span class="k">${esc(k)}</span>
+      <span class="v">${esc(fmtAny(v))}</span></div>`).join("");
+}
+
+/* ---------- workspace 绑定横幅（双命名空间） ---------- */
+function renderWorkspace(ws) {
+  const el = $("wsBanner");
+  if (!ws || ws.error || (!ws.workspace_instance_id && !ws.workspace_id)) {
+    el.className = "err";
+    el.innerHTML = `⚠ workspace 未绑定 / 解析失败：
+      ${esc(ws && ws.error ? ws.error.code + " " + ws.error.message : "无数据")}
+      —— 数据面板已禁用（fail-closed，不猜测 workspace）`;
+    return false;
+  }
+  el.className = "";
+  const reg = ws.registry_workspace_id;
+  const regHtml = reg !== undefined && reg !== null
+    ? `<span class="kv">daemon 注册表 workspace_id = <b>${esc(reg)}</b>
+       （instance ${esc(ws.registry_instance_id || "—")}）</span>`
+    : `<span class="kv muted">daemon 注册表 id 不可用
+       ${ws.registry_error ? esc("(" + ws.registry_error.code + ")") : ""}</span>`;
+  el.innerHTML = `
+    <span class="kv">task workspace_id = <b>${esc(ws.workspace_id)}</b></span>
+    <span class="kv">workspace_instance_id = <b>${esc(ws.workspace_instance_id)}</b></span>
+    ${regHtml}
+    <span class="kv muted">双命名空间：左侧 task DB，右侧 daemon registry</span>`;
+  return true;
+}
+
+/* ---------- 健康横幅 ---------- */
+function renderHealth(h) {
+  const pill = $("healthPill");
+  const banner = $("daemonBanner");
+  const ok = h && h.ok;
+  pill.textContent = ok ? "daemon 正常" : "daemon 异常";
+  pill.className = "pill " + (ok ? "ok" : "stale");
+  if (!ok) {
+    const parts = [];
+    if (h.daemon && h.daemon.error) parts.push("health: " + h.daemon.error.code);
+    if (h.bootstrap && h.bootstrap.error) parts.push("bootstrap: " + h.bootstrap.error.code);
+    if (h.workspace && h.workspace.error) parts.push("workspace: " + h.workspace.error.code);
+    banner.textContent = "⚠ 部分数据不可用（fail-closed，未回退缓存/猜测）：" + parts.join("；");
+    banner.className = "banner red";
+  } else {
+    banner.className = "banner";
+  }
+  const bs = h && h.bootstrap;
+  if (bs && bs.db_stale === true) {
+    const extra = document.createElement("div");
+    extra.className = "banner amber";
+    extra.textContent = "⚠ 图谱滞后：最近 scan_run 的 git_head 与当前 HEAD 不一致（db_stale）";
+    banner.after(extra);
+  }
+}
+
+/* ---------- dashboard 7 sections ---------- */
+const SECTIONS = [
+  ["overview", "总览"], ["code_scale", "代码规模"], ["code_quality", "代码质量"],
+  ["call_graph", "调用图"], ["task_risk", "任务风险"], ["audit", "审计"], ["evolution", "演化"],
+];
+function renderDashboard(d) {
+  const grid = $("dashGrid");
+  grid.innerHTML = SECTIONS.map(([key, label]) => {
+    let inner;
+    if (!d || d.error) {
+      inner = `<div class="err">${esc(d && d.error ? d.error.code + " " + d.error.message : "无数据")}</div>`;
+    } else if (!(key in d)) {
+      inner = `<div class="empty">暂无数据（section 缺失，不隐藏槽位）</div>`;
+    } else {
+      const v = d[key];
+      inner = (v && typeof v === "object" && !Array.isArray(v))
+        ? kvRows(v) : `<div class="kv"><span class="v">${esc(fmtAny(v))}</span></div>`;
+    }
+    return `<div class="card"><h3>${label} <span class="muted mono">(${key})</span></h3>${inner}</div>`;
+  }).join("");
+}
+
+/* ---------- 任务板 ---------- */
+function isBlocked(row) {
+  return row.workflow_status === "governance_blocked"
+      || row.action === "BLOCKED"
+      || row.decision === "BLOCKED"
+      || (Array.isArray(row.blocking_reasons) && row.blocking_reasons.length > 0)
+      || (row.governance && (row.governance.workflow_status === "governance_blocked"
+          || (Array.isArray(row.governance.blocking_reasons) && row.governance.blocking_reasons.length > 0)));
+}
+function reasonsOf(row) {
+  return row.blocking_reasons
+      || (row.governance && row.governance.blocking_reasons) || [];
+}
+
+function taskRowsHTML(rows, parentMap, parent, depth) {
+  const children = rows.filter((r) => (r.parent_id || null) === parent);
+  let html = "";
+  for (const r of children) {
+    const blocked = isBlocked(r);
+    const reasons = reasonsOf(r);
+    const status = r.status || r.lifecycle_status || "—";
+    const wf = r.workflow_status || (r.governance && r.governance.workflow_status) || "";
+    html += `
+    <tr class="task-row ${blocked ? "blocked-row" : ""}" data-tid="${esc(r.task_id)}">
+      <td><div class="${depth ? "child-indent" : ""}">
+        <b>${esc(r.title || "(无标题)")}</b>
+        ${blocked ? `<span class="pill blocked">被治理门禁阻挡</span>` : ""}
+        <div class="tid">${esc(r.task_id)}</div>
+        ${blocked && reasons.length ? `<div class="reasons">blocking_reasons：
+${esc(reasons.join("\n"))}</div>` : ""}
+      </div></td>
+      <td>${esc(status)}</td>
+      <td>${esc(wf || "—")}${wf === "governance_blocked" ? "" : ""}</td>
+      <td>${esc(r.next_role || (r.governance && r.governance.next_role) || "—")}<br>
+          <span class="muted" style="font-size:12px">${esc(r.next_action || (r.governance && r.governance.next_action) || "—")}</span></td>
+      <td class="muted" style="font-size:12px">${esc(fmtTime(r.updated_at || r.created_at))}</td>
+    </tr>`;
+    html += taskRowsHTML(rows, parentMap, r.task_id, depth + 1);
+  }
+  return html;
+}
+
+function renderTasks(data) {
+  const el = $("taskBoard");
+  const rows = (data && data.tasks) || [];
+  if (data && data.error) {
+    el.innerHTML = `<div class="banner red">任务板不可用：
+      ${esc(data.error.code + " " + data.error.message)}</div>`;
+    return;
+  }
+  if (!rows.length) {
+    el.innerHTML = `<div class="empty">当前过滤条件下无任务（仅在确无数据时显示此文案）</div>`;
+    return;
+  }
+  el.innerHTML = `
+  <table>
+    <thead><tr><th style="width:46%">任务（点行看下钻详情）</th><th>状态</th>
+      <th>workflow</th><th>下一棒 / 动作</th><th>更新时间</th></tr></thead>
+    <tbody>${taskRowsHTML(rows, null, null, 0)}</tbody>
+  </table>
+  <div class="muted" style="font-size:12px;margin-top:6px">
+    共 ${rows.length} 条${data.total > rows.length ? `（筛选命中 total=${esc(data.total)}，当前 limit=${esc(data.limit)} offset=${esc(data.offset)}）` : ""}
+  </div>`;
+  el.querySelectorAll("tr.task-row").forEach((tr) => {
+    tr.addEventListener("click", () => showDetail(tr.dataset.tid));
+  });
+}
+
+/* ---------- 单卡下钻 ---------- */
+async function showDetail(taskId) {
+  const panel = $("detailPanel");
+  panel.style.display = "block";
+  panel.innerHTML = `<span class="spin"></span>加载 ${esc(taskId)} …`;
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  let d;
+  try { d = await getJSON("/api/tasks/" + encodeURIComponent(taskId)); }
+  catch (e) {
+    panel.innerHTML = `<button class="close" onclick="this.parentNode.style.display='none'">✕</button>
+      <h3>下钻失败</h3><div class="err">${esc(e.code)} ${esc(e.message)}</div>`;
+    return;
+  }
+  const tree = d.tree || {};
+  const na = d.next_action;
+  const steps = (tree.steps || []).map((s) => `
+    <tr><td>${esc(s.step_index)}</td><td>${esc(s.action)}</td>
+    <td class="mono">${esc(s.target_file || "—")}</td><td>${esc(s.status)}</td>
+    <td class="muted">${esc((s.result || "").slice(0, 160))}</td></tr>`).join("");
+  const children = (tree.children || []).map((c) =>
+    `<li class="mono">${esc(c.id || c.task_id)} ${esc(c.title || "")} (${esc(c.status)})</li>`).join("");
+  panel.innerHTML = `
+    <button class="close" onclick="this.parentNode.style.display='none'">✕</button>
+    <h3>${esc(tree.title || taskId)} <span class="tid">${esc(taskId)}</span>
+      ${isBlocked(tree) ? `<span class="pill blocked">被治理门禁阻挡</span>` : ""}</h3>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="card"><h3>派工投影 task.next_action</h3>
+        ${na === null || na === undefined
+          ? `<div class="empty">终态卡：不请求派工投影（GOV-FIX-04 短路）</div>`
+          : na && na.error ? `<div class="err">${esc(na.error.code)} ${esc(na.error.message)}</div>`
+          : kvRows(na || {}, ["routing", "identity_policy"])}
+      </div>
+      <div class="card"><h3>证据新鲜度 get_freshness_status</h3>
+        ${(d.freshness && d.freshness.error)
+          ? `<div class="empty">暂无证据（${esc(d.freshness.error.code)}）</div>`
+          : kvRows(d.freshness || {}, [])}
+      </div>
+    </div>
+    ${reasonsOf(tree).length ? `<div class="reasons">blocking_reasons：
+${esc(reasonsOf(tree).join("\n"))}</div>` : ""}
+    ${steps ? `<h3 style="margin:14px 0 6px">步骤</h3>
+      <table class="steps"><thead><tr><th>#</th><th>动作</th><th>目标文件</th>
+      <th>状态</th><th>结果摘要</th></tr></thead><tbody>${steps}</tbody></table>` : ""}
+    ${children ? `<h3 style="margin:14px 0 6px">子任务</h3><ul>${children}</ul>` : ""}`;
+}
+
+/* ---------- 装载 ---------- */
+let loadSeq = 0;
+async function loadAll() {
+  const seq = ++loadSeq;
+  $("refreshBtn").innerHTML = `<span class="spin"></span>刷新中`;
+  const stale = () => seq !== loadSeq;  // 只渲染最后一次点击的结果
+  const [h, d, t] = await Promise.allSettled([
+    getJSON("/api/health"), getJSON("/api/dashboard"), getJSON("/api/tasks"),
+  ]);
+  if (stale()) return;
+  const health = h.status === "fulfilled" ? h.value : { ok: false,
+    daemon: { error: { code: "HTTP_" + (h.reason && h.reason.status || 0),
+                       message: String(h.reason && h.reason.message || h.reason) } } };
+  renderHealth(health);
+  const wsOk = renderWorkspace(health.workspace);
+  renderDashboard(d.status === "fulfilled" ? d.value
+    : { error: { code: String(d.reason && d.reason.code || "E_FETCH"),
+                 message: String(d.reason && d.reason.message || d.reason) } });
+  renderTasks(t.status === "fulfilled" ? t.value
+    : { error: { code: String(t.reason && t.reason.code || "E_FETCH"),
+                 message: String(t.reason && t.reason.message || t.reason) } });
+  $("refreshBtn").textContent = "刷新";
+  if (!wsOk) {
+    // workspace 未解析：数据面板语义上仍渲染各自错误，但顶部横幅已给出明确禁用原因
+    console.info("workspace 未绑定，数据面板呈错误态（fail-closed）");
+  }
+}
+loadAll();
+</script>
+</body>
+</html>
