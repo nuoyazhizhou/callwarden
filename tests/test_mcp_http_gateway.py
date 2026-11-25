@@ -3,7 +3,11 @@
 覆盖：
 - Bearer token 签发/校验（角色/项目/过期/篡改/密钥）
 - 工具面 profile 裁剪（core/graph/security/all）
-- 响应预算出口 enforce_budget（未超限原样 / 超限截断 fail-closed）
+- 响应预算出口 enforce_budget（未超限原样 / 超限截断 fail-closed /
+  iterencode 流式序列化不先完整 dumps）
+- 按 token 累计的总量预算 SessionBudgetTracker（累计/隔离/并发安全/
+  惰性清理）与两层预算并存（budget_exhausted fail-closed 不执行工具）
+- 总量预算配置解析（环境变量覆盖 / 0 关闭 / 默认值）
 - LoopForge MCPServerDefinition 形状解析（合法 / 非法 transport / 缺认证）
 - wire 集成：起网关（随机端口），streamable HTTP client 拉工具清单、
   认证失败 401、/health 豁免
@@ -195,6 +199,249 @@ class TestEnforceBudget:
         assert contents[0].text == "ok"
         assert structured == {"result": "ok"}
 
+    def test_streaming_matches_dumps_when_within_budget(self):
+        result = {"a": [1, 2, 3], "b": "中文", "c": None}
+        exceeded, observed, preview = gw._streaming_serialize(result, 4096)
+        expected = len(json.dumps(result, ensure_ascii=False, default=str).encode("utf-8"))
+        assert exceeded is False
+        assert observed == expected
+        assert preview == ""
+
+    def test_oversized_result_preview_bounded(self):
+        result = ([TextContent(type="text", text="x" * 100000)], {"result": "x" * 100000})
+        budgeted, info = gw.enforce_budget(result, max_bytes=1024)
+        payload = json.loads(budgeted[0][0].text)
+        # 预览按 UTF-8 字节边界截断，不超预算
+        assert len(payload["preview"].encode("utf-8")) <= 1024
+        # 流式中止：observed 为真实总量的下界，仍须超过预算
+        assert info["actual_bytes"] > 1024
+        # 送达体积远小于原始结果（fail-closed 替换，不携带全量数据）
+        assert info["response_bytes"] < 5000
+
+
+# ---------------------------------------------------------------------------
+# 按 token 累计的总量预算（SessionBudgetTracker + 两层预算并存）
+# ---------------------------------------------------------------------------
+
+
+class TestSessionBudgetTracker:
+    def test_record_accumulates_and_exhausts(self):
+        tracker = gw.SessionBudgetTracker(limit_bytes=100)
+        assert tracker.is_exhausted("tok-a") == (False, 0, 100)
+        assert tracker.record("tok-a", 60) == 60
+        assert tracker.is_exhausted("tok-a") == (False, 60, 100)
+        assert tracker.record("tok-a", 40) == 100
+        # 达到上限即耗尽（fail-closed）
+        assert tracker.is_exhausted("tok-a") == (True, 100, 100)
+
+    def test_tokens_are_independent(self):
+        tracker = gw.SessionBudgetTracker(limit_bytes=100)
+        tracker.record("tok-a", 100)
+        assert tracker.is_exhausted("tok-a")[0] is True
+        assert tracker.is_exhausted("tok-b") == (False, 0, 100)
+
+    def test_record_ignores_non_positive(self):
+        tracker = gw.SessionBudgetTracker(limit_bytes=100)
+        assert tracker.record("tok-a", 0) == 0
+        assert tracker.record("tok-a", -5) == 0
+
+    def test_rejects_non_positive_limit(self):
+        with pytest.raises(ValueError):
+            gw.SessionBudgetTracker(0)
+        with pytest.raises(ValueError):
+            gw.SessionBudgetTracker(-1)
+
+    def test_token_key_stable_and_blind(self):
+        assert gw.SessionBudgetTracker.token_key("abc") == gw.SessionBudgetTracker.token_key("abc")
+        assert gw.SessionBudgetTracker.token_key("abc") != gw.SessionBudgetTracker.token_key("abd")
+        # key 为 sha256，不保留 token 原文
+        assert "abc" not in gw.SessionBudgetTracker.token_key("abc")
+
+    def test_concurrent_record_thread_safe(self):
+        tracker = gw.SessionBudgetTracker(limit_bytes=10**9)
+
+        def hammer():
+            for _ in range(200):
+                tracker.record("tok-parallel", 1)
+
+        threads = [threading.Thread(target=hammer) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert tracker.usage("tok-parallel") == 1600
+
+    def test_prune_drops_expired_entries(self):
+        tracker = gw.SessionBudgetTracker(limit_bytes=10**9)
+        past = time.time() - 10
+        for i in range(gw._TRACKER_PRUNE_THRESHOLD + 10):
+            tracker._used[f"stale-{i}"] = [1, past, past]
+        tracker.record("fresh", 1, exp=time.time() + 600)
+        assert all(not k.startswith("stale-") for k in tracker._used)
+        assert tracker.usage("fresh") == 1
+
+
+class TestInstallResponseBudgetWithTotal:
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def test_exhausted_token_fail_closed_without_executing_tool(self):
+        mcp = gw.FastMCP("total-budget-test")
+        calls = []
+
+        @mcp.tool()
+        def counted() -> str:
+            calls.append(1)
+            return "x" * 40
+
+        tracker = gw.SessionBudgetTracker(limit_bytes=100)
+        gw.install_response_budget(mcp, max_bytes=1024, tracker=tracker)
+        tracker.record("tok-exhaust", 100)  # 预置：该 token 已达总量上限
+        ctx = gw._current_client_token.set(("tok-exhaust", None))
+        try:
+            contents, structured = self._run(mcp.call_tool("counted", {}))
+            # 工具未执行（fail-closed，不返回数据）
+            assert calls == []
+            payload = json.loads(contents[0].text)
+            assert payload["budget_exhausted"] is True
+            assert payload["used_bytes"] == 100
+            assert payload["limit_bytes"] == 100
+            assert payload["tool"] == "counted"
+            assert structured["budget_exhausted"] is True
+        finally:
+            gw._current_client_token.reset(ctx)
+
+    def test_accumulation_across_calls_then_exhausted(self):
+        mcp = gw.FastMCP("total-budget-acc")
+        calls = []
+
+        @mcp.tool()
+        def blob() -> str:
+            calls.append(1)
+            return "y" * 1000
+
+        tracker = gw.SessionBudgetTracker(limit_bytes=5000)
+        gw.install_response_budget(mcp, max_bytes=10000, tracker=tracker)
+        ctx = gw._current_client_token.set(("tok-acc", None))
+        try:
+            exhausted_at = None
+            for i in range(10):
+                contents, structured = self._run(mcp.call_tool("blob", {}))
+                if isinstance(structured, dict) and structured.get("budget_exhausted"):
+                    exhausted_at = i
+                    break
+                assert structured.get("budget_exhausted") is None
+            assert exhausted_at is not None, "总量预算未在 10 次内触发"
+            assert len(calls) == exhausted_at  # 每次拦截前工具确实执行过
+            used = tracker.usage("tok-acc")
+            assert used >= 5000
+            # 拦截响应携带机器可读 used/limit，且持续拦截
+            _, structured2 = self._run(mcp.call_tool("blob", {}))
+            assert structured2["budget_exhausted"] is True
+            assert structured2["used_bytes"] == used
+            assert structured2["limit_bytes"] == 5000
+        finally:
+            gw._current_client_token.reset(ctx)
+
+    def test_independent_tokens_isolated(self):
+        mcp = gw.FastMCP("total-budget-tok")
+
+        @mcp.tool()
+        def blob() -> str:
+            return "z" * 500
+
+        tracker = gw.SessionBudgetTracker(limit_bytes=900)
+        gw.install_response_budget(mcp, max_bytes=100000, tracker=tracker)
+        ctx_a = gw._current_client_token.set(("tok-iso-a", None))
+        try:
+            for _ in range(2):
+                self._run(mcp.call_tool("blob", {}))
+        finally:
+            gw._current_client_token.reset(ctx_a)
+        assert tracker.is_exhausted("tok-iso-a")[0] is True
+        # token b 不受 a 影响（token 换发即自然重置）
+        ctx_b = gw._current_client_token.set(("tok-iso-b", None))
+        try:
+            contents, structured = self._run(mcp.call_tool("blob", {}))
+            assert structured.get("budget_exhausted") is None
+        finally:
+            gw._current_client_token.reset(ctx_b)
+
+    def test_no_client_context_skips_total_accounting(self):
+        mcp = gw.FastMCP("total-budget-notok")
+
+        @mcp.tool()
+        def blob() -> str:
+            return "w" * 500
+
+        tracker = gw.SessionBudgetTracker(limit_bytes=10)
+        gw.install_response_budget(mcp, max_bytes=100000, tracker=tracker)
+        # 无认证上下文（contextvar 默认 None，如单测直调）：不累计、不拦截
+        for _ in range(3):
+            contents, structured = self._run(mcp.call_tool("blob", {}))
+            assert structured.get("budget_exhausted") is None
+        assert tracker._used == {}
+
+    def test_per_call_truncation_counts_delivered_bytes_only(self):
+        mcp = gw.FastMCP("total-budget-interplay")
+
+        @mcp.tool()
+        def huge() -> str:
+            return "h" * 5000
+
+        tracker = gw.SessionBudgetTracker(limit_bytes=100000)
+        gw.install_response_budget(mcp, max_bytes=1024, tracker=tracker)
+        ctx = gw._current_client_token.set(("tok-interplay", None))
+        try:
+            contents, structured = self._run(mcp.call_tool("huge", {}))
+            payload = json.loads(contents[0].text)
+            assert payload["budget_exceeded"] is True
+            used = tracker.usage("tok-interplay")
+            # 只累计实际送达的截断说明体积，而非原始超大结果
+            assert 0 < used < 5000
+        finally:
+            gw._current_client_token.reset(ctx)
+
+
+class TestSessionTotalBudgetConfig:
+    def _capture_tracker(self, monkeypatch):
+        captured = {}
+        real = gw.SessionBudgetTracker
+
+        def fake(limit_bytes):
+            captured["limit"] = limit_bytes
+            return real(limit_bytes)
+
+        monkeypatch.setattr(gw, "SessionBudgetTracker", fake)
+        return captured
+
+    def test_env_override(self, monkeypatch):
+        captured = self._capture_tracker(monkeypatch)
+        monkeypatch.setenv(gw.SESSION_TOTAL_BUDGET_ENV, "1234")
+        gw.create_gateway_app(
+            profile="security", secret=b"env-test", budget_bytes=4096,
+            bind_workspace=False,
+        )
+        assert captured["limit"] == 1234
+
+    def test_env_zero_disables(self, monkeypatch):
+        captured = self._capture_tracker(monkeypatch)
+        monkeypatch.setenv(gw.SESSION_TOTAL_BUDGET_ENV, "0")
+        gw.create_gateway_app(
+            profile="security", secret=b"env-test", budget_bytes=4096,
+            bind_workspace=False,
+        )
+        assert captured.get("limit") is None
+
+    def test_default_when_env_unset(self, monkeypatch):
+        captured = self._capture_tracker(monkeypatch)
+        monkeypatch.delenv(gw.SESSION_TOTAL_BUDGET_ENV, raising=False)
+        gw.create_gateway_app(
+            profile="security", secret=b"env-test", budget_bytes=4096,
+            bind_workspace=False,
+        )
+        assert captured["limit"] == gw.DEFAULT_SESSION_TOTAL_BUDGET_BYTES
+
 
 # ---------------------------------------------------------------------------
 # LoopForge MCPServerDefinition 形状解析
@@ -365,3 +612,75 @@ def test_wire_tools_list_respects_profile(gateway):
     # 清单是 security 档位的子集（分类清单可能超前于实际注册）
     assert names <= gw.profile_tool_names("security")
     assert len(names) > 0
+
+
+def _wire_budget_flags(out: dict) -> list[dict]:
+    """从 wire 响应中提取 budget_exhausted 说明（兼容文本/structured 两种承载）。"""
+    flags = []
+    for text in out["texts"]:
+        if text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict) and parsed.get("budget_exhausted"):
+                flags.append(parsed)
+    structured = out["structured"]
+    if isinstance(structured, dict):
+        for candidate in (structured, structured.get("result")):
+            if isinstance(candidate, dict) and candidate.get("budget_exhausted"):
+                flags.append(candidate)
+    return flags
+
+
+def test_wire_tools_call_accumulates_per_token():
+    """端到端：middleware 注入 token 上下文 → tools/call 按 token 累计并耗尽拦截。"""
+    secret = b"wire-total-budget-secret"
+    app, mcp_wire = gw.create_gateway_app(
+        profile="security", secret=secret, budget_bytes=100000,
+        session_total_budget_bytes=2000, bind_workspace=False,
+    )
+
+    @mcp_wire.tool()
+    def wire_blob() -> dict:
+        # dict 返回：FastMCP 不生成严格输出 schema，替换 payload 可原样过 wire
+        return {"result": "p" * 800}
+
+    holder = {}
+    thread = threading.Thread(target=_run_uvicorn, args=(app, holder), daemon=True)
+    thread.start()
+    port = _wait_port(holder)
+    try:
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        # 同一 token 跨多次 stateless 请求复用（token 是累计身份）
+        token = gw.issue_token("harness", "callwarden", ttl_seconds=600, secret=secret)
+
+        async def _call_once() -> dict:
+            url = f"http://127.0.0.1:{port}/mcp"
+            headers = {"Authorization": f"Bearer {token}"}
+            async with streamablehttp_client(url, headers=headers) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    result = await session.call_tool("wire_blob", {})
+                    texts = [c.text for c in result.content if hasattr(c, "text")]
+                    return {"texts": texts, "structured": result.structuredContent}
+
+        exhausted = None
+        for _ in range(6):
+            out = asyncio.run(_call_once())
+            flags = _wire_budget_flags(out)
+            if flags:
+                exhausted = flags[0]
+                break
+            # 未耗尽：正常返回 blob 数据，不携带任何预算说明
+            assert not any("budget_exhausted" in t for t in out["texts"])
+        assert exhausted is not None, "wire 层总量预算未触发"
+        assert exhausted["limit_bytes"] == 2000
+        assert exhausted["used_bytes"] >= 2000
+    finally:
+        server = holder.get("server")
+        if server is not None:
+            server.should_exit = True
+        thread.join(timeout=10)

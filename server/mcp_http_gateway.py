@@ -8,7 +8,8 @@
           → FastMCP streamable HTTP（stateless + JSON 响应，路径 /mcp）
             → 工具函数（server/tools/*，注册面受 CALLWARDEN_MCP_TOOL_PROFILE 控制）
               → route_rpc（server/daemon_client.py，写操作幂等、workspace 权威注入）
-                → install_response_budget 响应预算出口（tools/call 包装，超限截断）
+                → install_response_budget 响应预算出口（tools/call 包装：
+                  per-call 超限截断 + 按 token 累计总量 fail-closed）
                   → daemon RPC（mTLS，上游凭据只存在于网关进程，不进沙箱）
 
 环境变量：
@@ -16,6 +17,10 @@
     CALLWARDEN_MCP_GATEWAY_PORT           监听端口，默认 8765
     CALLWARDEN_MCP_TOOL_PROFILE           core | graph | security | all，默认 all
     CALLWARDEN_MCP_RESPONSE_BUDGET_BYTES  单次 tools/call 响应预算字节数，默认 262144
+    CALLWARDEN_MCP_SESSION_TOTAL_BUDGET_BYTES
+                                          单个 Bearer token 累计响应预算字节数，
+                                          默认 2097152（= per-call 256KB × 8）；
+                                          设为 0 或负数关闭总量预算层
     CALLWARDEN_MCP_GATEWAY_SECRET         HMAC 密钥（base64 或原文）；
                                           缺省时使用/生成 ~/.callwarden/mcp_gateway_secret
 """
@@ -24,11 +29,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextvars
 import hashlib
 import hmac
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -46,6 +53,8 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_PROFILE = "all"
 DEFAULT_RESPONSE_BUDGET_BYTES = 262144
+DEFAULT_SESSION_TOTAL_BUDGET_BYTES = 2097152  # = per-call 256KB × 8
+SESSION_TOTAL_BUDGET_ENV = "CALLWARDEN_MCP_SESSION_TOTAL_BUDGET_BYTES"
 DEFAULT_TOKEN_TTL_SECONDS = 3600
 DEFAULT_PROFILE_ENV = "CALLWARDEN_MCP_TOOL_PROFILE"
 MCP_PATH = "/mcp"
@@ -255,50 +264,204 @@ def make_token_verifier(secret: bytes | str) -> Callable[[str], tuple[bool, Opti
 
 
 # ---------------------------------------------------------------------------
-# 响应预算出口：tools/call 的统一出口包装。
+# 响应预算出口：tools/call 的统一出口包装，两层独立预算：
+#   1) per-call（max_bytes）：单次工具调用结果序列化超过预算即 fail-closed，
+#      不返回超限数据，改为返回预算说明 + 截断预览；
+#   2) 总量（SessionBudgetTracker）：按 Bearer token 累计该客户端所有
+#      tools/call 响应的序列化字节，达到上限后后续调用直接 budget_exhausted
+#      （不执行工具、不返回数据），防止多轮大响应撑爆 harness 的 prompt context。
 # 任务描述所称的 enforce_budget 在现有 daemon_client.py 中并不存在（调研
-# 结论），此处按同一语义在网关出口落地：单次工具调用结果序列化超过预算
-# 即 fail-closed，不返回超限数据，改为返回预算说明 + 截断预览。
+# 结论），此处按同一语义在网关出口落地。
 # ---------------------------------------------------------------------------
+
+# 当前请求的客户端身份 (token 原文, exp)：BearerAuthMiddleware 校验通过后
+# 设置、请求结束复位，tools/call 预算出口读取。stateless 网关下每个请求
+# 独立任务上下文，contextvar 天然请求级隔离；None 表示无认证上下文
+# （如单测直调 call_tool），此时不做总量累计。
+_current_client_token: contextvars.ContextVar = contextvars.ContextVar(
+    "callwarden_mcp_client_token", default=None
+)
+
+# tracker 惰性清理参数：条目数超过阈值时，删除已过期（exp 已过）或长期
+# 不活跃的 token 条目，防止 token 换发导致 dict 无界增长。
+_TRACKER_PRUNE_THRESHOLD = 4096
+_TRACKER_ENTRY_TTL_SECONDS = 86400.0
+
+
+class SessionBudgetTracker:
+    """按 Bearer token 累计 tools/call 响应序列化字节总量的进程内计数器。
+
+    并发语义（设计要求，审阅注意）：
+    - stateless 设计下 token 是唯一稳定的客户端标识：key 为 token 的
+      sha256（不保留原文，降低内存驻留敏感面），token 换发/失效产生新
+      key 即自然重置；计数器是进程内 dict，网关重启归零——总量预算是
+      单进程生命周期内的硬上限，不是持久化配额；
+    - dict 读写由 threading.Lock 保护：uvicorn 事件循环内的并发请求、
+      工具在线程池执行时，check-then-act（查是否耗尽 → 累加）不丢更新；
+    - 条目惰性清理：仅当 dict 超过 _TRACKER_PRUNE_THRESHOLD 时触发，
+      删除 exp 已过或超过 _TRACKER_ENTRY_TTL_SECONDS 不活跃的条目。
+    """
+
+    def __init__(self, limit_bytes: int):
+        if limit_bytes <= 0:
+            raise ValueError(
+                f"E_MCP_TOTAL_BUDGET: limit_bytes 必须为正整数，得到 {limit_bytes}"
+            )
+        self.limit_bytes = limit_bytes
+        # key = sha256(token) -> [used_bytes, exp, last_seen]
+        self._used: dict[str, list] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def token_key(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def usage(self, token: str) -> int:
+        key = self.token_key(token)
+        with self._lock:
+            entry = self._used.get(key)
+            return entry[0] if entry else 0
+
+    def is_exhausted(self, token: str) -> tuple[bool, int, int]:
+        """返回 (是否已达总量上限, used_bytes, limit_bytes)。"""
+        used = self.usage(token)
+        return used >= self.limit_bytes, used, self.limit_bytes
+
+    def record(self, token: str, nbytes: int, exp: Optional[float] = None) -> int:
+        """累加一次 tools/call 响应的序列化字节，返回该 token 的累计值。"""
+        if nbytes <= 0:
+            return self.usage(token)
+        key = self.token_key(token)
+        now = time.time()
+        with self._lock:
+            entry = self._used.get(key)
+            if entry is None:
+                entry = [0, exp, now]
+                self._used[key] = entry
+            entry[0] += nbytes
+            entry[2] = now
+            if exp is not None:
+                entry[1] = exp
+            self._prune_locked(now)
+            return entry[0]
+
+    def _prune_locked(self, now: float) -> None:
+        if len(self._used) <= _TRACKER_PRUNE_THRESHOLD:
+            return
+        stale = [
+            key for key, entry in self._used.items()
+            if (entry[1] is not None and entry[1] < now)
+            or (now - entry[2] > _TRACKER_ENTRY_TTL_SECONDS)
+        ]
+        for key in stale:
+            del self._used[key]
+
+
+def _streaming_serialize(result: Any, max_bytes: int) -> tuple[bool, int, str]:
+    """iterencode 流式序列化：超过 max_bytes 立即中止，不再先完整 dumps。
+
+    返回 (exceeded, observed_bytes, preview)：
+    - exceeded=False：observed_bytes 为完整序列化字节数（与
+      len(json.dumps(result, ensure_ascii=False, default=str).encode("utf-8"))
+      逐字节一致），preview 为 ""；
+    - exceeded=True：序列化在跨过 max_bytes 的分片处中止，observed_bytes
+      为已观察字节（真实总量的下界，恒 > max_bytes），preview 为截断到
+      max_bytes 的预览文本。超大响应不再要求先在内存中构建完整 JSON
+      字符串，单分片成本受限于最大叶子值而非整个序列化结果。
+    """
+    parts: list[str] = []
+    observed = 0
+    emitted = 0
+    encoder = json.JSONEncoder(ensure_ascii=False, default=str).iterencode(result)
+    for chunk in encoder:
+        size = len(chunk.encode("utf-8"))
+        observed += size
+        if observed > max_bytes:
+            allow = max_bytes - emitted
+            if allow > 0:
+                # 按 UTF-8 字节边界截断当前分片，保证预览不超预算
+                truncated = chunk.encode("utf-8")[:allow].decode(
+                    "utf-8", errors="ignore"
+                )
+                parts.append(truncated)
+            return True, observed, "".join(parts)
+        parts.append(chunk)
+        emitted = observed
+    return False, observed, ""
 
 
 def enforce_budget(result: Any, max_bytes: int) -> tuple[Any, dict]:
-    """响应预算检查：未超限原样返回；超限替换为预算说明（含截断预览）。
+    """per-call 响应预算检查：未超限原样返回；超限替换为预算说明（含截断预览）。
 
     FastMCP.call_tool 返回 (unstructured_contents, structured_result) 二元组，
     超限时保持该形状：unstructured 换成单条预算说明 TextContent，
     structured 换成预算信息 dict（fail-closed，不返回超限数据）。
+
+    info["response_bytes"] 为实际送达客户端的响应序列化字节数（超限时为
+    替换说明的体积），供总量预算层累计。
     """
-    raw = json.dumps(result, ensure_ascii=False, default=str).encode("utf-8")
-    info = {
-        "budget_bytes": max_bytes,
-        "actual_bytes": len(raw),
-        "exceeded": len(raw) > max_bytes,
-    }
-    if not info["exceeded"]:
+    exceeded, observed, preview = _streaming_serialize(result, max_bytes)
+    if not exceeded:
+        info = {
+            "budget_bytes": max_bytes,
+            "actual_bytes": observed,
+            "exceeded": False,
+            "response_bytes": observed,
+        }
         return result, info
-    preview = raw[: max_bytes].decode("utf-8", errors="replace")
     budget_payload = {
         "budget_exceeded": True,
         "budget_bytes": max_bytes,
-        "actual_bytes": len(raw),
+        "actual_bytes": observed,
         "preview": preview,
     }
     message = json.dumps(budget_payload, ensure_ascii=False)
     replacement = ([TextContent(type="text", text=message)], budget_payload)
+    info = {
+        "budget_bytes": max_bytes,
+        "actual_bytes": observed,
+        "exceeded": True,
+        "response_bytes": len(message.encode("utf-8")),
+    }
     return replacement, info
 
 
-def install_response_budget(mcp: FastMCP, max_bytes: int) -> None:
+def install_response_budget(
+    mcp: FastMCP,
+    max_bytes: int,
+    tracker: Optional[SessionBudgetTracker] = None,
+) -> None:
     """在 ToolManager.call_tool 出口安装预算包装（tools/call 统一出口）。
 
     FastMCP 在 __init__ 阶段已把 self.call_tool 的引用注册进低层 Server，
     因此包装点下移到 ToolManager.call_tool（运行时经实例属性查找，包装生效）。
+
+    tracker 非 None 时启用总量层：请求经 BearerAuthMiddleware 校验后携带
+    客户端 token 上下文，达到总量上限的 token 后续 tools/call 直接返回
+    budget_exhausted（不执行工具、不返回数据）；per-call 与总量两层独立
+    生效，互不替代。tracker 为 None 时仅启用 per-call 层（既有行为）。
     """
     tool_manager = mcp._tool_manager
     original_call_tool = tool_manager.call_tool
 
     async def call_tool_with_budget(name, arguments, context=None, convert_result=False):
+        client = _current_client_token.get()
+        token, exp = client if client is not None else (None, None)
+        if tracker is not None and token:
+            exhausted, used, limit = tracker.is_exhausted(token)
+            if exhausted:
+                logger.warning(
+                    "MCP 网关总量预算耗尽：tool=%s used=%d limit=%d（fail-closed）",
+                    name, used, limit,
+                )
+                payload = {
+                    "budget_exhausted": True,
+                    "used_bytes": used,
+                    "limit_bytes": limit,
+                    "tool": name,
+                }
+                message = json.dumps(payload, ensure_ascii=False)
+                return ([TextContent(type="text", text=message)], payload)
         result = await original_call_tool(
             name, arguments, context=context, convert_result=convert_result
         )
@@ -308,6 +471,8 @@ def install_response_budget(mcp: FastMCP, max_bytes: int) -> None:
                 "MCP 网关响应预算超限：tool=%s actual=%d budget=%d（已截断）",
                 name, info["actual_bytes"], info["budget_bytes"],
             )
+        if tracker is not None and token:
+            tracker.record(token, info["response_bytes"], exp)
         return budgeted
 
     tool_manager.call_tool = call_tool_with_budget
@@ -424,7 +589,15 @@ class BearerAuthMiddleware:
             "project": payload.get("project"),
             "exp": payload.get("exp"),
         }
-        await self.app(scope, receive, send)
+        # 把客户端 token 注入请求级上下文，供 tools/call 总量预算出口
+        # 按 token 累计（见 SessionBudgetTracker）；请求结束复位防串号。
+        token = authorization[7:].strip() if authorization[:7].lower() == "bearer " else ""
+        token_ctx = _current_client_token.set((token, payload.get("exp"))) if token else None
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if token_ctx is not None:
+                _current_client_token.reset(token_ctx)
 
 
 async def _health_endpoint(request):
@@ -438,19 +611,32 @@ def create_gateway_app(
     profile: Optional[str] = None,
     secret: bytes | str | None = None,
     budget_bytes: int = DEFAULT_RESPONSE_BUDGET_BYTES,
+    session_total_budget_bytes: Optional[int] = None,
     workspace_root: Optional[str] = None,
     bind_workspace: bool = True,
 ) -> tuple[Any, FastMCP]:
     """组装网关 ASGI app：(wrapped_app, fastmcp)。
 
     步骤：FastMCP(stateless + JSON) → register_all 注册全量工具面 →
-    apply_profile 裁剪 → install_response_budget 预算出口 →
-    streamable_http_app + /health → BearerAuthMiddleware 包裹。
+    apply_profile 裁剪 → install_response_budget 预算出口（per-call +
+    按 token 累计总量两层）→ streamable_http_app + /health →
+    BearerAuthMiddleware 包裹。
+
+    session_total_budget_bytes 为 None 时解析环境变量
+    CALLWARDEN_MCP_SESSION_TOTAL_BUDGET_BYTES（缺省 2097152）；设为 0 或
+    负数关闭总量预算层（仅保留 per-call 层）。
 
     bind_workspace=False 供单测使用：跳过 daemon workspace 绑定（不产生
     daemon 侧 register 副作用）。
     """
     resolved_profile = normalize_profile(profile or os.environ.get(DEFAULT_PROFILE_ENV, DEFAULT_PROFILE))
+    if session_total_budget_bytes is None:
+        session_total_budget_bytes = int(
+            os.environ.get(SESSION_TOTAL_BUDGET_ENV, str(DEFAULT_SESSION_TOTAL_BUDGET_BYTES))
+        )
+    tracker = None
+    if session_total_budget_bytes and session_total_budget_bytes > 0:
+        tracker = SessionBudgetTracker(session_total_budget_bytes)
     mcp = FastMCP(
         "callwarden-gateway",
         host=host,
@@ -479,7 +665,7 @@ def create_gateway_app(
 
     register_all(mcp)
     apply_profile(mcp, resolved_profile)
-    install_response_budget(mcp, budget_bytes)
+    install_response_budget(mcp, budget_bytes, tracker=tracker)
 
     app: Starlette = mcp.streamable_http_app()
     app.router.routes.append(Route(HEALTH_PATH, endpoint=_health_endpoint))
@@ -502,6 +688,10 @@ def main(argv: Optional[list[str]] = None) -> None:
         "--budget-bytes", type=int,
         default=int(os.environ.get("CALLWARDEN_MCP_RESPONSE_BUDGET_BYTES", str(DEFAULT_RESPONSE_BUDGET_BYTES))),
     )
+    parser.add_argument(
+        "--session-total-budget-bytes", type=int,
+        default=int(os.environ.get(SESSION_TOTAL_BUDGET_ENV, str(DEFAULT_SESSION_TOTAL_BUDGET_BYTES))),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -522,10 +712,13 @@ def main(argv: Optional[list[str]] = None) -> None:
         port=args.port,
         profile=args.profile,
         budget_bytes=args.budget_bytes,
+        session_total_budget_bytes=args.session_total_budget_bytes,
     )
     logger.info(
-        "MCP HTTP 网关启动：http://%s:%d%s profile=%s budget_bytes=%d",
+        "MCP HTTP 网关启动：http://%s:%d%s profile=%s budget_bytes=%d "
+        "session_total_budget_bytes=%d",
         args.host, args.port, MCP_PATH, args.profile, args.budget_bytes,
+        args.session_total_budget_bytes,
     )
     import uvicorn
 
