@@ -1,0 +1,33 @@
+{
+  "task_id": "T-1795513761767-d77a6c10 / T-1795513761922-e0b4ca78",
+  "parent_task_id": "T-1795466935294-3433ca6c",
+  "phase": "fix1 (Phase 3 复审 BLOCKED 整改)",
+  "executor": "executor-alm-3433ca6c-inst",
+  "session": "sess-executor-alm-3433ca6c-fix1",
+  "evidence": [
+    {
+      "path": "AC-06.md",
+      "desc": "CARD-R2 证据汇总：Python 7 文件审计回归命令/结果/sha256 + Phase 2 失效引用更正说明",
+      "sha256": "9291124de7dbddc7daf49553267b31b53302bd93fd4591b91178ffeb7c77a89e",
+      "bytes": 2717
+    },
+    {
+      "path": "AC-06-python-regression.log",
+      "desc": "CARD-R2 step0：主仓 7 文件 Python 审计回归完整日志（237 passed, 2 skipped, EXIT=0，含统计行）",
+      "sha256": "f0b526a25818649d5f9e5f50ebf860a3505d1f6f6b38249a4fa718edc0c2bf55",
+      "bytes": 786
+    },
+    {
+      "path": "../_fix1_test_focused2.log",
+      "desc": "CARD-R1 step3：新增 2 单测（open-failure / db-unconfigured）各 1 passed（blocker 夹具版）",
+      "sha256": "ccf54e280ce46ae72098186a8b911502040c383a904d33dda67be52abab14560",
+      "bytes": 86070
+    },
+    {
+      "path": "../_fix1_test_daemon_full.log",
+      "desc": "CARD-R1 step3：全量 cargo test daemon:: --lib（1639 passed; 0 failed; 0 ignored, EXIT=0）",
+      "sha256": "b8c122dc6c49cec57aed81136d8d55c8d51753397a07e917d12402d8e07b2cd8",
+      "bytes": 205413
+    }
+  ]
+}

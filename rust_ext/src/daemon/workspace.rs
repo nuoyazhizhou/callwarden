@@ -97,6 +97,10 @@ use super::replicator::{
     _daemon_parse_and_publish, daemon_handle_connect, daemon_handle_refresh, RefreshMessage,
     SessionStore,
 };
+use super::session_store::{
+    default_log_path, max_file_bytes_from_env, max_rotated_files_from_env, SessionAdmissionLimiter,
+    SessionEvent, SessionEventKind, SessionEventLog,
+};
 use super::snapshot_guard::evaluate_generation_protection;
 use super::staging_log::{StagingEntry, StagingLog};
 
@@ -1935,6 +1939,9 @@ pub struct WorkspaceDaemonState {
     pub audit_db_path: PathBuf,
     /// 分块全仓 refresh 的短生命周期规划状态。
     refresh_plans: HashMap<String, RefreshPlanAccumulator>,
+    /// 会话准入上限覆盖（测试 seam）：Some(n) 时跳过环境变量直接生效；
+    /// None = 按 `CALLWARDEN_SESSION_MAX_ACTIVE_SESSIONS`（SessionAdmissionLimiter::from_env）。
+    session_admission_limit_override: Option<usize>,
 }
 
 /// per-workspace 资源（懒初始化，缓存于 WorkspaceDaemonState.resources）
@@ -1960,6 +1967,11 @@ pub struct WorkspaceResources {
     pub parser_metrics: Arc<ParserMetrics>,
     /// P0-4 R3: parse retry log（持久化失败 generation，daemon 重启后重放）
     pub parse_retry_log: Arc<ParseRetryLog>,
+    /// durable session event log（session_events.log，append-only + 轮转 + 回放）。
+    ///
+    /// 会话关键事件（注册/激活/切换/结束）追加落盘；准入屏障据此回放得到
+    /// 活动会话视图——daemon 重启后无需额外状态即可恢复视图并继续判定。
+    pub session_event_log: Arc<SessionEventLog>,
 }
 
 impl WorkspaceDaemonState {
@@ -1974,6 +1986,7 @@ impl WorkspaceDaemonState {
             codegraph_db_path_template: String::new(),
             audit_db_path: PathBuf::new(),
             refresh_plans: HashMap::new(),
+            session_admission_limit_override: None,
         }
     }
 
@@ -1989,6 +2002,7 @@ impl WorkspaceDaemonState {
             codegraph_db_path_template: String::new(),
             audit_db_path: PathBuf::new(),
             refresh_plans: HashMap::new(),
+            session_admission_limit_override: None,
         }
     }
 
@@ -2021,6 +2035,16 @@ impl WorkspaceDaemonState {
     /// 空表示未配置（fail-closed 由 `audit_log_handlers` 兜底）。
     pub fn with_audit_db_path(mut self, path: PathBuf) -> Self {
         self.audit_db_path = path;
+        self
+    }
+
+    /// 注入会话准入上限覆盖（测试 seam）。
+    ///
+    /// `Some(n)`：`workspace.connect` 的准入屏障直接使用 n（跳过环境变量），
+    /// 供测试在不污染进程级环境变量的前提下验证超限拒绝；
+    /// `None`（默认）：按 `CALLWARDEN_SESSION_MAX_ACTIVE_SESSIONS` 读取。
+    pub fn with_session_admission_limit(mut self, limit: Option<usize>) -> Self {
+        self.session_admission_limit_override = limit;
         self
     }
 
@@ -2136,6 +2160,23 @@ impl WorkspaceDaemonState {
             )
         })?;
 
+        // durable session event log（session_events.log，append-only + 轮转 + 回放）：
+        // 磁盘空间上限与轮转数量由环境变量配置（CALLWARDEN_SESSION_LOG_MAX_BYTES /
+        // CALLWARDEN_SESSION_LOG_MAX_FILES），未配置时用模块默认值（8 MiB / 8 个）。
+        let session_event_log_path = default_log_path(&ws_dir);
+        let session_event_log =
+            SessionEventLog::with_limits(
+                &session_event_log_path,
+                max_file_bytes_from_env(),
+                max_rotated_files_from_env(),
+            )
+            .map_err(|e| {
+                DaemonRpcError::new(
+                    "resources_init_failed",
+                    format!("SessionEventLog::with_limits 失败: {}", e),
+                )
+            })?;
+
         let resources = Arc::new(WorkspaceResources {
             session_store: Arc::new(session_store),
             cas_store: Arc::clone(&local_cas_store),
@@ -2143,6 +2184,7 @@ impl WorkspaceDaemonState {
             staging_log: Arc::new(staging_log),
             parser_metrics,
             parse_retry_log: Arc::new(parse_retry_log),
+            session_event_log: Arc::new(session_event_log),
         });
         self.resources
             .insert(workspace_instance_id.to_string(), Arc::clone(&resources));
@@ -2501,6 +2543,36 @@ impl DaemonStateExt for WorkspaceDaemonState {
         // 懒初始化 per-workspace 资源（SessionStore / CasStore / StagingLog）
         let resources = self.get_or_init_resources(workspace_instance_id)?;
 
+        // ---- admission barrier：回放 durable session log 得到活动会话视图，超限拒绝 ----
+        // 视图来自持久化事件日志：daemon 重启后无需额外状态即可恢复会话视图，
+        // 并继续执行准入判定（重启恢复）。上限 0 表示不限制。
+        let limiter = match self.session_admission_limit_override {
+            Some(limit) => SessionAdmissionLimiter::new(limit),
+            None => SessionAdmissionLimiter::from_env(),
+        };
+        let view = resources.session_event_log.replay().map_err(|e| {
+            DaemonRpcError::internal_error(format!("session event log replay 失败: {}", e))
+        })?;
+        if let Err(err) = limiter.check(&view, workspace_instance_id) {
+            // 结构化拒绝：稳定错误码 E_SESSION_ADMISSION_LIMIT + workspace/active_sessions/limit
+            return Err(DaemonRpcError::new(err.code, err.to_json().to_string()));
+        }
+
+        // 记录 connect 前的活动会话（用于区分首次 Activate 与后续 Switch）
+        let prev_active: Option<(String, i64)> = {
+            let conn = resources.session_store.conn().lock().unwrap();
+            conn.query_row(
+                "SELECT active_session_id, active_session_epoch \
+                 FROM workspace_active_session WHERE workspace_id = ?1",
+                params![workspace_id_num],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("查询 active session 失败: {}", e))
+            })?
+        };
+
         // 调用 daemon_handle_connect（session epoch CAS）
         let result = daemon_handle_connect(
             peer.uid,
@@ -2509,6 +2581,51 @@ impl DaemonStateExt for WorkspaceDaemonState {
             resources.session_store.conn(),
         )
         .map_err(|e| DaemonRpcError::new("connect_failed", e.message))?;
+
+        // ---- durable session events：注册/激活/切换事件追加落盘（fail-closed）----
+        // 事件写失败时 connect 返回错误：准入屏障以该日志为权威视图，静默丢事件
+        // 会让视图少计活动会话、屏障被绕过。epoch 已在 SQLite 提交，客户端重试
+        // connect 会以 Switch 事件自愈。
+        let session_epoch = result
+            .get("session_epoch")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let mut register = SessionEvent::new(
+            workspace_instance_id,
+            agent_session_id,
+            session_epoch,
+            SessionEventKind::Register,
+        );
+        resources
+            .session_event_log
+            .append(&mut register)
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("session event append 失败: {}", e))
+            })?;
+        let mut activation = match &prev_active {
+            Some((prev_session_id, _)) => {
+                // 旧活动会话被撤销（daemon_handle_connect step 1）→ 切换事件
+                SessionEvent::new(
+                    workspace_instance_id,
+                    agent_session_id,
+                    session_epoch,
+                    SessionEventKind::Switch,
+                )
+                .with_detail(format!("from:{}", prev_session_id))
+            }
+            None => SessionEvent::new(
+                workspace_instance_id,
+                agent_session_id,
+                session_epoch,
+                SessionEventKind::Activate,
+            ),
+        };
+        resources
+            .session_event_log
+            .append(&mut activation)
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("session event append 失败: {}", e))
+            })?;
 
         // 在返回里附上 workspace_instance_id（与 Python 一致）
         let mut result = result;
@@ -2519,6 +2636,126 @@ impl DaemonStateExt for WorkspaceDaemonState {
             );
         }
         Ok(result)
+    }
+
+    /// 结束当前活动会话（`workspace.session.end`）。
+    ///
+    /// 会话生命周期的显式结束路径（此前只有 connect 的隐式撤销，无结束事件）：
+    /// - 仅允许结束当前 active session（否则 `session_not_active`，与 file.delete
+    ///   的 stale_session 校验语义一致）；
+    /// - SQLite：`agent_sessions.revoked_at` 置为 now + 删除 `workspace_active_session` 行；
+    /// - durable log：追加 End 事件（回放视图据此清除活动会话，准入屏障放行后续接入）。
+    fn handle_workspace_session_end(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        // ACL 校验（owner_uid 匹配 + 非 archived）
+        let workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
+        let agent_session_id = require_str_param(params, "agent_session_id")?;
+        let workspace_id_num: i64 = workspace
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
+
+        let resources = self.get_or_init_resources(workspace_instance_id)?;
+
+        // 校验：只能结束当前活动会话
+        let active: Option<(String, i64)> = {
+            let conn = resources.session_store.conn().lock().unwrap();
+            conn.query_row(
+                "SELECT active_session_id, active_session_epoch \
+                 FROM workspace_active_session WHERE workspace_id = ?1",
+                params![workspace_id_num],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("查询 active session 失败: {}", e))
+            })?
+        };
+        let (active_session_id, active_epoch) = active.ok_or_else(|| {
+            DaemonRpcError::new(
+                "session_not_active",
+                format!("workspace {} 没有 active session", workspace_instance_id),
+            )
+        })?;
+        if active_session_id != agent_session_id {
+            return Err(DaemonRpcError::new(
+                "session_not_active",
+                format!(
+                    "session {} 不是 workspace {} 的活动会话（当前: {}）",
+                    agent_session_id, workspace_instance_id, active_session_id
+                ),
+            ));
+        }
+
+        // SQLite：撤销 + 清除 active 行（事务，与 daemon_handle_connect 的事务纪律一致）
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        {
+            let conn = resources.session_store.conn().lock().unwrap();
+            conn.execute_batch("BEGIN IMMEDIATE").map_err(|e| {
+                DaemonRpcError::new("session_end_failed", format!("BEGIN IMMEDIATE 失败: {}", e))
+            })?;
+            let tx_result = (|| -> Result<(), rusqlite::Error> {
+                conn.execute(
+                    "UPDATE agent_sessions SET revoked_at = ?1 \
+                     WHERE workspace_id = ?2 AND session_id = ?3 AND revoked_at IS NULL",
+                    params![now, workspace_id_num, agent_session_id],
+                )?;
+                conn.execute(
+                    "DELETE FROM workspace_active_session WHERE workspace_id = ?1",
+                    params![workspace_id_num],
+                )?;
+                Ok(())
+            })();
+            match tx_result {
+                Ok(()) => {
+                    if let Err(e) = conn.execute_batch("COMMIT") {
+                        let _ = conn.execute_batch("ROLLBACK");
+                        return Err(DaemonRpcError::new(
+                            "session_end_failed",
+                            format!("COMMIT 失败: {}", e),
+                        ));
+                    }
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    return Err(DaemonRpcError::new(
+                        "session_end_failed",
+                        format!("session end SQL 失败: {}", e),
+                    ));
+                }
+            }
+        }
+
+        // durable log：End 事件（fail-closed：写失败返回错误。此时 SQLite 已结束会话，
+        // 但视图会保守地多计活动会话——准入方向 fail-closed，不会放行超额会话）
+        let mut end_event = SessionEvent::new(
+            workspace_instance_id,
+            agent_session_id,
+            active_epoch,
+            SessionEventKind::End,
+        );
+        resources
+            .session_event_log
+            .append(&mut end_event)
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("session event append 失败: {}", e))
+            })?;
+
+        Ok(serde_json::json!({
+            "workspace_instance_id": workspace_instance_id,
+            "session_id": agent_session_id,
+            "session_epoch": active_epoch,
+            "ended_at": now,
+        }))
     }
 
     fn handle_workspace_file_refresh(
@@ -6865,6 +7102,12 @@ mod tests {
             staging_log: std::sync::Arc::new(staging_log),
             parser_metrics,
             parse_retry_log: parse_retry_log.clone(),
+            session_event_log: std::sync::Arc::new(
+                crate::daemon::session_store::SessionEventLog::new(
+                    tmp.path().join("session_events.log"),
+                )
+                .unwrap(),
+            ),
         });
         state.resources.insert(ws_id.clone(), resources);
 
@@ -7083,6 +7326,12 @@ mod tests {
             staging_log: Arc::new(staging_log),
             parser_metrics,
             parse_retry_log: parse_retry_log.clone(),
+            session_event_log: Arc::new(
+                crate::daemon::session_store::SessionEventLog::new(
+                    tmp.path().join("session_events.log"),
+                )
+                .unwrap(),
+            ),
         });
         state.resources.insert(ws_id.clone(), resources);
 
@@ -7363,6 +7612,343 @@ mod tests {
         // 资源应已缓存
         assert!(state.resources.contains_key(&ws_id));
         assert_eq!(state.resources.len(), 1);
+    }
+
+    // ---- durable session log + admission barrier 集成测试 ----
+
+    #[test]
+    fn test_connect_appends_register_activate_switch_events() {
+        // connect 应把 注册/激活/切换 事件追加到 durable log，回放可重建会话视图
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let r1 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+        );
+        assert_eq!(r1["ok"], true, "首次 connect 应成功: {:?}", r1);
+        let r2 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-2"
+            }),
+        );
+        assert_eq!(r2["ok"], true, "重连应成功: {:?}", r2);
+
+        let resources = state.resources.get(&ws_id).unwrap().clone();
+        let events = resources.session_event_log.read_all().unwrap();
+        let kinds: Vec<crate::daemon::session_store::SessionEventKind> =
+            events.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                crate::daemon::session_store::SessionEventKind::Register,
+                crate::daemon::session_store::SessionEventKind::Activate,
+                crate::daemon::session_store::SessionEventKind::Register,
+                crate::daemon::session_store::SessionEventKind::Switch,
+            ],
+            "首次接入=Register+Activate，重连=Register+Switch"
+        );
+        // Switch 的 detail 记录被撤销的来源会话
+        assert_eq!(events[3].detail.as_deref(), Some("from:session-1"));
+        assert_eq!(events[0].workspace_id, ws_id);
+        assert_eq!(events[0].session_epoch, 1);
+        assert_eq!(events[3].session_epoch, 2);
+
+        // 回放视图：session-2 活动，session-1 已被切换撤销
+        let view = resources.session_event_log.replay().unwrap();
+        let active = view.active.get(&ws_id).expect("回放视图应有活动会话");
+        assert_eq!(active.session_id, "session-2");
+        assert_eq!(active.session_epoch, 2);
+        let sessions = view.sessions.get(&ws_id).unwrap();
+        assert!(sessions.get("session-1").unwrap().ended);
+        assert!(!sessions.get("session-2").unwrap().ended);
+    }
+
+    #[test]
+    fn test_admission_barrier_rejects_new_session_over_limit() {
+        // 上限 1：已有活动会话时新 connect 被结构化拒绝（E_SESSION_ADMISSION_LIMIT）；
+        // 显式结束当前会话后可再次接入
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state =
+            make_state_with_data_root(tmp.path()).with_session_admission_limit(Some(1));
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let r1 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+        );
+        assert_eq!(r1["ok"], true, "空视图时应放行: {:?}", r1);
+
+        let r2 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-2"
+            }),
+        );
+        assert_eq!(r2["ok"], false, "超限应被拒绝: {:?}", r2);
+        assert_eq!(r2["error"]["code"], "E_SESSION_ADMISSION_LIMIT");
+        let msg = r2["error"]["message"].as_str().expect("message 应为结构化 JSON");
+        assert!(msg.contains("\"active_sessions\":1"), "应携带活动会话数: {}", msg);
+        assert!(msg.contains("\"limit\":1"), "应携带配置上限: {}", msg);
+        assert!(msg.contains(&format!("\"workspace_id\":\"{}\"", ws_id)), "应携带 workspace: {}", msg);
+
+        // 显式结束活动会话 → 准入放行
+        let r3 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.session.end",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+        );
+        assert_eq!(r3["ok"], true, "session.end 应成功: {:?}", r3);
+
+        let r4 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-2"
+            }),
+        );
+        assert_eq!(r4["ok"], true, "结束后新会话应放行: {:?}", r4);
+        assert_eq!(r4["result"]["session_epoch"], 2);
+    }
+
+    #[test]
+    fn test_session_end_appends_end_event_and_clears_active() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let r1 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+        );
+        assert_eq!(r1["ok"], true);
+
+        let r2 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.session.end",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+        );
+        assert_eq!(r2["ok"], true, "session.end 应成功: {:?}", r2);
+        assert_eq!(r2["result"]["session_epoch"], 1);
+
+        // SQLite：active 行已清除，session 已撤销
+        let resources = state.resources.get(&ws_id).unwrap().clone();
+        let conn = resources.session_store.conn().lock().unwrap();
+        let active_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workspace_active_session WHERE workspace_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_count, 0, "active 行应已删除");
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM agent_sessions WHERE session_id = 'session-1'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert!(revoked_at.is_some(), "revoked_at 应已写入");
+        drop(conn);
+
+        // durable log：End 事件落盘，回放视图无活动会话
+        let events = resources.session_event_log.read_all().unwrap();
+        assert_eq!(
+            events.last().unwrap().kind,
+            crate::daemon::session_store::SessionEventKind::End,
+            "最后一条事件应为 End"
+        );
+        let view = resources.session_event_log.replay().unwrap();
+        assert!(view.active.get(&ws_id).is_none(), "回放视图应无活动会话");
+        assert!(view
+            .sessions
+            .get(&ws_id)
+            .unwrap()
+            .get("session-1")
+            .unwrap()
+            .ended);
+    }
+
+    #[test]
+    fn test_session_end_rejects_when_not_active() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let r1 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+        );
+        assert_eq!(r1["ok"], true);
+
+        // 非 active session 不能显式结束
+        let r2 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.session.end",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-other"
+            }),
+        );
+        assert_eq!(r2["ok"], false);
+        assert_eq!(r2["error"]["code"], "session_not_active");
+
+        // 未 connect 的 workspace 无 active session
+        let ws2 = register_ws(&mut state, peer.uid);
+        let r3 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.session.end",
+            &json!({
+                "workspace_instance_id": ws2,
+                "agent_session_id": "session-1"
+            }),
+        );
+        assert_eq!(r3["ok"], false);
+        assert_eq!(r3["error"]["code"], "session_not_active");
+    }
+
+    #[test]
+    fn test_session_view_recovered_from_log_after_restart() {
+        // 重启模拟：drop state 后以同一 data_root + 同一 registry.db 重建；
+        // 准入判定必须基于从持久化日志恢复的会话视图（不依赖进程内状态）。
+        // registry 用文件型 DB：进程内 registry 不持久，真实重启后 registry.db 仍在。
+        let tmp = tempfile::tempdir().unwrap();
+        let registry_db = tmp.path().join("registry.db");
+        let registry_db_path = registry_db.to_string_lossy().to_string();
+        let ws_id = {
+            let registry = WorkspaceRegistry::open(&registry_db_path).unwrap();
+            let mut state = WorkspaceDaemonState::with_data_root(
+                registry,
+                tmp.path().to_path_buf(),
+            )
+            .with_session_admission_limit(Some(1));
+            let peer = make_owner_peer();
+            let ws_id = register_ws(&mut state, peer.uid);
+            let r = dispatch(
+                &mut state,
+                make_owner_peer(),
+                "workspace.connect",
+                &json!({
+                    "workspace_instance_id": ws_id,
+                    "agent_session_id": "session-1"
+                }),
+            );
+            assert_eq!(r["ok"], true);
+            ws_id
+        }; // state drop = 进程退出；registry.db / workspace.db / session_events.log 均持久化
+
+        // 重启后新 state：从日志恢复视图 → session-1 仍活动 → 超限拒绝
+        let registry = WorkspaceRegistry::open(&registry_db_path).unwrap();
+        let mut state2 = WorkspaceDaemonState::with_data_root(
+            registry,
+            tmp.path().to_path_buf(),
+        )
+        .with_session_admission_limit(Some(1));
+        let peer = make_owner_peer();
+        let r1 = dispatch(
+            &mut state2,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-2"
+            }),
+        );
+        assert_eq!(r1["ok"], false, "重启后准入应基于恢复的视图: {:?}", r1);
+        assert_eq!(r1["error"]["code"], "E_SESSION_ADMISSION_LIMIT");
+
+        // 结束重启前遗留的活动会话 → 放行（SQLite 与日志在重启后均可用）
+        let r2 = dispatch(
+            &mut state2,
+            make_owner_peer(),
+            "workspace.session.end",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+        );
+        assert_eq!(r2["ok"], true, "重启后 session.end 应成功: {:?}", r2);
+
+        let r3 = dispatch(
+            &mut state2,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-2"
+            }),
+        );
+        assert_eq!(r3["ok"], true, "结束后重连应放行: {:?}", r3);
+        assert_eq!(r3["result"]["session_epoch"], 2);
+    }
+
+    #[test]
+    fn test_connect_default_limit_allows_reconnect() {
+        // 向后兼容：默认上限（8，或 env 未配置时的回退值）下连续重连不被准入拒绝
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        for i in 1..=3 {
+            let r = dispatch(
+                &mut state,
+                make_owner_peer(),
+                "workspace.connect",
+                &json!({
+                    "workspace_instance_id": ws_id,
+                    "agent_session_id": format!("session-{}", i)
+                }),
+            );
+            assert_eq!(r["ok"], true, "第 {} 次重连应放行（默认上限）: {:?}", i, r);
+            assert_eq!(r["result"]["session_epoch"], i);
+        }
     }
 
     // ---- handle_workspace_file_refresh 测试 ----

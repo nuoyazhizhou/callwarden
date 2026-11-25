@@ -244,7 +244,14 @@ class TestCli004Success:
 # =========================================================================
 
 class TestCli004AuthorityFailure:
-    """CLI-004 authority failure：伪造 workspace_instance_id 被 ACL 拒绝。"""
+    """CLI-004 authority failure：伪造 workspace_instance_id 被 ACL 拒绝。
+
+    安全取证#5（T-1795254396917-c1bf49c0）后，已认证 principal 携带的伪造
+    /未注册 instance 在 dispatch 层 resolve 阶段即 fail-closed，返回
+    E_PRINCIPAL_WORKSPACE_REQUIRED（FORBIDDEN 为可解析但未授权的相邻分支），
+    不再穿透到 handler 的 E_WORKSPACE_NOT_FOUND/E_WORKSPACE_NOT_OWNED。
+    断言候选同步纳入新码（仍要求必须抛异常，不放宽为接受成功）。
+    """
 
     def test_http_rpc_workspace_status_authority_failure(self, live_daemon):
         """workspace.status：伪造 workspace_id 返回 E_WORKSPACE_NOT_FOUND。"""
@@ -256,6 +263,7 @@ class TestCli004AuthorityFailure:
         assert getattr(ei.value, "code", "") in (
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
+            "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
         )
 
     def test_http_rpc_publish_authority_failure(self, live_daemon, tmp_path):
@@ -271,6 +279,7 @@ class TestCli004AuthorityFailure:
         assert getattr(ei.value, "code", "") in (
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
+            "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
         )
 
     def test_http_rpc_query_authority_failure(self, live_daemon):
@@ -286,6 +295,7 @@ class TestCli004AuthorityFailure:
         assert getattr(ei.value, "code", "") in (
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
+            "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
         )
 
     def test_http_rpc_query_stats_authority_failure(self, live_daemon):
@@ -298,6 +308,7 @@ class TestCli004AuthorityFailure:
         assert getattr(ei.value, "code", "") in (
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
+            "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
         )
 
     def test_http_rpc_snapshot_evict_authority_failure(self, live_daemon):
@@ -310,6 +321,7 @@ class TestCli004AuthorityFailure:
         assert getattr(ei.value, "code", "") in (
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
+            "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
         )
 
 

@@ -708,17 +708,27 @@ def _insert_event(conn, task_id, reason, actor="executor-1"):
 
 @_requires_fts5
 def test_session_fts_ensure_idempotent_and_backfills_old_rows():
-    """迁移幂等：重复执行不报错；建索引前已存在的数据回填后可检索。"""
+    """迁移幂等：重复执行不报错且不重填丢数据；建索引前历史数据回填后可检索。"""
     conn = _collab_conn()
     try:
         # 先写历史数据，再建索引 → 验证 rebuild 回填路径
         _insert_task(conn, "T-1", "Fix login failure")
+        _insert_task(conn, "T-0", "旧库历史行 upgrade backfill")
         _insert_event(conn, "T-1", "claimed by executor")
         assert ensure_session_fts_schema(conn) is True
         assert ensure_session_fts_schema(conn) is True  # 重复执行幂等
+        assert ensure_session_fts_schema(conn) is True  # 三次仍幂等
 
+        # 幂等只做 CREATE IF NOT EXISTS，不得清空已回填的历史数据
         assert [r["task_id"] for r in search_sessions(conn, "login")] == ["T-1"]
+        assert [r["task_id"] for r in search_sessions(conn, "backfill")] == ["T-0"]
         assert [r["task_id"] for r in search_messages(conn, "claimed")] == ["T-1"]
+
+        # 幂等之后再写入新行，触发器仍同步（不是只在首次建索引时有效）
+        _insert_task(conn, "T-2", "Fix logout timeout")
+        _insert_event(conn, "T-2", "reviewer blocked")
+        assert [r["task_id"] for r in search_sessions(conn, "logout")] == ["T-2"]
+        assert [r["task_id"] for r in search_messages(conn, "blocked")] == ["T-2"]
     finally:
         conn.close()
 
@@ -751,18 +761,23 @@ def test_session_fts_triggers_sync_insert_update_delete():
 
 @_requires_fts5
 def test_session_fts_chinese_english_hit_and_limit():
-    """中英文均可命中（unicode61 按分隔符切词）；limit 生效且片段带高亮标记。"""
+    """中英文均可命中；真实无空格中文标题的子串可检索；limit/highlight 生效。"""
     conn = _collab_conn()
     try:
         assert ensure_session_fts_schema(conn) is True
-        _insert_task(conn, "T-1", "修复 登录失败 问题", "认证模块")
+        # 真实标题普遍无空格：unicode61 无法切分，含 CJK 查询必须走 LIKE 子串路径
+        _insert_task(conn, "T-1", "修复会话检索中文分词问题", "认证模块")
         _insert_task(conn, "T-2", "login timeout 排查", "auth module")
-        _insert_task(conn, "T-3", "login 会话 过期", "session module")
+        _insert_task(conn, "T-3", "login 会话过期", "session module")
 
-        zh = search_sessions(conn, "登录失败")
-        assert [r["task_id"] for r in zh] == ["T-1"]
+        # CJK 子串命中（P1 回归）：修复/中文分词/检索 均为连续汉字中的子串
+        for query in ("修复", "中文分词", "会话检索", "检索中文"):
+            hits = [r["task_id"] for r in search_sessions(conn, query)]
+            assert hits == ["T-1"], (query, hits)
+        zh = search_sessions(conn, "中文分词")
         assert "[" in zh[0]["snippet"] and "]" in zh[0]["snippet"]
 
+        # 纯英文仍走 FTS 路径，bm25 + snippet + limit 保持
         en = search_sessions(conn, "login")
         assert {r["task_id"] for r in en} == {"T-2", "T-3"}
         assert len(search_sessions(conn, "login", limit=1)) == 1
@@ -770,6 +785,51 @@ def test_session_fts_chinese_english_hit_and_limit():
         combined = search_sessions_and_messages(conn, "login")
         assert len(combined["sessions"]) == 2
         assert combined["messages"] == []
+    finally:
+        conn.close()
+
+
+@_requires_fts5
+def test_session_fts_highlight_position_and_merged_limit():
+    """高亮片段定位到命中子串；合并查询面两段各自独立遵守 limit。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        _insert_task(conn, "T-1", "修复会话检索中文分词问题")
+        _insert_event(conn, "T-1", "修复中文分词失败")
+        _insert_event(conn, "T-1", "再次中文分词复测")
+
+        # CJK 子串高亮必须包住命中词本身，而非整段或其他位置
+        for query in ("中文分词", "检索中文", "修复"):
+            snip = search_sessions(conn, query)[0]["snippet"]
+            assert "[" + query + "]" in snip, (query, snip)
+
+        msg_snip = search_messages(conn, "分词失败")[0]["snippet"]
+        assert "[分词失败]" in msg_snip, msg_snip
+
+        merged = search_sessions_and_messages(conn, "中文", limit=1)
+        assert set(merged) == {"sessions", "messages"}
+        assert len(merged["sessions"]) == 1
+        assert len(merged["messages"]) == 1
+    finally:
+        conn.close()
+
+
+@_requires_fts5
+def test_session_fts_cjk_message_substring_and_like_escape():
+    """消息面 CJK 子串可命中；LIKE 降级路径中 % / _ 不当通配符（P4 回归）。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        _insert_task(conn, "T-1", "login")
+        _insert_event(conn, "T-1", "修复中文分词失败问题")
+        _insert_event(conn, "T-1", "literal 100%_done marker")
+
+        assert [r["task_id"] for r in search_messages(conn, "中文分词")] == ["T-1"]
+        assert [r["task_id"] for r in search_messages(conn, "分词失败")] == ["T-1"]
+        # %/_ 被转义为字面量：不应把两条消息都匹配回来
+        assert [r["task_id"] for r in search_messages(conn, "100%_done")] == ["T-1"]
+        assert search_messages(conn, "100%Xdone") == []
     finally:
         conn.close()
 

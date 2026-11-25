@@ -5,15 +5,24 @@
   - 消息 ← ``task_events``  协作事件流（reason / actor_identity / role / 状态迁移）
 
 索引与同步触发器由 ``db.schema.ensure_session_fts_schema`` 幂等维护
-（会话/消息 FTS5 外部内容表 + 插入/更新/删除触发器）。本模块只读：
-负责把用户输入转成安全的 MATCH 表达式、按 bm25 排序、用 ``snippet()``
-返回带高亮标记的片段。
+（会话/消息 FTS5 外部内容表 + 插入/更新/删除触发器）。本模块只读，
+即「既有 session 查询面」：上层 RPC/CLI 复用本模块的查询函数，无需新增
+MCP 工具。三个公共入口：
+  - ``search_sessions``      会话检索（title/description/creator）
+  - ``search_messages``      消息检索（reason/actor/role/status）
+  - ``search_sessions_and_messages``  两段合并视图（各段独立 limit）
+均支持 limit 与带 ``[ ]`` 高亮标记的片段返回。
 
-优雅降级：FTS5 未编译、索引缺失或 MATCH 语法异常时，回退 LIKE 子串匹配，
+路径选择：纯英文/数字走 FTS5 MATCH + bm25 排序 + ``snippet()``；
+含 CJK 的查询走 LIKE 子串路径（unicode61 不切分连续汉字，FTS 无法命中
+真实无空格中文标题的子串），高亮由 ``_manual_snippet`` 生成。
+
+优雅降级：FTS5 未编译、索引缺失或 MATCH 语法异常时同样回退 LIKE 子串匹配，
 调用方始终拿到结果列表而非异常（中英文子串均可命中）。
 
-调用链：search_sessions / search_messages → _fts_* → build_match_query
-        └─（异常/不可用）→ _like_*（LIKE 子串兜底）
+调用链：search_sessions / search_messages
+        ├─ 纯 ASCII → FTS5 MATCH（build_match_query）→ bm25 + snippet
+        └─ CJK / 异常 / 无索引 → _like_*（LIKE 子串兜底 + _manual_snippet）
 """
 
 from __future__ import annotations
@@ -34,7 +43,26 @@ SNIPPET_TOKENS = 16
 # FTS5 语法保留字符：直接剔除，避免用户输入被解释为操作符/列过滤
 _FTS_STRIP_RE = re.compile(r'["\'*:^(){}\[\]\-+~?\\]')
 
+# unicode61 只按分隔符切词，连续 CJK 会被并为单个 token，无法命中子串。
+# 含 CJK 的查询改走 LIKE 子串路径，保证真实无空格中文标题仍可检索。
+_CJK_RE = re.compile(
+    r'[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF'  # CJK 统一/扩展 A/兼容表意文字
+    r'\u3040-\u30FF\uAC00-\uD7AF]'               # 日文假名 / 韩文音节
+)
+
 _FTS_TABLES = ("sessions_fts", "messages_fts")
+
+
+def _has_cjk(text: str) -> bool:
+    """查询是否含 CJK 字符（unicode61 不切分 CJK，需 LIKE 子串路径）。"""
+    return bool(_CJK_RE.search(text or ""))
+
+
+def _like_pattern(query: str) -> str:
+    """构造 LIKE 模式并转义 %/_/\\，避免用户输入被当成通配符（宽松匹配）。"""
+    escaped = (query or "").strip()
+    escaped = escaped.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def _clamp_limit(limit: Any) -> int:
@@ -114,6 +142,10 @@ def search_sessions(
     match = build_match_query(query)
     if not match:
         return []
+    # unicode61 把连续 CJK 并为单 token，FTS 无法命中真实中文标题的子串。
+    # 含 CJK 查询直接走 LIKE（子串语义），英文/数字仍走 FTS 保留 bm25 排序。
+    if _has_cjk(query):
+        return _like_sessions(conn, query, limit)
     if fts_available(conn):
         try:
             cur = conn.execute(
@@ -150,6 +182,9 @@ def search_messages(
     match = build_match_query(query)
     if not match:
         return []
+    # 含 CJK 查询走 LIKE 子串路径（理由同 search_sessions）。
+    if _has_cjk(query):
+        return _like_messages(conn, query, limit)
     if fts_available(conn):
         try:
             cur = conn.execute(
@@ -192,12 +227,13 @@ def _like_sessions(
     conn: sqlite3.Connection, query: str, limit: int
 ) -> List[Dict[str, Any]]:
     """会话 LIKE 降级路径（FTS5 不可用）：中英文子串均可命中。"""
-    pattern = f"%{query.strip()}%"
+    pattern = _like_pattern(query)
     cur = conn.execute(
         """
         SELECT id AS task_id, title, creator, status, updated_at, description
         FROM tasks
-        WHERE title LIKE ? OR description LIKE ? OR creator LIKE ?
+        WHERE title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
+              OR creator LIKE ? ESCAPE '\\'
         ORDER BY updated_at DESC
         LIMIT ?
         """,
@@ -218,13 +254,14 @@ def _like_messages(
     conn: sqlite3.Connection, query: str, limit: int
 ) -> List[Dict[str, Any]]:
     """消息 LIKE 降级路径（FTS5 不可用）。"""
-    pattern = f"%{query.strip()}%"
+    pattern = _like_pattern(query)
     cur = conn.execute(
         """
         SELECT event_id, task_id, actor_identity, role, from_status, to_status,
                authoritative_timestamp, reason
         FROM task_events
-        WHERE reason LIKE ? OR actor_identity LIKE ? OR role LIKE ?
+        WHERE reason LIKE ? ESCAPE '\\' OR actor_identity LIKE ? ESCAPE '\\'
+              OR role LIKE ? ESCAPE '\\'
         ORDER BY authoritative_timestamp DESC
         LIMIT ?
         """,
