@@ -1942,7 +1942,8 @@
             "symbol_history_tasks_count": "任务（{count}）:",
             "git_show_tasks_count": "任务（{count}）:",
             "edit_invalid_symbol_id": "无效的 symbol_id: {symbol_id}",
-            "edit_symbol_id_not_found": "未找到符号: id={sid}"
+            "edit_symbol_id_not_found": "未找到符号: id={sid}",
+            "journal_list_empty": "(无匹配的运行事件)"
         },
         "subcommand_help": "代码守护者架构子命令（四大支柱）:\n\n  安全护栏:\n    guardrail scan [--file <path>] [--category <cat>]   扫描安全护栏违规\n    guardrail rules [--category <cat>]                  列出护栏规则\n\n  变更影响:\n    impact <symbol_hash> [--depth N]                    计算变更影响半径\n    review <symbol_hash>                                生成审查就绪报告\n\n  演化智能:\n    evolution <qualified_name> [--window 30d]           查询函数变更频率\n    hotspot [--module <path>]                           热点函数排名\n    churn [--module <path>] [--window 90d]              代码流失分析\n\n  缺陷知识库:\n    defect search [--category <cat>] [--severity <sev>] 搜索缺陷模式\n    defect suggest <symbol_hash> [--finding <id>]       推荐修复方案\n    defect learn <commit_hash>                          从修复 commit 学习\n    defect stats                                        缺陷知识库统计\n    defect build                                        构建缺陷知识库\n\n  代码图谱 GC（类 Java GC，归档被 .gitignore/.callwardenignore 命中的文件）:\n    gc archive [--force] [--dry-run]                    归档被 ignore 命中的文件\n    gc restore [--path <path> ...] [--force]            复活已归档文件\n    gc status                                           查看 GC 状态（活跃/归档/删除统计）\n    gc purge [--older-than <days>]                      彻底清除归档超过 N 天的文件\n\n  诊断与维护:\n    doctor                                              检查环境、数据库状态、推荐优化\n    doctor --add-defender-exclusion                     添加 Windows Defender 排除项（需管理员权限）\n\n传统命令（--flag 模式）:\n  以下选项为传统 --flag 风格命令，与上述子命令并存。"
     },
@@ -2331,5 +2332,15 @@
     "cli_fts_status_consistent": "✓ 一致（fts_rows == symbols_count）",
     "cli_fts_status_inconsistent": "✗ 不一致（symbols={symbols}，fts_rows={fts_rows}）",
     "cli_fts_status_inconsistent_hint": "  → 运行 `cw fts rebuild` 修复",
-    "current_locale": "zh_CN"
+    "current_locale": "zh_CN",
+    "cli_journal_desc": "SQLite 可查询运行日志（append/list；独立 run-journal.db）",
+    "cli_journal_append_desc": "追加一条运行事件",
+    "cli_journal_arg_event": "事件名（如 run_start / claim_ok / push_ok）",
+    "cli_journal_arg_run_id": "运行标识（如 run 目录名）",
+    "cli_journal_arg_task_id": "关联任务 ID（可空）",
+    "cli_journal_arg_detail": "一句话详情",
+    "cli_journal_arg_ts": "事件时间 ISO8601（默认当前本地时间）",
+    "cli_journal_list_desc": "查询运行事件（ts 倒序）",
+    "cli_journal_arg_since": "仅返回该 ISO8601 时刻之后的记录（含等于）",
+    "cli_journal_arg_limit": "最多返回 N 条（0 = 不限）"
 }

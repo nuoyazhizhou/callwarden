@@ -27,6 +27,7 @@ Call Warden 一键安装脚本：级联安装核心依赖 + 各语言 tree-sitte
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -1181,11 +1182,16 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
             return False
 
     def _is_package_installed(self, spec: PackageSpec) -> bool:
-        """检查包是否已安装（通过 import 测试）"""
+        """检查包是否已安装（只解析模块 spec，不执行模块代码）。
+
+        stale 修正（族8，2026-11-24）：原实现用 importlib.import_module 真实
+        导入；sentence-transformers 会连带加载 torch，单次 70s+（满负载时
+        超过测试 120s 超时），导致 `cw install --check` 状态检查被拖死。
+        find_spec 只解析查找器，不执行模块代码，语义上即"已安装"。
+        """
         try:
-            importlib.import_module(spec.import_name)
-            return True
-        except ImportError:
+            return importlib.util.find_spec(spec.import_name) is not None
+        except (ImportError, ValueError):
             return False
 
     def _install_group(self, packages: List[PackageSpec]) -> None:
