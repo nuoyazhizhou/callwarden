@@ -63,10 +63,13 @@ def test_get_project_dependencies_explicit_languages(live_daemon):
 def test_get_project_dependencies_unknown_workspace(live_daemon):
     """未知 workspace：无 root → 空对象（不报错）。"""
     c = live_daemon
-    # 未知 instance → fail-closed workspace_not_found（不静默返回空对象）
+    # 未知 instance → fail-closed 显式拒绝（不静默返回空对象）。
+    # stale 修正（族8，2026-11-24）：安全取证 #5 的 dispatch 前置门禁先解析
+    # instance→workspace_id（dispatch.rs:3284-3309），未注册实例在 handler 之前
+    # 即返回 E_PRINCIPAL_WORKSPACE_REQUIRED（原断言 workspace_not_found 陈旧）。
     with pytest.raises(Exception) as ei:
         c.call("get_project_dependencies", {"workspace_instance_id": UNKNOWN_INSTANCE})
-    assert "workspace_not_found" in str(ei.value)
+    assert "E_PRINCIPAL_WORKSPACE_REQUIRED" in str(ei.value)
 
 
 # ---------------------------------------------------------------------------

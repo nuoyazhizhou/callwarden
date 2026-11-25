@@ -25,14 +25,6 @@ try:
 except ImportError:
     HAS_RUST = False
 
-from callwarden.config import get_pki_dir  # noqa: E402
-
-# ADR-002 单轨 mTLS：真实 PKI 必须在模块 import 期解析——conftest autouse
-# `_isolate_db_path` 会在每个测试的 fixture 运行前 monkeypatch
-# callwarden.config.CALLWARDEN_DIR 为 tmp 目录，fixture 内再调 get_pki_dir()
-# 将指向空临时 PKI（daemon 自举 CA 但无 owner 身份 → E_MTLS_CLIENT_CERT_MISSING）。
-# 与 test_query_tests_rpc / test_lease_rpc 的 _REAL_PKI_DIR 同形态。
-_REAL_PKI_DIR = get_pki_dir()
 
 
 def _make_test_db(db_path):
@@ -250,13 +242,13 @@ def daemon_route_ready(tmp_path, monkeypatch):
     二进制/PKI/端口前置缺失 → skip（不掩盖断言失败）。
     """
     from callwarden.server.daemon_client import DaemonClient
-    from _w3_harness import setup_w3_client
+    from _w3_harness import restore_w3_env, setup_w3_client
 
-    # CW_PKI_DIR=真实 PKI（模块 import 期求值；conftest autouse _isolate_db_path
-    # 在 fixture 前已 monkeypatch CALLWARDEN_DIR，fixture 内 get_pki_dir() 会
-    # 解析到空临时 PKI → 客户端证书缺失）。先于 USERPROFILE 重定向设置，
-    # 保证 daemon（os.environ.copy() 继承）与客户端同 CA 同身份。
-    monkeypatch.setenv("CW_PKI_DIR", _REAL_PKI_DIR)
+    # stale 修正（族8，2026-11-24）：不再把 CW_PKI_DIR 钉到真实 PKI。
+    # spawn_isolated_daemon 会从 daemon env 中剔除 CW_PKI_DIR，daemon 实际使用
+    # data_root 下的隔离 LocalCa；旧钉法使客户端不带同源证书，握手报
+    # TLSV1_ALERT_UNKNOWN_CA。留空让 setup_w3_client 注入隔离 owner 身份，
+    # finally 用 restore_w3_env 还原。
     data_root = str(tmp_path / "w3")
     os.makedirs(data_root, exist_ok=True)
     DaemonClient.reset_instance()
@@ -288,6 +280,7 @@ def daemon_route_ready(tmp_path, monkeypatch):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
+        restore_w3_env()
 
 
 @pytest.mark.skipif(not HAS_RUST, reason="callwarden_core not available")

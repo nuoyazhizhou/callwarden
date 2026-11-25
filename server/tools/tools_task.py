@@ -75,6 +75,94 @@ def _task_create_context_pair():
     return pair, None
 
 
+_VALID_TASK_ROLES = ("executor", "reviewer", "adjudicator")
+
+# task.create 走 daemon 显式 legacy policy 通道（与 cli/main.py 建卡同路径）：
+# 带合同的创建若缺 identity_policy 会被 ERR_POLICY_REQUIRED 拒绝。
+_TASK_CREATE_IDENTITY_POLICY = "legacy_identity_v1"
+
+
+def _default_task_role_contracts() -> list:
+    """A' 三角色模板（executor/reviewer/adjudicator），与 daemon
+    default_trio_role_contracts / cli _build_role_contracts 保持一致。
+
+    task.create 只有 role_contracts 非空才会写 Task Contract 投影；裸建
+    （空 role_contracts）会落成 governance_blocked 的空投影任务，定时运行器
+    永远取不到（next_action 判"Task Contract 缺失"）。MCP 面与 CLI 对齐，
+    缺省注入三角色模板。
+    """
+    base = "cw.aprime"
+    v1 = ".executor.startup.v1"
+    return [
+        {
+            "role": "executor",
+            "prompt": f"{base}{v1}",
+            "description": "Execute steps under the frozen contract; stop and report on failure.",
+            "instructions": (
+                "Read the contract and steps before acting. Execute within the "
+                "authorized paths. Record evidence for each check item. On "
+                "failure stop and escalate."
+            ),
+        },
+        {
+            "role": "reviewer",
+            "prompt": f"{base}.reviewer.audit.v1",
+            "description": "Verify step evidence against acceptance criteria; request changes when unmet.",
+            "instructions": (
+                "Audit the evidence only; do not rewrite the implementation. "
+                "Verify each check item against the diff. Escalate unresolved "
+                "findings."
+            ),
+        },
+        {
+            "role": "adjudicator",
+            "prompt": f"{base}.adjudicator.decision.v1",
+            "description": "Adjudicate escalation and completion decisions from reviewer evidence.",
+            "instructions": (
+                "Decide on the reviewer's evidence. Allowed decisions: "
+                "approve, request-changes, reject. Do not execute tasks."
+            ),
+        },
+    ]
+
+
+def _normalize_role_contracts(role_contracts):
+    """校验显式传入的 role_contracts；None 返回 (None, None) 由调用方补缺省。
+
+    与 cli/_build_role_contracts 同规则 fail-closed：非空列表、每项为 dict、
+    role ∈ {executor, reviewer, adjudicator}。
+    """
+    if role_contracts is None:
+        return None, None
+    if not isinstance(role_contracts, list) or not role_contracts:
+        return None, {
+            "ok": False,
+            "code": "E_TASK_ROLE_CONTRACTS_INVALID",
+            "error": t("mcp.messages.task_role_contracts_list_required"),
+        }
+    normalized = []
+    for item in role_contracts:
+        if not isinstance(item, dict):
+            return None, {
+                "ok": False,
+                "code": "E_TASK_ROLE_CONTRACTS_INVALID",
+                "error": t("mcp.messages.task_role_contracts_object_required"),
+            }
+        role = item.get("role")
+        if role not in _VALID_TASK_ROLES:
+            return None, {
+                "ok": False,
+                "code": "E_TASK_ROLE_CONTRACTS_INVALID",
+                "error": t(
+                    "mcp.messages.task_role_invalid",
+                    roles="/".join(_VALID_TASK_ROLES),
+                    role=repr(role),
+                ),
+            }
+        normalized.append(item)
+    return normalized, None
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def task_create(
@@ -82,6 +170,7 @@ def register(mcp: FastMCP) -> None:
         description: str = "",
         steps: list = None,
         creator: str = "agent",
+        role_contracts: list = None,
         workspace_id: int = 0,
         workspace_instance_id: str = "",
     ) -> Optional[dict]:
@@ -94,17 +183,27 @@ def register(mcp: FastMCP) -> None:
         register` 或等价 RPC）签发，缺 instance 时 daemon 拒绝
         （E_TASK_WORKSPACE_INSTANCE_REQUIRED），不回退隐式合成。
 
+        role_contracts 缺省自动注入 A' 三角色模板（executor/reviewer/
+        adjudicator，与 CLI 一致）；缺合同的任务会被治理门禁判
+        governance_blocked，定时运行器取不到。
+
         Args:
             title: 任务标题
             description: 任务描述
             steps: 步骤列表，每个元素含 action/target_file/target_symbol/check_items
             creator: 创建者标识
+            role_contracts: 角色合同列表（可选；缺省注入三角色模板，显式传入须含合法 role）
             workspace_id: 工作区整数 id（可选；服务端按当前项目补齐，传入他项目 id 会被拒绝）
             workspace_instance_id: 工作区实例 id（可选；同上，仅允许当前项目配对）
 
         Returns:
             任务对象字典；task_id 字段为新任务 id
         """
+        normalized_contracts, contracts_error = _normalize_role_contracts(role_contracts)
+        if contracts_error is not None:
+            return contracts_error
+        if normalized_contracts is None:
+            normalized_contracts = _default_task_role_contracts()
         # 归属 fail-closed：任务必须挂在本 MCP 实例所属项目下。agent 传入的
         # workspace 配对只用于"声明"，不能决定归属——与当前项目不一致即拒绝；
         # 未提供（0/空）时由服务端按当前项目补齐，避免 agent 猜错项目。
@@ -147,6 +246,8 @@ def register(mcp: FastMCP) -> None:
                 "description": description,
                 "steps": steps if steps is not None else [],
                 "creator": creator,
+                "role_contracts": normalized_contracts,
+                "identity_policy": _TASK_CREATE_IDENTITY_POLICY,
                 "workspace_id": ctx_ws,
                 "workspace_instance_id": ctx_inst,
             },

@@ -2270,7 +2270,10 @@
             "workspace_id_unresolved": "无法从 workspace_instance_id={instance} 解析权威 workspace_id（fail-closed）",
             "task_workspace_root_unresolved": "无法解析当前项目 workspace 归属（root={root}）；请先 `cw workspace register --root {root}`。原因: {error}",
             "task_workspace_id_mismatch": "workspace_id={workspace_id} 不属于本 MCP 实例所在项目（当前项目 canonical workspace_id={ctx_ws}）；拒绝跨项目创建任务单",
-            "task_workspace_instance_mismatch": "workspace_instance_id 不属于本 MCP 实例所在项目（当前项目 canonical instance={ctx_inst}）；拒绝跨项目创建任务单"
+            "task_workspace_instance_mismatch": "workspace_instance_id 不属于本 MCP 实例所在项目（当前项目 canonical instance={ctx_inst}）；拒绝跨项目创建任务单",
+            "task_role_contracts_list_required": "role_contracts 必须是非空列表（缺省时自动注入三角色模板）",
+            "task_role_contracts_object_required": "role_contracts 每项必须是对象（role/prompt/description/instructions）",
+            "task_role_invalid": "role 必须是 {roles}，收到: {role}"
         }
     },
     "cli_test_usage": "用法: cw test <module> [pytest 参数]\n   示例: cw test test_p0_bugfixes\n   <module> 为 callwarden/tests/ 下的测试模块名(不含 .py)\n   注意区分: `cw test`=运行开发者 pytest 模块; `cw tests <符号>`=查询某符号的测试用例/覆盖",

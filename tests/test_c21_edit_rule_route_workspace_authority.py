@@ -468,14 +468,20 @@ def _rows(db: str, sql: str, args=()) -> list:
 # ----------------------------------------------------------------------
 
 def test_acl_unknown_workspace_fail_closed(c21_daemon):
-    """未知 workspace_instance_id → workspace_not_found（不静默）。"""
+    """未知 workspace_instance_id → fail-closed 显式拒绝（不静默）。
+
+    stale 修正（族8，2026-11-24）：安全取证 #5 的 dispatch 前置门禁先解析
+    instance→workspace_id（dispatch.rs:3284-3309），未注册实例在进入 handler
+    前即返回 `E_PRINCIPAL_WORKSPACE_REQUIRED`（原断言 `workspace_not_found`
+    归属 handler 层，已陈旧）。语义仍是未知实例显式拒绝。
+    """
     client, _, _, _ = c21_daemon
     with pytest.raises(DaemonRemoteError) as ei:
         client.call("edit.propose", {
             "workspace_instance_id": "ws-c21-nope",
             "file_path": "src/x.rs", "new_content": "x",
         })
-    assert "not_found" in ei.value.code.lower(), f"实得 code={ei.value.code}"
+    assert ei.value.code == "E_PRINCIPAL_WORKSPACE_REQUIRED", f"实得 code={ei.value.code}"
 
 
 def test_acl_foreign_owner_rejected(c21_daemon):

@@ -76,10 +76,16 @@ def _find_callwarden_db() -> str | None:
 
 
 def _connect_readonly(db_path: str) -> sqlite3.Connection:
-    """以 immutable=1 只读模式连接 SQLite"""
+    """以只读模式连接 SQLite（WAL 感知）。
+
+    族8 补充（2026-11-24）：不用 `immutable=1`——它会忽略 -wal 并把首次读到的
+    页视图钉死；同进程内 GraphStore 懒加载触发 checkpoint 后，旧视图与主库页
+    不一致，后续查询报 `database disk image is malformed`（与用例执行顺序相关）。
+    临时目录可写，改用 `mode=ro` 正常只读连接（-shm 自动建，读得到 WAL 内容）。
+    """
     normalized = db_path.replace('\\', '/')
     prefix = "file:" if normalized.startswith('/') else "file:///"
-    uri = f"{prefix}{normalized}?immutable=1"
+    uri = f"{prefix}{normalized}?mode=ro"
     return sqlite3.connect(uri, uri=True)
 
 
@@ -95,9 +101,17 @@ class TestGraphStoreIntegration(unittest.TestCase):
         # 复制到临时文件（沙箱中无法在 ~/.callwarden 创建 -shm 文件，但 tempdir 可以）
         cls.tmpdir = tempfile.mkdtemp(prefix="cw_p7b_test_")
         cls.db_path = os.path.join(cls.tmpdir, "test.db")
-        import shutil
-        shutil.copy2(src_db, cls.db_path)
-        # WAL/SHM 文件可能在源目录，不复制（新连接会重建）
+        # 族8 补充（2026-11-24）：不用 shutil.copy2 直接复制主库文件——源库处于
+        # WAL 模式且可能被生产 daemon 并发写入，只复制主文件会得到撕裂快照，读侧
+        # 报 `database disk image is malformed`（随环境负载间歇复现）。改用
+        # SQLite 在线备份 API 取事务一致快照。
+        src_conn = sqlite3.connect(src_db)
+        dst_conn = sqlite3.connect(cls.db_path)
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            dst_conn.close()
+            src_conn.close()
         from callwarden.db.db import CodeGraphDB
         cls.db = CodeGraphDB(db_path=cls.db_path, workspace_root=_project_root)
         # 直连只读 SQLite 用于验证结果

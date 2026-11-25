@@ -257,6 +257,7 @@ docs/testing/.bak_v5/
 rust_ext/target-nf1/
 rust_ext/target-stage/
 rust_ext/target-*/
+rust_ext/target_step2/
 # PyO3 扩展回滚备份（每次 build 产生，可重新生成）
 *.pyd.rollback
 *.pyd.*.rollback

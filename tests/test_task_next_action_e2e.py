@@ -216,6 +216,57 @@ def _registry_identity_hash(instance_id: str, view_hash: str, host_hash: str, ma
     return f"sha256:{digest}"
 
 
+def _insert_capture_row(conn, capture_id, instance_id, workspace_id, tag,
+                        view_hash, host_hash, manifest_hash, manifest_payload,
+                        identity_hash) -> None:
+    """插入一行 rev=1 workspace_authority_captures（供 full_chain / capture_only 复用）。"""
+    conn.execute(
+        "INSERT INTO workspace_authority_captures "
+        "(workspace_capture_id, workspace_id, capture_revision, supersedes_capture_id, "
+        " daemon_workspace_id, workspace_instance_id, capture_canonicalization_version, "
+        " capture_canonicalization_rules_hash, registry_identity_payload_json, "
+        " registry_identity_hash, workspace_manifest_payload_json, workspace_manifest_hash, "
+        " client_view_root_hash, host_real_root_hash, created_by, authoritative_created_at) "
+        "VALUES (?1, ?9, 1, NULL, 42, ?2, 'workspace-capture-c14n/v1', 'cap-rules-5d', ?3, "
+        " ?4, ?5, ?6, ?7, ?8, '5d-test', '0.000000')",
+        (
+            capture_id,
+            instance_id,
+            _c14n_payload_json(instance_id, view_hash, host_hash, manifest_hash),
+            identity_hash,
+            manifest_payload,
+            manifest_hash,
+            view_hash,
+            host_hash,
+            workspace_id,
+        ),
+    )
+
+
+def _seed_capture_only(task_db: str, instance_id: str, workspace_id: int, tag: str) -> None:
+    """只播一行 capture（无 task/binding），用于让 principal 门禁可解析 instance。
+
+    族8 修正（2026-11-24）：dispatch 前置门禁要求已认证 principal 的
+    workspace_instance_id 可解析（registry 或 task-DB capture）。原用例只播
+    binding 不播 capture，导致合法请求在门禁处被 E_PRINCIPAL_WORKSPACE_REQUIRED
+    拦截、无法覆盖 handler 层规则。
+    """
+    view_hash = f"client-view-{tag}"
+    host_hash = f"host-root-{tag}"
+    manifest_hash = f"manifest-{tag}"
+    manifest_payload = json.dumps({"kind": "5d", "task": tag}, ensure_ascii=False)
+    identity_hash = _registry_identity_hash(
+        instance_id, view_hash, host_hash, manifest_hash)
+    conn = sqlite3.connect(task_db)
+    try:
+        _insert_capture_row(
+            conn, f"wc-{tag}-1", instance_id, workspace_id, tag,
+            view_hash, host_hash, manifest_hash, manifest_payload, identity_hash)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _seed_full_chain(task_db: str, task_id: str, workspace_instance_id: str, workspace_id: int = 1) -> dict:
     """直接播种 §6 READY/CLAIM 所需的最小不可变链（与 next_action_test.rs 同构）。
 
@@ -269,27 +320,9 @@ def _seed_full_chain(task_db: str, task_id: str, workspace_instance_id: str, wor
             "VALUES (?1, ?2, '5d seed', '5d-test', 'open', ?3, ?3)",
             (task_id, f"task-{task_id}", now),
         )
-        conn.execute(
-            "INSERT INTO workspace_authority_captures "
-            "(workspace_capture_id, workspace_id, capture_revision, supersedes_capture_id, "
-            " daemon_workspace_id, workspace_instance_id, capture_canonicalization_version, "
-            " capture_canonicalization_rules_hash, registry_identity_payload_json, "
-            " registry_identity_hash, workspace_manifest_payload_json, workspace_manifest_hash, "
-            " client_view_root_hash, host_real_root_hash, created_by, authoritative_created_at) "
-            "VALUES (?1, ?9, 1, NULL, 42, ?2, 'workspace-capture-c14n/v1', 'cap-rules-5d', ?3, "
-            " ?4, ?5, ?6, ?7, ?8, '5d-test', '0.000000')",
-            (
-                capture_id,
-                workspace_instance_id,
-                _c14n_payload_json(workspace_instance_id, view_hash, host_hash, manifest_hash),
-                identity_hash,
-                manifest_payload,
-                manifest_hash,
-                view_hash,
-                host_hash,
-                workspace_id,
-            ),
-        )
+        _insert_capture_row(
+            conn, capture_id, workspace_instance_id, workspace_id, task_id,
+            view_hash, host_hash, manifest_hash, manifest_payload, identity_hash)
         conn.execute(
             "INSERT INTO task_workspace_bindings "
             "(task_id, workspace_id, workspace_binding_id, workspace_capture_id, created_by, authoritative_created_at) "
@@ -401,8 +434,11 @@ class TestNextActionWireLevel:
     """进程级 wire 验收：真实 cw-daemon.exe + HTTPS/mTLS 的 task.next_action。"""
 
     def test_task_not_found_returns_structured_error(self, lease_env):
-        client, tmp, _task_db, _proc, _endpoint = lease_env
+        client, tmp, task_db, _proc, _endpoint = lease_env
         ws = _ws_instance_for_root(tmp)
+        # 族8 修正（2026-11-24）：让 instance 可被 principal 门禁解析，
+        # 才能覆盖 handler 的「任务不存在/未授权」结构化错误。
+        _seed_capture_only(task_db, ws, workspace_id=11, tag="T-5D-NOTFOUND")
         with pytest.raises(DaemonRemoteError) as exc:
             client.call("task.next_action", {
                 "task_id": "T-5D-NOT-EXIST",
@@ -418,6 +454,9 @@ class TestNextActionWireLevel:
         ws = _ws_instance_for_root(tmp)
         task_id = "T-5D-UNBOUND"
         _seed_unbound_task(task_db, task_id)
+        # 族8 修正（2026-11-24）：先让 instance 可被 principal 门禁解析
+        # （只播 capture，不播 binding），否则请求会停在门禁、测不到规则 1。
+        _seed_capture_only(task_db, ws, workspace_id=8, tag="T-5D-UNBOUND")
         with pytest.raises(DaemonRemoteError) as exc:
             client.call("task.next_action", {
                 "task_id": task_id, "workspace_instance_id": ws,
@@ -431,6 +470,10 @@ class TestNextActionWireLevel:
         ws = _ws_instance_for_root(tmp)
         task_id = "T-5D-DANGLING"
         _seed_dangling_binding(task_db, task_id, ws)
+        # 族8 修正（2026-11-24）：先给 instance 播一行可解析 capture，让
+        # principal 门禁放行；binding 引用的 capture id 仍然缺失 → 覆盖规则 1
+        # 的悬空检测（原用例在门禁处即被截断）。
+        _seed_capture_only(task_db, ws, workspace_id=10, tag="T-5D-DANGLING")
         with pytest.raises(DaemonRemoteError) as exc:
             client.call("task.next_action", {
                 "task_id": task_id, "workspace_instance_id": ws,
@@ -444,6 +487,10 @@ class TestNextActionWireLevel:
         ws = _ws_instance_for_root(tmp)
         task_id = "T-5D-MISMATCH"
         _seed_full_chain(task_db, task_id, ws, workspace_id=1)
+        # 族8 修正（2026-11-24）：让请求携带的「另一个 instance」也能被
+        # principal 门禁解析（只播 capture），才能走到 handler 的 mismatch
+        # 规则 3（原用例在门禁处即被 E_PRINCIPAL_WORKSPACE_REQUIRED 截断）。
+        _seed_capture_only(task_db, "ws-inst-other", workspace_id=9, tag="T-5D-OTHER")
         with pytest.raises(DaemonRemoteError) as exc:
             client.call("task.next_action", {
                 "task_id": task_id,

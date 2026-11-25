@@ -2270,7 +2270,10 @@
             "workspace_id_unresolved": "Cannot resolve authoritative workspace_id from workspace_instance_id={instance} (fail-closed)",
             "task_workspace_root_unresolved": "Cannot resolve the current project's workspace ownership (root={root}); run `cw workspace register --root {root}` first. Reason: {error}",
             "task_workspace_id_mismatch": "workspace_id={workspace_id} does not belong to this MCP instance's project (current project canonical workspace_id={ctx_ws}); cross-project task creation refused",
-            "task_workspace_instance_mismatch": "workspace_instance_id does not belong to this MCP instance's project (current project canonical instance={ctx_inst}); cross-project task creation refused"
+            "task_workspace_instance_mismatch": "workspace_instance_id does not belong to this MCP instance's project (current project canonical instance={ctx_inst}); cross-project task creation refused",
+            "task_role_contracts_list_required": "role_contracts must be a non-empty list (default three-role templates are injected when omitted)",
+            "task_role_contracts_object_required": "each role_contracts item must be an object (role/prompt/description/instructions)",
+            "task_role_invalid": "role must be one of {roles}; got: {role}"
         }
     },
     "cli_test_usage": "Usage: cw test <module> [pytest args]\n   Example: cw test test_p0_bugfixes\n   <module> is a test module name under callwarden/tests/ (without .py)\n   Note: `cw test`=run developer pytest modules; `cw tests <symbol>`=query test cases/coverage for a symbol",

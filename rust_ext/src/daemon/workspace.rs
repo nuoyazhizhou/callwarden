@@ -79,7 +79,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
@@ -550,6 +550,29 @@ pub(crate) fn resolve_main_repo_root(root: &str) -> Option<String> {
     Some(normalize_identity_root(&main_root.to_string_lossy()))
 }
 
+/// D2 读写分离：只读路径的连接 guard。
+///
+/// - `Readonly`：缓存的只读连接（`Mutex<Option<Connection>>` guard），
+///   与写连接并存，不参与写连接 Mutex 排队。
+/// - `Primary`：回退主写连接 guard，仅内存库（`:memory:`）使用——独立只读
+///   连接看不到内存库数据，回退保持既有测试语义。
+///
+/// 实现 `Deref<Target = Connection>`，调用方可像 `&Connection` 一样直接用。
+enum ReadGuard<'a> {
+    Readonly(MutexGuard<'a, Option<Connection>>),
+    Primary(MutexGuard<'a, Connection>),
+}
+
+impl std::ops::Deref for ReadGuard<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        match self {
+            ReadGuard::Readonly(g) => g.as_ref().expect("read_conn 缓存已初始化"),
+            ReadGuard::Primary(g) => g,
+        }
+    }
+}
+
 /// workspace registry：封装 SQLite 连接 + 提供线程安全访问
 ///
 /// 内部用 `std::sync::Mutex`（而非 parking_lot::Mutex）保护 rusqlite Connection，
@@ -558,6 +581,14 @@ pub struct WorkspaceRegistry {
     conn: Mutex<Connection>,
     /// registry DB 文件路径（用于 backup/restore VACUUM INTO）
     pub db_path: String,
+    /// D2 读写分离：只读连接惰性缓存（与写连接 conn 并存，互不阻塞）。
+    ///
+    /// - `None` = 尚未打开；首次读路径经 [`Self::read_conn`] 用只读 flags 打开。
+    /// - `Some` = 已缓存；只读连接持有 WAL 快照读视图，能看到写连接已提交事务。
+    /// - `reopen` 会置回 `None`（restore 替换 DB 文件后必须重建）。
+    /// - 内存库（`:memory:`）恒为 `None`：独立连接看不到内存库数据，
+    ///   此时 [`Self::read_conn`] 返回 None，读路径回退主 conn（测试语义不变）。
+    read_conn: Mutex<Option<Connection>>,
 }
 
 impl WorkspaceRegistry {
@@ -574,6 +605,7 @@ impl WorkspaceRegistry {
         Ok(Self {
             conn: Mutex::new(conn),
             db_path: db_path.to_string(),
+            read_conn: Mutex::new(None),
         })
     }
 
@@ -584,6 +616,7 @@ impl WorkspaceRegistry {
         Ok(Self {
             conn: Mutex::new(conn),
             db_path: ":memory:".to_string(),
+            read_conn: Mutex::new(None),
         })
     }
 
@@ -600,6 +633,8 @@ impl WorkspaceRegistry {
         Ok(Self {
             conn: Mutex::new(conn),
             db_path: db_path.to_string(),
+            // 本实例自身即为只读连接；读路径直接走 conn，无需再开只读缓存。
+            read_conn: Mutex::new(None),
         })
     }
 
@@ -625,6 +660,8 @@ impl WorkspaceRegistry {
             let mut guard = self.conn.lock().unwrap();
             *guard = placeholder;
         }
+        // D2：restore 替换了 DB 文件，缓存的只读连接指向旧 inode，必须失效
+        *self.read_conn.lock().unwrap() = None;
         // 步骤 2：现在文件锁已释放，可以打开新连接
         let new_conn = Connection::open(&db_path)?;
         Self::init_conn(&new_conn)?;
@@ -643,6 +680,40 @@ impl WorkspaceRegistry {
             params![super::SCHEMA_VERSION.to_string(), now_ts()],
         )?;
         Ok(())
+    }
+
+    /// D2 读写分离：惰性获取只读连接（与写连接 conn 并存，只读路径专用）。
+    ///
+    /// - 文件库：返回 `ReadGuard::Readonly`，走独立只读连接（缓存于 self.read_conn）。
+    /// - 内存库（`:memory:`）：返回 `ReadGuard::Primary`，回退主 conn——独立连接
+    ///   看不到内存库数据，保持测试语义。
+    /// - 只读连接打开失败：**fail-closed 返回 Err，不回退写连接**。回退会让读
+    ///   路径重新排到写连接 Mutex 后面，正是 D2 要消除的阻塞；宁可显式报错。
+    ///
+    /// flags 与 [`Self::open_readonly`] 一致；额外设 `busy_timeout=5000`
+    /// 对齐写连接 `init_conn`（风险 2：只读连接同样需要 busy_timeout）。
+    /// 不执行 `wal_checkpoint`：WAL 只读连接经 -shm 读到最新已提交数据
+    /// （cas_query.rs:78-84 已验证的同型策略），checkpoint 反而会在 Windows
+    /// 上进入不受 busy_timeout 控制的 sleep 循环。
+    fn read_conn(&self) -> Result<ReadGuard<'_>, rusqlite::Error> {
+        if self.db_path == ":memory:" {
+            return Ok(ReadGuard::Primary(self.conn.lock().unwrap()));
+        }
+        {
+            let mut cache = self.read_conn.lock().unwrap();
+            if cache.is_none() {
+                use rusqlite::OpenFlags;
+                let conn = Connection::open_with_flags(
+                    &self.db_path,
+                    OpenFlags::SQLITE_OPEN_READ_ONLY
+                        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                        | OpenFlags::SQLITE_OPEN_URI,
+                )?;
+                conn.busy_timeout(std::time::Duration::from_secs(5))?;
+                *cache = Some(conn);
+            }
+        }
+        Ok(ReadGuard::Readonly(self.read_conn.lock().unwrap()))
     }
 
     /// 注册 workspace（对应 Python register_workspace）
@@ -842,7 +913,8 @@ impl WorkspaceRegistry {
         norm_root: &str,
         preferred: &[String],
     ) -> Result<Option<String>, rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        // D2：只读路径走独立只读连接（文件库）；内存库回退主 conn。
+        let conn = self.read_conn()?;
         let mut stmt = conn.prepare(
             "SELECT workspace_instance_id, host_real_root FROM daemon_workspaces
              WHERE owner_uid = ?1 ORDER BY registered_at ASC",
@@ -871,7 +943,7 @@ impl WorkspaceRegistry {
     /// 列出 workspace（对应 Python list_workspaces）
     /// owner_uid=None 时列出所有，否则按 owner_uid 过滤
     pub fn list_workspaces(&self, owner_uid: Option<u32>) -> Result<Vec<Value>, rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn()?;
         let mut stmt = if owner_uid.is_some() {
             conn.prepare(
                 "SELECT workspace_id, workspace_instance_id, snapshot_id, owner_uid,
@@ -906,7 +978,7 @@ impl WorkspaceRegistry {
         &self,
         workspace_instance_id: &str,
     ) -> Result<Option<Value>, rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn()?;
         let mut stmt = conn.prepare(
             "SELECT workspace_id, workspace_instance_id, snapshot_id, owner_uid,
                     git_remote_url, git_head_commit_sha, client_view_root, host_real_root,
@@ -930,7 +1002,7 @@ impl WorkspaceRegistry {
         &self,
         workspace_id: i64,
     ) -> Result<Option<Value>, rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn()?;
         let mut stmt = conn.prepare(
             "SELECT workspace_id, workspace_instance_id, snapshot_id, owner_uid,
                     git_remote_url, git_head_commit_sha, client_view_root, host_real_root,
@@ -1024,7 +1096,7 @@ impl WorkspaceRegistry {
 
     /// 统计 workspace 数量（用于 health 检查）
     pub fn count_workspaces(&self) -> Result<u32, rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn()?;
         let count: u32 = conn.query_row("SELECT COUNT(*) FROM daemon_workspaces", [], |row| {
             row.get(0)
         })?;
@@ -1081,7 +1153,7 @@ impl WorkspaceRegistry {
         &self,
         container_id: Option<&str>,
     ) -> Result<Vec<Value>, rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn()?;
         let mut stmt = if container_id.is_some() {
             conn.prepare(
                 "SELECT id, container_id, container_path, host_path, mapping_type
@@ -9610,6 +9682,72 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    /// D2 读写分离行为级证据：长写事务未提交期间，独立只读连接
+    /// (1) 读到的是已提交快照（不含未提交写）；(2) 不被写事务阻塞（<2s）。
+    /// 同时验证只读连接 busy_timeout 与 WAL 快照读一致性。
+    #[test]
+    fn test_d2_readonly_conn_sees_committed_snapshot_during_open_write_tx() {
+        use std::time::Instant;
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let db_path = std::env::temp_dir().join(format!(
+            "cw-d2-ro-{}-{nanos}.db",
+            std::process::id()
+        ));
+        let path_str = db_path.to_string_lossy().to_string();
+        let cleanup = || {
+            let _ = std::fs::remove_file(&db_path);
+            let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+            let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+        };
+        cleanup();
+
+        // 1. 建库 + 写一行已提交数据（status='active'）
+        let registry = WorkspaceRegistry::open(&path_str).unwrap();
+        {
+            let conn = registry.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO daemon_workspaces
+                 (workspace_id, workspace_instance_id, owner_uid, client_view_root,
+                  host_real_root, status, registered_at, last_active_at)
+                 VALUES (1, 'ws-d2-committed', 1000, '/c', '/c', 'active', 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 2. 独立连接开长写事务：UPDATE 为 'invisible' 但不 commit
+        let long_writer = Connection::open(&path_str).unwrap();
+        long_writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        long_writer
+            .execute(
+                "UPDATE daemon_workspaces SET status='invisible' WHERE workspace_id=1",
+                [],
+            )
+            .unwrap();
+
+        // 3. 只读连接读：应看到已提交 'active'，且 <2s 返回（不被长写事务阻塞）
+        let t0 = Instant::now();
+        let rows = registry.list_workspaces(None).unwrap();
+        let elapsed = t0.elapsed();
+        long_writer.execute_batch("ROLLBACK").unwrap();
+        cleanup();
+
+        assert_eq!(rows.len(), 1, "只读连接应看到已提交行");
+        assert_eq!(
+            rows[0]["status"], "active",
+            "只读连接必须看到已提交快照，不得看到未提交的 'invisible'"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "只读连接不得被长写事务阻塞，实际耗时 {:?}",
+            elapsed
+        );
     }
 }
 

@@ -219,6 +219,33 @@ def _assert_python_rust_read_outputs(
     )
 
 
+def _assert_python_rust_not_found_outputs(
+    python_result: subprocess.CompletedProcess[str],
+    rust_result: subprocess.CompletedProcess[str],
+) -> None:
+    """「未找到符号」运行时失败的差分断言（族7 stale 修正，2026-11-24）。
+
+    stale 依据：T-1793505963640-e9540b78 把 CLI 失败退出码统一为
+    「成功=0 / 运行时失败=1 / 用法=2」（docs/design/cli-mcp-matrix-backlog.md
+    §24）。python 薄壳 symbol/query/impact 未命中属运行时失败 → rc=1；
+    rust local 参考 CLI 仍按旧惯例 rc=0，但**输出文本与 python 逐字一致**。
+    本断言只登记该退出码契约差，文本/流仍严格等值——任一侧提示文案或流
+    归属变化即失败。
+    """
+    assert python_result.returncode == 1, (
+        f"python 未找到符号应 rc=1（统一失败口径），实得 {python_result.returncode}"
+    )
+    assert rust_result.returncode == 0, (
+        f"rust local 未找到符号现为 rc=0（既有契约差），实得 {rust_result.returncode}；"
+        "若 rust 侧已对齐统一口径，请改用等值断言"
+    )
+    assert rust_result.stderr == python_result.stderr == ""
+    assert rust_result.stdout == _align_resolution_markers(
+        _align_status_markers(python_result.stdout, rust_result.stdout),
+        rust_result.stdout,
+    )
+
+
 def _assert_python_rust_usage_error_outputs(
     python_result: subprocess.CompletedProcess[str],
     rust_result: subprocess.CompletedProcess[str],
@@ -226,16 +253,17 @@ def _assert_python_rust_usage_error_outputs(
     """usage 错误差分断言（台账 s1_rustdiff-07）：消息文本逐字一致，流/退出码按各自 CLI 契约。
 
     `cw tests` 无 qualified_name 时：python 薄壳 handler 沿既有惯例
-    ``print("Error: …")`` + ``return False``（分发器不映射布尔返回 → rc=0，
-    消息进 stdout）；rust CLI 按 clap 惯例写 stderr 且 rc=2。两侧消息文本
-    完全一致，差分只登记「python rc=0/stdout ↔ rust rc!=0/stderr」的既有
-    契约差，不回退任何一侧产品行为（python 全局退出码语义变更超出本差分
-    测试范围）。
+    ``print("Error: …")`` + ``return False``；rust CLI 按 clap 惯例写 stderr
+    且 rc=2。两侧消息文本完全一致，差分只登记「python stdout/rc=1 ↔
+    rust stderr/rc!=0」的契约差。
+
+    stale 修正（族7，2026-11-24）：T-1793505963640-e9540b78 统一失败退出码后，
+    python 该出口已由 rc=0 改为运行时失败 rc=1（原断言「惯例 rc=0」陈旧）。
     """
     py_msg = (python_result.stdout or "").strip()
     rs_msg = (rust_result.stderr or "").strip()
-    assert python_result.returncode == 0, (
-        f"python 薄壳 usage 错误惯例为 rc=0，实得 {python_result.returncode}"
+    assert python_result.returncode == 1, (
+        f"python 薄壳该出口应为运行时失败 rc=1，实得 {python_result.returncode}"
     )
     assert rust_result.returncode != 0, (
         f"rust usage 错误应为非零退出，实得 {rust_result.returncode}"
@@ -300,19 +328,23 @@ _DAEMON_BIN = None
 
 
 def _find_daemon_binary() -> Path:
+    """定位 current-HEAD 构建的 cw-daemon 二进制。
+
+    stale 修正（族7，2026-11-24）：旧实现无条件优先 `target/debug`，而本仓
+    近期只重建 release（含安全取证 #5 的 registry 实例解析覆写）。陈旧 debug
+    缺该覆写 → `workspace.register` 后 `snapshot.publish` 仍被
+    E_PRINCIPAL_WORKSPACE_REQUIRED 拒绝（已注册实例解析不到）。改为复用
+    `_w3_harness.find_daemon_binary`（多候选按 mtime 取最新 + 打印路径/sha256）。
+    """
     global _DAEMON_BIN
     if _DAEMON_BIN is not None:
         return _DAEMON_BIN
-    candidates = [
-        PROJECT_ROOT / "rust_ext" / "target" / "debug" / "cw-daemon.exe",
-        PROJECT_ROOT / "rust_ext" / "target" / "debug" / "cw-daemon",
-        Path(os.environ.get("CW_DAEMON_BIN", "")) if os.environ.get("CW_DAEMON_BIN") else None,
-    ]
-    for c in candidates:
-        if c is not None and c.is_file():
-            _DAEMON_BIN = c
-            return c
-    return None
+    from _w3_harness import find_daemon_binary  # noqa: PLC0415
+
+    resolved = find_daemon_binary()
+    if resolved is not None:
+        _DAEMON_BIN = Path(resolved)
+    return _DAEMON_BIN
 
 
 def _wait_daemon_manifest(home_dir: Path, proc, timeout: float = 20.0):
@@ -1042,6 +1074,10 @@ def test_symbol_binary_matches_python_process_output(
         encoding="utf-8",
     )
 
+    if qualified_name == "missing":
+        # 未命中 = 运行时失败：python rc=1 / rust local rc=0（族7 契约差登记）
+        _assert_python_rust_not_found_outputs(python_result, rust_result)
+        return
     _assert_python_rust_read_outputs(python_result, rust_result)
 
 
@@ -1181,6 +1217,10 @@ def test_query_binary_matches_python_process_output(
         encoding="utf-8",
     )
 
+    if symbol_name == "missing":
+        # 未命中 = 运行时失败：python rc=1 / rust local rc=0（族7 契约差登记）
+        _assert_python_rust_not_found_outputs(python_result, rust_result)
+        return
     _assert_python_rust_read_outputs(python_result, rust_result)
 
 
@@ -1595,6 +1635,10 @@ def test_graph_query_binary_matches_python_process_output(
         encoding="utf-8",
     )
 
+    if command == "impact" and query_args == ("missing",):
+        # 未命中 = 运行时失败：python rc=1 / rust local rc=0（族7 契约差登记）
+        _assert_python_rust_not_found_outputs(python_result, rust_result)
+        return
     _assert_python_rust_read_outputs(python_result, rust_result)
 
 

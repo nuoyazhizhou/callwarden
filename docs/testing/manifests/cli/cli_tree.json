@@ -1,14 +1,14 @@
 {
  "schema": "cli-tree/v1",
  "card": "TP-08C",
- "source_revision": "cda275de20230fe7d73f46da02ba25801be1f040",
- "generated_at": "2026-11-11T20:56:03",
+ "source_revision": "1fc671af86eb675c45f2648866f70061536c6f69",
+ "generated_at": "2026-11-24T12:18:10",
  "top_level_count": 86,
- "nested_total": 143,
+ "nested_total": 144,
  "standalone_entries": {
   "cw-client": {
    "parser": {
-    "help_text": "usage: cw daemon [-h] [--endpoint SOCKET]\n                 {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain} ...\n\ndaemon 管理与查询（Rust 原生 daemon 客户端；serve 子命令已下线，daemon 启动见 cw-daemon.exe）\n\npositional arguments:\n  {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain}\n    ping                检查 daemon 与 peer credential\n    start               启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client\n                        退出后仍存活\n    register            注册当前 UID 的 workspace\n    list                列出当前 UID 的 workspace\n    status              查询 workspace 和 snapshot 状态\n    publish             发布已刷新 DB 为共享 snapshot\n    query               查询共享 snapshot\n    mode                查看 daemon 模式\n    health              检查 daemon 健康状态（HTTP /health，Rust 权威）\n    manifest            显示 daemon HTTP manifest（authority/endpoint/registry\n                        revision）\n    capability          查询 daemon capability registry（MCP/RPC 工具矩阵）\n    schema-version      查询 registry DB schema 版本\n    bridge              检查 Windows bridge 配置与连通性\n    backup              备份 registry DB\n    restore             从备份恢复 registry DB\n    gc-cas              GC CAS 存储（清理未引用 content）\n    gc-snapshots        GC 快照（保留最近 N 个）\n    snapshot-stats      查询 daemon 内 SnapshotCache 统计（不带参数聚合所有\n                        workspace；--workspace-instance-id 查单个）\n    snapshot-list       列出 daemon 已知的所有 workspace snapshot\n    snapshot-evict      驱逐指定 workspace 的 snapshot 缓存\n    metrics             查询 daemon 运行时指标（counters/gauges/histograms）\n    mount               容器挂载映射管理\n    toolchain           工具链与 build context 管理\n\noptions:\n  -h, --help            show this help message and exit\n  --endpoint, --socket SOCKET\n                        HTTPS endpoint（默认经 authority manifest 解析）\n",
+    "help_text": "usage: cw daemon [-h] [--endpoint SOCKET]\n                 {ping,start,stop,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain} ...\n\ndaemon 管理与查询（Rust 原生 daemon 客户端；serve 子命令已下线，daemon 启动见 cw-daemon.exe）\n\npositional arguments:\n  {ping,start,stop,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain}\n    ping                检查 daemon 与 peer credential\n    start               启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client\n                        退出后仍存活\n    stop                停止本机 HTTP daemon。POSIX 发 SIGTERM（优雅 drain）；Windows 用\n                        taskkill /F 硬停（SIGTERM 不可达，见账本 §9.31）。daemon 未运行时幂等成功\n    register            注册当前 UID 的 workspace\n    list                列出当前 UID 的 workspace\n    status              查询 workspace 和 snapshot 状态\n    publish             发布已刷新 DB 为共享 snapshot\n    query               查询共享 snapshot\n    mode                查看 daemon 模式\n    health              检查 daemon 健康状态（HTTP /health，Rust 权威）\n    manifest            显示 daemon HTTP manifest（authority/endpoint/registry\n                        revision）\n    capability          查询 daemon capability registry（MCP/RPC 工具矩阵）\n    schema-version      查询 registry DB schema 版本\n    bridge              检查 Windows bridge 配置与连通性\n    backup              备份 registry DB\n    restore             从备份恢复 registry DB\n    gc-cas              GC CAS 存储（清理未引用 content）\n    gc-snapshots        GC 快照（保留最近 N 个）\n    snapshot-stats      查询 daemon 内 SnapshotCache 统计（不带参数聚合所有\n                        workspace；--workspace-instance-id 查单个）\n    snapshot-list       列出 daemon 已知的所有 workspace snapshot\n    snapshot-evict      驱逐指定 workspace 的 snapshot 缓存\n    metrics             查询 daemon 运行时指标（counters/gauges/histograms）\n    mount               容器挂载映射管理\n    toolchain           工具链与 build context 管理\n\noptions:\n  -h, --help            show this help message and exit\n  --endpoint, --socket SOCKET\n                        HTTPS endpoint（默认经 authority manifest 解析）\n",
     "rc": 0
    },
    "error": null
@@ -22,7 +22,7 @@
   },
   "cw-daemon": {
    "parser": {
-    "help_text": "Call Warden Enterprise Daemon (Windows, named pipe endpoint)\n\nUsage: cw-daemon.exe [OPTIONS] [COMMAND]\n\nCommands:\n  serve         启动命名管道 server（默认动作）\n  schema-check  schema 兼容性检查（与 Unix 一致，纯 DB 只读检查）\n  health-check  健康检查（连接命名管道，发送 ping，等待响应）\n  pki           PKI 生命周期管理（init / token issue / enroll / renew / revoke / rotate-server）\n  help          Print this message or the help of the given subcommand(s)\n\nOptions:\n      --config <CONFIG>\n          配置文件路径（JSON 格式，字段优先级：CLI > env > 文件 > 默认）\n\n      --foreground\n          前台运行（Rust 实现天然前台，flag 仅为 CLI 兼容）\n\n      --socket <SOCKET>\n          命名管道端点 `\\\\.\\pipe\\callwarden-<sid>`。\n          \n          Windows 上管道名始终由当前用户 SID 派生（NamedPipeListener::bind）， 该参数仅作 CLI 兼容（daemon_autostart 以 `--socket <pipe>` 唤起）。\n\n      --workers <WORKERS>\n          工作线程数（覆盖配置文件）\n\n      --registry <REGISTRY>\n          registry DB 路径（覆盖配置文件）\n\n      --cache-capacity <CACHE_CAPACITY>\n          snapshot cache 容量（覆盖配置文件）\n\n      --no-sd-notify\n          兼容 Unix CLI（Windows 无 sd_notify，忽略）\n\n      --http-bind <HTTP_BIND>\n          HTTP transport 绑定地址（dev_loopback_unauthenticated，迁移期默认）。 缺省（未设置 --http-bind / CW_DAEMON_TRANSPORT）时默认启用 loopback-only HTTP 监听（127.0.0.1:0 动态端口 + manifest）；显式 CW_DAEMON_TRANSPORT= named-pipe/uds 等回落旧通道（HTTP 不启用）。\n\n  -h, --help\n          Print help (see a summary with '-h')\n\n  -V, --version\n          Print version\n",
+    "help_text": "Call Warden Enterprise Daemon (Windows, named pipe endpoint)\n\nUsage: cw-daemon.exe [OPTIONS] [COMMAND]\n\nCommands:\n  serve         启动命名管道 server（默认动作）\n  schema-check  schema 兼容性检查（与 Unix 一致，纯 DB 只读检查）\n  health-check  健康检查（连接命名管道，发送 ping，等待响应）\n  pki           PKI 生命周期管理（init / token issue / enroll / renew / revoke / rotate-server）\n  help          Print this message or the help of the given subcommand(s)\n\nOptions:\n      --config <CONFIG>\n          配置文件路径（JSON 格式，字段优先级：CLI > env > 文件 > 默认）\n      --foreground\n          前台运行（Rust 实现天然前台，flag 仅为 CLI 兼容）\n      --workers <WORKERS>\n          工作线程数（覆盖配置文件）\n      --registry <REGISTRY>\n          registry DB 路径（覆盖配置文件）\n      --cache-capacity <CACHE_CAPACITY>\n          snapshot cache 容量（覆盖配置文件）\n      --no-sd-notify\n          兼容 Unix CLI（Windows 无 sd_notify，忽略）\n      --http-bind <HTTP_BIND>\n          HTTPS + mTLS 绑定地址（ADR-002，security_profile = https_mtls_v1）。 缺省（未设置 --http-bind / CW_DAEMON_TRANSPORT）时默认启用 loopback-only TLS 监听（127.0.0.1:0 动态端口 + manifest）；非 loopback 需 CW_DAEMON_HTTP_ALLOW_REMOTE=1，否则 fail-closed。\n  -h, --help\n          Print help\n  -V, --version\n          Print version\n",
     "rc": 0
    },
    "error": null
@@ -34,7 +34,7 @@
    "top_parser": {
     "prog": "cw workspace",
     "description": "工作区管理（list/register/set/delete）",
-    "usage": "usage: cw workspace [-h] {list,register,set,delete,scan,generate-ignore} ...",
+    "usage": "usage: cw workspace [-h]\n                    {list,register,set,delete,scan,generate-ignore,migrate} ...",
     "arguments": [
      {
       "option_strings": [
@@ -63,7 +63,8 @@
        "set",
        "delete",
        "scan",
-       "generate-ignore"
+       "generate-ignore",
+       "migrate"
       ],
       "help": "",
       "metavar": null,
@@ -73,7 +74,8 @@
        "set",
        "delete",
        "scan",
-       "generate-ignore"
+       "generate-ignore",
+       "migrate"
       ],
       "is_subparsers": true
      }
@@ -102,6 +104,10 @@
      },
      {
       "name": "generate-ignore",
+      "help": ""
+     },
+     {
+      "name": "migrate",
       "help": ""
      }
     ]
@@ -368,6 +374,70 @@
         "type": "",
         "choices": null,
         "help": "Actually write .callwardenignore (default: dry-run preview)",
+        "metavar": null
+       }
+      ],
+      "mutually_exclusive_groups": [],
+      "subparsers": []
+     }
+    },
+    "migrate": {
+     "parser": {
+      "prog": "cw workspace migrate",
+      "description": "",
+      "usage": "usage: cw workspace migrate [-h] [--dry-run] [--root PATH] [--json]",
+      "arguments": [
+       {
+        "option_strings": [
+         "-h",
+         "--help"
+        ],
+        "dest": "help",
+        "nargs": 0,
+        "required": false,
+        "default": "==SUPPRESS==",
+        "type": "",
+        "choices": null,
+        "help": "show this help message and exit",
+        "metavar": null
+       },
+       {
+        "option_strings": [
+         "--dry-run"
+        ],
+        "dest": "dry_run",
+        "nargs": 0,
+        "required": false,
+        "default": false,
+        "type": "",
+        "choices": null,
+        "help": "Preview the migration report without writing",
+        "metavar": null
+       },
+       {
+        "option_strings": [
+         "--root"
+        ],
+        "dest": "root",
+        "nargs": null,
+        "required": false,
+        "default": [],
+        "type": "",
+        "choices": null,
+        "help": "Extra checkout root to include (repeatable)",
+        "metavar": "PATH"
+       },
+       {
+        "option_strings": [
+         "--json"
+        ],
+        "dest": "json",
+        "nargs": 0,
+        "required": false,
+        "default": false,
+        "type": "",
+        "choices": null,
+        "help": "Print the raw JSON report",
         "metavar": null
        }
       ],
@@ -1989,7 +2059,7 @@
    "top_parser": {
     "prog": "cw detect-cycles",
     "description": "检测函数调用图中的循环调用",
-    "usage": "usage: cw detect-cycles [-h] [--depth DEPTH]",
+    "usage": "usage: cw detect-cycles [-h] [--depth DEPTH] [--fail-on-findings]",
     "arguments": [
      {
       "option_strings": [
@@ -2016,6 +2086,19 @@
       "type": "int",
       "choices": null,
       "help": "循环检测最大深度（默认 10）",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--fail-on-findings"
+      ],
+      "dest": "fail_on_findings",
+      "nargs": 0,
+      "required": false,
+      "default": false,
+      "type": "",
+      "choices": null,
+      "help": "有 findings 时以退出码 3 终止（CI 门禁）",
       "metavar": null
      }
     ],
@@ -2196,7 +2279,7 @@
    "top_parser": {
     "prog": "cw orphan-symbols",
     "description": "无调用关系的符号",
-    "usage": "usage: cw orphan-symbols [-h] [--module MODULE] [--limit LIMIT] [kind]",
+    "usage": "usage: cw orphan-symbols [-h] [--module MODULE] [--limit LIMIT]\n                         [--fail-on-findings]\n                         [kind]",
     "arguments": [
      {
       "option_strings": [
@@ -2247,6 +2330,19 @@
       "type": "int",
       "choices": null,
       "help": "最大结果数（默认 50）",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--fail-on-findings"
+      ],
+      "dest": "fail_on_findings",
+      "nargs": 0,
+      "required": false,
+      "default": false,
+      "type": "",
+      "choices": null,
+      "help": "有 findings 时以退出码 3 终止（CI 门禁）",
       "metavar": null
      }
     ],
@@ -8249,7 +8345,7 @@
         "default": 20,
         "type": "int",
         "choices": null,
-        "help": "最大提交数（默认 100）",
+        "help": "最大结果数（默认 20）",
         "metavar": null
        },
        {
@@ -8389,7 +8485,7 @@
      "parser": {
       "prog": "cw semgrep scan",
       "description": "",
-      "usage": "usage: cw semgrep scan [-h] [--config CONFIG] [--lang [LANGUAGES ...]]\n                       [--timeout TIMEOUT] [--save] [--quick] [--incremental]\n                       [--base BASE_BRANCH] [--head HEAD]\n                       [paths ...]",
+      "usage": "usage: cw semgrep scan [-h] [--config CONFIG] [--lang [LANGUAGES ...]]\n                       [--timeout TIMEOUT] [--save] [--quick] [--incremental]\n                       [--base BASE_BRANCH] [--head HEAD] [--fail-on-findings]\n                       [paths ...]",
       "arguments": [
        {
         "option_strings": [
@@ -8518,6 +8614,19 @@
         "type": "",
         "choices": null,
         "help": "增量扫描的 head ref（默认 HEAD）",
+        "metavar": null
+       },
+       {
+        "option_strings": [
+         "--fail-on-findings"
+        ],
+        "dest": "fail_on_findings",
+        "nargs": 0,
+        "required": false,
+        "default": false,
+        "type": "",
+        "choices": null,
+        "help": "有 findings 时以退出码 3 终止（CI 门禁）",
         "metavar": null
        }
       ],
@@ -9013,7 +9122,7 @@
    "top_parser": {
     "prog": "cw issues",
     "description": "Symbol-level static check issues (Semgrep + Guardrail findings)",
-    "usage": "usage: cw issues [-h] [--include-info] qualified_name",
+    "usage": "usage: cw issues [-h] [--include-info] [--fail-on-findings] qualified_name",
     "arguments": [
      {
       "option_strings": [
@@ -9052,6 +9161,19 @@
       "choices": null,
       "help": "Include INFO level findings (default: WARNING+ only)",
       "metavar": null
+     },
+     {
+      "option_strings": [
+       "--fail-on-findings"
+      ],
+      "dest": "fail_on_findings",
+      "nargs": 0,
+      "required": false,
+      "default": false,
+      "type": "",
+      "choices": null,
+      "help": "有 findings 时以退出码 3 终止（CI 门禁）",
+      "metavar": null
      }
     ],
     "mutually_exclusive_groups": [],
@@ -9065,7 +9187,7 @@
    "top_parser": {
     "prog": "cw function-issues",
     "description": "显示函数问题",
-    "usage": "usage: cw function-issues [-h] [--type TYPE] [--module MODULE] [--limit LIMIT]\n                          [--summary]\n                          [fn]",
+    "usage": "usage: cw function-issues [-h] [--type TYPE] [--module MODULE] [--limit LIMIT]\n                          [--summary] [--fail-on-findings]\n                          [fn]",
     "arguments": [
      {
       "option_strings": [
@@ -9142,6 +9264,19 @@
       "type": "",
       "choices": null,
       "help": "按严重程度汇总全项目问题",
+      "metavar": null
+     },
+     {
+      "option_strings": [
+       "--fail-on-findings"
+      ],
+      "dest": "fail_on_findings",
+      "nargs": 0,
+      "required": false,
+      "default": false,
+      "type": "",
+      "choices": null,
+      "help": "有 findings 时以退出码 3 终止（CI 门禁）",
       "metavar": null
      }
     ],
@@ -10732,7 +10867,7 @@
      "parser": {
       "prog": "cw clone detect",
       "description": "",
-      "usage": "usage: cw clone detect [-h] [--file-filter FILE_FILTER]\n                       [--min-lines MIN_LINES] [--similarity SIMILARITY]",
+      "usage": "usage: cw clone detect [-h] [--file-filter FILE_FILTER]\n                       [--min-lines MIN_LINES] [--similarity SIMILARITY]\n                       [--fail-on-findings]",
       "arguments": [
        {
         "option_strings": [
@@ -10785,6 +10920,19 @@
         "type": "float",
         "choices": null,
         "help": "Type-3 相似度阈值 [0,1]（默认 0.8）",
+        "metavar": null
+       },
+       {
+        "option_strings": [
+         "--fail-on-findings"
+        ],
+        "dest": "fail_on_findings",
+        "nargs": 0,
+        "required": false,
+        "default": false,
+        "type": "",
+        "choices": null,
+        "help": "有 findings 时以退出码 3 终止（CI 门禁）",
         "metavar": null
        }
       ],
@@ -13833,7 +13981,7 @@
    "top_parser": {
     "entry": "pki",
     "rc": 0,
-    "help_text": "PKI 生命周期管理（init / token issue / enroll / renew / revoke / rotate-server）\n\nUsage: cw-daemon.exe pki <COMMAND>\n\nCommands:\n  init           确保 CA + 服务端叶证书存在（幂等）\n  token          单次引导 token 管理\n  enroll         用引导 token 换取客户端证书（仅服务端认证 TLS）\n  renew          持有效客户端证书换发新证书（mTLS）\n  revoke         吊销证书 serial（幂等）\n  rotate-server  同一 CA 下重签服务端证书（daemon 重启生效）\n  help           Print this message or the help of the given subcommand(s)\n\nOptions:\n  -h, --help  Print help\n"
+    "help_text": "PKI 生命周期管理（init / token issue / enroll / renew / revoke / rotate-server）\n\nUsage: cw-daemon.exe pki <COMMAND>\n\nCommands:\n  init           确保 CA + 服务端叶证书存在（幂等）\n  token          单次引导 token 管理\n  enroll         用引导 token 换取客户端证书（仅服务端认证 TLS）\n  renew          持有效客户端证书换发新证书（mTLS）\n  cert-status    只读检查客户端证书状态（§9.34 B 自动续期数据源，不联网）\n  rotate-ca      rotate-ca 双 CA 信任窗口（§9.34 C）：--action prepare|commit|status\n  revoke         吊销证书 serial（幂等）\n  rotate-server  同一 CA 下重签服务端证书（daemon 重启生效）\n  help           Print this message or the help of the given subcommand(s)\n\nOptions:\n  -h, --help  Print help\n"
    },
    "nested": {},
    "error": null,
@@ -15939,7 +16087,7 @@
    "top_parser": {
     "entry": "daemon",
     "rc": 0,
-    "help_text": "usage: cw daemon [-h] [--endpoint SOCKET]\n                 {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain} ...\n\ndaemon 管理与查询（Rust 原生 daemon 客户端；serve 子命令已下线，daemon 启动见 cw-daemon.exe）\n\npositional arguments:\n  {ping,start,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain}\n    ping                检查 daemon 与 peer credential\n    start               启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client\n                        退出后仍存活\n    register            注册当前 UID 的 workspace\n    list                列出当前 UID 的 workspace\n    status              查询 workspace 和 snapshot 状态\n    publish             发布已刷新 DB 为共享 snapshot\n    query               查询共享 snapshot\n    mode                查看 daemon 模式\n    health              检查 daemon 健康状态（HTTP /health，Rust 权威）\n    manifest            显示 daemon HTTP manifest（authority/endpoint/registry\n                        revision）\n    capability          查询 daemon capability registry（MCP/RPC 工具矩阵）\n    schema-version      查询 registry DB schema 版本\n    bridge              检查 Windows bridge 配置与连通性\n    backup              备份 registry DB\n    restore             从备份恢复 registry DB\n    gc-cas              GC CAS 存储（清理未引用 content）\n    gc-snapshots        GC 快照（保留最近 N 个）\n    snapshot-stats      查询 daemon 内 SnapshotCache 统计（不带参数聚合所有\n                        workspace；--workspace-instance-id 查单个）\n    snapshot-list       列出 daemon 已知的所有 workspace snapshot\n    snapshot-evict      驱逐指定 workspace 的 snapshot 缓存\n    metrics             查询 daemon 运行时指标（counters/gauges/histograms）\n    mount               容器挂载映射管理\n    toolchain           工具链与 build context 管理\n\noptions:\n  -h, --help            show this help message and exit\n  --endpoint, --socket SOCKET\n                        HTTPS endpoint（默认经 authority manifest 解析）\n"
+    "help_text": "usage: cw daemon [-h] [--endpoint SOCKET]\n                 {ping,start,stop,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain} ...\n\ndaemon 管理与查询（Rust 原生 daemon 客户端；serve 子命令已下线，daemon 启动见 cw-daemon.exe）\n\npositional arguments:\n  {ping,start,stop,register,list,status,publish,query,mode,health,manifest,capability,schema-version,bridge,backup,restore,gc-cas,gc-snapshots,snapshot-stats,snapshot-list,snapshot-evict,metrics,mount,toolchain}\n    ping                检查 daemon 与 peer credential\n    start               启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client\n                        退出后仍存活\n    stop                停止本机 HTTP daemon。POSIX 发 SIGTERM（优雅 drain）；Windows 用\n                        taskkill /F 硬停（SIGTERM 不可达，见账本 §9.31）。daemon 未运行时幂等成功\n    register            注册当前 UID 的 workspace\n    list                列出当前 UID 的 workspace\n    status              查询 workspace 和 snapshot 状态\n    publish             发布已刷新 DB 为共享 snapshot\n    query               查询共享 snapshot\n    mode                查看 daemon 模式\n    health              检查 daemon 健康状态（HTTP /health，Rust 权威）\n    manifest            显示 daemon HTTP manifest（authority/endpoint/registry\n                        revision）\n    capability          查询 daemon capability registry（MCP/RPC 工具矩阵）\n    schema-version      查询 registry DB schema 版本\n    bridge              检查 Windows bridge 配置与连通性\n    backup              备份 registry DB\n    restore             从备份恢复 registry DB\n    gc-cas              GC CAS 存储（清理未引用 content）\n    gc-snapshots        GC 快照（保留最近 N 个）\n    snapshot-stats      查询 daemon 内 SnapshotCache 统计（不带参数聚合所有\n                        workspace；--workspace-instance-id 查单个）\n    snapshot-list       列出 daemon 已知的所有 workspace snapshot\n    snapshot-evict      驱逐指定 workspace 的 snapshot 缓存\n    metrics             查询 daemon 运行时指标（counters/gauges/histograms）\n    mount               容器挂载映射管理\n    toolchain           工具链与 build context 管理\n\noptions:\n  -h, --help            show this help message and exit\n  --endpoint, --socket SOCKET\n                        HTTPS endpoint（默认经 authority manifest 解析）\n"
    },
    "nested": {},
    "error": null,

@@ -167,7 +167,10 @@ class TestHttpWriteConvenienceMethods:
         assert methods == ["workspace.register"]
         assert calls[0][1]["client_view_root"] == root
         assert set(calls[0][1]) <= {
+            # stale 修正（ws-identity C-02）：register params 合法键集增加
+            # git_main_root（worktree 场景主仓绝对路径）。
             "client_view_root", "git_remote_url", "git_head_commit_sha",
+            "git_main_root",
         }
         assert row["workspace_instance_id"] == "inst-w2"
         assert client._workspace_instance_by_root[
@@ -531,13 +534,19 @@ class TestRealDaemonWriteRoundTrip:
 
     @requires_binaries
     def test_write_unknown_instance_rejected(self, real_daemon_client):
-        """d) 不存在 instance_id 的 workspace.activate → workspace_not_found
-        （fail-closed，不静默成功）。"""
+        """d) 不存在 instance_id 的 workspace.activate → principal 门禁拒绝
+        （fail-closed，不静默成功）。
+
+        stale 修正（T-1795254396917-c1bf49c0 安全取证 #5）：已认证 principal
+        的 workspace_instance_id 无法解析回 registry workspace_id 时，
+        dispatch 前置门禁直接返回 `E_PRINCIPAL_WORKSPACE_REQUIRED`，
+        先于 handler 的 owned ACL（旧断言 workspace_not_found 已陈旧）。
+        """
         with pytest.raises(DaemonRemoteError) as exc:
             real_daemon_client.call(
                 "workspace.activate", {"workspace_instance_id": "deadbeefdeadbeef01"}
             )
-        assert exc.value.code == "workspace_not_found"
+        assert exc.value.code == "E_PRINCIPAL_WORKSPACE_REQUIRED"
 
     @requires_binaries
     def test_write_missing_instance_id_invalid_params(self, real_daemon_client):

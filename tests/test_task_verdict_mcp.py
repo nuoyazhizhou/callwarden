@@ -2,7 +2,24 @@
 
 from unittest.mock import patch
 
+import pytest
+
+from callwarden.i18n import get_language, set_language
 from callwarden.server.tools import tools_collab
+
+
+@pytest.fixture(autouse=True)
+def _zh_cn_locale():
+    """固定输出语言为 zh_CN。
+
+    本文件断言的是中文 i18n 文案；`_current_lang` 是进程级全局，全量运行时
+    可能被其他用例改为 en_US（如 test_cli_055 固定 en_US）。显式钉住并还原，
+    避免依赖宿主机 locale 与用例执行顺序。
+    """
+    previous = get_language()
+    set_language("zh_CN")
+    yield
+    set_language(previous)
 
 
 def _registered_tools():

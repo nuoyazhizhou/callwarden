@@ -390,21 +390,27 @@ class TestRealDaemonSnapshotRoundTrip:
 
     @requires_binaries
     def test_stats_unknown_instance_workspace_not_found(self, real_daemon_client):
-        """b) 不存在 instance_id 的 snapshot.stats → workspace_not_found。"""
+        """b) 不存在 instance_id 的 snapshot.stats → principal 门禁拒绝。
+
+        stale 修正（T-1795254396917-c1bf49c0 安全取证 #5）：已认证 principal
+        的 workspace_instance_id 必须解析回 registry workspace_id；查无此实例
+        → `E_PRINCIPAL_WORKSPACE_REQUIRED`（dispatch.rs 前置门禁），先于
+        handler 的 owned ACL（旧断言 workspace_not_found 已陈旧）。
+        """
         with pytest.raises(DaemonRemoteError) as exc:
             real_daemon_client.call(
                 "snapshot.stats", {"workspace_instance_id": "deadbeefdeadbeef01"}
             )
-        assert exc.value.code == "workspace_not_found"
+        assert exc.value.code == "E_PRINCIPAL_WORKSPACE_REQUIRED"
 
     @requires_binaries
     def test_evict_unknown_instance_workspace_not_found(self, real_daemon_client):
-        """b) 不存在 instance_id 的 snapshot.evict → workspace_not_found。"""
+        """b) 不存在 instance_id 的 snapshot.evict → principal 门禁拒绝（同上）。"""
         with pytest.raises(DaemonRemoteError) as exc:
             real_daemon_client.call(
                 "snapshot.evict", {"workspace_instance_id": "deadbeefdeadbeef01"}
             )
-        assert exc.value.code == "workspace_not_found"
+        assert exc.value.code == "E_PRINCIPAL_WORKSPACE_REQUIRED"
 
     @requires_binaries
     def test_stats_before_publish_snapshot_not_ready(self, real_daemon_client, tmp_path):

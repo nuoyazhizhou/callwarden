@@ -105,8 +105,19 @@ def isolated_http_daemon():
                 f"隔离 daemon 未发布 manifest\nstdout={stdout}\nstderr={stderr}"
             )
         skip_if_isolated_daemon_pipe_conflict(proc)
+        # stale 修正（族8，2026-11-24）：ADR-002 单轨 mTLS 下隔离 daemon 的信任根
+        # 是其 USERPROFILE 下的 LocalCa，客户端必须注入同源 owner 身份证书，
+        # 否则 SSL 上下文无法验证 daemon 证书（unable to get local issuer
+        # certificate）。与 test_http_daemon_release_acceptance 同源处理。
+        from _w3_harness import inject_isolated_mtls_env, restore_w3_env
+        inject_isolated_mtls_env(data_root)
         client = HttpDaemonRpcClient(
             endpoint=manifest["endpoint"],
+            # stale 修正（族8，2026-11-24）：只传 explicit endpoint 时
+            # discover() 仍会按真实 HOME 解析 manifest，取到生产 daemon 的
+            # tls.ca_cert_pem（与隔离 daemon 的 LocalCa 异构）→ 握手
+            # UnknownIssuer。显式传入隔离 manifest 路径后 CA pin 同源。
+            manifest_path=manifest_path,
             verify_health=False,
             validate_manifest=False,
             timeout=15,
@@ -121,6 +132,9 @@ def isolated_http_daemon():
     finally:
         _terminate(proc)
         _restore_or_clean_http_manifest(manifest_path, proc.pid, backup)
+        # 还原 inject_isolated_mtls_env 注入的 mTLS 证书 env，避免污染后续模块
+        from _w3_harness import restore_w3_env
+        restore_w3_env()
         shutil.rmtree(data_root, ignore_errors=True)
 
 
@@ -341,8 +355,15 @@ def seed_workspace(isolated_http_daemon):
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(root, fname))
 
-    client = HttpDaemonRpcClient(endpoint=endpoint, verify_health=False,
-                                 validate_manifest=False, timeout=180)
+    # stale 修正（族8，2026-11-24）：同 isolated_http_daemon，CA pin 必须指向
+    # 隔离 manifest（否则 discover() 取真实 HOME 生产 manifest 的 CA）。
+    client = HttpDaemonRpcClient(
+        endpoint=endpoint,
+        manifest_path=_isolated_manifest_path(data_root),
+        verify_health=False,
+        validate_manifest=False,
+        timeout=180,
+    )
 
     # 1. 注册 workspace(拿权威 instance id)
     reg = client.call("workspace.register", {

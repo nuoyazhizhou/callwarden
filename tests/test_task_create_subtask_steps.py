@@ -228,6 +228,9 @@ def _env_with_daemon(endpoint: str, data_root: str) -> dict:
     env.pop("CW_PKI_DIR", None)  # §9.42：沿用隔离 PKI 的 CW_CLIENT_CERT/KEY/CA
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+    # 断言基于中文 i18n 文案：显式钉住语言，避免宿主机 locale / 全量运行时
+    # 其他用例遗留的 CALLWARDEN_LANG 导致输出语言漂移。
+    env["CALLWARDEN_LANG"] = "zh_CN"
     env.pop("CW_DAEMON_SOCKET_PATH", None)
     env.pop("CW_DAEMON_ENDPOINT", None)
     return env

@@ -11,6 +11,8 @@ import json
 import os
 import sys
 
+import pytest
+
 
 # 让测试能导入 cli/main.py
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -144,7 +146,11 @@ def test_handle_refresh_failure_recorded(capsys):
     """失败文件被记录在汇总中。"""
     db = _FakeDb()
     db.fail_on = {"b.py"}
-    cli_main._handle_refresh(["a.py", "b.py", "c.py"], db)
+    # stale 修正（族8，2026-11-24）：T-1793505963640-e9540b78 统一失败退出码
+    # 后，部分文件刷新失败按运行时失败 raise SystemExit(1)；汇总输出不变。
+    with pytest.raises(SystemExit) as ei:
+        cli_main._handle_refresh(["a.py", "b.py", "c.py"], db)
+    assert ei.value.code == 1
 
     # a.py 和 c.py 成功，b.py 失败
     assert db.refreshed == ["a.py", "c.py"]

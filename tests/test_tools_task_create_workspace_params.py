@@ -138,6 +138,56 @@ def test_task_create_returns_dict_without_pydantic_rejection(captured_route, fix
     assert "open" in text
 
 
+def test_task_create_injects_default_role_contracts(captured_route, fixed_ctx):
+    """缺省注入 A' 三角色模板 + legacy_identity_v1，任务不再落空投影。"""
+    _call_task_create({"title": "default trio"})
+    _, params, _ = captured_route[0]
+    contracts = params["role_contracts"]
+    assert [c["role"] for c in contracts] == ["executor", "reviewer", "adjudicator"]
+    assert contracts[0]["prompt"] == "cw.aprime.executor.startup.v1"
+    assert contracts[1]["prompt"] == "cw.aprime.reviewer.audit.v1"
+    assert contracts[2]["prompt"] == "cw.aprime.adjudicator.decision.v1"
+    assert all(c.get("description") and c.get("instructions") for c in contracts)
+    assert params["identity_policy"] == "legacy_identity_v1"
+
+
+def test_task_create_rejects_invalid_role(captured_route, fixed_ctx):
+    """role 不在合法集合 → E_TASK_ROLE_CONTRACTS_INVALID，且不发 RPC。"""
+    text = _call_task_create({
+        "title": "bad role",
+        "role_contracts": [{"role": "boss", "prompt": "x"}],
+    })
+    assert "E_TASK_ROLE_CONTRACTS_INVALID" in text
+    assert captured_route == []
+
+
+def test_task_create_rejects_empty_role_contracts(captured_route, fixed_ctx):
+    """显式空列表 → E_TASK_ROLE_CONTRACTS_INVALID（空投影任务禁止），且不发 RPC。"""
+    text = _call_task_create({"title": "empty contracts", "role_contracts": []})
+    assert "E_TASK_ROLE_CONTRACTS_INVALID" in text
+    assert captured_route == []
+
+
+def test_task_create_rejects_non_dict_role_contracts(captured_route, fixed_ctx):
+    """列表元素非对象 → E_TASK_ROLE_CONTRACTS_INVALID，且不发 RPC。"""
+    text = _call_task_create({"title": "bad item", "role_contracts": ["executor"]})
+    assert "E_TASK_ROLE_CONTRACTS_INVALID" in text
+    assert captured_route == []
+
+
+def test_task_create_forwards_custom_role_contracts(captured_route, fixed_ctx):
+    """显式合法 role_contracts 原样透传（不覆盖、不合并）。"""
+    custom = [
+        {"role": "executor", "prompt": "custom.executor", "description": "d", "instructions": "i"},
+        {"role": "reviewer", "prompt": "custom.reviewer", "description": "d", "instructions": "i"},
+        {"role": "adjudicator", "prompt": "custom.adjudicator", "description": "d", "instructions": "i"},
+    ]
+    _call_task_create({"title": "custom trio", "role_contracts": custom})
+    _, params, _ = captured_route[0]
+    assert params["role_contracts"] == custom
+    assert params["identity_policy"] == "legacy_identity_v1"
+
+
 def test_task_create_context_pair_fail_closed_on_daemon_unavailable(monkeypatch):
     """`_task_create_context_pair` 在 daemon 不可用时返回错误字典，不回退默认项目。"""
     def _boom(_root):

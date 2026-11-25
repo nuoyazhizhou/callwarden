@@ -425,11 +425,18 @@ def _rows(db: str, sql: str, args=()) -> list:
 # ----------------------------------------------------------------------
 
 def test_acl_unknown_workspace_fail_closed(c17_daemon):
-    """未知 workspace_instance_id → workspace_not_found（不静默）。"""
+    """未知 workspace_instance_id → fail-closed 显式拒绝（不静默）。
+
+    stale 修正（族8，2026-11-24）：安全取证 #5 在 dispatch 前置门禁中先做
+    instance→workspace_id 解析（dispatch.rs:3284-3309），未注册实例在进入
+    handler 前即返回 `E_PRINCIPAL_WORKSPACE_REQUIRED`，不再落到
+    `owned_workspace` 的 `workspace_not_found`。语义仍是「未知实例必须显式
+    报错」，仅错误码换了归属层。
+    """
     client, _, _, _ = c17_daemon
     with pytest.raises(DaemonRemoteError) as ei:
         client.call("admin.gc_policy_get", {"workspace_instance_id": "ws-c17-nope"})
-    assert "not_found" in ei.value.code.lower(), f"实得 code={ei.value.code}"
+    assert ei.value.code == "E_PRINCIPAL_WORKSPACE_REQUIRED", f"实得 code={ei.value.code}"
 
 
 def test_acl_foreign_owner_rejected(c17_daemon):

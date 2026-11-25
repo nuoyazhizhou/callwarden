@@ -156,7 +156,11 @@ class TestHttpWorkspaceStatusInjection:
         # 1091-1113）附加 git_remote_url/git_head_commit_sha，register params
         # 不再等于仅 client_view_root 的单键 dict（旧断言陈旧）。
         assert set(calls[0][1]) <= {
+            # stale 修正（ws-identity C-02）：daemon_client 现附加
+            # git_main_root（worktree 场景主仓绝对路径），register params
+            # 合法键集需同步放行。
             "client_view_root", "git_remote_url", "git_head_commit_sha",
+            "git_main_root",
         }
         # publish：注入权威 instance_id + 透传 db_path（abspath 规范化）
         assert calls[1][1]["workspace_instance_id"] == "inst-w1"
@@ -475,18 +479,20 @@ class TestRealDaemonWorkspaceRoundTrip:
 
     @requires_binaries
     def test_status_unknown_instance_rejected(self, real_daemon_client):
-        """d) 不存在 instance_id 的 workspace.status → E_WORKSPACE_NOT_FOUND。"""
+        """d) 不存在 instance_id 的 workspace.status → 被 principal 范围门禁拒绝。
+
+        stale 修正（T-1795254396917-c1bf49c0 安全取证 #5）：已认证 principal
+        携带的 workspace_instance_id 必须先解析回 registry workspace_id——
+        registry 查无此实例 → `E_PRINCIPAL_WORKSPACE_REQUIRED`
+        （rust_ext/src/daemon/dispatch.rs:3280-3304 前置门禁）。
+        旧断言 `E_WORKSPACE_NOT_FOUND` 是小写 domain 码时代的实现细节，且
+        门禁在 handler ACL 之前触发，故错误码以门禁为准。
+        """
         with pytest.raises(DaemonRemoteError) as exc:
             real_daemon_client.call(
                 "workspace.status", {"workspace_instance_id": "deadbeefdeadbeef01"}
             )
-        # stale（PYT 回归卡 step#4 · A 桶）：旧断言用小写 domain 码
-        # "workspace_not_found"，但 UnifiedAuthority 权威缺失时 Rust 侧显式
-        # 返回大写错误码。生产依据：
-        # rust_ext/src/daemon/snapshot_state.rs:520-526
-        # `unified_workspace_authority` 返回 None → DaemonRpcError::new(
-        # "E_WORKSPACE_NOT_FOUND", ...)（非 workspace_not_found）。
-        assert exc.value.code == "E_WORKSPACE_NOT_FOUND"
+        assert exc.value.code == "E_PRINCIPAL_WORKSPACE_REQUIRED"
 
     @requires_binaries
     def test_status_missing_instance_id_invalid_params(self, real_daemon_client):

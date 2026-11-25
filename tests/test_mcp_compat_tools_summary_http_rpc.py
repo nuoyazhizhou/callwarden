@@ -196,7 +196,10 @@ def test_unknown_workspace_fail_closed(client):
     ]:
         with pytest.raises(Exception) as ei:
             client.call(method, {"workspace_instance_id": UNKNOWN_INSTANCE, **params})
-        assert "workspace_not_found" in str(ei.value), method
+        # stale 修正（族8，2026-11-24）：未知实例现由 dispatch 前置门禁
+        # （dispatch.rs:3284-3309）拒绝为 E_PRINCIPAL_WORKSPACE_REQUIRED，
+        # 不再落到 handler 的 workspace_not_found；fail-closed 语义不变。
+        assert "E_PRINCIPAL_WORKSPACE_REQUIRED" in str(ei.value), method
 
 
 # ---------------------------------------------------------------

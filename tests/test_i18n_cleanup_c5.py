@@ -284,19 +284,32 @@ def test_all_new_keys_used_in_source():
     """新增的 i18n key 至少在一个源文件中被引用。"""
     from callwarden.config import PROJECT_ROOT
 
-    # 收集所有 Python 源码
+    # 收集产品源码中的 t() 引用。
+    # stale 修正（族8，2026-11-24）：原实现 os.walk(PROJECT_ROOT) 全仓扫描，
+    # 会递归读取 .venv_test / node_modules / testcode 等目录内数万个 .py
+    # （且可能穿过 junction），单测超过 60s 并随环境增长失控。i18n key 的
+    # 引用只可能出现在产品源码与顶层入口脚本中，故收敛到显式源码根。
     all_source = []
-    for root, dirs, files in os.walk(PROJECT_ROOT):
-        # 跳过 .git, __pycache__, tests
-        dirs[:] = [d for d in dirs if d not in (
-            ".git", "__pycache__", ".pytest_cache")]
-        for f in files:
-            if f.endswith(".py"):
-                try:
-                    with open(os.path.join(root, f), encoding="utf-8") as fh:
-                        all_source.append(fh.read())
-                except (OSError, UnicodeDecodeError):
-                    pass
+    source_files = [
+        os.path.join(PROJECT_ROOT, f)
+        for f in os.listdir(PROJECT_ROOT) if f.endswith(".py")
+    ]
+    for name in ("cli", "server", "i18n", "scripts", "skills", "cicd"):
+        base = os.path.join(PROJECT_ROOT, name)
+        if not os.path.isdir(base):
+            continue
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in (
+                "__pycache__", ".pytest_cache", "node_modules")]
+            for f in files:
+                if f.endswith(".py"):
+                    source_files.append(os.path.join(root, f))
+    for path in source_files:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                all_source.append(fh.read())
+        except (OSError, UnicodeDecodeError):
+            pass
 
     combined = "\n".join(all_source)
 

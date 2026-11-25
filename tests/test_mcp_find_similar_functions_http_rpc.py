@@ -50,11 +50,14 @@ def test_find_similar_functions_no_target(live_daemon):
 def test_find_similar_functions_unknown_workspace(live_daemon):
     """未知 workspace：无目标 → []。"""
     c = live_daemon
-    # 未知 instance → fail-closed workspace_not_found（不静默返回空）
+    # 未知 instance → fail-closed 显式拒绝（不静默返回空）。
+    # stale 修正（族8，2026-11-24）：安全取证 #5 的 dispatch 前置门禁先解析
+    # instance→workspace_id（dispatch.rs:3284-3309），未注册实例在 handler 之前
+    # 即返回 E_PRINCIPAL_WORKSPACE_REQUIRED（原断言 workspace_not_found 陈旧）。
     with pytest.raises(Exception) as ei:
         c.call("find_similar_functions",
                {"workspace_instance_id": UNKNOWN_INSTANCE, "qualified_name": "X"})
-    assert "workspace_not_found" in str(ei.value)
+    assert "E_PRINCIPAL_WORKSPACE_REQUIRED" in str(ei.value)
 
 
 def test_find_similar_functions_missing_params(live_daemon):

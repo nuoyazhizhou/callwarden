@@ -14,6 +14,8 @@ cli_handle_rule_cleanup_sync_log_handlers.rs 单元测试与
 test_cli_054_http_rpc_daemon.py live 契约）。
 """
 
+import pytest
+
 import callwarden.cli.main as main_mod
 
 
@@ -96,8 +98,12 @@ def test_cli054_cleanup_sync_log_failure_surfaces_error(monkeypatch, capsys):
         "older_than": 90, "keep_latest": 100, "apply": False,
     })()
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
-    rc = main_mod._handle_rule_cleanup_sync_log(opts, proxy)
-    assert rc is True
+    # stale 修正（族8，2026-11-24）：T-1793505963640-e9540b78 统一失败退出码
+    # 后，daemon 业务失败由 handler 直接 raise SystemExit(1)（运行时失败），
+    # 不再返回布尔值（原断言 rc is True 陈旧）。
+    with pytest.raises(SystemExit) as ei:
+        main_mod._handle_rule_cleanup_sync_log(opts, proxy)
+    assert ei.value.code == 1
     assert captured.get("method") == "admin.cleanup_rule_sync_log"
     out = capsys.readouterr().out
     assert "E_PERMISSION" in out

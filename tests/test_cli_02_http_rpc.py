@@ -119,9 +119,14 @@ def test_http_rpc_search_authority_failure(published_workspace):
             "kind": None,
             "limit": 10,
         })
+    # stale 修正（族6/族8，2026-11-24）：dispatch 前置 principal 门禁先于 handler
+    # ACL 校验，未注册 workspace_instance_id 被拒为
+    # E_PRINCIPAL_WORKSPACE_REQUIRED（rust_ext/src/daemon/dispatch.rs）。补入该码，
+    # 保留原错误码集合，不弱化断言。
     assert getattr(ei.value, "code", "") in (
         "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
         "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
+        "E_PRINCIPAL_WORKSPACE_REQUIRED",
     )
 
 
