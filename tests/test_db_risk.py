@@ -1,0 +1,1095 @@
+"""风险评分模型 + 边置信度四档机制测试。
+
+A. 纯函数（db/db_risk.py）：分档、封顶、同源加法、置信度分档、汇总。
+B. 集成（CodeGraphDB.review_readiness_report）：用合成调用图验证
+   resolved（同文件/跨文件）与 raw（qualified/裸名）四档都进入报告，
+   且旧字段（risk_level / must_test / impact_scope ...）保持向后兼容。
+"""
+
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+
+from callwarden.db.db import CodeGraphDB
+from callwarden.db.db_sessions import (
+    build_match_query,
+    search_messages,
+    search_sessions,
+    search_sessions_and_messages,
+)
+from callwarden.db.schema import ensure_session_fts_schema
+from callwarden.db.db_risk import (
+    EDGE_CONFIDENCE,
+    classify_confidence,
+    classify_edge,
+    collect_risk_signals,
+    compute_risk_score,
+    edge_confidence_weight,
+    is_noisy_raw_name,
+    is_security_named,
+    summarize_edges,
+)
+
+
+# ----------------------------------------------------------------------
+# A. 纯函数
+# ----------------------------------------------------------------------
+
+
+def test_classify_edge_four_tiers():
+    assert classify_edge(12, True, "mod.target") == "EXTRACTED"
+    assert classify_edge(12, False, "mod.target") == "INFERRED"
+    assert classify_edge(0, False, "mod.target") == "AMBIGUOUS"
+    assert classify_edge(0, False, "") == "UNRESOLVED"
+    # 已解析边不受 qualified 存在与否影响
+    assert classify_edge(3, False, "") == "INFERRED"
+
+
+def test_edge_confidence_weights_and_unknown_tier():
+    assert EDGE_CONFIDENCE == {
+        "EXTRACTED": 1.0,
+        "INFERRED": 0.8,
+        "AMBIGUOUS": 0.4,
+        "UNRESOLVED": 0.2,
+    }
+    for tier, weight in EDGE_CONFIDENCE.items():
+        assert edge_confidence_weight(tier) == weight
+    # 未知分档 fail-closed 到最低档
+    assert edge_confidence_weight("WHATEVER") == 0.2
+
+
+def test_signals_are_capped_per_dimension():
+    signals = collect_risk_signals(
+        max_depth=10,                       # 0.05*10 → cap 0.25
+        impacted_modules=[f"m{i}" for i in range(10)],
+        source_module="src",
+        must_test_count=10,                 # 0.05*10 → cap 0.30
+        test_symbol_count=0,
+        security_named_count=3,             # flat 0.20（不累加）
+        direct_caller_count=100,            # 100/20*0.05=0.25 → cap 0.10
+        churn_commits=100,                  # 100/10*0.05=0.5 → cap 0.15
+    )
+    assert signals == {
+        "depth_reach": 0.25,
+        "cross_module": 0.15,
+        "test_gap": 0.30,
+        "security_surface": 0.20,
+        "caller_pressure": 0.10,
+        "churn": 0.15,
+    }
+    assert compute_risk_score(signals) == 1.15
+
+
+def test_cross_module_excludes_source_module_and_test_gap_floors_at_zero():
+    signals = collect_risk_signals(
+        max_depth=0,
+        impacted_modules=["src", "src", ""],
+        source_module="src",
+        must_test_count=2,
+        test_symbol_count=5,  # 测试覆盖超过必测项 → 缺口为 0
+        security_named_count=0,
+        direct_caller_count=0,
+        churn_commits=0,
+    )
+    assert signals["cross_module"] == 0.0
+    assert signals["test_gap"] == 0.0
+    assert signals["security_surface"] == 0.0
+    assert compute_risk_score(signals) == 0.0
+
+
+def test_risk_score_is_sum_of_signals():
+    signals = {"depth_reach": 0.10, "cross_module": 0.05, "churn": 0.05}
+    assert compute_risk_score(signals) == 0.20
+
+
+@pytest.mark.parametrize(
+    ("weight", "expected"),
+    [
+        (1.0, "WILL_BREAK"),
+        (0.8, "WILL_BREAK"),
+        (0.79, "LIKELY_AFFECTED"),
+        (0.4, "LIKELY_AFFECTED"),
+        (0.2, "UNAFFECTED"),
+        (0.0, "UNAFFECTED"),
+    ],
+)
+def test_classify_confidence_boundaries(weight, expected):
+    assert classify_confidence(weight) == expected
+
+
+def test_summarize_edges_histogram_and_ordering():
+    block = summarize_edges({"a.fast": 1.0, "b.mid": 0.8, "c.leaf": 0.2})
+    assert block["min_confidence"] == 0.2
+    assert block["classification"] == "UNAFFECTED"
+    assert block["histogram"] == {
+        "WILL_BREAK": 2,
+        "LIKELY_AFFECTED": 0,
+        "UNAFFECTED": 1,
+    }
+    # 按置信度升序：最不可靠的排前面
+    assert [row["qualified_name"] for row in block["per_symbol"]] == [
+        "c.leaf", "b.mid", "a.fast",
+    ]
+    assert block["per_symbol"][0]["tier"] == "UNRESOLVED"
+    assert block["per_symbol"][2]["tier"] == "EXTRACTED"
+
+
+def test_summarize_edges_caps_per_symbol_at_20():
+    block = summarize_edges({f"mod.fn{i:02d}": 1.0 for i in range(30)})
+    assert len(block["per_symbol"]) == 20
+    assert sum(block["histogram"].values()) == 30
+
+
+def test_summarize_edges_candidate_metadata_complete():
+    """每个候选都带 qualified_name/target_uid/file_path/kind/call_line。"""
+    metadata = {
+        "a.fast": {"file_path": "a.py", "kind": "fn", "call_line": 30},
+        "b.mid": {"file_path": "b.py", "kind": "method", "call_line": 20},
+        "c.leaf": {"file_path": "c.py", "kind": "fn", "call_line": 10},
+    }
+    block = summarize_edges({"a.fast": 1.0, "b.mid": 0.8, "c.leaf": 0.2}, metadata)
+    for row in block["per_symbol"] + block["ranked"]:
+        for field in ("qualified_name", "target_uid", "file_path", "kind", "call_line"):
+            assert field in row, f"候选缺少字段 {field}"
+        assert row["target_uid"] == row["qualified_name"]
+    by_name = {row["qualified_name"]: row for row in block["ranked"]}
+    assert by_name["a.fast"]["file_path"] == "a.py"
+    assert by_name["b.mid"]["kind"] == "method"
+    assert by_name["c.leaf"]["call_line"] == 10
+
+
+def test_summarize_edges_ranked_order_stable():
+    """ranked：置信度降序 → 调用行号升序 → 限定名兜底，重复调用结果一致。"""
+    metadata = {
+        "x.a": {"call_line": 20},
+        "x.b": {"call_line": 10},
+        "x.c": {"call_line": 30},
+    }
+    weights = {"x.a": 0.8, "x.b": 0.8, "x.c": 0.8, "x.high": 1.0, "x.low": 0.2}
+    metadata["x.high"] = {"call_line": 40}
+    metadata["x.low"] = {"call_line": 50}
+    first = summarize_edges(weights, metadata)["ranked"]
+    second = summarize_edges(weights, metadata)["ranked"]
+    order = [row["qualified_name"] for row in first]
+    assert order == [
+        "x.high",   # 1.0
+        "x.b", "x.a", "x.c",  # 0.8，按行号 10/20/30
+        "x.low",    # 0.2
+    ]
+    assert [row["qualified_name"] for row in second] == order
+
+
+def test_summarize_edges_ranked_unknown_call_line_last_in_tier():
+    """同置信度下未知调用行号（0）排在已知行号之后。"""
+    metadata = {"x.unknown": {"call_line": 0}, "x.known": {"call_line": 7}}
+    ranked = summarize_edges({"x.unknown": 0.4, "x.known": 0.4}, metadata)["ranked"]
+    assert [row["qualified_name"] for row in ranked] == ["x.known", "x.unknown"]
+
+
+def test_summarize_edges_min_confidence_filters_candidates():
+    """min_confidence=0.4 过滤掉 UNAFFECTED 候选，全局统计不变。"""
+    weights = {"a.fast": 1.0, "b.mid": 0.8, "c.edge": 0.4, "d.low": 0.2}
+    metadata = {name: {"call_line": idx + 1} for idx, name in enumerate(weights)}
+    full = summarize_edges(weights, metadata)
+    assert len(full["ranked"]) == 4
+
+    filtered = summarize_edges(weights, metadata, 0.4)
+    assert [row["qualified_name"] for row in filtered["ranked"]] == [
+        "a.fast", "b.mid", "c.edge",
+    ]
+    assert [row["qualified_name"] for row in filtered["per_symbol"]] == [
+        "c.edge", "b.mid", "a.fast",
+    ]
+    assert all(row["confidence"] >= 0.4 for row in filtered["ranked"])
+    # 全量统计字段不受过滤影响
+    assert filtered["histogram"] == full["histogram"]
+    assert filtered["min_confidence"] == full["min_confidence"]
+    # 缺省 None 与不传参一致
+    assert summarize_edges(weights, metadata, None) == full
+
+
+def test_summarize_edges_per_symbol_carries_metadata():
+    """per_symbol 每条候选同样带收窄字段，且保持升序口径。"""
+    metadata = {
+        "m.b": {"file_path": "b.py", "kind": "method", "call_line": 8},
+        "m.a": {"file_path": "a.py", "kind": "fn", "call_line": 5},
+    }
+    block = summarize_edges({"m.a": 0.8, "m.b": 0.2}, metadata)
+    assert [row["qualified_name"] for row in block["per_symbol"]] == ["m.b", "m.a"]
+    for row in block["per_symbol"]:
+        for field in ("qualified_name", "target_uid", "file_path", "kind", "call_line"):
+            assert field in row, f"per_symbol 缺少字段 {field}"
+        assert row["target_uid"] == row["qualified_name"]
+    by_name = {row["qualified_name"]: row for row in block["per_symbol"]}
+    assert (by_name["m.a"]["file_path"], by_name["m.a"]["kind"], by_name["m.a"]["call_line"]) == (
+        "a.py", "fn", 5,
+    )
+
+
+
+
+def test_security_named_detection():
+    assert is_security_named("authenticate_user", "mod.authenticate_user")
+    assert is_security_named("rotate_api_key")
+    assert is_security_named("LoginHandler")
+    assert not is_security_named("render_page", "mod.render_page")
+
+
+def test_noisy_raw_name_guard():
+    assert is_noisy_raw_name("get")
+    assert is_noisy_raw_name("ab")
+    assert not is_noisy_raw_name("resolve_target")
+
+
+# ----------------------------------------------------------------------
+# B. 集成（review_readiness_report）
+# ----------------------------------------------------------------------
+
+def _insert_file(
+    db: CodeGraphDB, workspace_id: int, rel_path: str, module_path: str
+) -> int:
+    # file_instances.current_content_hash 有 FK 指向 file_contents（默认 ''）
+    db.conn.execute(
+        "INSERT OR IGNORE INTO file_contents "
+        "(content_hash, language, total_lines, first_seen_at) VALUES ('', '', 0, 0)"
+    )
+    cur = db.conn.execute(
+        """
+        INSERT INTO file_instances (
+            workspace_id, rel_path, abs_path, mtime, status, module_path
+        ) VALUES (?, ?, ?, 0, 'active', ?)
+        """,
+        (workspace_id, rel_path, f"/{rel_path}", module_path),
+    )
+    return int(cur.lastrowid)
+
+
+def _insert_symbol(
+    db: CodeGraphDB,
+    file_instance_id: int,
+    symbol_hash: str,
+    name: str,
+    qualified_name: str,
+    module_path: str,
+) -> int:
+    # symbols.symbol_hash 有 FK 指向 symbol_contents.content_hash
+    db.conn.execute(
+        "INSERT OR IGNORE INTO symbol_contents "
+        "(content_hash, name, kind, content, qualified_name) VALUES (?, ?, 'fn', '', ?)",
+        (symbol_hash, name, qualified_name),
+    )
+    cur = db.conn.execute(
+        """
+        INSERT INTO symbols (
+            file_instance_id, symbol_hash, name, kind, visibility,
+            start_line, end_line, qualified_name, module_path
+        ) VALUES (?, ?, ?, 'fn', 'public', 1, 2, ?, ?)
+        """,
+        (file_instance_id, symbol_hash, name, qualified_name, module_path),
+    )
+    return int(cur.lastrowid)
+
+
+def _insert_call(
+    db: CodeGraphDB,
+    caller_id: int,
+    caller_name: str,
+    callee_name: str,
+    callee_qualified: str,
+    callee_id: int,
+    line: int,
+) -> None:
+    db.conn.execute(
+        """
+        INSERT INTO calls (
+            caller_id, caller_name, caller_module, callee_name,
+            callee_qualified, callee_id, call_line
+        ) VALUES (?, ?, 'mod', ?, ?, ?, ?)
+        """,
+        (caller_id, caller_name, callee_name, callee_qualified, callee_id, line),
+    )
+
+
+def _build_risk_fixture(db: CodeGraphDB, ws_id: int) -> None:
+    """源 → (跨文件调用方 ×2 + 同文件调用方) → 二层 leaf，外加 raw 候选边。"""
+    src_file = _insert_file(db, ws_id, "src.py", "pkg_src")
+    mid_file = _insert_file(db, ws_id, "mid.py", "pkg_mid")
+    auth_file = _insert_file(db, ws_id, "auth.py", "pkg_auth")
+
+    source = _insert_symbol(db, src_file, "h-source", "source", "pkg_src.source", "pkg_src")
+    local = _insert_symbol(db, src_file, "h-local", "local_helper", "pkg_src.local_helper", "pkg_src")
+    mid = _insert_symbol(db, mid_file, "h-mid", "mid", "pkg_mid.mid", "pkg_mid")
+    leaf = _insert_symbol(db, mid_file, "h-leaf", "leaf", "pkg_mid.leaf", "pkg_mid")
+    auth = _insert_symbol(
+        db, auth_file, "h-auth", "authenticate_user", "pkg_auth.authenticate_user", "pkg_auth"
+    )
+    orphan = _insert_symbol(db, auth_file, "h-orphan", "orphan", "pkg_auth.orphan", "pkg_auth")
+
+    # 已解析边：caller → source（同文件 = EXTRACTED，跨文件 = INFERRED）
+    _insert_call(db, local, "local_helper", "source", "pkg_src.source", source, 10)
+    _insert_call(db, mid, "mid", "source", "pkg_src.source", source, 11)
+    _insert_call(db, auth, "authenticate_user", "source", "pkg_src.source", source, 12)
+    # 二层：leaf → mid（同文件）
+    _insert_call(db, leaf, "leaf", "mid", "pkg_mid.mid", mid, 13)
+
+    # raw 边：leaf 另有一条未解析的 qualified 边指向 mid（AMBIGUOUS）
+    _insert_call(db, leaf, "leaf", "mid", "pkg_mid.mid", 0, 14)
+    # raw 边：orphan 只有裸名 source（UNRESOLVED，且不在影响树内 → 候选）
+    _insert_call(db, orphan, "orphan", "source", "", 0, 15)
+
+
+def test_review_readiness_integrates_risk_score_and_edge_confidence(tmp_path):
+    db = CodeGraphDB(str(tmp_path / "risk.db"), workspace_root=str(tmp_path))
+    try:
+        ws_id = db.register_workspace("ws", str(tmp_path), "")
+        _build_risk_fixture(db, ws_id)
+        db.conn.commit()
+        db.set_active_workspace(ws_id)
+
+        # 强制走 Python SQL 路径（禁用 Rust GraphStore 短路）
+        original_get_graph_store = db._get_graph_store
+        db._get_graph_store = lambda: None
+        try:
+            report = db.review_readiness_report("h-source")
+        finally:
+            db._get_graph_store = original_get_graph_store
+
+        # 旧字段向后兼容
+        for key in (
+            "impact_scope", "risk_level", "total_impacted", "must_test",
+            "review_points", "by_layer",
+        ):
+            assert key in report, f"旧字段 {key} 丢失"
+        assert report["risk_level"] == report["impact_scope"] == "low"
+        assert report["total_impacted"] == 5  # source + 3 个一层 + leaf
+
+        # 风险评分：信号 → 同源加法
+        signals = report["risk_signals"]
+        assert signals["depth_reach"] == 0.1        # 最大深度 2 层
+        assert signals["cross_module"] == 0.1       # pkg_mid + pkg_auth
+        assert signals["test_gap"] == 0.25          # 5 个 public 必测项（含源符号），0 个测试符号
+        assert signals["security_surface"] == 0.2   # authenticate_user
+        assert signals["churn"] == 0.0              # 非 git 仓库
+        assert report["risk_score"] == compute_risk_score(signals)
+
+        # 边置信度四档
+        block = report["edge_confidence"]
+        by_name = {row["qualified_name"]: row for row in block["per_symbol"]}
+        assert by_name["pkg_src.local_helper"]["confidence"] == 1.0      # 同文件
+        assert by_name["pkg_mid.mid"]["confidence"] == 0.8               # 跨文件
+        assert by_name["pkg_auth.authenticate_user"]["confidence"] == 0.8
+        assert by_name["pkg_mid.leaf"]["confidence"] == 0.4             # min(1.0, raw 0.4)
+        assert by_name["pkg_auth.orphan"]["confidence"] == 0.2          # 裸名候选
+        assert block["min_confidence"] == 0.2
+        assert block["classification"] == "UNAFFECTED"
+        assert block["histogram"] == {
+            "WILL_BREAK": 3,
+            "LIKELY_AFFECTED": 1,
+            "UNAFFECTED": 1,
+        }
+        assert report["weighted_impacted"] == 3.2
+    finally:
+        db.close()
+
+
+def test_review_readiness_degrades_gracefully_for_unknown_symbol(tmp_path):
+    db = CodeGraphDB(str(tmp_path / "risk-empty.db"), workspace_root=str(tmp_path))
+    try:
+        ws_id = db.register_workspace("ws", str(tmp_path), "")
+        db.set_active_workspace(ws_id)
+        original_get_graph_store = db._get_graph_store
+        db._get_graph_store = lambda: None
+        try:
+            report = db.review_readiness_report("h-missing")
+        finally:
+            db._get_graph_store = original_get_graph_store
+
+        assert report["total_impacted"] == 0
+        assert report["risk_score"] == 0.0
+        assert report["risk_signals"] == {}
+        assert report["edge_confidence"]["per_symbol"] == []
+        assert report["edge_confidence"]["ranked"] == []
+        assert report["weighted_impacted"] == 0.0
+    finally:
+        db.close()
+
+
+def test_review_readiness_ranked_candidates_have_metadata(tmp_path):
+    """ranked 候选带 target_uid/file_path/kind/call_line，且按置信度+行号排序。"""
+    db = CodeGraphDB(str(tmp_path / "risk-ranked.db"), workspace_root=str(tmp_path))
+    try:
+        ws_id = db.register_workspace("ws", str(tmp_path), "")
+        _build_risk_fixture(db, ws_id)
+        db.conn.commit()
+        db.set_active_workspace(ws_id)
+
+        original_get_graph_store = db._get_graph_store
+        db._get_graph_store = lambda: None
+        try:
+            report = db.review_readiness_report("h-source")
+        finally:
+            db._get_graph_store = original_get_graph_store
+
+        ranked = report["edge_confidence"]["ranked"]
+        # 置信度降序：1.0 → 0.8（行 11、12）→ 0.4 → 0.2
+        assert [row["qualified_name"] for row in ranked] == [
+            "pkg_src.local_helper",
+            "pkg_mid.mid",
+            "pkg_auth.authenticate_user",
+            "pkg_mid.leaf",
+            "pkg_auth.orphan",
+        ]
+        by_name = {row["qualified_name"]: row for row in ranked}
+        for row in ranked:
+            for field in ("qualified_name", "target_uid", "file_path", "kind", "call_line"):
+                assert field in row, f"候选缺少字段 {field}"
+            assert row["target_uid"] == row["qualified_name"]
+
+        local = by_name["pkg_src.local_helper"]
+        assert (local["file_path"], local["kind"], local["call_line"]) == ("src.py", "fn", 10)
+        mid = by_name["pkg_mid.mid"]
+        assert (mid["file_path"], mid["call_line"]) == ("mid.py", 11)
+        leaf = by_name["pkg_mid.leaf"]
+        # leaf 有 resolved(行13,1.0) 与 raw(行14,0.4) 两条边，取最低权重边行号
+        assert (leaf["file_path"], leaf["call_line"]) == ("mid.py", 14)
+        orphan = by_name["pkg_auth.orphan"]
+        assert (orphan["file_path"], orphan["call_line"]) == ("auth.py", 15)
+
+        # 稳定可复现：再次生成顺序一致
+        original_get_graph_store = db._get_graph_store
+        db._get_graph_store = lambda: None
+        try:
+            again = db.review_readiness_report("h-source")
+        finally:
+            db._get_graph_store = original_get_graph_store
+        assert [row["qualified_name"] for row in again["edge_confidence"]["ranked"]] == [
+            row["qualified_name"] for row in ranked
+        ]
+    finally:
+        db.close()
+
+
+def test_review_readiness_min_confidence_filters_unaaffected(tmp_path):
+    """min_confidence=0.4 过滤 UNAFFECTED 候选；None/不传参与原行为一致。"""
+    db = CodeGraphDB(str(tmp_path / "risk-filter.db"), workspace_root=str(tmp_path))
+    try:
+        ws_id = db.register_workspace("ws", str(tmp_path), "")
+        _build_risk_fixture(db, ws_id)
+        db.conn.commit()
+        db.set_active_workspace(ws_id)
+
+        original_get_graph_store = db._get_graph_store
+        db._get_graph_store = lambda: None
+        try:
+            base = db.review_readiness_report("h-source")
+            same = db.review_readiness_report("h-source", min_confidence=None)
+            filtered = db.review_readiness_report("h-source", min_confidence=0.4)
+        finally:
+            db._get_graph_store = original_get_graph_store
+
+        # 不传参 / None → 行为完全一致（向后兼容）
+        assert same == base
+        assert "pkg_auth.orphan" in {
+            row["qualified_name"] for row in base["edge_confidence"]["ranked"]
+        }
+        assert base["edge_confidence"]["min_confidence"] == 0.2
+
+        # 0.4 → 过滤掉 0.2 的 UNAFFECTED 候选
+        ranked = filtered["edge_confidence"]["ranked"]
+        assert [row["qualified_name"] for row in ranked] == [
+            "pkg_src.local_helper",
+            "pkg_mid.mid",
+            "pkg_auth.authenticate_user",
+            "pkg_mid.leaf",
+        ]
+        assert all(row["confidence"] >= 0.4 for row in ranked)
+        assert all(
+            row["confidence"] >= 0.4
+            for row in filtered["edge_confidence"]["per_symbol"]
+        )
+        # per_symbol 同样被收窄，且保持 confidence 升序 + 限定名兜底
+        assert [
+            row["qualified_name"] for row in filtered["edge_confidence"]["per_symbol"]
+        ] == [
+            "pkg_mid.leaf",
+            "pkg_auth.authenticate_user",
+            "pkg_mid.mid",
+            "pkg_src.local_helper",
+        ]
+        # 旧字段不受过滤影响
+        assert filtered["risk_level"] == base["risk_level"]
+        assert filtered["must_test"] == base["must_test"]
+        assert filtered["total_impacted"] == base["total_impacted"]
+        # 全局直方图仍反映全量候选
+        assert filtered["edge_confidence"]["histogram"] == base["edge_confidence"]["histogram"]
+    finally:
+        db.close()
+
+
+# ----------------------------------------------------------------------
+# C. rationale 语义注释：解析 + 回读（多语言前缀覆盖）
+# ----------------------------------------------------------------------
+
+# 七种前缀按语言拆分覆盖：Python 用 #，JS/TS/Rust 用 //
+RATIONALE_SAMPLES = {
+    "a.py": "# NOTE: py 说明\n# IMPORTANT: py 重要\n",
+    "a.ts": "// HACK: ts 临时方案\n// WHY: ts 原因\n",
+    "a.rs": "// RATIONALE: rs 理由\n// TODO: rs 待办\n// FIXME: rs 待修\n",
+}
+
+
+def test_rationale_extract_multi_language_prefixes():
+    """多语言注释符下 7 种前缀全部覆盖，且行号/正文可读。"""
+    from callwarden.db.db_build import extract_rationale_comments
+
+    covered = set()
+    expected = {
+        "a.py": [("NOTE", "py 说明"), ("IMPORTANT", "py 重要")],
+        "a.ts": [("HACK", "ts 临时方案"), ("WHY", "ts 原因")],
+        "a.rs": [
+            ("RATIONALE", "rs 理由"),
+            ("TODO", "rs 待办"),
+            ("FIXME", "rs 待修"),
+        ],
+    }
+    for rel_path, source in RATIONALE_SAMPLES.items():
+        entries = extract_rationale_comments(source, rel_path)
+        assert [(e["prefix"], e["text"]) for e in entries] == expected[rel_path]
+        assert [e["line"] for e in entries] == list(range(1, len(expected[rel_path]) + 1))
+        covered.update(e["prefix"] for e in entries)
+    assert covered == {
+        "NOTE", "IMPORTANT", "HACK", "WHY", "RATIONALE", "TODO", "FIXME",
+    }
+
+
+def test_rationale_parse_then_read_back(tmp_path):
+    """解析得到的 rationale 经入库后可由 get_symbol 原样回读。"""
+    import hashlib
+
+    from callwarden.db.db_build import extract_rationale_comments
+
+    source = "// WHY: 兼容旧协议\n// TODO: 补测试\nfunction alpha() { return 1; }\n"
+    path = tmp_path / "a.ts"
+    path.write_text(source, encoding="utf-8")
+
+    rationale = extract_rationale_comments(source, "a.ts")
+    assert [e["prefix"] for e in rationale] == ["WHY", "TODO"]
+
+    content = "function alpha() { return 1; }"
+    symbol = {
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "name": "alpha",
+        "kind": "function",
+        "visibility": "public",
+        "start_line": 3,
+        "end_line": 3,
+        "start_col": 0,
+        "end_col": len(content),
+        "signature": "function alpha()",
+        "has_comment": False,
+        "comment_content": "",
+        "content": content,
+        "module_path": "a",
+        "qualified_name": "a.alpha",
+        "rationale": rationale,
+    }
+
+    db = CodeGraphDB(db_path=str(tmp_path / "rationale.db"), workspace_root=str(tmp_path))
+    db.is_feature_rolled_back = lambda name: True  # 固定 Python 写路径
+    try:
+        file_instance_id = db._register_file_db(str(path), "a")
+        result = {
+            "abs_path": str(path),
+            "rel_path": "a.ts",
+            "module_path": "a",
+            "content_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            "total_lines": source.count("\n"),
+            "language": "typescript",
+            "symbols": [symbol],
+            "inline_modules": [],
+        }
+        file_version_id = db._save_file_version(file_instance_id, result)
+        db._save_symbols_for_version(file_version_id, file_instance_id, result)
+        db.conn.commit()
+
+        got = db.get_symbol("a.alpha")
+        assert got is not None
+        assert got["rationale"] == rationale
+    finally:
+        db.close()
+
+
+
+# ----------------------------------------------------------------------
+# C. FTS5 会话/消息全文检索（tasks ← 会话，task_events ← 消息）
+# ----------------------------------------------------------------------
+
+
+def _fts5_supported() -> bool:
+    """当前 SQLite 构建是否编译了 FTS5。"""
+    try:
+        probe = sqlite3.connect(":memory:")
+        try:
+            probe.execute("CREATE VIRTUAL TABLE fts_probe USING fts5(x)")
+        finally:
+            probe.close()
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+_FTS5_AVAILABLE = _fts5_supported()
+_requires_fts5 = pytest.mark.skipif(not _FTS5_AVAILABLE, reason="SQLite 未编译 FTS5")
+
+_COLLAB_DDL = """
+CREATE TABLE tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    creator TEXT NOT NULL DEFAULT 'agent',
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    applied_at REAL,
+    closed_at REAL,
+    parent_id TEXT DEFAULT '',
+    depth INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE task_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    workspace_id TEXT DEFAULT '',
+    from_status TEXT NOT NULL,
+    to_status TEXT NOT NULL,
+    reason_code TEXT DEFAULT '',
+    reason TEXT DEFAULT '',
+    actor_identity TEXT NOT NULL,
+    agent_session_id TEXT DEFAULT '',
+    role TEXT DEFAULT '',
+    contract_hash TEXT DEFAULT '',
+    snapshot_id TEXT DEFAULT '',
+    monotonic_seq INTEGER NOT NULL,
+    authoritative_timestamp REAL NOT NULL,
+    request_id TEXT DEFAULT '',
+    step_id TEXT DEFAULT '',
+    evidence_path TEXT DEFAULT '',
+    evidence_hash TEXT DEFAULT ''
+);
+"""
+
+
+def _collab_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(_COLLAB_DDL)
+    return conn
+
+
+def _insert_task(conn, task_id, title, description="", creator="executor-1"):
+    conn.execute(
+        "INSERT INTO tasks (id, title, description, creator, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (task_id, title, description, creator, 1.0, 2.0),
+    )
+    conn.commit()
+
+
+def _insert_event(conn, task_id, reason, actor="executor-1"):
+    conn.execute(
+        "INSERT INTO task_events (task_id, from_status, to_status, reason, "
+        "actor_identity, role, monotonic_seq, authoritative_timestamp) "
+        "VALUES (?, 'open', 'in_progress', ?, ?, 'executor', 1, 3.0)",
+        (task_id, reason, actor),
+    )
+    conn.commit()
+
+
+@_requires_fts5
+def test_session_fts_ensure_idempotent_and_backfills_old_rows():
+    """迁移幂等：重复执行不报错且不重填丢数据；建索引前历史数据回填后可检索。"""
+    conn = _collab_conn()
+    try:
+        # 先写历史数据，再建索引 → 验证 rebuild 回填路径
+        _insert_task(conn, "T-1", "Fix login failure")
+        _insert_task(conn, "T-0", "旧库历史行 upgrade backfill")
+        _insert_event(conn, "T-1", "claimed by executor")
+        assert ensure_session_fts_schema(conn) is True
+        assert ensure_session_fts_schema(conn) is True  # 重复执行幂等
+        assert ensure_session_fts_schema(conn) is True  # 三次仍幂等
+
+        # 幂等只做 CREATE IF NOT EXISTS，不得清空已回填的历史数据
+        assert [r["task_id"] for r in search_sessions(conn, "login")] == ["T-1"]
+        assert [r["task_id"] for r in search_sessions(conn, "backfill")] == ["T-0"]
+        assert [r["task_id"] for r in search_messages(conn, "claimed")] == ["T-1"]
+
+        # 幂等之后再写入新行，触发器仍同步（不是只在首次建索引时有效）
+        _insert_task(conn, "T-2", "Fix logout timeout")
+        _insert_event(conn, "T-2", "reviewer blocked")
+        assert [r["task_id"] for r in search_sessions(conn, "logout")] == ["T-2"]
+        assert [r["task_id"] for r in search_messages(conn, "blocked")] == ["T-2"]
+    finally:
+        conn.close()
+
+
+@_requires_fts5
+def test_session_fts_triggers_sync_insert_update_delete():
+    """触发器同步：插入命中、更新后旧词失效新词命中、删除后不再命中。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        _insert_task(conn, "T-1", "Fix login failure")
+        assert [r["task_id"] for r in search_sessions(conn, "login")] == ["T-1"]
+
+        conn.execute("UPDATE tasks SET title = 'Refactor logout flow' WHERE id = 'T-1'")
+        conn.commit()
+        assert search_sessions(conn, "login") == []
+        assert [r["task_id"] for r in search_sessions(conn, "logout")] == ["T-1"]
+
+        _insert_event(conn, "T-1", "review blocked")
+        assert [r["task_id"] for r in search_messages(conn, "blocked")] == ["T-1"]
+
+        conn.execute("DELETE FROM tasks WHERE id = 'T-1'")
+        conn.execute("DELETE FROM task_events WHERE task_id = 'T-1'")
+        conn.commit()
+        assert search_sessions(conn, "logout") == []
+        assert search_messages(conn, "blocked") == []
+    finally:
+        conn.close()
+
+
+@_requires_fts5
+def test_session_fts_chinese_english_hit_and_limit():
+    """中英文均可命中；真实无空格中文标题的子串可检索；limit/highlight 生效。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        # 真实标题普遍无空格：unicode61 无法切分，含 CJK 查询必须走 LIKE 子串路径
+        _insert_task(conn, "T-1", "修复会话检索中文分词问题", "认证模块")
+        _insert_task(conn, "T-2", "login timeout 排查", "auth module")
+        _insert_task(conn, "T-3", "login 会话过期", "session module")
+
+        # CJK 子串命中（P1 回归）：修复/中文分词/检索 均为连续汉字中的子串
+        for query in ("修复", "中文分词", "会话检索", "检索中文"):
+            hits = [r["task_id"] for r in search_sessions(conn, query)]
+            assert hits == ["T-1"], (query, hits)
+        zh = search_sessions(conn, "中文分词")
+        assert "[" in zh[0]["snippet"] and "]" in zh[0]["snippet"]
+
+        # 纯英文仍走 FTS 路径，bm25 + snippet + limit 保持
+        en = search_sessions(conn, "login")
+        assert {r["task_id"] for r in en} == {"T-2", "T-3"}
+        assert len(search_sessions(conn, "login", limit=1)) == 1
+
+        combined = search_sessions_and_messages(conn, "login")
+        assert len(combined["sessions"]) == 2
+        assert combined["messages"] == []
+    finally:
+        conn.close()
+
+
+@_requires_fts5
+def test_session_fts_highlight_position_and_merged_limit():
+    """高亮片段定位到命中子串；合并查询面两段各自独立遵守 limit。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        _insert_task(conn, "T-1", "修复会话检索中文分词问题")
+        _insert_event(conn, "T-1", "修复中文分词失败")
+        _insert_event(conn, "T-1", "再次中文分词复测")
+
+        # CJK 子串高亮必须包住命中词本身，而非整段或其他位置
+        for query in ("中文分词", "检索中文", "修复"):
+            snip = search_sessions(conn, query)[0]["snippet"]
+            assert "[" + query + "]" in snip, (query, snip)
+
+        msg_snip = search_messages(conn, "分词失败")[0]["snippet"]
+        assert "[分词失败]" in msg_snip, msg_snip
+
+        merged = search_sessions_and_messages(conn, "中文", limit=1)
+        assert set(merged) == {"sessions", "messages"}
+        assert len(merged["sessions"]) == 1
+        assert len(merged["messages"]) == 1
+    finally:
+        conn.close()
+
+
+@_requires_fts5
+def test_session_fts_cjk_message_substring_and_like_escape():
+    """消息面 CJK 子串可命中；LIKE 降级路径中 % / _ 不当通配符（P4 回归）。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        _insert_task(conn, "T-1", "login")
+        _insert_event(conn, "T-1", "修复中文分词失败问题")
+        _insert_event(conn, "T-1", "literal 100%_done marker")
+
+        assert [r["task_id"] for r in search_messages(conn, "中文分词")] == ["T-1"]
+        assert [r["task_id"] for r in search_messages(conn, "分词失败")] == ["T-1"]
+        # %/_ 被转义为字面量：不应把两条消息都匹配回来
+        assert [r["task_id"] for r in search_messages(conn, "100%_done")] == ["T-1"]
+        assert search_messages(conn, "100%Xdone") == []
+    finally:
+        conn.close()
+
+
+def test_session_fts_graceful_degradation_without_index():
+    """无 FTS 环境（索引缺失）时降级 LIKE，中英文子串仍可命中且不抛异常。"""
+    conn = _collab_conn()
+    try:
+        _insert_task(conn, "T-1", "Fix 登录失败 problem")
+        _insert_task(conn, "T-2", "unrelated work")
+        # 不建 FTS 索引：模拟未编译 FTS5 / 索引缺失
+        from callwarden.db.db_sessions import fts_available
+
+        assert fts_available(conn) is False
+        zh = search_sessions(conn, "登录")
+        assert [r["task_id"] for r in zh] == ["T-1"]
+        assert "登录" in zh[0]["snippet"]
+        assert search_sessions(conn, "problem")[0]["task_id"] == "T-1"
+        assert search_messages(conn, "登录") == []
+    finally:
+        conn.close()
+
+
+def test_build_match_query_strips_fts_operators():
+    """用户输入中的 FTS5 语法字符被剔除，OR/AND 不会被当作操作符。"""
+    assert build_match_query("login OR failure") == '"login" "OR" "failure"'
+    assert build_match_query('  "quoted"  ') == '"quoted"'
+    assert build_match_query("col:value") == '"colvalue"'
+    assert build_match_query("   ") == ""
+
+
+# ----------------------------------------------------------------------
+# D. Smart CI 检查集选择 + verify_design 设计约束比对
+# ----------------------------------------------------------------------
+
+
+def _build_smart_ci_fixture(db: CodeGraphDB, ws_id: int, tmp_path) -> None:
+    """源函数 + 测试调用方 + 触发 guardrail 的高风险变更文件（含真实内容）。"""
+    src_file = _insert_file(db, ws_id, "src.py", "pkg_src")
+    test_file = _insert_file(db, ws_id, "tests/test_src.py", "tests.test_src")
+    _insert_file(db, ws_id, "risky.py", "risky")
+
+    source = _insert_symbol(
+        db, src_file, "h-source", "source", "pkg_src.source", "pkg_src"
+    )
+    test_sym = _insert_symbol(
+        db, test_file, "h-test", "test_source",
+        "tests.test_src.test_source", "tests.test_src",
+    )
+    _insert_call(db, test_sym, "test_source", "source", "pkg_src.source", source, 2)
+    db.conn.commit()
+
+    # guardrail guard 检测按 workspace_root 拼接读取文件内容
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_src.py").write_text(
+        "def test_source():\n    assert source() == 1\n", encoding="utf-8",
+    )
+    (tmp_path / "risky.py").write_text(
+        "# BREAKING CHANGE: drop legacy parameter\nvalue = 1\n", encoding="utf-8",
+    )
+
+
+def _smart_ci_db(tmp_path) -> CodeGraphDB:
+    db = CodeGraphDB(str(tmp_path / "smart-ci.db"), workspace_root=str(tmp_path))
+    ws_id = db.register_workspace("ws", str(tmp_path), "")
+    _build_smart_ci_fixture(db, ws_id, tmp_path)
+    db.set_active_workspace(ws_id)
+    # 强制走 Python SQL BFS（禁用 Rust GraphStore 短路），保证结果与环境无关
+    db._get_graph_store = lambda: None
+    return db
+
+
+def _insert_agent_rule(
+    db: CodeGraphDB,
+    rule_id: str,
+    title: str,
+    rule_text: str,
+    scope: dict,
+    severity: str,
+    evidence: dict,
+) -> None:
+    import json
+
+    db.conn.execute(
+        """
+        INSERT INTO agent_rules (
+            id, title, rule_text, scope_json, severity, status,
+            evidence_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, 0, 0)
+        """,
+        (rule_id, title, rule_text, json.dumps(scope), severity,
+         json.dumps(evidence)),
+    )
+    db.conn.commit()
+
+
+def _insert_guardrail_rule(
+    db: CodeGraphDB,
+    rule_id: str,
+    pattern: str,
+    description: str,
+    severity: str = "block",
+) -> None:
+    db.conn.execute(
+        """
+        INSERT INTO guardrail_rules (
+            rule_id, category, severity, pattern, action, description,
+            is_builtin, created_at
+        ) VALUES (?, 'custom', ?, ?, 'block', ?, 0, 1)
+        """,
+        (rule_id, severity, pattern, description),
+    )
+    db.conn.commit()
+
+
+def test_smart_ci_selects_minimal_checks_reproducibly(tmp_path):
+    """同一变更稳定选出测试+语法+guardrail 检查集，且两次调用完全一致。"""
+    db = _smart_ci_db(tmp_path)
+    try:
+        plan = db.smart_ci_plan(changed_files=["src.py", "risky.py"])
+
+        # 影响面：源函数 + 其调用方（测试函数）都进入影响集
+        assert [s["qualified_name"] for s in plan["impacted_symbols"]] == [
+            "pkg_src.source",
+            "tests.test_src.test_source",
+        ]
+        # 复用 test_impact_selection：测试函数被选中，并记录覆盖的受影响符号
+        assert plan["test_selection"] == [{
+            "qualified_name": "tests.test_src.test_source",
+            "name": "test_source",
+            "file_path": "tests/test_src.py",
+            "module_path": "tests.test_src",
+            "start_line": 1,
+            "covers": ["pkg_src.source"],
+        }]
+
+        # 最小充分检查集：guardrail 命中 + 语法 + 测试
+        assert [c["check_id"] for c in plan["checks"]] == [
+            "guardrail:GR-builtin-api-1:risky.py",
+            "guardrail:GR-builtin-inc-1:risky.py",
+            "guardrail:GR-builtin-inc-2:risky.py",
+            "guardrail:GR-builtin-inc-3:risky.py",
+            "syntax:risky.py",
+            "syntax:src.py",
+            "test:tests/test_src.py",
+        ]
+        by_id = {c["check_id"]: c for c in plan["checks"]}
+        guard = by_id["guardrail:GR-builtin-api-1:risky.py"]
+        assert (guard["kind"], guard["severity"]) == ("guardrail", "block")
+        assert guard["command"] == "cw guardrail scan --file risky.py"
+        assert by_id["syntax:src.py"]["command"] == "python -m py_compile src.py"
+        assert by_id["test:tests/test_src.py"]["command"] == "pytest -q tests/test_src.py"
+
+        assert plan["selection"]["test_count"] == 1
+        assert plan["selection"]["rule_ids"] == [
+            "GR-builtin-api-1", "GR-builtin-inc-1",
+            "GR-builtin-inc-2", "GR-builtin-inc-3",
+        ]
+
+        # 同一变更反复调用（输入顺序不同）→ 输出完全一致
+        again = db.smart_ci_plan(changed_files=["risky.py", "src.py"])
+        assert again == plan
+
+        # diff_text 入口与文件入口一致映射到触达符号
+        diff_text = (
+            "--- a/src.py\n+++ b/src.py\n@@ -1,2 +1,2 @@\n"
+            " def source():\n-    return 1\n+    return 2\n"
+        )
+        from_diff = db.smart_ci_plan(diff_text=diff_text)
+        assert from_diff["changed_files"] == ["src.py"]
+        assert [s["qualified_name"] for s in from_diff["seed_symbols"]] == [
+            "pkg_src.source",
+        ]
+        assert [t["qualified_name"] for t in from_diff["test_selection"]] == [
+            "tests.test_src.test_source",
+        ]
+    finally:
+        db.close()
+
+
+def test_smart_ci_empty_when_no_impacted_symbols(tmp_path):
+    """无受影响符号时返回空检查集且不报错。"""
+    db = _smart_ci_db(tmp_path)
+    try:
+        plan = db.smart_ci_plan(changed_files=["ghost_file_xyz.py"])
+        assert plan["impacted_symbols"] == []
+        assert plan["test_selection"] == []
+        assert plan["checks"] == []
+        assert plan["summary"] == "无受影响符号，检查集为空"
+    finally:
+        db.close()
+
+
+def test_verify_design_hits_constraints_with_design_refs(tmp_path):
+    """命中 agent/guardrail 约束时输出违背项，并给出设计条文引用。"""
+    db = _smart_ci_db(tmp_path)
+    try:
+        _insert_agent_rule(
+            db, "AR-design-1", "写操作必须走事务封装",
+            "见 docs/design/tx-design.md#L12：写操作必须走事务封装",
+            {"file_patterns": ["src.py"]}, "error",
+            {"doc": "docs/design/tx-design.md"},
+        )
+        _insert_guardrail_rule(
+            db, "GR-test-pattern", r"BREAKING CHANGE",
+            "兼容性条款见 docs/design/api-design.md",
+        )
+
+        result = db.verify_design(changed_files=["src.py", "risky.py"])
+
+        # agent_rules：仅命中 file_patterns=src.py 的符号上下文
+        agent_hits = [v for v in result["violations"] if v["source"] == "agent_rule"]
+        assert len(agent_hits) == 1
+        assert agent_hits[0]["rule_id"] == "AR-design-1"
+        assert agent_hits[0]["qualified_name"] == "pkg_src.source"
+        assert agent_hits[0]["rule_ref"] == "rule:AR-design-1"
+        assert agent_hits[0]["design_refs"] == [
+            "docs/design/tx-design.md",
+            "docs/design/tx-design.md#L12",
+        ]
+
+        # guardrail_rules：pattern 命中变更文件 risky.py
+        guard_hits = [
+            v for v in result["violations"] if v["source"] == "guardrail_rule"
+        ]
+        assert len(guard_hits) == 1
+        assert guard_hits[0]["rule_id"] == "GR-test-pattern"
+        assert guard_hits[0]["file_path"] == "risky.py"
+        assert guard_hits[0]["lines"] == [1]
+        assert guard_hits[0]["rule_ref"] == "guardrail:GR-test-pattern"
+        assert guard_hits[0]["design_refs"] == ["docs/design/api-design.md"]
+
+        assert result["design_refs"] == [
+            "docs/design/api-design.md",
+            "docs/design/tx-design.md",
+            "docs/design/tx-design.md#L12",
+            "guardrail:GR-test-pattern",
+            "rule:AR-design-1",
+        ]
+        assert result["summary"] == "命中设计约束 2 项"
+
+        # 稳定可复现
+        assert db.verify_design(changed_files=["risky.py", "src.py"]) == result
+    finally:
+        db.close()
+
+
+def test_verify_design_empty_when_no_constraints_hit(tmp_path):
+    """未命中约束时输出空且不报错。"""
+    db = _smart_ci_db(tmp_path)
+    try:
+        result = db.verify_design(changed_files=["src.py"])
+        assert result["violations"] == []
+        assert result["design_refs"] == []
+        assert result["summary"] == "未命中设计约束"
+
+        empty = db.verify_design(changed_files=["ghost_file_xyz.py"])
+        assert empty["violations"] == []
+        assert empty["design_refs"] == []
+        assert empty["summary"] == "无受影响符号，未命中设计约束"
+    finally:
+        db.close()
+

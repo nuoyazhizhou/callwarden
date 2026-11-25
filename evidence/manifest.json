@@ -1,0 +1,33 @@
+{
+  "task_id": "T-1795513761767-d77a6c10 / T-1795513761922-e0b4ca78 / T-1795513688143-b324cb64",
+  "parent_task_id": "T-1795466935294-3433ca6c",
+  "phase": "fix1 (Phase 3 复审 BLOCKED 整改)；2026-11-26 重建卡重跑闭合证据链缺口",
+  "executor": "executor-alm-3433ca6c-inst（R2 首跑）；executor worker run-20261126-061617-5f3a（重跑）",
+  "session": "sess-executor-alm-3433ca6c-fix1（R2 首跑）；run-20261126-061617-5f3a（重跑）",
+  "evidence": [
+    {
+      "path": "AC-06.md",
+      "desc": "AC-06 证据汇总：2026-11-26 master 9add67d 重跑（LF 稳定 sha256，磁盘=blob=检出三面一致）+ R2 首跑历史快照 + Phase 2 失效引用更正 + step1 审计结论（S-1795513688155-b3db8908）",
+      "sha256": "52285ad9ac9923ebc29fe704c48080c2bf9468cc471774eefadc71f95a80a286",
+      "bytes": 4766
+    },
+    {
+      "path": "AC-06-python-regression.log",
+      "desc": "step S-1795513688155-b3da8c4c：master 9add67d identifier-safe worktree 7 文件 Python 审计回归完整日志（237 passed, 2 skipped, EXIT=0；LF 字节入库，替代 2026-11-24 CRLF 原件消除对账缺口）",
+      "sha256": "40987a601703cdc9dd1bbb977c13eb0be90ececbbbfef3b5f57315eebaa4818a",
+      "bytes": 1062
+    },
+    {
+      "path": "../_fix1_test_focused2.log",
+      "desc": "CARD-R1 step3：新增 2 单测（open-failure / db-unconfigured）各 1 passed（blocker 夹具版）",
+      "sha256": "ccf54e280ce46ae72098186a8b911502040c383a904d33dda67be52abab14560",
+      "bytes": 86070
+    },
+    {
+      "path": "../_fix1_test_daemon_full.log",
+      "desc": "CARD-R1 step3：全量 cargo test daemon:: --lib（1639 passed; 0 failed; 0 ignored, EXIT=0）",
+      "sha256": "b8c122dc6c49cec57aed81136d8d55c8d51753397a07e917d12402d8e07b2cd8",
+      "bytes": 205413
+    }
+  ]
+}

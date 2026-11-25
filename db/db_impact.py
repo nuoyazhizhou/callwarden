@@ -10,6 +10,7 @@ db_impact.py
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import time
@@ -775,7 +776,9 @@ class ImpactMixin:
             # Rust 异常 → fail-soft 降级到 Python
             return None
 
-    def review_readiness_report(self, symbol_hash: str) -> Dict[str, Any]:
+    def review_readiness_report(
+        self, symbol_hash: str, min_confidence: Optional[float] = None
+    ) -> Dict[str, Any]:
         """审查就绪报告
 
         综合影响半径与跨层影响，给出变更审查建议：
@@ -788,6 +791,9 @@ class ImpactMixin:
 
         Args:
             symbol_hash: 源符号 hash
+            min_confidence: 可选置信度下限（0.8=WILL_BREAK / 0.4=LIKELY_AFFECTED）；
+                给定时只保留 confidence >= 该值的候选（含 UNAFFECTED 过滤）。
+                缺省 None 时输出与不传参完全一致（向后兼容）。
 
         Returns:
             报告字典：
@@ -801,7 +807,7 @@ class ImpactMixin:
             - risk_score: 六信号加权总分（深度/跨模块/测试缺口/安全面/调用压力/变更热度）
             - risk_signals: 上述六信号各自封顶后的分值
             - edge_confidence: 受影响符号的边置信度四档汇总
-              （per_symbol/min_confidence/classification/histogram）
+              （per_symbol/min_confidence/classification/histogram/ranked）
             - weighted_impacted: 按边置信度加权后的影响面（替代纯计数口径）
         """
         blast = self.blast_radius(symbol_hash)
@@ -878,8 +884,739 @@ class ImpactMixin:
                 pass
 
         # 风险评分模型 + 边置信度四档（新增字段，不改旧键语义）
-        report.update(self._build_risk_profile(symbol_hash, blast, must_test))
+        report.update(
+            self._build_risk_profile(symbol_hash, blast, must_test, min_confidence)
+        )
         return report
+
+    # ------------------------------------------------------------------
+    # Smart CI：变更驱动的最小检查集选择
+    # ------------------------------------------------------------------
+
+    # 语法检查推荐命令（按语言；未列语言不产出 syntax 检查项）
+    _SYNTAX_COMMANDS: Dict[str, str] = {
+        "python": "python -m py_compile {file}",
+        "rust": "cargo check",
+        "javascript": "npx tsc --noEmit",
+        "typescript": "npx tsc --noEmit",
+    }
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """转义 LIKE 通配符，避免路径中的 % / _ 被当作通配符。"""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def _symbols_for_changed_files(
+        self, ws_id: int, changed_files: List[str]
+    ) -> List[Dict[str, Any]]:
+        """把变更文件解析为工作区内的符号
+
+        精确 rel_path 优先；未命中时按后缀匹配兜底（应对 diff 路径前缀差异）。
+        结果按 (file_path, qualified_name, symbol_hash) 排序，保证同一变更
+        反复调用得到完全一致的选择集。
+
+        Args:
+            ws_id: 工作区 ID
+            changed_files: 变更文件路径列表（相对或绝对路径）
+
+        Returns:
+            符号列表（symbol_hash / qualified_name / file_path）
+        """
+        found: Dict[str, Dict[str, Any]] = {}
+        for raw in changed_files:
+            rel = self._normalize_path(raw or "")
+            if not rel:
+                continue
+            rows = self.conn.execute(
+                """
+                SELECT s.symbol_hash, s.qualified_name, fi.rel_path
+                FROM symbols s
+                JOIN file_instances fi ON s.file_instance_id = fi.id
+                WHERE fi.workspace_id = ? AND fi.rel_path = ?
+                ORDER BY s.qualified_name, s.id
+                """,
+                (ws_id, rel),
+            ).fetchall()
+            if not rows:
+                rows = self.conn.execute(
+                    """
+                    SELECT s.symbol_hash, s.qualified_name, fi.rel_path
+                    FROM symbols s
+                    JOIN file_instances fi ON s.file_instance_id = fi.id
+                    WHERE fi.workspace_id = ? AND fi.rel_path LIKE ? ESCAPE '\\'
+                    ORDER BY fi.rel_path, s.qualified_name, s.id
+                    """,
+                    (ws_id, "%" + self._escape_like(rel)),
+                ).fetchall()
+            for row in rows:
+                key = f"{row['qualified_name']}\u0000{row['symbol_hash']}"
+                if key in found:
+                    continue
+                found[key] = {
+                    "symbol_hash": row["symbol_hash"] or "",
+                    "qualified_name": row["qualified_name"] or "",
+                    "file_path": self._normalize_path(row["rel_path"] or ""),
+                }
+        return sorted(
+            found.values(),
+            key=lambda s: (s["file_path"], s["qualified_name"], s["symbol_hash"]),
+        )
+
+    def _impacted_symbols_for_seeds(
+        self, seeds: List[Dict[str, Any]], depth: int
+    ) -> List[Dict[str, Any]]:
+        """合并各触达符号的影响半径（blast_radius BFS），按限定名去重排序。
+
+        Args:
+            seeds: 触达符号列表（含 symbol_hash）
+            depth: 影响半径遍历深度
+
+        Returns:
+            受影响符号列表（qualified_name / file_path / symbol_hash），
+            按 qualified_name 稳定排序；blast_radius 失败时 fail-soft 跳过。
+        """
+        impacted: Dict[str, Dict[str, Any]] = {}
+        for seed in seeds:
+            symbol_hash = seed.get("symbol_hash") or ""
+            if not symbol_hash:
+                # 无 hash 时至少把种子自身纳入影响面
+                qn = seed.get("qualified_name") or ""
+                if qn:
+                    impacted.setdefault(qn, {
+                        "qualified_name": qn,
+                        "symbol_hash": "",
+                        "file_path": seed.get("file_path", ""),
+                    })
+                continue
+            try:
+                blast = self.blast_radius(symbol_hash, depth)
+            except Exception:
+                blast = None
+            if not blast:
+                qn = seed.get("qualified_name") or ""
+                if qn:
+                    impacted.setdefault(qn, dict(seed))
+                continue
+            for layer in blast.get("layers") or []:
+                for sym in layer.get("symbols") or []:
+                    qn = sym.get("qualified_name") or ""
+                    if not qn:
+                        continue
+                    impacted.setdefault(qn, {
+                        "qualified_name": qn,
+                        "symbol_hash": sym.get("symbol_hash") or "",
+                        "file_path": sym.get("file_path") or "",
+                    })
+        return sorted(impacted.values(), key=lambda s: s["qualified_name"])
+
+    def _select_tests_for_symbols(
+        self, qualified_names: List[str]
+    ) -> List[Dict[str, Any]]:
+        """对受影响符号复用 test_impact_selection，合并去重测试清单。
+
+        Args:
+            qualified_names: 受影响符号限定名（已排序）
+
+        Returns:
+            测试列表（qualified_name / name / file_path / module_path /
+            start_line / covers），按测试限定名排序；covers 为触发该测试的
+            受影响符号限定名（升序）。
+        """
+        merged: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "test_impact_selection"):
+            return []
+        for qn in qualified_names:
+            try:
+                tests = self.test_impact_selection(qn) or []
+            except Exception:
+                continue
+            for t in tests:
+                test_qn = t.get("qualified_name") or ""
+                if not test_qn:
+                    continue
+                entry = merged.get(test_qn)
+                if entry is None:
+                    entry = {
+                        "qualified_name": test_qn,
+                        "name": t.get("name") or "",
+                        "file_path": t.get("file_path") or "",
+                        "module_path": t.get("module_path") or "",
+                        "start_line": t.get("start_line"),
+                        "covers": [],
+                    }
+                    merged[test_qn] = entry
+                if qn not in entry["covers"]:
+                    entry["covers"].append(qn)
+        for entry in merged.values():
+            entry["covers"].sort()
+        return [merged[qn] for qn in sorted(merged)]
+
+    def _detect_guardrail_findings(
+        self, changed_files: List[str]
+    ) -> List[Dict[str, Any]]:
+        """对变更文件做 guardrail 只读检测（check_before_edit，不落库）。
+
+        Args:
+            changed_files: 变更文件路径列表
+
+        Returns:
+            finding 列表（rule_id / severity / file_path / message），按
+            (file_path, rule_id, message) 稳定排序；文件不可读时无产出。
+        """
+        findings: List[Dict[str, Any]] = []
+        if not hasattr(self, "check_before_edit"):
+            return findings
+        for rel in changed_files:
+            try:
+                result = self.check_before_edit(rel, "")
+            except Exception:
+                continue
+            for f in (result or {}).get("findings") or []:
+                findings.append({
+                    "rule_id": f.get("rule_id") or "",
+                    "severity": f.get("severity") or "",
+                    "file_path": rel,
+                    "message": f.get("message") or "",
+                })
+        return sorted(
+            findings,
+            key=lambda f: (f["file_path"], f["rule_id"], f["message"]),
+        )
+
+    def _syntax_command(self, rel_path: str) -> Optional[str]:
+        """按文件语言给出语法检查推荐命令（不支持的语言返回 None）。"""
+        try:
+            from ..config import detect_language_from_path
+            lang = detect_language_from_path(rel_path)
+        except Exception:
+            return None
+        template = self._SYNTAX_COMMANDS.get((lang or "").lower())
+        if not template:
+            return None
+        return template.format(file=rel_path)
+
+    def smart_ci_plan(
+        self,
+        changed_files: Optional[List[str]] = None,
+        diff_text: str = "",
+        depth: int = 2,
+    ) -> Dict[str, Any]:
+        """Smart CI：按变更影响面选择最小充分检查集
+
+        流程（纯只读）：
+        1. 解析变更面：diff_text 经 diff_to_symbol 映射符号；changed_files 经
+           符号表解析（精确/后缀匹配）。两者可同时给出，按符号去重。
+        2. 影响半径：对触达符号逐个 blast_radius 合并影响面（去重 + 稳定排序）。
+        3. 测试选择：对影响面内每个符号复用 test_impact_selection 合并测试。
+        4. 检查集：语法检查（按语言）+ guardrail 规则检测（check_before_edit，
+           只读不落库）+ 测试命令；每项附推荐命令与预期证据形式。
+
+        验收口径：
+        - 同一变更反复调用输出完全一致（全链路稳定排序）；
+        - 无受影响符号时返回空检查集（checks / test_selection 均为空）。
+
+        Args:
+            changed_files: 变更文件路径列表（可选）
+            diff_text: git diff 文本（可选）
+            depth: 影响半径遍历深度（默认 2）
+
+        Returns:
+            {
+                "changed_files": [...],
+                "seed_symbols": [...],       # diff/文件直接触达的符号
+                "impacted_symbols": [...],   # 影响半径合并后的符号
+                "test_selection": [...],     # 需要运行的测试
+                "checks": [...],             # 推荐检查项（含 command/evidence）
+                "selection": {...},          # 选择统计（可审计）
+                "summary": "...",
+            }
+        """
+        normalized_files: List[str] = []
+        seeds: Dict[str, Dict[str, Any]] = {}
+
+        if diff_text:
+            for item in self.diff_to_symbol(diff_text) or []:
+                rel = self._normalize_path(item.get("file_path") or "")
+                if rel:
+                    normalized_files.append(rel)
+                key = item.get("symbol_hash") or item.get("qualified_name") or ""
+                if key and key not in seeds:
+                    seeds[key] = {
+                        "symbol_hash": item.get("symbol_hash") or "",
+                        "qualified_name": item.get("qualified_name") or "",
+                        "file_path": rel,
+                        "change_type": item.get("change_type") or "",
+                    }
+
+        for raw in changed_files or []:
+            rel = self._normalize_path(raw or "")
+            if rel:
+                normalized_files.append(rel)
+
+        normalized_files = sorted(set(normalized_files))
+
+        if normalized_files:
+            ws_id = self._get_active_workspace_id()
+            for sym in self._symbols_for_changed_files(ws_id, normalized_files):
+                key = sym.get("symbol_hash") or sym.get("qualified_name") or ""
+                if key and key not in seeds:
+                    seeds[key] = dict(sym)
+
+        seed_list = sorted(
+            seeds.values(),
+            key=lambda s: (
+                s.get("file_path", ""),
+                s.get("qualified_name", ""),
+                s.get("symbol_hash", ""),
+            ),
+        )
+        impacted = self._impacted_symbols_for_seeds(seed_list, depth)
+
+        result: Dict[str, Any] = {
+            "changed_files": normalized_files,
+            "seed_symbols": seed_list,
+            "impacted_symbols": impacted,
+            "test_selection": [],
+            "checks": [],
+            "selection": {
+                "strategy": "impact-radius+guardrail",
+                "depth": depth,
+                "changed_file_count": len(normalized_files),
+                "seed_symbol_count": len(seed_list),
+                "impacted_symbol_count": len(impacted),
+                "test_count": 0,
+                "rule_ids": [],
+            },
+            "summary": "",
+        }
+
+        # 无受影响符号 → 空检查集（验收口径）
+        if not impacted:
+            result["summary"] = "无受影响符号，检查集为空"
+            return result
+
+        tests = self._select_tests_for_symbols(
+            [s["qualified_name"] for s in impacted if s.get("qualified_name")]
+        )
+        result["test_selection"] = tests
+
+        checks: List[Dict[str, Any]] = []
+
+        # 1) 测试检查项：按测试文件聚合（同一文件只推荐一次，附带覆盖的测试名）
+        tests_by_file: Dict[str, List[str]] = {}
+        for t in tests:
+            fp = t.get("file_path") or ""
+            if not fp:
+                continue
+            tests_by_file.setdefault(fp, []).append(t["qualified_name"])
+        for fp in sorted(tests_by_file):
+            names = sorted(set(tests_by_file[fp]))
+            checks.append({
+                "check_id": f"test:{fp}",
+                "kind": "test",
+                "target": fp,
+                "command": f"pytest -q {fp}",
+                "evidence": "pytest 汇总行（passed/failed 计数，0 failed）",
+                "related_symbols": names,
+            })
+
+        # 2) 语法检查项：按变更文件语言
+        for rel in normalized_files:
+            cmd = self._syntax_command(rel)
+            if not cmd:
+                continue
+            checks.append({
+                "check_id": f"syntax:{rel}",
+                "kind": "syntax",
+                "target": rel,
+                "command": cmd,
+                "evidence": "命令退出码 0（无语法错误）",
+            })
+
+        # 3) guardrail 规则检查项：按 (rule_id, file) 聚合命中
+        guard_findings = self._detect_guardrail_findings(normalized_files)
+        rule_ids = sorted({f["rule_id"] for f in guard_findings if f["rule_id"]})
+        seen_rule_file = set()
+        for f in guard_findings:
+            key = (f["rule_id"], f["file_path"])
+            if key in seen_rule_file:
+                continue
+            seen_rule_file.add(key)
+            checks.append({
+                "check_id": f"guardrail:{f['rule_id']}:{f['file_path']}",
+                "kind": "guardrail",
+                "target": f["file_path"],
+                "rule_id": f["rule_id"],
+                "severity": f["severity"],
+                "command": f"cw guardrail scan --file {f['file_path']}",
+                "evidence": "cw guardrail scan 输出该文件无 block 级 finding",
+            })
+
+        checks.sort(key=lambda c: c["check_id"])
+        result["checks"] = checks
+        result["selection"]["test_count"] = len(tests)
+        result["selection"]["rule_ids"] = rule_ids
+        result["summary"] = (
+            f"受影响符号 {len(impacted)} 个，选中测试 {len(tests)} 个，"
+            f"检查项 {len(checks)} 项"
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # verify_design：设计约束 × 变更影响面比对
+    # ------------------------------------------------------------------
+
+    # 设计条文引用：rule_text/description/evidence 中出现的 docs 文档路径
+    _DESIGN_REF_RE = re.compile(
+        r"(docs/[A-Za-z0-9_\-./]+\.(?:md|markdown|txt|json))(#[A-Za-z0-9_\-]+)?"
+    )
+
+    @classmethod
+    def _extract_design_refs(
+        cls, texts: List[str], evidence: Optional[Dict[str, Any]]
+    ) -> List[str]:
+        """从规则文本与 evidence 中提取设计条文引用（去重升序）。
+
+        Args:
+            texts: 规则标题/正文/描述等文本
+            evidence: 规则 evidence dict（可含 doc/design_doc/link/ref/path/url）
+
+        Returns:
+            条文引用列表（如 "docs/design/xxx.md#L12"）
+        """
+        refs: set = set()
+        for text in texts:
+            if not text:
+                continue
+            for m in cls._DESIGN_REF_RE.finditer(text):
+                refs.add(m.group(1) + (m.group(2) or ""))
+        if isinstance(evidence, dict):
+            for key in ("doc", "design_doc", "design_ref", "link", "ref", "path", "url"):
+                value = evidence.get(key)
+                if isinstance(value, str) and value.strip():
+                    refs.add(value.strip())
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, str) and item.strip():
+                            refs.add(item.strip())
+        return sorted(refs)
+
+    @staticmethod
+    def _detect_language(rel_path: str) -> str:
+        """按文件路径推断语言（失败返回空串，不抛错）。"""
+        try:
+            from ..config import detect_language_from_path
+            return (detect_language_from_path(rel_path) or "").lower()
+        except Exception:
+            return ""
+
+    def _load_active_agent_rules(self) -> List[Dict[str, Any]]:
+        """读取 active 的 agent_rules（缺表时 fail-soft 返回空列表）。"""
+        try:
+            rows = self.conn.execute(
+                """
+                SELECT id, title, rule_text, scope_json, severity, evidence_json,
+                       updated_at
+                FROM agent_rules
+                WHERE status = 'active'
+                ORDER BY updated_at DESC
+                LIMIT 500
+                """
+            ).fetchall()
+        except Exception:
+            return []
+        return [dict(r) for r in rows]
+
+    def _load_guardrail_rules(self) -> List[Dict[str, Any]]:
+        """读取 guardrail_rules（缺表时 fail-soft 返回空列表；不触发内置规则写入）。"""
+        try:
+            rows = self.conn.execute(
+                """
+                SELECT rule_id, category, severity, pattern, action, description,
+                       is_builtin, created_at
+                FROM guardrail_rules
+                ORDER BY is_builtin DESC, created_at ASC, rule_id ASC
+                """
+            ).fetchall()
+        except Exception:
+            return []
+        return [dict(r) for r in rows]
+
+    def _symbol_contexts(
+        self, ws_id: int, impacted: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """为受影响符号构造规则匹配上下文（文件/语言/符号类型/模块前缀）。
+
+        Args:
+            ws_id: 工作区 ID
+            impacted: 受影响符号列表（qualified_name / file_path）
+
+        Returns:
+            上下文列表，元素含 context 与 symbol 原始信息；按 (file_path,
+            qualified_name) 稳定排序。
+        """
+        contexts: List[Dict[str, Any]] = []
+        for sym in impacted:
+            qn = sym.get("qualified_name") or ""
+            fp = self._normalize_path(sym.get("file_path") or "")
+            kind = ""
+            module_path = ""
+            if qn:
+                try:
+                    row = self.conn.execute(
+                        """
+                        SELECT s.kind, s.module_path
+                        FROM symbols s
+                        JOIN file_instances fi ON s.file_instance_id = fi.id
+                        WHERE fi.workspace_id = ? AND s.qualified_name = ?
+                        LIMIT 1
+                        """,
+                        (ws_id, qn),
+                    ).fetchone()
+                    if row is not None:
+                        kind = row["kind"] or ""
+                        module_path = row["module_path"] or ""
+                except Exception:
+                    pass
+            contexts.append({
+                "context": {
+                    "file_path": fp,
+                    "language": self._detect_language(fp),
+                    "symbol_kind": kind,
+                    "module_prefix": module_path,
+                },
+                "symbol": sym,
+            })
+        return sorted(
+            contexts,
+            key=lambda c: (
+                c["context"]["file_path"],
+                (c["symbol"].get("qualified_name") or ""),
+            ),
+        )
+
+    def verify_design(
+        self,
+        changed_files: Optional[List[str]] = None,
+        impacted_symbols: Optional[List[Dict[str, Any]]] = None,
+        diff_text: str = "",
+        depth: int = 2,
+    ) -> Dict[str, Any]:
+        """把设计约束与变更影响面比对，输出违背项与设计条文引用
+
+        约束来源（均为已有规则，不新增规则类型）：
+        - agent_rules：active 规则，按 scope（languages / file_patterns /
+          symbol_kinds / module_prefixes 等）与受影响符号上下文匹配，复用
+          AgentRulesMixin._match_scope 的 AND/OR 语义；
+        - guardrail_rules：内置/自定义规则，用 pattern 正则扫描受影响文件内容
+          （只读，不落库、不初始化内置规则）。
+
+        设计条文引用提取：规则文本/描述/evidence 中的 docs 文档路径；
+        无显式文档路径时回退为 rule:<id> / guardrail:<id> 规则定义引用。
+
+        验收口径：
+        - 命中约束时给出条文引用（design_refs + rule_ref 非空）；
+        - 未命中时 violations / design_refs 为空且不报错。
+
+        Args:
+            changed_files: 变更文件路径列表（可选）
+            impacted_symbols: 已算好的影响面（可选；每项含 qualified_name /
+                file_path），给定时不再重算
+            diff_text: git diff 文本（可选；用于解析触达符号）
+            depth: 影响半径遍历深度（默认 2，仅在需要重算影响面时使用）
+
+        Returns:
+            {
+                "changed_files": [...],
+                "impacted_symbols": [...],
+                "violations": [...],   # 违背项（含 design_refs / rule_ref）
+                "design_refs": [...],  # 全部命中规则的条文引用（去重升序）
+                "summary": "...",
+            }
+        """
+        normalized_files: List[str] = []
+        seeds: Dict[str, Dict[str, Any]] = {}
+
+        if impacted_symbols is None:
+            if diff_text:
+                for item in self.diff_to_symbol(diff_text) or []:
+                    rel = self._normalize_path(item.get("file_path") or "")
+                    if rel:
+                        normalized_files.append(rel)
+                    key = item.get("symbol_hash") or item.get("qualified_name") or ""
+                    if key and key not in seeds:
+                        seeds[key] = {
+                            "symbol_hash": item.get("symbol_hash") or "",
+                            "qualified_name": item.get("qualified_name") or "",
+                            "file_path": rel,
+                        }
+            for raw in changed_files or []:
+                rel = self._normalize_path(raw or "")
+                if rel:
+                    normalized_files.append(rel)
+            normalized_files = sorted(set(normalized_files))
+            if normalized_files:
+                ws_id = self._get_active_workspace_id()
+                for sym in self._symbols_for_changed_files(ws_id, normalized_files):
+                    key = sym.get("symbol_hash") or sym.get("qualified_name") or ""
+                    if key and key not in seeds:
+                        seeds[key] = dict(sym)
+            seed_list = sorted(
+                seeds.values(),
+                key=lambda s: (
+                    s.get("file_path", ""),
+                    s.get("qualified_name", ""),
+                    s.get("symbol_hash", ""),
+                ),
+            )
+            impacted = self._impacted_symbols_for_seeds(seed_list, depth)
+        else:
+            impacted = sorted(
+                [
+                    dict(s)
+                    for s in impacted_symbols
+                    if (s.get("qualified_name") or s.get("file_path"))
+                ],
+                key=lambda s: (
+                    self._normalize_path(s.get("file_path") or ""),
+                    s.get("qualified_name") or "",
+                ),
+            )
+            normalized_files = sorted({
+                self._normalize_path(s.get("file_path") or "")
+                for s in impacted
+                if s.get("file_path")
+            })
+
+        result: Dict[str, Any] = {
+            "changed_files": normalized_files,
+            "impacted_symbols": impacted,
+            "violations": [],
+            "design_refs": [],
+            "summary": "",
+        }
+
+        if not impacted:
+            result["summary"] = "无受影响符号，未命中设计约束"
+            return result
+
+        ws_id = self._get_active_workspace_id()
+        violations: List[Dict[str, Any]] = []
+        all_refs: set = set()
+
+        # 1) agent_rules：按 scope 与受影响符号上下文匹配
+        contexts = self._symbol_contexts(ws_id, impacted)
+        match_scope = getattr(self, "_match_scope", None)
+        if match_scope is not None:
+            for rule in self._load_active_agent_rules():
+                try:
+                    scope = json.loads(rule.get("scope_json") or "{}")
+                except (TypeError, ValueError):
+                    scope = {}
+                if not isinstance(scope, dict):
+                    scope = {}
+                try:
+                    evidence = json.loads(rule.get("evidence_json") or "{}")
+                except (TypeError, ValueError):
+                    evidence = {}
+                if not isinstance(evidence, dict):
+                    evidence = {}
+                refs = self._extract_design_refs(
+                    [
+                        rule.get("title") or "",
+                        rule.get("rule_text") or "",
+                    ],
+                    evidence,
+                )
+                for ctx_item in contexts:
+                    context = ctx_item["context"]
+                    if scope:
+                        matched_labels, ok = match_scope(scope, context)
+                    else:
+                        matched_labels, ok = ["global"], True
+                    if not ok:
+                        continue
+                    rule_id = rule.get("id") or ""
+                    symbol_qn = ctx_item["symbol"].get("qualified_name") or ""
+                    rule_ref = f"rule:{rule_id}"
+                    all_refs.add(rule_ref)
+                    all_refs.update(refs)
+                    violations.append({
+                        "source": "agent_rule",
+                        "rule_id": rule_id,
+                        "title": rule.get("title") or "",
+                        "severity": rule.get("severity") or "info",
+                        "file_path": context["file_path"],
+                        "qualified_name": symbol_qn,
+                        "matched_scope": matched_labels,
+                        "design_refs": refs,
+                        "rule_ref": rule_ref,
+                    })
+
+        # 2) guardrail_rules：pattern 正则扫描变更/受影响文件内容（只读）
+        target_files = sorted(
+            set(normalized_files)
+            | {
+                self._normalize_path(s.get("file_path") or "")
+                for s in impacted
+                if s.get("file_path")
+            }
+        )
+        for rule in self._load_guardrail_rules():
+            pattern = rule.get("pattern") or ""
+            if not pattern:
+                continue
+            try:
+                regex = re.compile(pattern)
+            except re.error:
+                # 非法正则规则跳过（不阻塞比对，也不报错）
+                continue
+            refs = self._extract_design_refs(
+                [rule.get("description") or ""], None
+            )
+            rule_id = rule.get("rule_id") or ""
+            rule_ref = f"guardrail:{rule_id}"
+            for rel in target_files:
+                content = self._load_file_content_for_check(rel) if hasattr(
+                    self, "_load_file_content_for_check"
+                ) else None
+                if content is None:
+                    continue
+                lines = [
+                    content.count("\n", 0, m.start()) + 1
+                    for m in regex.finditer(content)
+                ]
+                if not lines:
+                    continue
+                all_refs.add(rule_ref)
+                all_refs.update(refs)
+                violations.append({
+                    "source": "guardrail_rule",
+                    "rule_id": rule_id,
+                    "title": rule.get("description") or "",
+                    "severity": rule.get("severity") or "warn",
+                    "file_path": rel,
+                    "lines": sorted(set(lines)),
+                    "design_refs": refs,
+                    "rule_ref": rule_ref,
+                })
+
+        violations.sort(
+            key=lambda v: (
+                v["source"],
+                v["rule_id"],
+                v["file_path"],
+                v.get("qualified_name") or "",
+            )
+        )
+        result["violations"] = violations
+        result["design_refs"] = sorted(all_refs)
+        result["summary"] = (
+            f"命中设计约束 {len(violations)} 项"
+            if violations
+            else "未命中设计约束"
+        )
+        return result
 
     # ------------------------------------------------------------------
     # 风险评分 / 边置信度（评审就绪报告增强）
@@ -929,6 +1666,12 @@ class ImpactMixin:
         同一 caller 取所有相关边的最低权重（保守口径）。raw 边可能带来
         影响树之外的候选调用方（未解析边不会被 blast_radius 遍历到），
         它们也进入结果，作为"低置信度候选"暴露给审查方。
+
+        Returns:
+            (weights, call_lines)：
+            - weights: {caller_symbol_hash: 最低置信度权重}
+            - call_lines: {caller_symbol_hash: 该最低权重边所在调用行号}
+              （同权重多边时取最小非零行号，保证 ranked 排序稳定可复现）
         """
         anchor_qns = {
             (s.get("qualified_name") or ""): (s.get("name") or "")
@@ -939,8 +1682,22 @@ class ImpactMixin:
         if source_qn:
             anchor_qns.setdefault(source_qn, source_qn.rsplit(".", 1)[-1])
         if not anchor_qns:
-            return {}
+            return {}, {}
         weights: Dict[str, float] = {}
+        call_lines: Dict[str, int] = {}
+
+        def _record(caller_hash: str, weight: float, call_line: Any) -> None:
+            """记录最低权重边；同权重取更小非零行号（未知行号不覆盖已知）。"""
+            line = int(call_line or 0)
+            prev = weights.get(caller_hash)
+            if prev is None or weight < prev:
+                weights[caller_hash] = weight
+                call_lines[caller_hash] = line
+            elif weight == prev:
+                prev_line = call_lines.get(caller_hash, 0)
+                if line and (prev_line == 0 or line < prev_line):
+                    call_lines[caller_hash] = line
+
         anchor_list = list(anchor_qns.keys())
         placeholders = ",".join("?" * len(anchor_list))
         impacted_hashes = [
@@ -953,7 +1710,8 @@ class ImpactMixin:
             cur = self.conn.execute(
                 f"""
                 SELECT s1.symbol_hash AS caller_hash,
-                       (fi1.id = fi2.id) AS same_file
+                       (fi1.id = fi2.id) AS same_file,
+                       c.call_line AS call_line
                 FROM calls c
                 JOIN symbols s1 ON s1.id = c.caller_id
                 JOIN file_instances fi1 ON fi1.id = s1.file_instance_id
@@ -973,8 +1731,7 @@ class ImpactMixin:
                 weight = edge_confidence_weight(
                     classify_edge(1, bool(row["same_file"]), "")
                 )
-                if caller_hash not in weights or weight < weights[caller_hash]:
-                    weights[caller_hash] = weight
+                _record(caller_hash, weight, row["call_line"])
 
         # 未解析边：qualified 命中锚点 → AMBIGUOUS；裸名命中 → UNRESOLVED
         name_to_anchors: Dict[str, List[str]] = {}
@@ -986,7 +1743,7 @@ class ImpactMixin:
         cur = self.conn.execute(
             f"""
             SELECT s1.symbol_hash AS caller_hash,
-                   c.callee_qualified, c.callee_name
+                   c.callee_qualified, c.callee_name, c.call_line AS call_line
             FROM calls c
             JOIN symbols s1 ON s1.id = c.caller_id
             JOIN file_instances fi1 ON fi1.id = s1.file_instance_id
@@ -1011,14 +1768,14 @@ class ImpactMixin:
                 weight = unresolved
             else:
                 continue
-            if caller_hash not in weights or weight < weights[caller_hash]:
-                weights[caller_hash] = weight
+            _record(caller_hash, weight, row["call_line"])
 
         for sym in others:
             sh = sym.get("symbol_hash") or ""
             if sh:
                 weights.setdefault(sh, edge_confidence_weight("EXTRACTED"))
-        return weights
+                call_lines.setdefault(sh, 0)
+        return weights, call_lines
 
     def _symbol_qualified_name(self, ws_id: int, symbol_hash: str) -> str:
         """按 hash 取符号限定名（源符号锚点用）；不存在返回空串。"""
@@ -1040,6 +1797,7 @@ class ImpactMixin:
         symbol_hash: str,
         blast: Dict[str, Any],
         must_test: List[Dict[str, Any]],
+        min_confidence: Optional[float] = None,
     ) -> Dict[str, Any]:
         """六信号风险评分 + 边置信度四档汇总（纯派生，不写库）。"""
         layers = blast.get("layers") or []
@@ -1054,23 +1812,30 @@ class ImpactMixin:
                     "classification": "UNAFFECTED",
                     "histogram": {"WILL_BREAK": 0, "LIKELY_AFFECTED": 0, "UNAFFECTED": 0},
                     "per_symbol": [],
+                    "ranked": [],
                 },
                 "weighted_impacted": 0.0,
             }
 
         ws_id = self._get_active_workspace_id()
-        weights = self._edge_confidence_weights(ws_id, symbol_hash, others)
-        # 权重按 symbol_hash 记账（raw 候选可能不在影响树内），输出前统一换名
-        hash_to_qn = {
-            (s.get("symbol_hash") or ""): (s.get("qualified_name") or "")
+        weights, call_lines = self._edge_confidence_weights(ws_id, symbol_hash, others)
+        # 权重按 symbol_hash 记账（raw 候选可能不在影响树内），输出前统一换名并补元数据
+        hash_to_info: Dict[str, Dict[str, str]] = {
+            (s.get("symbol_hash") or ""): {
+                "qualified_name": s.get("qualified_name") or "",
+                "file_path": s.get("file_path") or "",
+                "kind": s.get("kind") or "",
+            }
             for s in others
+            if s.get("symbol_hash")
         }
-        missing = [h for h in weights if h not in hash_to_qn]
+        missing = [h for h in weights if h not in hash_to_info]
         if missing:
             ph = ",".join("?" * len(missing))
             cur = self.conn.execute(
                 f"""
-                SELECT s.symbol_hash, s.qualified_name
+                SELECT s.symbol_hash, s.qualified_name, s.kind,
+                       fi.rel_path AS file_path
                 FROM symbols s
                 JOIN file_instances fi ON fi.id = s.file_instance_id
                 WHERE fi.workspace_id = ? AND s.symbol_hash IN ({ph})
@@ -1078,10 +1843,22 @@ class ImpactMixin:
                 [ws_id, *missing],
             )
             for row in cur:
-                hash_to_qn[row["symbol_hash"]] = row["qualified_name"] or ""
-        per_symbol = {
-            (hash_to_qn.get(h) or h): w for h, w in weights.items()
-        }
+                hash_to_info[row["symbol_hash"]] = {
+                    "qualified_name": row["qualified_name"] or "",
+                    "file_path": row["file_path"] or "",
+                    "kind": row["kind"] or "",
+                }
+        per_symbol: Dict[str, float] = {}
+        candidate_meta: Dict[str, Dict[str, Any]] = {}
+        for h, w in weights.items():
+            info = hash_to_info.get(h) or {}
+            qn = info.get("qualified_name") or h
+            per_symbol[qn] = w
+            candidate_meta[qn] = {
+                "file_path": info.get("file_path") or "",
+                "kind": info.get("kind") or "",
+                "call_line": int(call_lines.get(h, 0)),
+            }
 
         source_module = ""
         source_file = ""
@@ -1112,7 +1889,9 @@ class ImpactMixin:
         return {
             "risk_score": compute_risk_score(signals),
             "risk_signals": signals,
-            "edge_confidence": summarize_edges(per_symbol),
+            "edge_confidence": summarize_edges(
+                per_symbol, candidate_meta, min_confidence
+            ),
             "weighted_impacted": round(sum(per_symbol.values()), 2),
         }
 

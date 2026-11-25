@@ -2,7 +2,7 @@
 
 提取方式（真实树，非静态解析）：
 - 顶层命令集合取 `cli/categories.py`（`all_command_names()`，唯一权威分类源，
-  由 tests/test_category_source.py 锁定 86 入口不重不漏）；
+  由 tests/test_category_source.py 锁定 87 入口不重不漏）；
 - 每个命令的 argparse 树通过**进程内捕获真实 parser 对象**取得：CLI 自身提供
   `_dispatch_subcommand_help()`（跳过 db 初始化的 help 快路径），本脚本在其执行
   期间挂钩 `ArgumentParser.format_help`，把被打印的那个 parser 连同全部
@@ -254,7 +254,7 @@ def extract() -> dict:
         ],
         "extraction_method": {
             "top_level_source": "cli/categories.py::all_command_names()（唯一权威分类源，"
-                                "tests/test_category_source.py 锁定 86 入口不重不漏）",
+                                "tests/test_category_source.py 锁定 87 入口不重不漏）",
             "parser_capture": "进程内挂钩 argparse.ArgumentParser.format_help，"
                               "经 CLI 自带 help 快路径 _dispatch_subcommand_help 捕获真实 parser",
             "cw_py_entries": "install/server/test/setup/daemon 经真实子进程 cw.py <entry> --help",

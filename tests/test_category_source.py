@@ -2,8 +2,8 @@
 
 覆盖两组不变量：
 1. CLI 侧：cli/categories.py 的 COMMAND_CATEGORIES 恰好覆盖全部顶层命令
-   （cli.main._SUBCOMMANDS 81 个 + cw.py standalone 3 个 + setup + daemon
-   = 86 个），无重复、无遗漏——新增命令漏归类在此拦截；
+   （cli.main._SUBCOMMANDS 82 个 + cw.py standalone 3 个 + setup + daemon
+   = 87 个），无重复、无遗漏——新增命令漏归类在此拦截；
 2. MCP 侧：server/tools/_categories.py 的 17 个 TOOL_CATEGORIES 恰好划分
    server/tools/*.py 注册的全部 @mcp.tool() 工具（244 个），无重复、
    无遗漏——新增工具漏归类在此拦截；
@@ -35,7 +35,7 @@ _EXTRA_TOP_LEVEL = {"install", "server", "test", "setup", "daemon"}
 
 
 def test_cli_categories_cover_all_top_level_commands():
-    """COMMAND_CATEGORIES 恰好覆盖全部顶层命令（86 = 81 + 3 + setup + daemon）"""
+    """COMMAND_CATEGORIES 恰好覆盖全部顶层命令（87 = 82 + 3 + setup + daemon）"""
     categorized = set(all_command_names())
     expected = set(cli_main._SUBCOMMANDS) | _EXTRA_TOP_LEVEL
     missing = expected - categorized
@@ -52,8 +52,8 @@ def test_cli_categories_no_duplicate():
 
 
 def test_cli_categories_command_count():
-    """顶层命令总数为 86（数量变化时须同步更新本断言与文档）"""
-    assert len(all_command_names()) == 86
+    """顶层命令总数为 87（数量变化时须同步更新本断言与文档）"""
+    assert len(all_command_names()) == 87
 
 
 def test_cli_categories_desc_key_no_placeholder_risk():
@@ -244,7 +244,7 @@ class TestToolCliMapping:
         assert not extra, f"以下映射键不是已归类工具: {sorted(extra)}"
 
     def test_mapping_top_level_commands_exist(self):
-        """每条非 None 值的顶层命令 ∈ all_command_names()（86 个）"""
+        """每条非 None 值的顶层命令 ∈ all_command_names()（87 个）"""
         all_cmds = set(all_command_names())
         bad = [
             (tool, entry[0])

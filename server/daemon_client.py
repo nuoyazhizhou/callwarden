@@ -37,6 +37,7 @@ from typing import Optional, List, Dict, Any
 from callwarden.server.daemon_autostart import (
     ensure_http_daemon,
     resolve_http_endpoint_and_manifest,
+    spawn_http_daemon,
 )
 from callwarden.server.daemon_mutex import DaemonMutex
 from callwarden.server.degraded_mode import (
@@ -1881,6 +1882,81 @@ class HttpDaemonRpcClient:
             raise self._connection_error(e, url)
         return self._handle_response(status, raw, rid, url)
 
+    def call_with_autostart(self, method: str,
+                            params: Optional[Dict[str, Any]] = None) -> Any:
+        """带自动拉起自愈的 RPC 调用（HTTP thin client 版，Req 14.22–14.24）。
+
+        修复 GAP（2026-11-23）：daemon 被杀后 manifest 仍指向死 PID，
+        validate_http_manifest fail-closed 抛 E_HTTP_MANIFEST_STALE /
+        E_HTTP_MANIFEST_MISSING（DaemonRemoteError）。该错误此前未被视作
+        "daemon 不可用"，直接冒泡到 CLI/MCP 退出，自动拉起路径从未执行。
+
+        语义：
+        - DaemonUnavailableError（连接失败/超时/发现失败）→ 进入自愈；
+        - DaemonRemoteError 且 code 命中连接级错误码（stale/missing manifest、
+          E_HTTP_DAEMON_UNAVAILABLE）→ 映射为 daemon 不可用，进入自愈；
+        - 其他 DaemonRemoteError（业务错误）原样透传，绝不触发自愈。
+
+        自愈流程（与 legacy DaemonClient.call_with_autostart 对齐，但 HTTP
+        单轨无本地 SQL 回退，自愈失败一律 fail-closed）：
+        1. 清 endpoint 缓存重新 discover（daemon 可能已被其他会话重启）；
+        2. DaemonMutex 互斥：持有者先短窗 ensure（等可能正在启动的 daemon），
+           未就绪则 spawn_http_daemon 显式拉起（动态端口 +
+           authority-scoped manifest；其内部轮询容忍 stale manifest——
+           新 daemon 写出更新后的 manifest 后校验自然通过）；
+        3. 未持有互斥者仅长窗退避等待，不重复 spawn。
+
+        安全边界（不放松）：
+        - 不连接 stale endpoint：自愈前清缓存并重新 discover，stale manifest
+          仍由 validate_http_manifest fail-closed 拒绝连接；
+        - 不改删 manifest：stale manifest 只由 daemon 写新 manifest 翻新；
+        - 治理写 fail-closed 不变：本方法只做「拉起 + 重试原请求」，无任何
+          本地回退。
+        """
+        try:
+            return self.call(method, params)
+        except DaemonUnavailableError:
+            pass
+        except DaemonRemoteError as dre:
+            if not _is_connect_level_daemon_error(dre):
+                raise
+            # stale/missing manifest：语义等同 daemon 不可用，进入自愈
+
+        # 自愈：清缓存重新发现
+        self.reset_endpoint_cache()
+        try:
+            endpoint = self.discover()
+        except Exception:
+            endpoint = ""
+        mutex = DaemonMutex(endpoint)
+        if mutex.try_acquire():
+            try:
+                ready = ensure_http_daemon(
+                    endpoint,
+                    window=2.0,
+                    readiness_check=lambda ep: self.verify_health(ep),
+                )
+                if ready is None:
+                    # daemon 未运行：显式拉起（spawn 内部轮询容忍 stale manifest）
+                    ready = spawn_http_daemon()
+                if ready is not None:
+                    self.reset_endpoint_cache()
+                    return self.call(method, params)
+            finally:
+                mutex.release()
+        else:
+            # 其他会话正在启动 daemon：有界窗口内退避等待，不重复 spawn
+            ready = ensure_http_daemon(
+                endpoint, readiness_check=lambda ep: self.verify_health(ep)
+            )
+            if ready is not None:
+                self.reset_endpoint_cache()
+                return self.call(method, params)
+        raise DaemonUnavailableError(
+            f"{E_HTTP_DAEMON_UNAVAILABLE}: daemon 自愈失败"
+            f"（ensure/spawn 均未就绪），method={method}"
+        )
+
     def _call_with_watchdog(self, url: str, body: bytes, timeout: float,
                             rid: str) -> Any:
         """§9.31 长任务心跳：慢方法 watchdog 调用（/health 探活 + 判死快速失败）。
@@ -3416,7 +3492,16 @@ def _inject_workspace_id(params: dict) -> dict:
     # cwd 显式上送：daemon 侧按 root_path 匹配解析 workspace（起点优先），
     # 避免多 active workspace 时静默取最小 id 导致跨项目任务混串
     # （cwd 在 callwarden 却拿到 TokenSlim 任务的根因）。
-    result = client.call("mcp.daemon_client.inject_workspace_id", {
+    # 注入是每次任务/工作区路由的前置 RPC：必须走自愈（stale/missing
+    # manifest → ensure/spawn），否则 daemon 被杀后该调用先于业务方法冒泡
+    # E_HTTP_MANIFEST_STALE，route 层的 call_with_autostart 永远执行不到。
+    call = (
+        client.call_with_autostart
+        if getattr(client, "is_http_client", False)
+        and hasattr(client, "call_with_autostart")
+        else client.call
+    )
+    result = call("mcp.daemon_client.inject_workspace_id", {
         "params": dict(params),
         "cwd": os.getcwd(),
     })
@@ -3675,7 +3760,12 @@ def route_task_read(rpc_method: str, params: dict, fallback_func):
     else:
         rpc_params = _inject_workspace_id(params)
     try:
-        return rpc_client.call(rpc_method, rpc_params)
+        call = (
+            rpc_client.call_with_autostart
+            if hasattr(rpc_client, "call_with_autostart")
+            else rpc_client.call
+        )
+        return call(rpc_method, rpc_params)
     except DaemonRemoteError as dre:
         if not _is_connect_level_daemon_error(dre):
             # 业务错误（task_not_found / permission_denied 等）原样透传：

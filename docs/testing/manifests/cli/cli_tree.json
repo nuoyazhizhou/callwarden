@@ -1,10 +1,10 @@
 {
  "schema": "cli-tree/v1",
  "card": "TP-08C",
- "source_revision": "1fc671af86eb675c45f2648866f70061536c6f69",
- "generated_at": "2026-11-24T12:18:10",
- "top_level_count": 86,
- "nested_total": 144,
+ "source_revision": "444c04595befa0af3390703ae2239c7d76636273",
+ "generated_at": "2026-11-23T13:58:16",
+ "top_level_count": 87,
+ "nested_total": 146,
  "standalone_entries": {
   "cw-client": {
    "parser": {
@@ -2350,6 +2350,267 @@
     "subparsers": []
    },
    "nested": {},
+   "error": null
+  },
+  "journal": {
+   "category": "call_chain",
+   "top_parser": {
+    "prog": "cw journal",
+    "description": "SQLite 可查询运行日志（append/list；独立 run-journal.db）",
+    "usage": "usage: cw journal [-h] {append,list} ...",
+    "arguments": [
+     {
+      "option_strings": [
+       "-h",
+       "--help"
+      ],
+      "dest": "help",
+      "nargs": 0,
+      "required": false,
+      "default": "==SUPPRESS==",
+      "type": "",
+      "choices": null,
+      "help": "show this help message and exit",
+      "metavar": null
+     },
+     {
+      "option_strings": [],
+      "dest": "action",
+      "nargs": "A...",
+      "required": false,
+      "default": null,
+      "type": "",
+      "choices": [
+       "append",
+       "list"
+      ],
+      "help": "",
+      "metavar": null,
+      "subcommands": [
+       "append",
+       "list"
+      ],
+      "is_subparsers": true
+     }
+    ],
+    "mutually_exclusive_groups": [],
+    "subparsers": [
+     {
+      "name": "append",
+      "help": ""
+     },
+     {
+      "name": "list",
+      "help": ""
+     }
+    ]
+   },
+   "nested": {
+    "append": {
+     "parser": {
+      "prog": "cw journal append",
+      "description": "",
+      "usage": "usage: cw journal append [-h] [--run-id ID] [--task-id ID] [--detail TEXT]\n                         [--ts ISO8601] [--json]\n                         EVENT",
+      "arguments": [
+       {
+        "option_strings": [
+         "-h",
+         "--help"
+        ],
+        "dest": "help",
+        "nargs": 0,
+        "required": false,
+        "default": "==SUPPRESS==",
+        "type": "",
+        "choices": null,
+        "help": "show this help message and exit",
+        "metavar": null
+       },
+       {
+        "option_strings": [],
+        "dest": "event",
+        "nargs": null,
+        "required": true,
+        "default": null,
+        "type": "",
+        "choices": null,
+        "help": "事件名（如 run_start / claim_ok / push_ok）",
+        "metavar": "EVENT"
+       },
+       {
+        "option_strings": [
+         "--run-id"
+        ],
+        "dest": "run_id",
+        "nargs": null,
+        "required": false,
+        "default": "",
+        "type": "",
+        "choices": null,
+        "help": "运行标识（如 run 目录名）",
+        "metavar": "ID"
+       },
+       {
+        "option_strings": [
+         "--task-id"
+        ],
+        "dest": "task_id",
+        "nargs": null,
+        "required": false,
+        "default": "",
+        "type": "",
+        "choices": null,
+        "help": "关联任务 ID（可空）",
+        "metavar": "ID"
+       },
+       {
+        "option_strings": [
+         "--detail"
+        ],
+        "dest": "detail",
+        "nargs": null,
+        "required": false,
+        "default": "",
+        "type": "",
+        "choices": null,
+        "help": "一句话详情",
+        "metavar": "TEXT"
+       },
+       {
+        "option_strings": [
+         "--ts"
+        ],
+        "dest": "ts",
+        "nargs": null,
+        "required": false,
+        "default": "",
+        "type": "",
+        "choices": null,
+        "help": "事件时间 ISO8601（默认当前本地时间）",
+        "metavar": "ISO8601"
+       },
+       {
+        "option_strings": [
+         "--json"
+        ],
+        "dest": "json",
+        "nargs": 0,
+        "required": false,
+        "default": false,
+        "type": "",
+        "choices": null,
+        "help": "JSON 输出",
+        "metavar": null
+       }
+      ],
+      "mutually_exclusive_groups": [],
+      "subparsers": []
+     }
+    },
+    "list": {
+     "parser": {
+      "prog": "cw journal list",
+      "description": "",
+      "usage": "usage: cw journal list [-h] [--run-id ID] [--event EVENT] [--task-id ID]\n                       [--since ISO8601] [--limit N] [--json]",
+      "arguments": [
+       {
+        "option_strings": [
+         "-h",
+         "--help"
+        ],
+        "dest": "help",
+        "nargs": 0,
+        "required": false,
+        "default": "==SUPPRESS==",
+        "type": "",
+        "choices": null,
+        "help": "show this help message and exit",
+        "metavar": null
+       },
+       {
+        "option_strings": [
+         "--run-id"
+        ],
+        "dest": "run_id",
+        "nargs": null,
+        "required": false,
+        "default": "",
+        "type": "",
+        "choices": null,
+        "help": "按运行标识过滤",
+        "metavar": "ID"
+       },
+       {
+        "option_strings": [
+         "--event"
+        ],
+        "dest": "event",
+        "nargs": null,
+        "required": false,
+        "default": "",
+        "type": "",
+        "choices": null,
+        "help": "按事件名过滤",
+        "metavar": "EVENT"
+       },
+       {
+        "option_strings": [
+         "--task-id"
+        ],
+        "dest": "task_id",
+        "nargs": null,
+        "required": false,
+        "default": "",
+        "type": "",
+        "choices": null,
+        "help": "按任务 ID 过滤",
+        "metavar": "ID"
+       },
+       {
+        "option_strings": [
+         "--since"
+        ],
+        "dest": "since",
+        "nargs": null,
+        "required": false,
+        "default": "",
+        "type": "",
+        "choices": null,
+        "help": "仅返回该 ISO8601 时刻之后的记录（含等于）",
+        "metavar": "ISO8601"
+       },
+       {
+        "option_strings": [
+         "--limit"
+        ],
+        "dest": "limit",
+        "nargs": null,
+        "required": false,
+        "default": 0,
+        "type": "int",
+        "choices": null,
+        "help": "最多返回 N 条（0 = 不限）",
+        "metavar": "N"
+       },
+       {
+        "option_strings": [
+         "--json"
+        ],
+        "dest": "json",
+        "nargs": 0,
+        "required": false,
+        "default": false,
+        "type": "",
+        "choices": null,
+        "help": "JSON 输出",
+        "metavar": null
+       }
+      ],
+      "mutually_exclusive_groups": [],
+      "subparsers": []
+     }
+    }
+   },
    "error": null
   },
   "metrics": {
@@ -16131,7 +16392,7 @@
    "top_parser": {
     "entry": "test",
     "rc": 1,
-    "help_text": "Traceback (most recent call last):\n  File \"C:\\git_work\\callwarden\\cw.py\", line 176, in <module>\n    main()\n    ~~~~^^\n  File \"C:\\git_work\\callwarden\\cw.py\", line 165, in main\n    mod = importlib.import_module(f\"{_PKG}.tests.{test_name}\")\n  File \"C:\\Python314\\Lib\\importlib\\__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1398, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1371, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1335, in _find_and_load_unlocked\nModuleNotFoundError: No module named 'callwarden.tests.--help'\n"
+    "help_text": "Traceback (most recent call last):\n  File \"C:\\git_work\\callwarden-worker\\runs\\run-20261123-122229-1ecb\\cw.py\", line 176, in <module>\n    main()\n    ~~~~^^\n  File \"C:\\git_work\\callwarden-worker\\runs\\run-20261123-122229-1ecb\\cw.py\", line 165, in main\n    mod = importlib.import_module(f\"{_PKG}.tests.{test_name}\")\n  File \"C:\\Python314\\Lib\\importlib\\__init__.py\", line 88, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen importlib._bootstrap>\", line 1398, in _gcd_import\n  File \"<frozen importlib._bootstrap>\", line 1371, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1335, in _find_and_load_unlocked\nModuleNotFoundError: No module named 'run-20261123-122229-1ecb.tests.--help'\n"
    },
    "nested": {},
    "error": null,
@@ -16150,7 +16411,7 @@
   }
  ],
  "extraction_method": {
-  "top_level_source": "cli/categories.py::all_command_names()（唯一权威分类源，tests/test_category_source.py 锁定 86 入口不重不漏）",
+  "top_level_source": "cli/categories.py::all_command_names()（唯一权威分类源，tests/test_category_source.py 锁定 87 入口不重不漏）",
   "parser_capture": "进程内挂钩 argparse.ArgumentParser.format_help，经 CLI 自带 help 快路径 _dispatch_subcommand_help 捕获真实 parser",
   "cw_py_entries": "install/server/test/setup/daemon 经真实子进程 cw.py <entry> --help",
   "skips_db_init": "help 快路径不初始化 db；绕过 _run_subcommand_mode 的 lazy auto-setup"

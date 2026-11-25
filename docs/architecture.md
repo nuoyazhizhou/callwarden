@@ -13,7 +13,7 @@
 ┌──────────────────────────┐     ┌──────────────────────────────┐
 │      CLI (cli/main.py)   │     │   MCP Server (FastMCP)       │
 │  subcommand 风格         │     │   244 个 @mcp.tool() 工具    │
-│  86 个顶层命令           │     │   stdio / SSE 传输           │
+│  87 个顶层命令           │     │   stdio / SSE 传输           │
 └────────────┬─────────────┘     └──────────────┬───────────────┘
              │                                  │
              └──────────────┬───────────────────┘
@@ -1030,13 +1030,13 @@ Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprec
 
 ### 21 主分类设计
 
-Call Warden 把 84 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 21 个主分类，CLI 与 MCP 共用同一套分类体系（[1]-[17] 同构对齐，[18]-[21] 为 CLI 独有运维面）。
+Call Warden 把 87 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 21 个主分类，CLI 与 MCP 共用同一套分类体系（[1]-[17] 同构对齐，[18]-[21] 为 CLI 独有运维面）。
 
 | #   | 主分类                       | CLI 命令数 | MCP 工具数 |
 | --- | ---------------------------- | ---------- | ---------- |
 | 1   | **Workspace & Database**     | 6          | 16         |
 | 2   | **Query & Search**           | 13         | 24         |
-| 3   | **Call Chain Analysis**      | 12         | 14         |
+| 3   | **Call Chain Analysis**      | 13         | 14         |
 | 4   | **Code Health & Metrics**    | 11         | 12         |
 | 5   | **Task Orchestration**       | 1          | 36         |
 | 6   | **Agent Rule Memory**        | 1          | 11         |
@@ -1536,5 +1536,5 @@ CREATE TABLE task_lease_events (
 ## 下一步
 
 - [MCP 工具参考](mcp_tools.md)：243 个工具详情
-- [CLI 命令参考](cli_reference.md)：84 个顶层命令详情
+- [CLI 命令参考](cli_reference.md)：87 个顶层命令详情
 - [部署指南](deployment.md)：Docker 部署与升级

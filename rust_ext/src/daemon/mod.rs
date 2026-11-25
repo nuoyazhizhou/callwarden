@@ -47,6 +47,10 @@ pub mod toolchain;
 ///     mark_failed/truncate/compact_applied）
 pub mod staging_log;
 
+/// SessionEventLog——durable session log（append-only JSONL + 文件轮转 + 回放）
+/// 记录会话注册 / 激活 / 切换 / 结束事件，供重启恢复与审计。
+pub mod session_store;
+
 /// Replicator——Session 管理 + daemon_handle_connect + daemon_handle_refresh +
 /// Replicator（跨平台，rusqlite + CasStore + StagingLog）
 /// R5：实现 SESSION_SCHEMA_DDL + daemon_handle_connect（session epoch CAS）+

@@ -1187,7 +1187,7 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
         stale 修正（族8，2026-11-24）：原实现用 importlib.import_module 真实
         导入；sentence-transformers 会连带加载 torch，单次 70s+（满负载时
         超过测试 120s 超时），导致 `cw install --check` 状态检查被拖死。
-        find_spec 只解析查找器，不执行模块代码，语义上即“已安装”。
+        find_spec 只解析查找器，不执行模块代码，语义上即"已安装"。
         """
         try:
             return importlib.util.find_spec(spec.import_name) is not None

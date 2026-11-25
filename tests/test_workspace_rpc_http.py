@@ -155,6 +155,9 @@ class TestHttpWorkspaceStatusInjection:
         # _workspace_snapshot_metadata（server/daemon_client.py:2114-2116,
         # 1091-1113）附加 git_remote_url/git_head_commit_sha，register params
         # 不再等于仅 client_view_root 的单键 dict（旧断言陈旧）。
+        # C-03（REQ-02）新增 git_main_root（worktree 主仓绝对路径），
+        # _workspace_snapshot_metadata 可能一并注入，须纳入允许键集合
+        # （源码有意扩展，测试对齐源码而非弱化断言）。
         assert set(calls[0][1]) <= {
             # stale 修正（ws-identity C-02）：daemon_client 现附加
             # git_main_root（worktree 场景主仓绝对路径），register params
@@ -479,14 +482,16 @@ class TestRealDaemonWorkspaceRoundTrip:
 
     @requires_binaries
     def test_status_unknown_instance_rejected(self, real_daemon_client):
-        """d) 不存在 instance_id 的 workspace.status → 被 principal 范围门禁拒绝。
+        """d) 不存在/不可解析 instance_id 的 workspace.status → fail-closed 拒绝。
 
-        stale 修正（T-1795254396917-c1bf49c0 安全取证 #5）：已认证 principal
-        携带的 workspace_instance_id 必须先解析回 registry workspace_id——
-        registry 查无此实例 → `E_PRINCIPAL_WORKSPACE_REQUIRED`
-        （rust_ext/src/daemon/dispatch.rs:3280-3304 前置门禁）。
-        旧断言 `E_WORKSPACE_NOT_FOUND` 是小写 domain 码时代的实现细节，且
-        门禁在 handler ACL 之前触发，故错误码以门禁为准。
+        安全取证 #5（T-1795254396917-c1bf49c0）：已认证 principal 携带的
+        workspace_instance_id 必须由 daemon 在 dispatch 层先解析回 registry
+        workspace_id 并强校验 grant。完全伪造/未注册的实例在 resolve 阶段即
+        fail-closed（E_PRINCIPAL_WORKSPACE_REQUIRED），不会进入 handler 返回
+        E_WORKSPACE_NOT_FOUND——生产依据 rust_ext/src/daemon/dispatch.rs
+        :3283-3319（principal 自述 instance 解析失败 → E_PRINCIPAL_WORKSPACE_REQUIRED）。
+        拒绝语义不变，仅错误码前移到 dispatch 层，断言对齐新契约（不放宽：
+        仍要求明确拒绝码，不接受静默成功或穿透到 handler）。
         """
         with pytest.raises(DaemonRemoteError) as exc:
             real_daemon_client.call(

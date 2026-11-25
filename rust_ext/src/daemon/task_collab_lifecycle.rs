@@ -486,6 +486,18 @@ impl TaskCollabStore {
             next_status = "in_progress".to_string();
         }
 
+        // 证据契约对齐：任务进入 review 后，executor 的唯一出口是
+        // task.handoff(executor_ready_for_review)，其 evidence 三元组必须与
+        // 最近一条 'reported' event 完全一致。空证据的终态 report 会在 handoff
+        // 处形成死锁（非空 evidence 撞 provenance mismatch，空 evidence 撞
+        // STRUCTURED_REQUIRED），因此在此提前拒绝并给出恢复指引，不改变成功路径。
+        if next_status == "review" && (evidence_path.is_empty() || evidence_hash.is_empty()) {
+            return Err(DaemonRpcError::new(
+                "E_REPORT_EVIDENCE_REQUIRED",
+                "task.report 缺少后续 handoff 必需的 evidence_path/evidence_hash（任务将进入 review），已拒绝且未推进状态；请补带 evidence_path/evidence_hash 的 task.report（生成新 request_id）后重试",
+            ));
+        }
+
         let updated = tx
             .execute(
                 "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
@@ -1369,6 +1381,17 @@ impl TaskCollabStore {
                 || reported_evidence_path != evidence_path
                 || reported_evidence_hash != evidence_hash
             {
+                // 细分「原 report 未携带证据」与真正的三元组不一致：前者只需补带
+                // 证据重报即可恢复，错误信息必须给出该恢复路径，避免 provenance 死锁。
+                if reported_evidence_path.is_empty() || reported_evidence_hash.is_empty() {
+                    return Err(DaemonRpcError::new(
+                        "E_HANDOFF_REPORT_EVIDENCE_MISSING",
+                        format!(
+                            "原 report（request_id={}）未携带 evidence_path/evidence_hash，无法与 handoff 证据三元组对齐；请补带证据的 task.report 生成新 request_id 后重试 handoff",
+                            report_request_id
+                        ),
+                    ));
+                }
                 return Err(DaemonRpcError::new(
                     "E_HANDOFF_REPORT_PROVENANCE_MISMATCH",
                     "report_request_id 与 step_id/evidence_path/evidence_hash 不一致",

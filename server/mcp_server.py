@@ -86,6 +86,14 @@ def _start_daemon_for_mcp_startup() -> None:
                     endpoint = spawn_http_daemon(wait_window=15.0)
                     ready = endpoint is not None
                     if ready:
+                        # 自愈成功后清掉共享单例的 endpoint 缓存：长驻 MCP
+                        # 进程可能已把死端口（stale manifest）缓存进单例，
+                        # 不清缓存的话后续工具调用仍连旧端口报
+                        # E_HTTP_DAEMON_UNAVAILABLE。
+                        try:
+                            HttpDaemonRpcClient.get_instance().reset_endpoint_cache()
+                        except Exception:
+                            pass
                         print(t("mcp.messages.daemon_http_autostart_ok",
                                 endpoint=endpoint), file=sys.stderr)
                 except Exception as spawn_exc:
