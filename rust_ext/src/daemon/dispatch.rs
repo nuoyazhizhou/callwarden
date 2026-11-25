@@ -201,6 +201,9 @@ pub struct DaemonState {
     /// `None` = 能力未组装，`task_loop.public_promote` 与公共路由一律 fail-closed。
     pub task_loop_control:
         Option<std::sync::Arc<crate::daemon::task_loop::promotion::TaskLoopControlPlane>>,
+    /// build_graph 单飞/进度/预算协调（GitNexus refresh_index 设计映射）。
+    /// daemon 级共享实例：per-repo 同时只允许一个在跑的构建。
+    pub build_flights: std::sync::Arc<crate::daemon::fs_handlers::build_flight::BuildFlights>,
 }
 
 impl Default for DaemonState {
@@ -214,6 +217,7 @@ impl Default for DaemonState {
             transport: transport_from_env(),
             task_db_fingerprint: task_db_fingerprint_from_env(),
             task_loop_control: None,
+            build_flights: std::sync::Arc::default(),
         }
     }
 }
@@ -335,11 +339,15 @@ pub trait DaemonStateExt {
 
     /// 安全取证 #5（T-1795254396917-c1bf49c0）：把客户端自述的
     /// `workspace_instance_id` 解析为 registry workspace_id，供 principal
-    /// grant 强校验。解析顺序对齐
-    /// `task_loop::next_action::resolve_workspace_id_by_instance`：
-    /// 先 capture 精确匹配，再回退 `ws-{id}` 约定；root-hash 推导不在安全
-    /// 路径复刻——未注册实例一律 Ok(None)（调用方 fail-closed）。
+    /// grant 强校验。默认实现按
+    /// `task_loop::next_action::resolve_workspace_id_by_instance` 的 capture /
+    /// `ws-{id}` 约定解析；root-hash 推导不在安全路径复刻——未注册实例一律
+    /// Ok(None)（调用方 fail-closed）。
     /// store 未装配（精简 state/部分测试）时仅支持 `ws-{id}` 约定。
+    /// 真实 daemon（`SnapshotDaemonState`）覆写本方法，优先用 registry
+    /// `daemon_workspaces` 这一权威 instance→workspace_id 映射解析，
+    /// 否则「已 register、尚无 authority capture」的 workspace 首轮调用
+    /// （workspace.status/activate）会被误判为伪造实例而 E_PRINCIPAL_WORKSPACE_REQUIRED。
     fn resolve_instance_workspace_id(
         &self,
         instance: &str,
@@ -3988,6 +3996,7 @@ mod tests {
             transport: "named-pipe".to_string(),
             task_db_fingerprint: String::new(),
             task_loop_control: None,
+            build_flights: std::sync::Arc::default(),
         }
     }
 
