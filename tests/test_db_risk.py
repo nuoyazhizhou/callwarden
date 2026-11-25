@@ -708,17 +708,27 @@ def _insert_event(conn, task_id, reason, actor="executor-1"):
 
 @_requires_fts5
 def test_session_fts_ensure_idempotent_and_backfills_old_rows():
-    """迁移幂等：重复执行不报错；建索引前已存在的数据回填后可检索。"""
+    """迁移幂等：重复执行不报错且不重填丢数据；建索引前历史数据回填后可检索。"""
     conn = _collab_conn()
     try:
         # 先写历史数据，再建索引 → 验证 rebuild 回填路径
         _insert_task(conn, "T-1", "Fix login failure")
+        _insert_task(conn, "T-0", "旧库历史行 upgrade backfill")
         _insert_event(conn, "T-1", "claimed by executor")
         assert ensure_session_fts_schema(conn) is True
         assert ensure_session_fts_schema(conn) is True  # 重复执行幂等
+        assert ensure_session_fts_schema(conn) is True  # 三次仍幂等
 
+        # 幂等只做 CREATE IF NOT EXISTS，不得清空已回填的历史数据
         assert [r["task_id"] for r in search_sessions(conn, "login")] == ["T-1"]
+        assert [r["task_id"] for r in search_sessions(conn, "backfill")] == ["T-0"]
         assert [r["task_id"] for r in search_messages(conn, "claimed")] == ["T-1"]
+
+        # 幂等之后再写入新行，触发器仍同步（不是只在首次建索引时有效）
+        _insert_task(conn, "T-2", "Fix logout timeout")
+        _insert_event(conn, "T-2", "reviewer blocked")
+        assert [r["task_id"] for r in search_sessions(conn, "logout")] == ["T-2"]
+        assert [r["task_id"] for r in search_messages(conn, "blocked")] == ["T-2"]
     finally:
         conn.close()
 
