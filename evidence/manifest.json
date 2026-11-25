@@ -1,21 +1,21 @@
 {
-  "task_id": "T-1795513761767-d77a6c10 / T-1795513761922-e0b4ca78",
+  "task_id": "T-1795513761767-d77a6c10 / T-1795513761922-e0b4ca78 / T-1795513688143-b324cb64",
   "parent_task_id": "T-1795466935294-3433ca6c",
-  "phase": "fix1 (Phase 3 复审 BLOCKED 整改)",
-  "executor": "executor-alm-3433ca6c-inst",
-  "session": "sess-executor-alm-3433ca6c-fix1",
+  "phase": "fix1 (Phase 3 复审 BLOCKED 整改)；2026-11-26 重建卡重跑闭合证据链缺口",
+  "executor": "executor-alm-3433ca6c-inst（R2 首跑）；executor worker run-20261126-061617-5f3a（重跑）",
+  "session": "sess-executor-alm-3433ca6c-fix1（R2 首跑）；run-20261126-061617-5f3a（重跑）",
   "evidence": [
     {
       "path": "AC-06.md",
-      "desc": "CARD-R2 证据汇总：Python 7 文件审计回归命令/结果/sha256 + Phase 2 失效引用更正说明",
-      "sha256": "9291124de7dbddc7daf49553267b31b53302bd93fd4591b91178ffeb7c77a89e",
-      "bytes": 2717
+      "desc": "AC-06 证据汇总：2026-11-26 master 9add67d 重跑（LF 稳定 sha256，磁盘=blob=检出三面一致）+ R2 首跑历史快照 + Phase 2 失效引用更正",
+      "sha256": "e287736fcae7f274eceae1faf850de43ffae9f8d0a159fb387d075bbbacd6326",
+      "bytes": 4127
     },
     {
       "path": "AC-06-python-regression.log",
-      "desc": "CARD-R2 step0：主仓 7 文件 Python 审计回归完整日志（237 passed, 2 skipped, EXIT=0，含统计行）",
-      "sha256": "f0b526a25818649d5f9e5f50ebf860a3505d1f6f6b38249a4fa718edc0c2bf55",
-      "bytes": 786
+      "desc": "step S-1795513688155-b3da8c4c：master 9add67d identifier-safe worktree 7 文件 Python 审计回归完整日志（237 passed, 2 skipped, EXIT=0；LF 字节入库，替代 2026-11-24 CRLF 原件消除对账缺口）",
+      "sha256": "40987a601703cdc9dd1bbb977c13eb0be90ececbbbfef3b5f57315eebaa4818a",
+      "bytes": 1062
     },
     {
       "path": "../_fix1_test_focused2.log",
