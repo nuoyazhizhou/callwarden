@@ -7,9 +7,9 @@
   "evidence": [
     {
       "path": "AC-06.md",
-      "desc": "AC-06 证据汇总：2026-11-26 master 9add67d 重跑（LF 稳定 sha256，磁盘=blob=检出三面一致）+ R2 首跑历史快照 + Phase 2 失效引用更正",
-      "sha256": "e287736fcae7f274eceae1faf850de43ffae9f8d0a159fb387d075bbbacd6326",
-      "bytes": 4127
+      "desc": "AC-06 证据汇总：2026-11-26 master 9add67d 重跑（LF 稳定 sha256，磁盘=blob=检出三面一致）+ R2 首跑历史快照 + Phase 2 失效引用更正 + step1 审计结论（S-1795513688155-b3db8908）",
+      "sha256": "52285ad9ac9923ebc29fe704c48080c2bf9468cc471774eefadc71f95a80a286",
+      "bytes": 4766
     },
     {
       "path": "AC-06-python-regression.log",
