@@ -5,15 +5,24 @@
   - 消息 ← ``task_events``  协作事件流（reason / actor_identity / role / 状态迁移）
 
 索引与同步触发器由 ``db.schema.ensure_session_fts_schema`` 幂等维护
-（会话/消息 FTS5 外部内容表 + 插入/更新/删除触发器）。本模块只读：
-负责把用户输入转成安全的 MATCH 表达式、按 bm25 排序、用 ``snippet()``
-返回带高亮标记的片段。
+（会话/消息 FTS5 外部内容表 + 插入/更新/删除触发器）。本模块只读，
+即「既有 session 查询面」：上层 RPC/CLI 复用本模块的查询函数，无需新增
+MCP 工具。三个公共入口：
+  - ``search_sessions``      会话检索（title/description/creator）
+  - ``search_messages``      消息检索（reason/actor/role/status）
+  - ``search_sessions_and_messages``  两段合并视图（各段独立 limit）
+均支持 limit 与带 ``[ ]`` 高亮标记的片段返回。
 
-优雅降级：FTS5 未编译、索引缺失或 MATCH 语法异常时，回退 LIKE 子串匹配，
+路径选择：纯英文/数字走 FTS5 MATCH + bm25 排序 + ``snippet()``；
+含 CJK 的查询走 LIKE 子串路径（unicode61 不切分连续汉字，FTS 无法命中
+真实无空格中文标题的子串），高亮由 ``_manual_snippet`` 生成。
+
+优雅降级：FTS5 未编译、索引缺失或 MATCH 语法异常时同样回退 LIKE 子串匹配，
 调用方始终拿到结果列表而非异常（中英文子串均可命中）。
 
-调用链：search_sessions / search_messages → _fts_* → build_match_query
-        └─（异常/不可用）→ _like_*（LIKE 子串兜底）
+调用链：search_sessions / search_messages
+        ├─ 纯 ASCII → FTS5 MATCH（build_match_query）→ bm25 + snippet
+        └─ CJK / 异常 / 无索引 → _like_*（LIKE 子串兜底 + _manual_snippet）
 """
 
 from __future__ import annotations

@@ -780,6 +780,32 @@ def test_session_fts_chinese_english_hit_and_limit():
 
 
 @_requires_fts5
+def test_session_fts_highlight_position_and_merged_limit():
+    """高亮片段定位到命中子串；合并查询面两段各自独立遵守 limit。"""
+    conn = _collab_conn()
+    try:
+        assert ensure_session_fts_schema(conn) is True
+        _insert_task(conn, "T-1", "修复会话检索中文分词问题")
+        _insert_event(conn, "T-1", "修复中文分词失败")
+        _insert_event(conn, "T-1", "再次中文分词复测")
+
+        # CJK 子串高亮必须包住命中词本身，而非整段或其他位置
+        for query in ("中文分词", "检索中文", "修复"):
+            snip = search_sessions(conn, query)[0]["snippet"]
+            assert "[" + query + "]" in snip, (query, snip)
+
+        msg_snip = search_messages(conn, "分词失败")[0]["snippet"]
+        assert "[分词失败]" in msg_snip, msg_snip
+
+        merged = search_sessions_and_messages(conn, "中文", limit=1)
+        assert set(merged) == {"sessions", "messages"}
+        assert len(merged["sessions"]) == 1
+        assert len(merged["messages"]) == 1
+    finally:
+        conn.close()
+
+
+@_requires_fts5
 def test_session_fts_cjk_message_substring_and_like_escape():
     """消息面 CJK 子串可命中；LIKE 降级路径中 % / _ 不当通配符（P4 回归）。"""
     conn = _collab_conn()
