@@ -1,8 +1,8 @@
 # report/handoff 证据契约死锁：现状梳理与对齐方案
 
-- 任务：T-1795492756996-4996aaf8（step S-1795492757019-4af60b50，write）
+- 任务：T-1795492756996-4996aaf8（step S-1795492757019-4af60b50 设计 + S-1795492757020-4af9ef04 实现 + S-1795492757020-4afa8e64 实现记录）
 - 日期：2026-11-26
-- 状态：设计文档（实现与负面测试见后续步骤）
+- 状态：已实现（commit 54284cb 设计文档，commit 7c9e245 代码与测试），实现记录见 §6
 
 ## 1. 问题陈述
 
@@ -154,3 +154,31 @@ next_status == "review" && (evidence_path.is_empty() || evidence_hash.is_empty()
 | 提前校验误伤无 step 的 legacy report | 无 step_id 的 report 默认 next_status="review"，同样被校验 | 该路径与 handoff 引用目标一致，属预期收紧；如需灰度可先仅对带 step_id 的 report 生效 |
 
 回滚：guard 为单一分支（判 next_status + 两字段非空），revert 对应 commit 即可完全回滚；新增错误码不影响既有语义，无需数据迁移。
+
+## 6. 最终实现记录（commit 7c9e245）
+
+### 6.1 实际改动点（file:line，基于 7c9e245）
+
+| 改动 | 位置 | 内容 |
+|---|---|---|
+| report 提前校验 | `rust_ext/src/daemon/task_collab_lifecycle.rs` L490-502（handle_task_report） | `next_status == "review"` 且 evidence_path/evidence_hash 为空 → `E_REPORT_EVIDENCE_REQUIRED`；guard 位于 UPDATE tasks 与落 `reported` event 之前，拒绝即整体回滚，状态不推进；message 含「补带 evidence_path/evidence_hash 的 task.report（生成新 request_id）后重试」 |
+| handoff 错误细分 | 同文件 L1383-1395（handle_task_handoff executor_ready_for_review 分支） | 最近一条 `reported` event 的 evidence 为空 → `E_HANDOFF_REPORT_EVIDENCE_MISSING`（message 指明根因与恢复路径）；否则维持 `E_HANDOFF_REPORT_PROVENANCE_MISMATCH` 原语义 |
+| 负面测试 1 | `rust_ext/src/daemon/task_collab_tests_core.rs` L2222 `test_report_requires_evidence_when_entering_review_and_recovers_via_rereport` | 终态 report 缺 evidence → `E_REPORT_EVIDENCE_REQUIRED` 且任务保持 in_progress、零 `reported` event；补带证据重报（新 request_id）→ 进 review → handoff 用新 request_id + 一致三元组成功 |
+| 负面测试 2 | 同文件 L2362 `test_handoff_missing_report_evidence_reports_recovery_path` | 预置空证据 `reported` event（模拟旧版本落库）→ handoff 带 non-null evidence → `E_HANDOFF_REPORT_EVIDENCE_MISSING` 且 message 含恢复指引；补带证据重报 → handoff 成功 |
+| 既有测试补齐 evidence | 同文件 `report_valid_params`、T-THREAD-REVISE remediation report、T-IDENTITY-001 report、T-REPORT-SNAPSHOT-001 report | 4 处进 review 的 report 调用补 evidence_path/evidence_hash，适配新提前校验 |
+
+成功路径语义不变：过程性 report（任务回 in_progress）与带证据终态 report 行为与 master 一致。
+
+### 6.2 测试结果
+
+`cargo test --manifest-path rust_ext/Cargo.toml --lib task_collab`：**187 passed / 0 failed**（13.66s），含 2 个新负面测试与全部既有 report/handoff/projection/verdict 回归。
+
+### 6.3 恢复路径操作步骤
+
+死锁场景（历史空证据 report 已落库，或 report 被提前校验拒绝后）恢复步骤：
+
+1. **补带证据重报**：再调一次 `task.report`，携带 `evidence_path`、`evidence_hash` 与新 `request_id`（不传 request_id 时 daemon 自动生成）。新 `reported` event 成为 provenance 查询的「最近一条」，空证据 event 被自然覆盖，无需数据迁移。
+2. **handoff 对齐**：调 `task.handoff` outcome=executor_ready_for_review，`report_request_id` 用第 1 步的新 request_id，`step_id`/`evidence_path`/`evidence_hash` 三元组与该 report 完全一致。
+3. **错误自解释**：若仍带旧 request_id 或不一致三元组，`E_HANDOFF_REPORT_EVIDENCE_MISSING` / `E_HANDOFF_REPORT_PROVENANCE_MISMATCH` 的 message 会分别指出「原 report 未携带证据，请补带证据重报」与「三元组不一致」，按指引回到第 1 步。
+
+对 `E_REPORT_EVIDENCE_REQUIRED`（提前拒绝）：直接按 message 指引补带 evidence_path/evidence_hash 的 task.report 重试即可，任务状态未被推进，重报无副作用。
