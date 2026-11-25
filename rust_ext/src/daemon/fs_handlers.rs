@@ -1610,9 +1610,12 @@ fn run_build_graph(
 ///   `build_too_large`（默认 5000，0=不限制）；
 /// - 单飞：同 workspace 并发构建报 `build_in_progress`（附当前扫描进度），
 ///   超时转后台后同样持有单飞，直到后台跑完发布 lastBuild；
-/// - 超时：等待 [`build_flight::build_wait_bound`]（默认 15s）后返回
-///   `accepted=true` 结构化响应（HTTP 200，非错误），后台线程继续执行
-///   并发布 lastBuild——worker 永不中断（GitNexus "never interrupts"）；
+/// - 等待移出全局锁（Step 1）：spawn 后立即以零超时非阻塞探测后台结果，
+///   不在持有 daemon 全局状态锁的 dispatch 线程内同步等待
+///   [`build_flight::build_wait_bound`]（默认 15s）；未就绪即返回
+///   `accepted=true` 结构化响应（HTTP 200，非错误），后台线程继续执行并
+///   发布 lastBuild——worker 永不中断（GitNexus "never interrupts"），
+///   工具层用 dry_run=true 轮询收敛；单次 RPC 持锁时长降到 ms 级（<2s 验收线）。
 /// - dry_run：不占单飞，报 estimatedFiles/inProgress/wouldRun/lastBuild。
 pub fn handle_build_graph_async(
     registry: &WorkspaceRegistry,
@@ -1786,7 +1789,13 @@ pub fn handle_build_graph_async(
         return Err(DaemonRpcError::internal_error("build_graph 后台线程启动失败"));
     }
 
-    match rx.recv_timeout(build_flight::build_wait_bound()) {
+    // Step 1（等待移出全局锁）：零超时非阻塞探测——dispatch 在 http_server.rs
+    // 的 app.state.lock() 持有期间同步执行本函数，原 15s 同步等待会把所有只读
+    // RPC 拖入队头阻塞（watchdog 连续 2 次 /health 失败判死）。改为立即返回：
+    // 后台已就绪则取回同步结果，否则走下方 Timeout 分支返回 accepted=true，
+    // 由工具层 dry_run=true 轮询收敛。rx 仍在作用域内，三处 badpath 出口
+    // （db_path=None / spawn 失败 / recv Err）保持原样，交在途卡另行修复。
+    match rx.recv_timeout(std::time::Duration::ZERO) {
         Ok(Ok(stats)) => Ok(stats),
         Ok(Err(e)) => Err(e),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
