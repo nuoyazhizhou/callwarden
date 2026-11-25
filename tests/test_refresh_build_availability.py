@@ -17,6 +17,11 @@ RPC 探活约 15 分钟（/health 与 /v1/rpc TLS 握手超时）。
 
 探测：后台线程每 250ms 同时探 /health（verify_health）与 /v1/rpc
 （task.list，dispatch 需 state 锁），覆盖整个 refresh 序列，断言零失败。
+
+另覆盖全仓构建路径（workspace.build_graph）：重活（全量解析 + 收尾全仓
+resolve）在后台线程执行，dispatch 占用被 CALLWARDEN_BUILD_WAIT_MS 约束
+（测试压到 1.2s < 探测超时 5s）。构建调用超时返回 accepted=true 转后台，
+dry_run 轮询对账 lastBuild（构建结果不丢），构建全程探活零失败。
 """
 
 import hashlib
@@ -24,6 +29,8 @@ import os
 import sqlite3
 import threading
 import time
+
+import pytest
 
 from callwarden.server.daemon_client import HttpDaemonRpcClient
 
@@ -50,6 +57,35 @@ _FNS_PER_TARGET = 50
 _PROBE_INTERVAL_SECS = 0.25
 _PROBE_TIMEOUT_SECS = 5.0
 _REFRESH_PER_FILE_BOUND_SECS = 5.0
+
+# 全仓构建测试：磁盘大仓规模（全新文件，mtime 快路径不命中 → 全量解析 +
+# 收尾全仓 resolve，构建耗时稳定超过压低的等待上限，触发「超时转后台」）。
+# 函数名必须全仓唯一（mod{i}_fn{j}）：构建收尾 resolve 按名字解析候选，
+# 共享名走多候选路径（每名 × 每候选文件一条 UPDATE，autocommit+fsync 主导，
+# 800 文件 × 100 共享名 ≈ 8 万条 UPDATE ≈ 800s 无法收敛）；唯一名每名恰好
+# 1 条 UPDATE，构建在轮询上限内收敛。
+_BUILD_FILES = 200
+_FNS_PER_BUILD_FILE = 20
+_BUILD_WAIT_MS = "1200"
+_POLL_DEADLINE_SECS = 240.0
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bounded_build_wait():
+    """把 daemon 构建等待上限压到 1.2s（< 探测超时 5s），仅本模块 daemon 继承。
+
+    daemon 在 spawn 时继承 pytest 进程环境（spawn_isolated_daemon 用
+    os.environ.copy()）；模块级 autouse fixture 先于 w3_live（同 scope 非
+    autouse）实例化，保证 daemon 拿到该值；teardown 恢复原值，不泄漏给
+    其他测试模块。
+    """
+    prev = os.environ.get("CALLWARDEN_BUILD_WAIT_MS")
+    os.environ["CALLWARDEN_BUILD_WAIT_MS"] = _BUILD_WAIT_MS
+    yield
+    if prev is None:
+        os.environ.pop("CALLWARDEN_BUILD_WAIT_MS", None)
+    else:
+        os.environ["CALLWARDEN_BUILD_WAIT_MS"] = prev
 
 
 def _seed_heavy_repo(cg_db, root, ws_id):
@@ -230,5 +266,90 @@ def test_refresh_large_repo_probes_stay_alive(w3_live):
     assert not stats["rpc_fail"], (
         f"/v1/rpc 探测失败 {len(stats['rpc_fail'])} 次: {stats['rpc_fail'][:3]}")
     # 探测确有发生（防止探测线程静默死亡造成假绿）。
+    assert stats["health_ok"] >= 4, f"/health 探测次数过少: {stats}"
+    assert stats["rpc_ok"] >= 4, f"/v1/rpc 探测次数过少: {stats}"
+
+
+def _build_source(file_idx):
+    """单文件源码：_FNS_PER_BUILD_FILE 个全仓唯一名函数互相调用。"""
+    lines = []
+    for j in range(_FNS_PER_BUILD_FILE):
+        lines.append(f"def mod{file_idx:04d}_fn{j:03d}():")
+        lines.append(
+            f"    return mod{file_idx:04d}_fn{(j + 1) % _FNS_PER_BUILD_FILE:03d}()")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _wait_background_build(client, inst, seq):
+    """dry_run 轮询直到后台构建收敛（lastBuild.build_seq 对账且构建已结束）。
+
+    dry_run 响应顶层键为驼峰（inProgress/lastBuild，fs_handlers.rs dry_run
+    分支构造），lastBuild 内部统计为 snake_case（ok/scanned/build_seq）。
+    """
+    deadline = time.monotonic() + _POLL_DEADLINE_SECS
+    last = None
+    while time.monotonic() < deadline:
+        r = client.call("workspace.build_graph", {
+            "workspace_instance_id": inst, "dry_run": True})
+        lb = r.get("lastBuild") or {}
+        last = lb
+        if lb.get("build_seq") == seq and not r.get("inProgress"):
+            return lb
+        time.sleep(1.0)
+    raise AssertionError(f"后台构建未收敛: build_seq={seq} lastBuild={last!r}")
+
+
+def test_build_graph_timeout_background_probes_stay_alive(w3_live):
+    """全仓构建超时转后台不丢结果，构建期间 /health 与 /v1/rpc 零超时。
+
+    重活（200 文件 × 20 个全仓唯一名符号的全量解析 + 收尾全仓 resolve）
+    全部在后台线程执行；
+    dispatch 占用被 CALLWARDEN_BUILD_WAIT_MS=1.2s 约束（< 探测超时 5s）：
+    构建调用返回 accepted=true 转后台，dry_run 轮询对账 lastBuild
+    （结果不丢），构建全程探活零失败。
+    """
+    client = w3_live["client"]
+    inst = w3_live["inst"]
+    endpoint = w3_live["endpoint"]
+    root = w3_live["data_root"] + "/repo"
+
+    # 真实磁盘大仓（pytest 进程创建 → daemon 侧 ownership 检查可通过）。
+    pkgb = os.path.join(root, "pkgb")
+    os.makedirs(pkgb, exist_ok=True)
+    for i in range(_BUILD_FILES):
+        with open(os.path.join(pkgb, f"mod_{i:04d}.py"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(_build_source(i))
+
+    stats = {"health_ok": 0, "rpc_ok": 0, "health_fail": [], "rpc_fail": []}
+    stop_evt = threading.Event()
+    prober = threading.Thread(target=_probe_loop, args=(stop_evt, endpoint, stats),
+                              daemon=True)
+    prober.start()
+    try:
+        r = client.call("workspace.build_graph", {"workspace_instance_id": inst})
+        if r.get("accepted") is True:
+            # 超时转后台：对账 build_seq，轮询直至 lastBuild 收敛（结果不丢）。
+            seq = r.get("build_seq")
+            assert seq is not None, f"accepted 响应缺 build_seq: {r!r}"
+            lb = _wait_background_build(client, inst, seq)
+            assert lb.get("ok") is True, f"后台构建失败: {lb!r}"
+            assert lb.get("scanned", 0) >= _BUILD_FILES, (
+                f"后台构建扫描数不足（构建结果丢失？）: {lb!r}")
+        else:
+            # 构建快于等待上限（机器过快）：同步返回完整统计，结果同样不丢。
+            assert r.get("ok") is True, f"build_graph 响应异常: {r!r}"
+            assert r.get("scanned", 0) >= _BUILD_FILES, f"扫描数不足: {r!r}"
+    finally:
+        stop_evt.set()
+        prober.join(timeout=15)
+
+    # 探测零失败（构建调用窗口 ~1.2s < 探测超时 5s；后台构建不占 dispatch）。
+    assert not stats["health_fail"], (
+        f"/health 探测失败 {len(stats['health_fail'])} 次: "
+        f"{stats['health_fail'][:3]}")
+    assert not stats["rpc_fail"], (
+        f"/v1/rpc 探测失败 {len(stats['rpc_fail'])} 次: {stats['rpc_fail'][:3]}")
     assert stats["health_ok"] >= 4, f"/health 探测次数过少: {stats}"
     assert stats["rpc_ok"] >= 4, f"/v1/rpc 探测次数过少: {stats}"
