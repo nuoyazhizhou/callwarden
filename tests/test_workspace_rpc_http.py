@@ -155,8 +155,12 @@ class TestHttpWorkspaceStatusInjection:
         # _workspace_snapshot_metadata（server/daemon_client.py:2114-2116,
         # 1091-1113）附加 git_remote_url/git_head_commit_sha，register params
         # 不再等于仅 client_view_root 的单键 dict（旧断言陈旧）。
+        # C-03（REQ-02）新增 git_main_root（worktree 主仓绝对路径），
+        # _workspace_snapshot_metadata 可能一并注入，须纳入允许键集合
+        # （源码有意扩展，测试对齐源码而非弱化断言）。
         assert set(calls[0][1]) <= {
             "client_view_root", "git_remote_url", "git_head_commit_sha",
+            "git_main_root",
         }
         # publish：注入权威 instance_id + 透传 db_path（abspath 规范化）
         assert calls[1][1]["workspace_instance_id"] == "inst-w1"
@@ -475,18 +479,22 @@ class TestRealDaemonWorkspaceRoundTrip:
 
     @requires_binaries
     def test_status_unknown_instance_rejected(self, real_daemon_client):
-        """d) 不存在 instance_id 的 workspace.status → E_WORKSPACE_NOT_FOUND。"""
+        """d) 不存在/不可解析 instance_id 的 workspace.status → fail-closed 拒绝。
+
+        安全取证 #5（T-1795254396917-c1bf49c0）：已认证 principal 携带的
+        workspace_instance_id 必须由 daemon 在 dispatch 层先解析回 registry
+        workspace_id 并强校验 grant。完全伪造/未注册的实例在 resolve 阶段即
+        fail-closed（E_PRINCIPAL_WORKSPACE_REQUIRED），不会进入 handler 返回
+        E_WORKSPACE_NOT_FOUND——生产依据 rust_ext/src/daemon/dispatch.rs
+        :3283-3319（principal 自述 instance 解析失败 → E_PRINCIPAL_WORKSPACE_REQUIRED）。
+        拒绝语义不变，仅错误码前移到 dispatch 层，断言对齐新契约（不放宽：
+        仍要求明确拒绝码，不接受静默成功或穿透到 handler）。
+        """
         with pytest.raises(DaemonRemoteError) as exc:
             real_daemon_client.call(
                 "workspace.status", {"workspace_instance_id": "deadbeefdeadbeef01"}
             )
-        # stale（PYT 回归卡 step#4 · A 桶）：旧断言用小写 domain 码
-        # "workspace_not_found"，但 UnifiedAuthority 权威缺失时 Rust 侧显式
-        # 返回大写错误码。生产依据：
-        # rust_ext/src/daemon/snapshot_state.rs:520-526
-        # `unified_workspace_authority` 返回 None → DaemonRpcError::new(
-        # "E_WORKSPACE_NOT_FOUND", ...)（非 workspace_not_found）。
-        assert exc.value.code == "E_WORKSPACE_NOT_FOUND"
+        assert exc.value.code == "E_PRINCIPAL_WORKSPACE_REQUIRED"
 
     @requires_binaries
     def test_status_missing_instance_id_invalid_params(self, real_daemon_client):
