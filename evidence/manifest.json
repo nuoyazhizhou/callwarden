@@ -1,9 +1,9 @@
 {
-  "task_id": "T-1795513761767-d77a6c10 / T-1795513761922-e0b4ca78 / T-1795513688143-b324cb64",
+  "task_id": "T-1795513761767-d77a6c10 / T-1795513761922-e0b4ca78 / T-1795513688143-b324cb64 / T-1795513182883-0f484fcc",
   "parent_task_id": "T-1795466935294-3433ca6c",
-  "phase": "fix1 (Phase 3 复审 BLOCKED 整改)；2026-11-26 重建卡重跑闭合证据链缺口",
-  "executor": "executor-alm-3433ca6c-inst（R2 首跑）；executor worker run-20261126-061617-5f3a（重跑）",
-  "session": "sess-executor-alm-3433ca6c-fix1（R2 首跑）；run-20261126-061617-5f3a（重跑）",
+  "phase": "fix1 (Phase 3 复审 BLOCKED 整改)；2026-11-26 重建卡重跑闭合证据链缺口；2026-11-26 本卡（T-1795513182883-0f484fcc）复跑验证",
+  "executor": "executor-alm-3433ca6c-inst（R2 首跑）；executor worker run-20261126-061617-5f3a（重跑）；executor worker run-20261126-073117-01fe（复跑验证）",
+  "session": "sess-executor-alm-3433ca6c-fix1（R2 首跑）；run-20261126-061617-5f3a（重跑）；run-20261126-073117-01fe（2026-11-26 07:47 +08:00 复跑）",
   "evidence": [
     {
       "path": "AC-06.md",
@@ -28,6 +28,12 @@
       "desc": "CARD-R1 step3：全量 cargo test daemon:: --lib（1639 passed; 0 failed; 0 ignored, EXIT=0）",
       "sha256": "b8c122dc6c49cec57aed81136d8d55c8d51753397a07e917d12402d8e07b2cd8",
       "bytes": 205413
+    },
+    {
+      "path": "AC-06-python-regression-verify.log",
+      "desc": "本卡（T-1795513182883-0f484fcc / S-1795513182911-10fc9238）：master 5d48585 identifier-safe worktree 复跑同一 7 文件回归集（237 passed, 2 skipped, EXIT=0，与权威日志结果一致）；不设 PYTHONPATH 以确保 editable-rebind 生效（口径见日志头部 note）；原权威日志未改动",
+      "sha256": "5b4ce9aa798051f50db0a4f9d1c70c1740cf3fdba6976ceac2c52c04042404ee",
+      "bytes": 2145
     }
   ]
 }
