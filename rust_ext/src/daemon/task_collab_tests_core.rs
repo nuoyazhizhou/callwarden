@@ -89,6 +89,8 @@ use super::support::*;
             "task_id": "T-TEST-001",
             "summary": "Fixed memory leak",
             "snapshot_id": "snapshot-test-001",
+            "evidence_path": "deliverables/fix.md",
+            "evidence_hash": "sha256:fix-001",
             "agent_session_id": "session-123"
         });
         let report_res = store
@@ -1055,7 +1057,8 @@ use super::support::*;
         let report = store.handle_task_report(peer.clone(), &serde_json::json!({
             "task_id":"T-THREAD-REVISE", "step_id":remediation_one,
             "agent_session_id":"executor-session", "identity":executor_identity,
-            "summary":"first revision done", "success":true, "snapshot_id":"snapshot-thread-revise"
+            "summary":"first revision done", "success":true, "snapshot_id":"snapshot-thread-revise",
+            "evidence_path":"deliverables/thread-revise-1.md", "evidence_hash":"sha256:thread-revise-1"
         })).unwrap();
         assert_eq!(report["status"], "review");
 
@@ -1943,6 +1946,8 @@ plan_file 路径步骤持久化用例乙。
                     "summary": "done",
                     "success": true,
                     "snapshot_id": "snapshot-identity-001",
+                    "evidence_path": "deliverables/identity-001.md",
+                    "evidence_hash": "sha256:identity-001",
                     "identity": {
                         "agent_id": "agent-identity",
                         "session_id": "session-identity",
@@ -2059,6 +2064,7 @@ plan_file 路径步骤持久化用例乙。
                     "summary": "reported with authoritative snapshot",
                     "snapshot_id": snapshot_id,
                     "evidence_path": "deliverables/report.md",
+                    "evidence_hash": "sha256:report-snapshot-001",
                     "success": true
                 }),
             )
@@ -2210,6 +2216,297 @@ plan_file 路径步骤持久化用例乙。
             )
             .unwrap();
         assert_eq!(status, "in_progress");
+    }
+
+    #[test]
+    fn test_report_requires_evidence_when_entering_review_and_recovers_via_rereport() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let mut executor_identity = lease_identity(
+            "agent-evidence-guard",
+            "evidence-guard-session",
+            "model-test",
+            "executor",
+        );
+        executor_identity["agent_instance_id"] = Value::String("agent-evidence-guard-inst".into());
+        seed_workspace(&store);
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "agent-evidence-guard",
+            "agent-evidence-guard-inst",
+            "evidence-guard-session",
+            "executor",
+        );
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-EVIDENCE-GUARD", "title": "evidence guard",
+                    "steps": [{"action": "implement", "target_file": "src/lib.rs", "check_items": "focused"}],
+                    "identity_policy": "legacy_identity_v1",
+                    "role_contracts": p0l_governance_roles()
+                }),
+            )
+            .unwrap();
+        let step_id: String = {
+            let conn = store.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT id FROM task_steps WHERE task_id='T-EVIDENCE-GUARD'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        store
+            .handle_task_claim(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-EVIDENCE-GUARD",
+                    "agent_session_id": "evidence-guard-session",
+                    "identity": executor_identity.clone()
+                }),
+            )
+            .unwrap();
+
+        // 负面：终态 report 不带 evidence → 提前拒绝；状态不推进、不落 reported event。
+        let err = store
+            .handle_task_report(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-EVIDENCE-GUARD", "step_id": step_id,
+                    "agent_session_id": "evidence-guard-session", "identity": executor_identity.clone(),
+                    "summary": "done without evidence", "success": true,
+                    "snapshot_id": "snapshot-evidence-guard"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_REPORT_EVIDENCE_REQUIRED");
+        assert!(
+            err.message.contains("补带 evidence_path/evidence_hash 的 task.report"),
+            "错误信息必须给出恢复指引: {}",
+            err.message
+        );
+        {
+            let conn = store.conn.lock().unwrap();
+            let status: String = conn
+                .query_row(
+                    "SELECT status FROM tasks WHERE id='T-EVIDENCE-GUARD'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(status, "in_progress");
+            let reported: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM task_events
+                     WHERE task_id='T-EVIDENCE-GUARD' AND reason_code='reported'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(reported, 0);
+        }
+
+        // 恢复路径：补带证据重报（新 request_id）→ 进 review →
+        // handoff 用新 request_id 与一致证据三元组成功。
+        let report = store
+            .handle_task_report(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-EVIDENCE-GUARD", "step_id": step_id,
+                    "agent_session_id": "evidence-guard-session", "identity": executor_identity.clone(),
+                    "summary": "done with evidence", "success": true,
+                    "snapshot_id": "snapshot-evidence-guard",
+                    "request_id": "report-evidence-guard-2",
+                    "evidence_path": "deliverables/evidence-guard.md",
+                    "evidence_hash": "sha256:evidence-guard-2"
+                }),
+            )
+            .unwrap();
+        assert_eq!(report["status"], "review");
+        let lease = store
+            .handle_lease_acquire(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-EVIDENCE-GUARD", "role": "executor",
+                    "ttl_seconds": 3600.0, "identity": executor_identity.clone()
+                }),
+            )
+            .unwrap();
+        let handoff = store
+            .handle_task_handoff(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-EVIDENCE-GUARD", "from_role": "executor",
+                    "outcome": "executor_ready_for_review", "next_role": "reviewer",
+                    "next_action": "review", "reason": "delivery complete",
+                    "independence_requirement": "required",
+                    "request_id": "handoff-evidence-guard-1",
+                    "step_id": step_id, "report_request_id": "report-evidence-guard-2",
+                    "evidence_path": "deliverables/evidence-guard.md",
+                    "evidence_hash": "sha256:evidence-guard-2",
+                    "identity": executor_identity.clone(),
+                    "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"]
+                }),
+            )
+            .unwrap();
+        assert_eq!(handoff["status"], "review");
+    }
+
+    #[test]
+    fn test_handoff_missing_report_evidence_reports_recovery_path() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let mut executor_identity = lease_identity(
+            "agent-legacy-evidence",
+            "legacy-evidence-session",
+            "model-test",
+            "executor",
+        );
+        executor_identity["agent_instance_id"] =
+            Value::String("agent-legacy-evidence-inst".into());
+        seed_workspace(&store);
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "agent-legacy-evidence",
+            "agent-legacy-evidence-inst",
+            "legacy-evidence-session",
+            "executor",
+        );
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-LEGACY-EVIDENCE", "title": "legacy evidence",
+                    "steps": [{"action": "implement", "target_file": "src/lib.rs", "check_items": "focused"}],
+                    "identity_policy": "legacy_identity_v1",
+                    "role_contracts": p0l_governance_roles()
+                }),
+            )
+            .unwrap();
+        let step_id: String = {
+            let conn = store.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT id FROM task_steps WHERE task_id='T-LEGACY-EVIDENCE'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        store
+            .handle_task_claim(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-LEGACY-EVIDENCE",
+                    "agent_session_id": "legacy-evidence-session",
+                    "identity": executor_identity.clone()
+                }),
+            )
+            .unwrap();
+        store
+            .handle_task_report(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-LEGACY-EVIDENCE", "step_id": step_id,
+                    "agent_session_id": "legacy-evidence-session", "identity": executor_identity.clone(),
+                    "summary": "done", "success": true,
+                    "snapshot_id": "snapshot-legacy-evidence",
+                    "request_id": "report-legacy-1",
+                    "evidence_path": "deliverables/legacy-1.md",
+                    "evidence_hash": "sha256:legacy-1"
+                }),
+            )
+            .unwrap();
+
+        // 模拟历史遗留：report event 的 evidence 被置空（旧版本空证据落库）。
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE task_events SET evidence_path='', evidence_hash=''
+                 WHERE task_id='T-LEGACY-EVIDENCE' AND request_id='report-legacy-1'",
+                [],
+            )
+            .unwrap();
+        }
+
+        let lease = store
+            .handle_lease_acquire(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-LEGACY-EVIDENCE", "role": "executor",
+                    "ttl_seconds": 3600.0, "identity": executor_identity.clone()
+                }),
+            )
+            .unwrap();
+        // 负面：handoff 撞上空证据 report → 细分错误码 + 恢复指引，
+        // 不再笼统报 provenance mismatch。
+        let err = store
+            .handle_task_handoff(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-LEGACY-EVIDENCE", "from_role": "executor",
+                    "outcome": "executor_ready_for_review", "next_role": "reviewer",
+                    "next_action": "review", "reason": "delivery complete",
+                    "independence_requirement": "required",
+                    "request_id": "handoff-legacy-1",
+                    "step_id": step_id, "report_request_id": "report-legacy-1",
+                    "evidence_path": "deliverables/legacy-1.md",
+                    "evidence_hash": "sha256:legacy-1",
+                    "identity": executor_identity.clone(),
+                    "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"]
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_HANDOFF_REPORT_EVIDENCE_MISSING");
+        assert!(
+            err.message.contains("补带证据的 task.report"),
+            "错误信息必须给出恢复指引: {}",
+            err.message
+        );
+
+        // 恢复：补带证据重报（新 request_id）→ handoff 用新 request_id 成功。
+        store
+            .handle_task_report(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-LEGACY-EVIDENCE", "step_id": step_id,
+                    "agent_session_id": "legacy-evidence-session", "identity": executor_identity.clone(),
+                    "summary": "re-report with evidence", "success": true,
+                    "snapshot_id": "snapshot-legacy-evidence",
+                    "request_id": "report-legacy-2",
+                    "evidence_path": "deliverables/legacy-2.md",
+                    "evidence_hash": "sha256:legacy-2"
+                }),
+            )
+            .unwrap();
+        let handoff = store
+            .handle_task_handoff(
+                peer,
+                &serde_json::json!({
+                    "task_id": "T-LEGACY-EVIDENCE", "from_role": "executor",
+                    "outcome": "executor_ready_for_review", "next_role": "reviewer",
+                    "next_action": "review", "reason": "delivery complete",
+                    "independence_requirement": "required",
+                    "request_id": "handoff-legacy-2",
+                    "step_id": step_id, "report_request_id": "report-legacy-2",
+                    "evidence_path": "deliverables/legacy-2.md",
+                    "evidence_hash": "sha256:legacy-2",
+                    "identity": executor_identity.clone(),
+                    "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"]
+                }),
+            )
+            .unwrap();
+        assert_eq!(handoff["status"], "review");
     }
 
     // ============================================================
