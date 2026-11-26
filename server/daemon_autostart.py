@@ -47,6 +47,18 @@ CONNECT_TIMEOUT: float = 1.0
 MACOS_LAUNCHD_LABEL: str = "com.callwarden.daemon"
 LINUX_SYSTEMD_UNIT: str = "callwarden-daemon.service"
 
+# D3 自愈守卫（根修卡 T-1795507699058-41d9fcbc / 合同 r2）
+# 探活失败不得拉第二 daemon：探活 1s 抖动 → 退避重试窗口 + 冷却。
+E_DAEMON_ALREADY_RUNNING: str = "E_DAEMON_ALREADY_RUNNING"
+# 探活失败后的退避重试：先给 in-flight RPC 一个短窗收敛，再决定是否 spawn。
+D3_PROBE_RETRY_WINDOW: float = float(
+    os.environ.get("CW_DAEMON_PROBE_RETRY_WINDOW", "2.0"))
+D3_PROBE_RETRY_INTERVAL: float = 0.25
+# spawn 冷却：同一进程内两次 spawn 尝试的最小间隔，防 1s 抖动重复拉起。
+D3_SPAWN_COOLDOWN: float = float(
+    os.environ.get("CW_DAEMON_SPAWN_COOLDOWN", "5.0"))
+_spawn_last_attempt_monotonic: Optional[float] = None
+
 
 # ---------------------------------------------------------------------------
 # 公开 API
@@ -425,81 +437,242 @@ def _find_daemon_binary() -> Optional[str]:
     return None
 
 
+def _authority_id() -> str:
+    """当前 authority_id（D3 host 级守卫的统一取值点）。"""
+    from callwarden.config import get_http_authority_id
+    return get_http_authority_id()
+
+
+def authority_daemon_diagnostic(authority_id: str = "") -> Dict[str, Any]:
+    """读权威 manifest + host 注册表，构造 E_DAEMON_ALREADY_RUNNING 结构化诊断。
+
+    判活铁律（合同 r2）：pid **且** process_start_time 双键匹配才算活实例。
+    仅 pid 存活不足以判活——现场 PID 30200 被 smartscreen.exe 复用。
+    manifest 是 daemon 权威；注册表只是轻量索引；冲突以 manifest 为准。
+
+    Returns:
+        诊断 dict，含 code/pid/endpoint/manifest/process_start_time/
+        manifest_path/registry_entries/job_status/alive。
+    """
+    from callwarden.config import get_http_manifest_path
+    from .host_process_registry import (
+        is_process_alive,
+        read_all,
+    )
+
+    authority_id = authority_id or _authority_id()
+    manifest_path = get_http_manifest_path(authority_id)
+    manifest: Dict[str, Any] = {}
+    read_error = ""
+    try:
+        manifest = read_http_manifest(manifest_path)
+    except Exception as exc:  # DaemonRemoteError(MISSING/STALE) 等
+        read_error = f"{type(exc).__name__}: {exc}"
+
+    pid = manifest.get("pid")
+    try:
+        pid = int(pid) if pid is not None else None
+    except (TypeError, ValueError):
+        pid = None
+    start_time = manifest.get("process_start_time")
+    try:
+        start_time = int(start_time) if start_time is not None else None
+    except (TypeError, ValueError):
+        start_time = None
+    endpoint = manifest.get("endpoint", "") or ""
+    alive = is_process_alive(pid, start_time) if (pid and start_time) else False
+
+    return {
+        "code": E_DAEMON_ALREADY_RUNNING,
+        "authority_id": authority_id,
+        "manifest_path": manifest_path,
+        "manifest_read_error": read_error,
+        "pid": pid,
+        "process_start_time": start_time,
+        "endpoint": endpoint,
+        "manifest": manifest,
+        "registry_entries": read_all(authority_id),
+        # 作业状态：全量构建拥塞期 health 超时但 daemon/作业仍活，故标 busy。
+        # 这只是一句结构化说明，不伪造 daemon 内部实时进度。
+        "job_status": ("alive_but_unresponsive_probe" if alive else "not_running"),
+        "alive": alive,
+        "restart_hint": "cw daemon restart --force",
+    }
+
+
 def spawn_http_daemon(wait_window: float = 15.0) -> Optional[str]:
     """启动本机 HTTP daemon(detached 进程),返回就绪后的 endpoint;失败返回 None。
 
-    与纯探针的 ensure_http_daemon 不同:本函数是**显式启动动作**,供
-    `cw daemon start` 与「HTTP daemon 不可达时的自动拉起」调用。
+    D3 自愈守卫（根修卡 T-1795507699058-41d9fcbc / 合同 r2），严格顺序：
 
-    启动约定(与 cw_daemon.rs H6 默认 HTTP 一致):
-    - 不带 --http-bind:daemon 默认监听 127.0.0.1:0 动态端口并写 authority-scoped
-      manifest(client 经 manifest 发现端口,不硬编码);
+    1. **manifest 权威判活**：读 authority manifest，pid + process_start_time
+       双键判活。活着 → 绝不 spawn 第二实例，记录 E_DAEMON_ALREADY_RUNNING
+       结构化诊断，返回 None 并打日志（由调用方上报）。
+    2. **host 级互斥**：拿 ``acquire_host_daemon_mutex()``（authority + task_db，
+       同机所有 endpoint 共享一把锁），消除 TOCTOU；拿不到 → 说明别的会话正在
+       启动，本会话退避返回 None。
+    3. **显式权威 bind**：不再裸 ``Popen([daemon_bin])``。从 manifest 读权威
+       endpoint（或其 host:port）显式传 ``--http-bind``；读不到权威 endpoint
+       即 fail-closed（无参启动被拒，绝不落到默认 5854 孤儿绑定）。
+    4. **启动后注册自身**：Popen 成功后把 {role=daemon, pid, start_time,
+       endpoint_or_bind, binary_sha256} upsert 进 host 进程注册表。
+    5. 等待 manifest 翻新 + health 就绪（沿用退避窗口）。
+
+    启动约定(与 cw_daemon.rs H6 一致):
     - 显式 CW_DAEMON_TRANSPORT=http:防止继承环境把 transport 设成 named-pipe/uds
-      而禁用 HTTP(cw_daemon.rs:显式非 http transport 会回落 pipe-only);
+      而禁用 HTTP;
     - 注入 CW_DAEMON_TASK_DB=权威库:与 Python cw task CLI 共享同一任务状态;
     - detached 进程:客户端退出后 daemon 仍存活。
 
     平台:当前仅实现 Windows 与 POSIX 通用 spawn(Popen detached)。macOS/Linux
     的 launchd/systemd 激活由 _start_daemon_platform 负责,本函数是 HTTP 直启补充。
     """
-    daemon_bin = _find_daemon_binary()
-    if daemon_bin is None:
-        logger.error("spawn_http_daemon: 未找到 cw-daemon 可执行文件(检查 "
-                     "CW_DAEMON_BIN 或 ~/.callwarden/runtime/current/)")
+    global _spawn_last_attempt_monotonic
+
+    # cooldown：1s 探活抖动不得连续触发 spawn（合同 r2 验收栏）。
+    now = time.monotonic()
+    if (_spawn_last_attempt_monotonic is not None
+            and now - _spawn_last_attempt_monotonic < D3_SPAWN_COOLDOWN):
+        logger.info(
+            "spawn_http_daemon: 仍处于 %.1fs 冷却窗口，跳过重复 spawn",
+            D3_SPAWN_COOLDOWN)
         return None
 
-    from callwarden.config import DB_PATH as _AUTHORITY_TASK_DB
-    child_env = dict(os.environ)
-    # 显式 http transport:H6 默认虽为 http,但继承环境若含 named-pipe/uds 会禁用 HTTP
-    child_env["CW_DAEMON_TRANSPORT"] = "http"
-    child_env["CW_DAEMON_TASK_DB"] = _AUTHORITY_TASK_DB
-    # 移除可能强制固定端口的继承值,交给 daemon 默认动态端口 + manifest 发现
-    child_env.pop("CW_DAEMON_HTTP_ENDPOINT", None)
+    authority_id = _authority_id()
 
+    # ---- 1) manifest 权威判活：已有活 daemon 绝不拉第二实例 ----
+    diag = authority_daemon_diagnostic(authority_id)
+    if diag["alive"]:
+        logger.warning(
+            "spawn_http_daemon: %s 权威 daemon 仍存活 "
+            "(pid=%s, start_time=%s, endpoint=%s)，拒绝拉起第二实例；%s",
+            E_DAEMON_ALREADY_RUNNING, diag["pid"],
+            diag["process_start_time"], diag["endpoint"], diag["restart_hint"])
+        return None
+
+    # ---- 2) host 级互斥：临界区内再做一次判活，消除 TOCTOU ----
+    from .daemon_mutex import acquire_host_daemon_mutex
+    mutex = acquire_host_daemon_mutex()
+    if mutex is None:
+        logger.info("spawn_http_daemon: 未取得 host 级 daemon 互斥，退避不 spawn")
+        return None
+
+    _spawn_last_attempt_monotonic = time.monotonic()
     try:
-        if sys.platform == "win32":
-            DETACHED_PROCESS = 0x00000008
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            CREATE_NO_WINDOW = 0x08000000
-            subprocess.Popen(
-                [daemon_bin],  # 不带 --http-bind:H6 默认 127.0.0.1:0 + manifest
-                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                close_fds=True,
-                env=child_env,
-            )
-        else:
-            subprocess.Popen(
-                [daemon_bin],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                close_fds=True,
-                start_new_session=True,
-                env=child_env,
-            )
-        logger.info("spawn_http_daemon: 已启动 detached daemon: %s", daemon_bin)
-    except OSError as exc:
-        logger.error("spawn_http_daemon: 启动失败: %s", exc)
-        return None
+        diag2 = authority_daemon_diagnostic(authority_id)
+        if diag2["alive"]:
+            logger.warning(
+                "spawn_http_daemon: 临界区内复判 %s 权威 daemon 已存活，放弃 spawn",
+                E_DAEMON_ALREADY_RUNNING)
+            return None
 
-    # 等待 daemon 写出 manifest 并 health 就绪:轮询 resolve endpoint + /health。
-    deadline = time.monotonic() + wait_window
-    backoff = BACKOFF_BASE
-    while time.monotonic() < deadline:
+        # ---- 3) 显式权威 bind：无参启动 fail-closed ----
+        bind_spec = _authoritative_bind_spec(diag2)
+        if not bind_spec:
+            logger.error(
+                "spawn_http_daemon: 无法从权威 manifest 解析 bind，fail-closed "
+                "拒绝无参启动（禁止落到默认端口产生孤儿 daemon）")
+            return None
+
+        daemon_bin = _find_daemon_binary()
+        if daemon_bin is None:
+            logger.error("spawn_http_daemon: 未找到 cw-daemon 可执行文件(检查 "
+                         "CW_DAEMON_BIN 或 ~/.callwarden/runtime/current/)")
+            return None
+
+        from callwarden.config import DB_PATH as _AUTHORITY_TASK_DB
+        child_env = dict(os.environ)
+        child_env["CW_DAEMON_TRANSPORT"] = "http"
+        child_env["CW_DAEMON_TASK_DB"] = _AUTHORITY_TASK_DB
+        # 显式权威 bind：不再 pop 掉交给默认动态端口。
+        child_env["CW_DAEMON_HTTP_BIND"] = bind_spec
+        cmd = [daemon_bin, "--http-bind", bind_spec]
+
         try:
-            endpoint, _manifest = resolve_http_endpoint_and_manifest(validate=True)
-            if endpoint and try_http_connect(endpoint, timeout=2.0):
-                logger.info("spawn_http_daemon: daemon 就绪 @ %s", endpoint)
-                return endpoint
-        except Exception:
-            pass  # manifest 尚未写出/stale,继续等
-        time.sleep(min(backoff, max(0.0, deadline - time.monotonic())))
-        backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
-    logger.error("spawn_http_daemon: 启动后 %.1fs 内未就绪", wait_window)
-    return None
+            if sys.platform == "win32":
+                DETACHED_PROCESS = 0x00000008
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                CREATE_NO_WINDOW = 0x08000000
+                proc = subprocess.Popen(
+                    cmd,
+                    creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    close_fds=True,
+                    env=child_env,
+                )
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    close_fds=True,
+                    start_new_session=True,
+                    env=child_env,
+                )
+            logger.info("spawn_http_daemon: 已启动 detached daemon: %s --http-bind %s",
+                        daemon_bin, bind_spec)
+        except OSError as exc:
+            logger.error("spawn_http_daemon: 启动失败: %s", exc)
+            return None
+
+        # ---- 4) 注册自身进 host 进程注册表（role=daemon）----
+        try:
+            from .host_process_registry import register_process
+            import hashlib
+            bin_sha = ""
+            try:
+                with open(daemon_bin, "rb") as fh:
+                    bin_sha = hashlib.sha256(fh.read()).hexdigest()
+            except OSError:
+                pass
+            register_process(
+                authority_id=authority_id, role="daemon", pid=proc.pid,
+                endpoint_or_bind=bind_spec, binary_sha256=bin_sha)
+        except Exception as exc:
+            # 注册失败不阻断启动：manifest 仍是权威，注册表只是索引。
+            logger.warning("spawn_http_daemon: 注册表 upsert 失败（不阻断）: %s", exc)
+
+        # ---- 5) 等 manifest 翻新 + health 就绪 ----
+        deadline = time.monotonic() + wait_window
+        backoff = BACKOFF_BASE
+        while time.monotonic() < deadline:
+            try:
+                endpoint, _manifest = resolve_http_endpoint_and_manifest(validate=True)
+                if endpoint and try_http_connect(endpoint, timeout=2.0):
+                    logger.info("spawn_http_daemon: daemon 就绪 @ %s", endpoint)
+                    return endpoint
+            except Exception:
+                pass  # manifest 尚未写出/stale,继续等
+            time.sleep(min(backoff, max(0.0, deadline - time.monotonic())))
+            backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
+        logger.error("spawn_http_daemon: 启动后 %.1fs 内未就绪", wait_window)
+        return None
+    finally:
+        mutex.release()
+
+
+def _authoritative_bind_spec(diag: Dict[str, Any]) -> str:
+    """从权威 manifest 诊断解析 ``--http-bind`` 参数（host:port）。
+
+    - 显式 CW_DAEMON_HTTP_ENDPOINT 优先（仍是 authority 的显式声明）；
+    - 否则取 manifest.endpoint 的 host:port；
+    - 都没有 → 返回 ""（fail-closed，禁止无参启动落到默认端口）。
+    """
+    from callwarden.config import get_http_daemon_endpoint, parse_http_endpoint_host
+
+    for candidate in (get_http_daemon_endpoint(), diag.get("endpoint", "")):
+        if not candidate:
+            continue
+        try:
+            _scheme, host, port = parse_http_endpoint_host(candidate)
+        except ValueError:
+            continue
+        if host and port:
+            return f"{host}:{port}"
+    return ""
 
 
 def get_default_endpoint() -> str:

@@ -81,6 +81,13 @@ def _start_daemon_for_mcp_startup() -> None:
                 # HTTP daemon 不可达:启动期一次性显式拉起本机 daemon(detached)。
                 # 这是 MCP 宿主进程启动时的自愈——此前 HTTP 模式只探活不 spawn,
                 # daemon 挂掉后 MCP/CLI 全部 fail-closed 且无自助恢复(见审计问题1)。
+                #
+                # D3 自愈守卫（根修卡 T-1795507699058-41d9fcbc / 合同 r2）：
+                # spawn_http_daemon 内部先用 manifest 的 pid+process_start_time
+                # 判活——1s 探活超时但 daemon 仍活（全量索引拥塞期）时绝不 Popen
+                # 第二实例，而是返回 None。这里捕获该情形并上报
+                # E_DAEMON_ALREADY_RUNNING + 结构化诊断（pid/endpoint/manifest/
+                # 注册表/作业状态），把重启决策交给显式 `cw daemon restart --force`。
                 try:
                     from .daemon_autostart import spawn_http_daemon
                     endpoint = spawn_http_daemon(wait_window=15.0)
@@ -96,6 +103,29 @@ def _start_daemon_for_mcp_startup() -> None:
                             pass
                         print(t("mcp.messages.daemon_http_autostart_ok",
                                 endpoint=endpoint), file=sys.stderr)
+                    else:
+                        # spawn 未产生新实例：区分「已有活 daemon（探活抖动）」
+                        # 与「真启动失败」两种语义，前者必须结构化上报。
+                        try:
+                            from .daemon_autostart import authority_daemon_diagnostic
+                            diag = authority_daemon_diagnostic()
+                        except Exception:
+                            diag = None
+                        if diag is not None and diag.get("alive"):
+                            import json
+                            print(
+                                t("mcp.messages.daemon_http_autostart_failed",
+                                  error=(f"{diag['code']}: "
+                                         f"pid={diag.get('pid')} "
+                                         f"endpoint={diag.get('endpoint')} "
+                                         f"restart={diag.get('restart_hint')}")),
+                                file=sys.stderr)
+                            print(json.dumps(diag, ensure_ascii=False,
+                                             default=str), file=sys.stderr)
+                        else:
+                            print(t("mcp.messages.daemon_http_autostart_failed",
+                                    error="spawn 未就绪且无存活的权威 daemon"),
+                                  file=sys.stderr)
                 except Exception as spawn_exc:
                     print(t("mcp.messages.daemon_http_autostart_failed",
                             error=str(spawn_exc)), file=sys.stderr)

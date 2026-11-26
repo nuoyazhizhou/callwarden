@@ -48,22 +48,63 @@ class DaemonMutex:
                 start_daemon(...)
     """
 
-    def __init__(self, endpoint: str):
+    def __init__(self, endpoint: str = "", authority_id: str = ""):
+        """构造 host 级 daemon 启动互斥。
+
+        endpoint 保留为兼容参数（旧调用方 ``DaemonMutex(endpoint)`` 不报错），
+        但**不再参与锁标识派生**——D3 根因正是「按 endpoint 分锁导致两个端口
+        两把锁互不冲突，第二 daemon 与权威实例共写同一主库」。锁标识改为
+        host 级：仅按 authority_id + 权威 task_db 路径派生，同机所有 endpoint
+        共享同一把锁。
+        """
         self._endpoint = endpoint
-        self._lock_id = self._derive_lock_id(endpoint)
+        self._authority_id = authority_id
+        # D3：显式 authority_id → host 级锁；仅 endpoint → legacy 兼容派生。
+        self._lock_id = self._derive_lock_id(endpoint, authority_id)
         self._handle: Optional[int] = None  # Windows mutex handle
         self._lock_file = None  # Unix lock file object
         self._acquired = False
 
     @staticmethod
-    def _derive_lock_id(endpoint: str) -> str:
-        """从 endpoint 派生唯一的锁标识。
+    def _host_identity(authority_id: str = "") -> str:
+        """host 级身份串：authority_id + 权威 task_db 绝对路径。
 
-        对 endpoint 做 SHA-256 取前 16 位 hex，确保：
-        - 不同 endpoint 对应不同锁
-        - 锁名称长度可控（Windows 命名互斥体有长度限制）
+        authority_id 缺省时取当前 authority（与 manifest 一致），task_db 取
+        callwarden.config.DB_PATH。两者共同唯一标识「本机本用户本权威库」——
+        同一台机同一权威库只允许一个 daemon，无论它绑定哪个 endpoint。
         """
-        return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()[:16]
+        if not authority_id:
+            try:
+                from callwarden.config import get_http_authority_id
+                authority_id = get_http_authority_id()
+            except Exception:
+                authority_id = "unknown-authority"
+        try:
+            from callwarden.config import DB_PATH
+            task_db = os.path.realpath(DB_PATH)
+        except Exception:
+            task_db = "unknown-task-db"
+        return f"{authority_id}|{task_db}"
+
+    @classmethod
+    def _derive_lock_id(cls, endpoint: str = "", authority_id: str = "") -> str:
+        """派生锁标识：D3 host 级优先，legacy endpoint 兼容。
+
+        - 显式 ``authority_id``（含便捷函数新调用）→ host 级身份串
+          ``authority|task_db``，同机所有 endpoint 共享一把锁（D3 根修）。
+          这是白名单内自愈路径（daemon_autostart / mcp_server）启用的模式。
+        - 仅传 ``endpoint`` 且未给 authority_id → 保留旧签名语义，按 endpoint
+          派生。旧调用方（daemon_client.py / 既有单测）不受破坏；真正的
+          防双实例权威守卫在 spawn_http_daemon 内部用 host 级锁兜底，不依赖
+          这层 endpoint 锁。
+
+        SHA-256 取前 16 位 hex，名称长度可控（Windows 命名互斥体限制）。
+        """
+        if authority_id:
+            identity = cls._host_identity(authority_id)
+        else:
+            identity = f"endpoint|{endpoint}"
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 
     def try_acquire(self) -> bool:
         """非阻塞尝试获取互斥。
@@ -231,20 +272,22 @@ class DaemonMutex:
 # ---------------------------------------------------------------------------
 
 
-def try_acquire_daemon_mutex(endpoint: str) -> Optional[DaemonMutex]:
-    """尝试获取 daemon 启动互斥。
+def try_acquire_daemon_mutex(
+    endpoint: str = "", authority_id: str = ""
+) -> Optional[DaemonMutex]:
+    """尝试获取 daemon 启动互斥（host 级，同机所有 endpoint 共享一把锁）。
 
     Returns:
         持有互斥的 DaemonMutex 实例（调用方用完后必须 release），
         或 None（其他会话正在启动 daemon）。
     """
-    mutex = DaemonMutex(endpoint)
+    mutex = DaemonMutex(endpoint=endpoint, authority_id=authority_id)
     if mutex.try_acquire():
         return mutex
     return None
 
 
-def should_start_daemon(endpoint: str) -> bool:
+def should_start_daemon(endpoint: str = "", authority_id: str = "") -> bool:
     """判断本会话是否应该启动 daemon [Req 14.23]。
 
     尝试获取互斥：
@@ -254,5 +297,19 @@ def should_start_daemon(endpoint: str) -> bool:
     注意：返回 True 时互斥已被持有，调用方必须在启动完成后释放。
     推荐使用 try_acquire_daemon_mutex() 获取可释放的实例。
     """
-    mutex = DaemonMutex(endpoint)
+    mutex = DaemonMutex(endpoint=endpoint, authority_id=authority_id)
     return mutex.try_acquire()
+
+
+def acquire_host_daemon_mutex() -> Optional[DaemonMutex]:
+    """D3 自愈守卫专用：获取 host 级 daemon 启动互斥。
+
+    与 ``try_acquire_daemon_mutex(endpoint)`` 的区别：本函数**不带 endpoint**，
+    lock_id 恒按 authority + task_db 派生（同机所有端口/端点共享一把锁）。
+    这是「同一台机只允许一个 daemon 实例」的权威互斥，白名单内自愈路径
+    （daemon_autostart.spawn_http_daemon）必须用它，而非按 endpoint 的旧锁。
+    """
+    if not authority_id:
+        from callwarden.config import get_http_authority_id
+        authority_id = get_http_authority_id()
+    return try_acquire_daemon_mutex(authority_id=authority_id)
