@@ -3,7 +3,7 @@
 > 分析对象：`c:/git_work/callwarden/testcode/hermes-agent` @ `31a161a6d2b9169dddf6633c096fe038e6925d0f`
 > 深读文件（5 核心 + 1 辅助）：`agent/background_review.py`(1499)、`agent/curator.py`(1220)、`agent/memory_manager.py`(964)、`cron/suggestions.py`(202)、`evals/postmortem/run.py`(88)；辅助 `hermes_cli/kanban_db_dispatch.py`(2897)、`hermes_cli/kanban_db.py`、`agent/review_signals.py`(65)、`tools/skill_usage.py`、`cron/skill_blueprints.py`、`cron/suggestion_catalog.py`。
 > 全部引用均本轮实际读取/grep 核验；hermes 自身 AGENTS.md（root/cron/agent/hermes_cli 四份）作为设计约束上下文。
-> 建议源诚信口径：suggestions.py docstring 声明四源（catalog/blueprint/usage/integration），in-repo 生产端本轮只核实 catalog（suggestion_catalog.py:137-139 seed）与 blueprint（skill_blueprints.py:144）；usage/integration 源的生产端未在仓内定位（疑走插件/上游），不下结论。
+> 建议源诚信口径：suggestions.py docstring 声明四源（catalog/blueprint/usage/integration），in-repo 生产端本轮只核实 catalog（suggestion_catalog.py:137-139 seed）与 blueprint（skill_blueprints.py:144）；usage/integration 源的生产端原未在仓内定位（疑走插件/上游），已由任务 T-1795492760395-142b21e0 于 2026-11-26 补查证伪：**不适用（仓内无生产端）**——usage 仅测试直写（tests/cron/test_suggestions.py:110），integration 全仓零调用，声明触发流（agent/background_review.py、tools/connectors/）均无 suggestions 调用；取证见 docs/design/hermes-signals-usage-integration-notes.md。
 
 ## 可直接落地（42-53）
 
@@ -42,7 +42,7 @@
 
 - 行锚点全部来自本轮实际 Read/Grep 输出（curator.py/background_review.py/memory_manager.py/suggestions.py/run.py/review_signals.py/skill_blueprints.py/suggestion_catalog.py 全文或结构读取；kanban_db_dispatch.py 读 L1373-1497、L1558-1667 + 函数地图 grep；常量经 grep 核验：`DEFAULT_FAILURE_LIMIT=2`@L39、`_RESPAWN_GUARD_SUCCESS_WINDOW=3600`@L73、`_RESPAWN_GUARD_PR_WINDOW=86400`@L82、`KANBAN_TERMINAL_PROVIDER_EXIT_CODE=78`@kanban_db.py:315）。
 - 上一轮 REVIEW 曾因 6+ 处 file:line 错误被 BLOCK；本提取每条引用在落盘前均对照源码行号核对。
-- hermes-agent 仓内「usage/integration」建议源的生产端未定位，已在头部诚信声明，不杜撰。
+- hermes-agent 仓内「usage/integration」建议源的生产端已由任务 T-1795492760395-142b21e0（2026-11-26）补查证伪：**不适用（仓内无生产端）**，取证过程见 docs/design/hermes-signals-usage-integration-notes.md；头部诚信声明已同步更新。
 
 ## 落地顺序建议（并入报告第三节优先级）
 

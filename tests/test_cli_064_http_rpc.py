@@ -12,6 +12,8 @@
 Rust 侧 query.symbol 由 M2.2 迁移核验。
 """
 
+import pytest
+
 import callwarden.cli.main as main_mod
 
 
@@ -62,8 +64,11 @@ def test_cli064_symbol_not_found(monkeypatch, capsys):
     monkeypatch.setattr(main_mod, "route_rpc", _fake_route)
 
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
-    rc = main_mod._handle_symbol(["pkg.nope"], proxy)
-    assert rc is True
+    # stale 修正（族8，2026-11-24）：T-1793505963640-e9540b78 统一失败退出码
+    # 后，查询目标不存在属运行时失败 raise SystemExit(1)（原断言 rc is True 陈旧）。
+    with pytest.raises(SystemExit) as ei:
+        main_mod._handle_symbol(["pkg.nope"], proxy)
+    assert ei.value.code == 1
     assert captured["params"].get("qualified_name") == "pkg.nope"
     out = capsys.readouterr().out
     assert "not found" in out.lower() or "未找到" in out

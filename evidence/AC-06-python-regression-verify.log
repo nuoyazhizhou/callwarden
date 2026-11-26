@@ -1,0 +1,28 @@
+== Python 审计回归（AC-06）复跑验证 ==
+date: 2026-11-26 07:47:20 +0800
+task: T-1795513182883-0f484fcc / step S-1795513182911-10fc9238 (action=test)
+run: run-20261126-073117-01fe
+repo: C:\git_work\callwarden-worker\runs\pytest_20261126_073117_01fe (identifier-safe worktree at master 5d48585, clean checkout; root conftest editable-rebind per repo doc: worktree dir must be a valid identifier)
+env: CW_TEST_MODE=1 C:\Python314\python.exe -m pytest -p no:cacheprovider --tb=short；不设 PYTHONPATH
+note: PYTHONPATH=C:/git_work 会使 PathFinder（meta_path 中先于 editable finder）把 callwarden 解析到主仓 C:/git_work/callwarden，editable-rebind 失效；本机主仓工作树当前有未解决合并冲突，复跑必须确保导入走本 worktree
+files: tests/test_audit_chain.py tests/test_audit_chain_mixin.py tests/test_audit_chain_full_flow.py tests/test_audit_key_rotation.py tests/test_mcp_audit_verify_chain_http_rpc.py tests/test_phase8_audit_log.py tests/test_remote_write_governance.py
+==...==
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\git_work\callwarden-worker\runs\pytest_20261126_073117_01fe
+configfile: pyproject.toml
+plugins: timeout-2.4.0, xdist-3.8.0, anyio-4.12.1
+collected 239 items
+
+tests\test_audit_chain.py ...............................                [ 12%]
+tests\test_audit_chain_mixin.py ..........................               [ 23%]
+tests\test_audit_chain_full_flow.py ..............                       [ 29%]
+tests\test_audit_key_rotation.py ....................................... [ 46%]
+....................................................                     [ 67%]
+tests\test_mcp_audit_verify_chain_http_rpc.py .........                  [ 71%]
+tests\test_phase8_audit_log.py ......................................... [ 88%]
+..                                                                       [ 89%]
+tests\test_remote_write_governance.py .......................ss          [100%]
+
+======================= 237 passed, 2 skipped in 22.12s =======================
+EXIT=0

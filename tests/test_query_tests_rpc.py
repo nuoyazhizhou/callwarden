@@ -60,11 +60,9 @@ import tempfile
 import pytest
 
 from callwarden.server.daemon_protocol import DaemonRemoteError
-from callwarden.config import get_pki_dir
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
-_REAL_PKI_DIR = get_pki_dir()
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
@@ -100,30 +98,27 @@ def ensure_fresh_binary():
 @pytest.fixture(scope="class")
 def query_tests_env():
     """启动隔离 HTTPS daemon（_w3_harness 权威栈），返回 (client, tmp, proc)。"""
-    from _w3_harness import setup_w3_client
+    from _w3_harness import restore_w3_env, setup_w3_client
 
-    prev_pki = os.environ.get("CW_PKI_DIR")
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    # stale 修正（族8，2026-11-24）：不再把 CW_PKI_DIR 钉到真实 PKI。
+    # spawn_isolated_daemon 会从 daemon env 中剔除 CW_PKI_DIR，daemon 实际使用
+    # data_root 下的隔离 LocalCa；旧钉法使客户端不带同源证书，握手报
+    # TLSV1_ALERT_UNKNOWN_CA。留空让 setup_w3_client 注入隔离 owner 身份，
+    # teardown 用 restore_w3_env 还原。
     tmp = tempfile.mkdtemp(prefix="cw_query_tests_")
     client = proc = None
     try:
         client, _inst, _endpoint, proc = setup_w3_client(
             tmp, os.path.join(tmp, "repo"), ws_id=1
         )
-    finally:
-        if prev_pki is None:
-            os.environ.pop("CW_PKI_DIR", None)
-        else:
-            os.environ["CW_PKI_DIR"] = prev_pki
-    if client is None:
-        shutil.rmtree(tmp, ignore_errors=True)
-        pytest.skip("隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）")
-    try:
+        if client is None:
+            pytest.skip("隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）")
         yield client, tmp, proc
     finally:
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             proc.kill()
         shutil.rmtree(tmp, ignore_errors=True)
+        restore_w3_env()
 
 
 # ----------------------------------------------------------------------
@@ -462,7 +457,11 @@ class TestQueryTestsRpc:
         client, _tmp, _proc = query_tests_env
         with pytest.raises(DaemonRemoteError) as exc:
             _query_tests(client, "deadbeefdeadbeef01", "a.alpha")
-        assert exc.value.code == "workspace_not_found"
+        # stale 修正（族6/族8，2026-11-24）：dispatch 前置 principal 门禁先于
+        # handler，未注册 workspace_instance_id 被拒为
+        # E_PRINCIPAL_WORKSPACE_REQUIRED；保留原 handler 错误码。
+        assert exc.value.code in ("workspace_not_found",
+                                  "E_PRINCIPAL_WORKSPACE_REQUIRED")
 
     @requires_binaries
     def test_query_tests_no_match_returns_empty_array(self, query_tests_env):

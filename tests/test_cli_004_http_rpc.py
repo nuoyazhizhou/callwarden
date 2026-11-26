@@ -261,6 +261,10 @@ class TestCli004AuthorityFailure:
                 "workspace_instance_id": "NO-SUCH-WS-CLI004-AUTH",
             })
         assert getattr(ei.value, "code", "") in (
+            # stale 修正：principal 范围门禁（T-1795254396917-c1bf49c0 取证 #5）
+            # 在 handler ACL 之前解析 instance → registry，查无此实例即
+            # E_PRINCIPAL_WORKSPACE_REQUIRED，故伪造实例的错误码集合需纳入。
+            "E_PRINCIPAL_WORKSPACE_REQUIRED",
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
             "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
@@ -277,6 +281,10 @@ class TestCli004AuthorityFailure:
                 "db_path": db,
             })
         assert getattr(ei.value, "code", "") in (
+            # stale 修正：principal 范围门禁（T-1795254396917-c1bf49c0 取证 #5）
+            # 在 handler ACL 之前解析 instance → registry，查无此实例即
+            # E_PRINCIPAL_WORKSPACE_REQUIRED，故伪造实例的错误码集合需纳入。
+            "E_PRINCIPAL_WORKSPACE_REQUIRED",
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
             "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
@@ -293,6 +301,10 @@ class TestCli004AuthorityFailure:
                 "limit": 10,
             })
         assert getattr(ei.value, "code", "") in (
+            # stale 修正：principal 范围门禁（T-1795254396917-c1bf49c0 取证 #5）
+            # 在 handler ACL 之前解析 instance → registry，查无此实例即
+            # E_PRINCIPAL_WORKSPACE_REQUIRED，故伪造实例的错误码集合需纳入。
+            "E_PRINCIPAL_WORKSPACE_REQUIRED",
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
             "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
@@ -306,6 +318,10 @@ class TestCli004AuthorityFailure:
                 "workspace_instance_id": "NO-SUCH-WS-CLI004-QST",
             })
         assert getattr(ei.value, "code", "") in (
+            # stale 修正：principal 范围门禁（T-1795254396917-c1bf49c0 取证 #5）
+            # 在 handler ACL 之前解析 instance → registry，查无此实例即
+            # E_PRINCIPAL_WORKSPACE_REQUIRED，故伪造实例的错误码集合需纳入。
+            "E_PRINCIPAL_WORKSPACE_REQUIRED",
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
             "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",
@@ -319,6 +335,10 @@ class TestCli004AuthorityFailure:
                 "workspace_instance_id": "NO-SUCH-WS-CLI004-EVT",
             })
         assert getattr(ei.value, "code", "") in (
+            # stale 修正：principal 范围门禁（T-1795254396917-c1bf49c0 取证 #5）
+            # 在 handler ACL 之前解析 instance → registry，查无此实例即
+            # E_PRINCIPAL_WORKSPACE_REQUIRED，故伪造实例的错误码集合需纳入。
+            "E_PRINCIPAL_WORKSPACE_REQUIRED",
             "E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
             "E_WORKSPACE_NOT_FOUND", "workspace_not_found", "invalid_params",
             "E_PRINCIPAL_WORKSPACE_REQUIRED", "E_PRINCIPAL_WORKSPACE_FORBIDDEN",

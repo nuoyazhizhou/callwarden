@@ -1,0 +1,54 @@
+{
+  "contract_id": "TC-T-1795507699058-41d9fcbc",
+  "revision": 2,
+  "supersedes_revision": 1,
+  "supersedes_contract_hash": "sha256:29c9637433be395f2c8fd83fb54c6fc6592b7b313a0b4c62311ede49031cef8a",
+  "profile": "code_change",
+  "objective": "REQ：根治 daemon 全量构建占死 workspace 锁 + MCP 自愈拉起孤儿 daemon 两个机制性问题；supersede T-1795491554078-3616ae10，合并其 3 步并扩权。\n\n背景实证（2026-11-24）：观测面 7 section + workspace 解析同时 30s 超时，/health 20ms（不碰 workspace DB）→ 锁阻塞特征；config.py:1691-1694 自述 build 期间持有 workspace 锁，把后续 RPC 全拖入超时。dashboard quick 0.77s vs 全量 29.9s；callwarden.db 1.63GB，journal_mode=wal。孤儿 daemon PID 6608（07:24 无参启动、绑默认 5854、与 4523 权威实例共写 callwarden.db）已清除；原卡已记同型孤儿 PID 44076。元凶链：mcp_server.py:74 探活 timeout=1.0s → daemon_autostart.py:305-306 subprocess.Popen([daemon_bin]) 裸启动 → 默认端口 5854；daemon_mutex.py:241 按 endpoint 加锁 → 两把锁互不冲突，单实例守卫被绕过。\n\nD1 构建隔离（继承原卡 3 步）：build_graph async 作业化 + 分批提交，写锁持有时间有界；修复 refresh 全仓同步构建压垮 daemon；health/watchdog 与构建隔离。\nD2 读写分离（留在 SQLite，不换库）：WAL 已开启；cas.rs:236 / http_server.rs:244 / workspace.rs:558 / toolchain.rs:121 / replicator.rs:1224 的 Mutex<Connection> 单连接串行改为「1 写 + N 读连接池」，读走 WAL 快照读；处理 WAL checkpoint 饥饿与 read-after-write 一致性。\nD3 自愈守卫：autostart 显式传权威 endpoint（查 manifest/registry，禁止裸 Popen）；daemon 无参启动 fail-closed；探活 1s → 退避重试 + 冷却；DaemonMutex 升级 host 级（按 authority/task_db，不按 endpoint）；禁止两个 daemon 共写同一主库。\n\n边界（防重复建单）：T-1795466935294-3433ca6c / T-1795451985855-842b3b64 管 build_graph 审计回执（可观测性），本卡管构建路径可用性与 daemon 连接/自愈架构，互补不重叠。\n\n所有权白名单（规则 39，扩权）：rust_ext/src/daemon/（build_graph/refresh 路由、build_flight、health/watchdog、DB 连接层 cas/workspace/http_server/toolchain/replicator）、cli/ refresh 入口、server/daemon_autostart.py、server/daemon_mutex.py、server/mcp_server.py、tests/ 相关测试；禁止改 task 治理表、schema 治理结构、role_prompts 资产。\n\n验收：D1 全仓构建期间 /api/health 与只读 RPC 仍 <2s；D2 长写事务期间并发读不阻塞（行为级测试）；D3 同一台机只存在一个 daemon 实例，探活失败不产生第二实例，无参启动被拒。\n\n【合同修订 r2（2026-11-24，append-only，仅补设计/验收，D1/D2/D3 主规格不变）】\nhost 进程注册表：与 authority manifest 同根的 ~/.callwarden/runtime/host-process-registry.json，schema=callwarden-host-process-registry/v1，按 authority_id 隔离；entries[] 每条 {role,pid,process_start_time,endpoint_or_bind,binary_sha256,started_at,status}，role ∈ {bridge,daemon,webui}。发布沿用 publish_manifest_atomic 的 temp+fsync+rename；进程启动 upsert 自身、正常退出注销；崩溃残留由权威 daemon 按 pid+process_start_time 判活后标 stale（不删历史）。webui（python -m callwarden.server.web_gateway，bind 127.0.0.1:8765）独立注册为 role=webui 条目，启停不触发 daemon 单实例守卫，daemon 重启不清理 webui 条目。manifest 保持 daemon 权威，注册表仅轻量索引；两者冲突以 manifest 为准并返回 E_DAEMON_ALREADY_RUNNING + 结构化诊断（含 pid/endpoint/manifest/作业状态），重启交显式 cw daemon restart --force。原子临界区用现有 flock/Windows named mutex 原语，禁止纯「读文件→判断→写文件→启动」的 TOCTOU 路径。\n白名单扩展（规则 39）：+ server/host_process_registry.py（新）、server/web_gateway.py、rust_ext/src/daemon/http_server.rs（manifest 判活辅助）、server/daemon_mutex.py、server/mcp_server.py、tests/test_host_process_registry.py；禁止改 task 治理表/schema 治理结构/role_prompts 资产。\n现场发现证据：docs/reports/daemon-single-instance-lock-forensics-20261124.md + docs/evidence/daemon-single-instance-lock-20261124.md（后者作本 revision 治理证据 manifest）。\n",
+  "source_provenance": "task.contract_revise r2: host process registry design + reviewer acceptance (D1/D2/D3 scope unchanged)",
+  "interfaces": [
+    "task.create",
+    "task.contract.revise",
+    "daemon.manifest(v2)",
+    "host-process-registry/v1",
+    "mcp.daemon.autostart",
+    "web_gateway:127.0.0.1:8765"
+  ],
+  "allowed_edit_scope": [
+    "rust_ext/src/daemon/fs_handlers.rs",
+    "rust_ext/src/daemon/workspace.rs",
+    "rust_ext/src/daemon/http_server.rs",
+    "server/daemon_autostart.py",
+    "server/daemon_mutex.py",
+    "server/mcp_server.py",
+    "server/host_process_registry.py",
+    "server/web_gateway.py",
+    "tests/test_refresh_build_availability.py",
+    "tests/test_host_process_registry.py"
+  ],
+  "acceptance_clauses": [
+    "D1 全仓构建期间 /api/health 与只读 RPC 仍 <2s",
+    "D2 长写事务期间并发读不阻塞（行为级测试）",
+    "D3 同一台机只存在一个 daemon 实例，探活失败不产生第二实例，无参启动被拒",
+    "reviewer 栏（r2 新增）：host 进程注册表原子发布 + pid/process_start_time 判活经独立复审，含 PID 复用负向测试",
+    "reviewer 栏（r2 新增）：webui 独立注册为 role=webui，启停不与 daemon 单实例守卫耦合；daemon 重启不误杀 webui entry",
+    "reviewer 栏（r2 新增）：模拟 1s 探活失败而 daemon 存活（全量索引拥塞期）→ 不得拉起第二 daemon，必须返回 E_DAEMON_ALREADY_RUNNING + 结构化诊断",
+    "reviewer 栏（r2 新增）：manifest 与注册表冲突时以 manifest 为权威并上报；两份证据 manifest/hash 在 reviewer 记录可复核"
+  ],
+  "risks": [
+    "partial projection is forbidden",
+    "host 进程注册表原子性：TOCTOU 必须靠 OS 锁守临界区，禁止纯文件读改写判活",
+    "PID 复用需 process_start_time 校验，避免陈旧 manifest 误判活实例",
+    "webui 与 daemon 生命周期解耦，禁止用 daemon 锁管 webui 端口"
+  ],
+  "rollback": [
+    "append-only historical contract revisions; failed transaction rolls back",
+    "host-process-registry.json 仅标 stale，不物理删历史 entry"
+  ],
+  "dependencies": [
+    "supersede source: T-1795491554078-3616ae10",
+    "evidence: EV-registry-dual-workspace-20261124-01（D3 附录）",
+    "evidence: docs/evidence/daemon-single-instance-lock-20261124.md（本 revision）",
+    "串行前置：本卡先于 T-1795509949652-43b41898（workspace 身份消歧卡）执行"
+  ]
+}

@@ -1942,7 +1942,8 @@
             "symbol_history_tasks_count": "Tasks ({count}):",
             "git_show_tasks_count": "Tasks ({count}):",
             "edit_invalid_symbol_id": "Invalid symbol_id: {symbol_id}",
-            "edit_symbol_id_not_found": "Symbol not found: id={sid}"
+            "edit_symbol_id_not_found": "Symbol not found: id={sid}",
+            "journal_list_empty": "(no matching run events)"
         },
         "subcommand_help": "Call Warden Architecture Subcommands (Four Pillars):\n\n  Guardrail:\n    guardrail scan [--file <path>] [--category <cat>]   Scan guardrail violations\n    guardrail rules [--category <cat>]                  List guardrail rules\n\n  Change Impact:\n    impact <symbol_hash> [--depth N]                    Compute change impact radius\n    review <symbol_hash>                                Generate review readiness report\n\n  Evolution Intelligence:\n    evolution <qualified_name> [--window 30d]           Query function change frequency\n    hotspot [--module <path>]                           Hotspot function ranking\n    churn [--module <path>] [--window 90d]              Code churn analysis\n\n  Defect Knowledge Base:\n    defect search [--category <cat>] [--severity <sev>] Search defect patterns\n    defect suggest <symbol_hash> [--finding <id>]       Recommend fix suggestions\n    defect learn <commit_hash>                          Learn from fix commit\n    defect stats                                        Defect KB statistics\n    defect build                                        Build defect knowledge base\n\n  Code Graph GC (Java-like GC, archive files hit by .gitignore/.callwardenignore):\n    gc archive [--force] [--dry-run]                    Archive files hit by ignore rules\n    gc restore [--path <path> ...] [--force]            Restore archived files\n    gc status                                           View GC status (active/archived/deleted stats)\n    gc purge [--older-than <days>]                      Permanently remove files archived over N days\n\n  Diagnostics & Maintenance:\n    doctor                                              Check environment, database status, recommended optimizations\n    doctor --add-defender-exclusion                     Add Windows Defender exclusion (requires admin privileges)\n\nLegacy Commands (--flag mode):\n  The following options are legacy --flag style commands, coexisting with the above subcommands."
     },
@@ -2270,7 +2271,10 @@
             "workspace_id_unresolved": "Cannot resolve authoritative workspace_id from workspace_instance_id={instance} (fail-closed)",
             "task_workspace_root_unresolved": "Cannot resolve the current project's workspace ownership (root={root}); run `cw workspace register --root {root}` first. Reason: {error}",
             "task_workspace_id_mismatch": "workspace_id={workspace_id} does not belong to this MCP instance's project (current project canonical workspace_id={ctx_ws}); cross-project task creation refused",
-            "task_workspace_instance_mismatch": "workspace_instance_id does not belong to this MCP instance's project (current project canonical instance={ctx_inst}); cross-project task creation refused"
+            "task_workspace_instance_mismatch": "workspace_instance_id does not belong to this MCP instance's project (current project canonical instance={ctx_inst}); cross-project task creation refused",
+            "task_role_contracts_list_required": "role_contracts must be a non-empty list (default three-role templates are injected when omitted)",
+            "task_role_contracts_object_required": "each role_contracts item must be an object (role/prompt/description/instructions)",
+            "task_role_invalid": "role must be one of {roles}; got: {role}"
         }
     },
     "cli_test_usage": "Usage: cw test <module> [pytest args]\n   Example: cw test test_p0_bugfixes\n   <module> is a test module name under callwarden/tests/ (without .py)\n   Note: `cw test`=run developer pytest modules; `cw tests <symbol>`=query test cases/coverage for a symbol",
@@ -2331,5 +2335,15 @@
     "cli_fts_status_consistent": "✓ Consistent (fts_rows == symbols_count)",
     "cli_fts_status_inconsistent": "✗ Inconsistent (symbols={symbols}, fts_rows={fts_rows})",
     "cli_fts_status_inconsistent_hint": "  → Run `cw fts rebuild` to fix",
-    "current_locale": "en_US"
+    "current_locale": "en_US",
+    "cli_journal_desc": "Queryable run journal backed by SQLite (append/list; dedicated run-journal.db)",
+    "cli_journal_append_desc": "Append a run event",
+    "cli_journal_arg_event": "Event name (e.g. run_start / claim_ok / push_ok)",
+    "cli_journal_arg_run_id": "Run identifier (e.g. run directory name)",
+    "cli_journal_arg_task_id": "Related task ID (optional)",
+    "cli_journal_arg_detail": "One-line detail",
+    "cli_journal_arg_ts": "Event timestamp in ISO8601 (defaults to current local time)",
+    "cli_journal_list_desc": "Query run events (newest first by ts)",
+    "cli_journal_arg_since": "Only return records at or after this ISO8601 instant (inclusive)",
+    "cli_journal_arg_limit": "Return at most N records (0 = unlimited)"
 }

@@ -159,6 +159,9 @@ class TestHttpWorkspaceStatusInjection:
         # _workspace_snapshot_metadata 可能一并注入，须纳入允许键集合
         # （源码有意扩展，测试对齐源码而非弱化断言）。
         assert set(calls[0][1]) <= {
+            # stale 修正（ws-identity C-02）：daemon_client 现附加
+            # git_main_root（worktree 场景主仓绝对路径），register params
+            # 合法键集需同步放行。
             "client_view_root", "git_remote_url", "git_head_commit_sha",
             "git_main_root",
         }

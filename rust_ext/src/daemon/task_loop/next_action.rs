@@ -781,11 +781,18 @@ fn wait_if_active_lease(
     workspace_id: i64,
     task_id: &str,
     task_status: &str,
+    prerequisites: Value,
 ) -> Result<Option<Value>, DaemonRpcError> {
     match active_lease_role(conn, workspace_id, task_id)? {
         Some(holder) => {
             let step = first_claimable_step(conn, task_id)?.unwrap_or_default();
-            Ok(Some(wait_outcome(task_id, task_status, &step, &holder)?))
+            Ok(Some(wait_outcome(
+                task_id,
+                task_status,
+                &step,
+                &holder,
+                prerequisites,
+            )?))
         }
         None => Ok(None),
     }
@@ -930,6 +937,9 @@ struct Rendered {
     role_contract: Option<RoleContractProjection>,
     verdict_eligibility: &'static str,
     blocking_conditions: Vec<String>,
+    /// REQ-PREQ-02：前置条件告知——判定引擎 `hard_unmet` 投影；
+    /// 无未满足硬依赖时恒为 `[]`（字段必须存在，空数组语义）。
+    prerequisites: Value,
     revision_hint: Option<Value>,
     next_role: Option<String>,
     next_action: &'static str,
@@ -937,6 +947,25 @@ struct Rendered {
     next_session: Option<Value>,
     review_verdict_id: Option<String>,
     review_findings_count: Option<usize>,
+}
+
+/// 判定引擎结果 → `prerequisites` 投影数组（仅 `hard_unmet`；信息性 warnings 不进投影）。
+fn prerequisites_to_json(evaluation: super::prerequisites::PrerequisiteEvaluation) -> Value {
+    Value::Array(
+        evaluation
+            .hard_unmet
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "provider_task_id": item.provider_task_id,
+                    "lifecycle_status": item.lifecycle_status,
+                    "dep_type": item.dep_type,
+                    "unmet_reason": item.unmet_reason,
+                    "freshness_status": item.freshness_status,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// 用户可读的治理阶段投影；`tasks.status` 仍保留生命周期门禁语义。
@@ -1093,6 +1122,9 @@ fn render(r: &Rendered, task_status: &str) -> Value {
         "blocking_reasons".to_string(),
         serde_json::json!(r.blocking_conditions),
     );
+    // REQ-PREQ-02：prerequisites 键位于 blocking_reasons 之后、revision_hint 之前；
+    // 无未满足硬依赖时字段必须存在且为 []（空数组语义，不省略）。
+    m.insert("prerequisites".to_string(), r.prerequisites.clone());
     m.insert(
         "revision_hint".to_string(),
         r.revision_hint.clone().unwrap_or(Value::Null),
@@ -1129,6 +1161,7 @@ fn blocked(
     task_id: &str,
     task_status: &str,
     blocking: String,
+    prerequisites: Value,
 ) -> Result<Value, DaemonRpcError> {
     let r = Rendered {
         decision: "BLOCKED",
@@ -1139,6 +1172,7 @@ fn blocked(
         role_contract: None,
         verdict_eligibility: "not_evaluated",
         blocking_conditions: vec![blocking.clone()],
+        prerequisites,
         revision_hint: None,
         next_role: None,
         next_action: "none",
@@ -1162,6 +1196,7 @@ fn claim_outcome(
     tc: (String, i64, String),
     rc: RoleContractProjection,
     kind: &str,
+    prerequisites: Value,
 ) -> Result<Value, DaemonRpcError> {
     let reason = if kind == "remediation" {
         format!("存在 unresolved failed step，唯一可领取目标为 remediation step {step_id}")
@@ -1177,6 +1212,7 @@ fn claim_outcome(
         role_contract: Some(rc),
         verdict_eligibility: "not_required_for_claim",
         blocking_conditions: Vec::new(),
+        prerequisites,
         revision_hint: None,
         next_role: Some("executor".to_string()),
         next_action: "claim_current_step",
@@ -1202,6 +1238,7 @@ fn wait_outcome(
     task_status: &str,
     step_id: &str,
     holder_role: &str,
+    prerequisites: Value,
 ) -> Result<Value, DaemonRpcError> {
     let r = Rendered {
         decision: "WAITING",
@@ -1212,6 +1249,7 @@ fn wait_outcome(
         role_contract: None,
         verdict_eligibility: "not_evaluated",
         blocking_conditions: vec![format!("task 存在 active 未过期 lease（持有角色 {holder_role}），等待其释放")],
+        prerequisites,
         revision_hint: None,
         next_role: None,
         next_action: "wait_for_current_lease",
@@ -1233,6 +1271,7 @@ fn review_outcome(
     task_status: &str,
     tc: (String, i64, String),
     rc: RoleContractProjection,
+    prerequisites: Value,
 ) -> Result<Value, DaemonRpcError> {
     let r = Rendered {
         decision: "READY",
@@ -1243,6 +1282,7 @@ fn review_outcome(
         role_contract: Some(rc),
         verdict_eligibility: "pending_review",
         blocking_conditions: Vec::new(),
+        prerequisites,
         revision_hint: None,
         next_role: Some("reviewer".to_string()),
         next_action: "review_current_step",
@@ -1272,6 +1312,7 @@ fn revise_outcome(
     rc: Option<RoleContractProjection>,
     hint: Option<Value>,
     reason: String,
+    prerequisites: Value,
 ) -> Result<Value, DaemonRpcError> {
     let review_verdict_id = hint
         .as_ref()
@@ -1292,6 +1333,7 @@ fn revise_outcome(
         role_contract: rc,
         verdict_eligibility: "blocked",
         blocking_conditions: Vec::new(),
+        prerequisites,
         revision_hint: hint,
         next_role: Some("executor".to_string()),
         next_action: "revise_current_step",
@@ -1321,6 +1363,7 @@ fn adjudicate_outcome(
     reason: String,
     review_verdict_id: Option<String>,
     review_findings_count: Option<usize>,
+    prerequisites: Value,
 ) -> Result<Value, DaemonRpcError> {
     let r = Rendered {
         decision: "READY",
@@ -1331,6 +1374,7 @@ fn adjudicate_outcome(
         role_contract: Some(rc),
         verdict_eligibility: "passed",
         blocking_conditions: Vec::new(),
+        prerequisites,
         revision_hint: None,
         next_role: Some("adjudicator".to_string()),
         next_action: "adjudicate_current_verdict",
@@ -1409,6 +1453,8 @@ fn complete_outcome(task_id: &str, task_status: &str) -> Result<Value, DaemonRpc
         role_contract: None,
         verdict_eligibility: "not_evaluated",
         blocking_conditions: Vec::new(),
+        // 终态无后续派工，前置告知恒为空数组（字段仍必须存在）。
+        prerequisites: serde_json::json!([]),
         revision_hint: None,
         next_role: Some("complete".to_string()),
         next_action: "finalize",
@@ -1438,6 +1484,8 @@ fn terminal_outcome(task_id: &str, task_status: &str) -> Result<Value, DaemonRpc
         role_contract: None,
         verdict_eligibility: "not_evaluated",
         blocking_conditions: Vec::new(),
+        // 终态无后续派工，前置告知恒为空数组（字段仍必须存在）。
+        prerequisites: serde_json::json!([]),
         revision_hint: None,
         next_role: Some("reverted".to_string()),
         next_action: "finalize",
@@ -1510,6 +1558,14 @@ fn evaluate_next_action_inner(
     })?;
     verify_capture(conn, workspace_id, &workspace_capture_id, workspace_instance_id)?;
 
+    // REQ-PREQ-02：prerequisites 投影填充——判定引擎只读查询 `hard_unmet`。
+    // 无依赖/全部满足 → 空数组（字段恒存在，AC-05）；
+    // 引擎 DB 失败 → DaemonRpcError 向上抛，evaluate_next_action 整体失败，
+    // 不静默省略字段（fail-closed，AC-03）。
+    let prerequisites = prerequisites_to_json(
+        super::prerequisites::evaluate_task_prerequisites(conn, workspace_id, task_id)?,
+    );
+
     // 规则 4：Task Contract 缺失/多版本冲突/revision 断链 → BLOCKED/NONE。
     let task_contract = match resolve_current_task_contract(conn, task_id)? {
         Some(tc) => tc,
@@ -1518,6 +1574,7 @@ fn evaluate_next_action_inner(
                 task_id,
                 &task_status,
                 "Task Contract 缺失、多版本冲突或 revision 链不连续（无法验证 hash）".to_string(),
+                prerequisites,
             )
         }
     };
@@ -1531,12 +1588,14 @@ fn evaluate_next_action_inner(
             Some(step_id) => {
                 return match resolve_or_block_step(conn, workspace_id, task_id, &step_id)? {
                     StepResolution::Ready(rc) => {
-                        claim_outcome(task_id, &task_status, &step_id, tc, rc, "remediation")
+                        claim_outcome(task_id, &task_status, &step_id, tc, rc, "remediation", prerequisites)
                     }
                     StepResolution::Waiting { holder_role } => {
-                        wait_outcome(task_id, &task_status, &step_id, &holder_role)
+                        wait_outcome(task_id, &task_status, &step_id, &holder_role, prerequisites)
                     }
-                    StepResolution::Blocked { reason } => blocked(task_id, &task_status, reason),
+                    StepResolution::Blocked { reason } => {
+                        blocked(task_id, &task_status, reason, prerequisites)
+                    }
                 };
             }
             None => {
@@ -1554,6 +1613,7 @@ fn evaluate_next_action_inner(
                         "reason": "remediation 已完成但未调用 task.step.resolve；必须 resolve 后才能进入 review",
                     })),
                     "存在 unresolved failed step 且无待领取 remediation，必须 resolve 后继续".to_string(),
+                    prerequisites,
                 );
             }
         }
@@ -1584,16 +1644,18 @@ fn evaluate_next_action_inner(
                             task_id,
                             &task_status,
                             "review 状态缺少 reviewer Role Contract lineage（合同缺失）".to_string(),
+                            prerequisites,
                         )
                     }
                 };
-                return review_outcome(task_id, &task_status, tc, rc);
+                return review_outcome(task_id, &task_status, tc, rc, prerequisites);
             }
             return Ok(wait_outcome(
                 task_id,
                 &task_status,
                 &first_claimable_step(conn, task_id)?.unwrap_or_default(),
                 &holder,
+                prerequisites,
             )?);
         }
         let verdicts = read_effective_verdicts(conn, task_id)?;
@@ -1615,15 +1677,17 @@ fn evaluate_next_action_inner(
                                 task_id,
                                 &task_status,
                                 "review 状态缺少 reviewer Role Contract lineage（合同缺失）".to_string(),
+                                prerequisites,
                             )
                         }
                     };
-                    return review_outcome(task_id, &task_status, tc, rc);
+                    return review_outcome(task_id, &task_status, tc, rc, prerequisites);
                 }
                 return blocked(
                     task_id,
                     &task_status,
                     "verdict 无法按持久化 normalization 规则验证（UNVERIFIED），保持 fail-closed".to_string(),
+                    prerequisites,
                 );
             }
             Some(v) if v.normalized_overall == "block" => {
@@ -1635,6 +1699,7 @@ fn evaluate_next_action_inner(
                                 task_id,
                                 &task_status,
                                 "remediation 已完成但缺少 reviewer Role Contract lineage（合同缺失）".to_string(),
+                                prerequisites,
                             )
                         }
                     };
@@ -1643,6 +1708,7 @@ fn evaluate_next_action_inner(
                         &task_status,
                         tc,
                         rc,
+                        prerequisites,
                     );
                 }
                 let rc = match resolve_lineage_role_contract(conn, workspace_id, task_id, "executor")? {
@@ -1664,6 +1730,7 @@ fn evaluate_next_action_inner(
                     rc,
                     hint,
                     "reviewer 有效 verdict 为 BLOCKED，返回 Executor 整改（READY/REVISE）".to_string(),
+                    prerequisites,
                 );
             }
             Some(v) => {
@@ -1675,6 +1742,7 @@ fn evaluate_next_action_inner(
                             task_id,
                             &task_status,
                             "review PASS 但缺少 adjudicator Role Contract lineage（合同缺失）".to_string(),
+                            prerequisites,
                         )
                     }
                 };
@@ -1686,6 +1754,7 @@ fn evaluate_next_action_inner(
                     "reviewer 有效 verdict 为 PASS，交独立 Adjudicator 裁决（不等于 apply/close）".to_string(),
                     Some(v.verdict_id.clone()),
                     Some(verdict_findings_count(conn, task_id, &v.verdict_id)?),
+                    prerequisites,
                 );
             }
         }
@@ -1694,7 +1763,9 @@ fn evaluate_next_action_inner(
     // 规则 11：adjudicator 已接受（applied），可执行最终 close（仍需独立 instance + 真实 lease）。
     if task_status == "applied" {
         // 规则 6 优先于 11：仍有 active 未过期 lease → WAITING/WAIT。
-        if let Some(wait) = wait_if_active_lease(conn, workspace_id, task_id, &task_status)? {
+        if let Some(wait) =
+            wait_if_active_lease(conn, workspace_id, task_id, &task_status, prerequisites.clone())?
+        {
             return Ok(wait);
         }
         let rc = match resolve_lineage_role_contract(conn, workspace_id, task_id, "adjudicator")? {
@@ -1704,6 +1775,7 @@ fn evaluate_next_action_inner(
                     task_id,
                     &task_status,
                     "applied 状态缺少 adjudicator Role Contract lineage（合同缺失）".to_string(),
+                    prerequisites,
                 )
             }
         };
@@ -1715,6 +1787,7 @@ fn evaluate_next_action_inner(
             "adjudicator 已接受，可执行最终 apply/close（READY/ADJUDICATE）".to_string(),
             None,
             None,
+            prerequisites,
         );
     }
 
@@ -1723,12 +1796,14 @@ fn evaluate_next_action_inner(
     if let Some(step_id) = required_remediation_step(conn, task_id)? {
         return match resolve_or_block_step(conn, workspace_id, task_id, &step_id)? {
             StepResolution::Ready(rc) => {
-                claim_outcome(task_id, &task_status, &step_id, tc, rc, "remediation")
+                claim_outcome(task_id, &task_status, &step_id, tc, rc, "remediation", prerequisites)
             }
             StepResolution::Waiting { holder_role } => {
-                wait_outcome(task_id, &task_status, &step_id, &holder_role)
+                wait_outcome(task_id, &task_status, &step_id, &holder_role, prerequisites)
             }
-            StepResolution::Blocked { reason } => blocked(task_id, &task_status, reason),
+            StepResolution::Blocked { reason } => {
+                blocked(task_id, &task_status, reason, prerequisites)
+            }
         };
     }
 
@@ -1741,6 +1816,7 @@ fn evaluate_next_action_inner(
                 task_id,
                 &task_status,
                 "任务无 pending 步骤且无待处理 remediation（依赖或 acceptance 未满足）".to_string(),
+                prerequisites,
             );
         }
     };
@@ -1752,13 +1828,14 @@ fn evaluate_next_action_inner(
         match resolve_or_block_step(conn, workspace_id, task_id, &step_id)? {
             StepResolution::Ready(rc) => rc,
             StepResolution::Waiting { holder_role } => {
-                return wait_outcome(task_id, &task_status, &step_id, &holder_role);
+                return wait_outcome(task_id, &task_status, &step_id, &holder_role, prerequisites);
             }
             StepResolution::Blocked { reason } => {
-                return blocked(task_id, &task_status, reason);
+                return blocked(task_id, &task_status, reason, prerequisites);
             }
         },
         "normal",
+        prerequisites,
     )
 }
 

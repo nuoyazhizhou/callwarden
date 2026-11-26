@@ -12,6 +12,8 @@
 Rust 侧由 cargo 单测覆盖（见 semgrep_handlers.rs）。
 """
 
+import pytest
+
 import callwarden.cli.main as main_mod
 
 
@@ -122,8 +124,11 @@ def test_cli061_semgrep_scan_failure(monkeypatch, capsys):
     monkeypatch.setattr(main_mod, "route_rpc", _fake_route)
 
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
-    rc = main_mod._handle_semgrep(["scan"], proxy)
-    assert rc is True
+    # stale 修正（族8，2026-11-24）：T-1793505963640-e9540b78 统一失败退出码
+    # 后，daemon 业务失败由 handler 直接 raise SystemExit(1)（运行时失败）。
+    with pytest.raises(SystemExit) as ei:
+        main_mod._handle_semgrep(["scan"], proxy)
+    assert ei.value.code == 1
     assert captured.get("method") == "run_semgrep"
     out = capsys.readouterr().out
     assert "semgrep 未安装" in out

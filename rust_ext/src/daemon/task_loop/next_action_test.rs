@@ -12,7 +12,9 @@
 //! - remediation 完成但未调用 resolution → 保持 in_progress/REVISE（§6 L597）；
 //! - task 不存在 → E_TASK_NOT_FOUND_OR_UNAUTHORIZED（§3.2 规则 2）；
 //! - binding 缺失 → E_WORKSPACE_AUTHORITY_UNAVAILABLE；instance 不匹配 → MISMATCH（§3.2 规则 1/3）；
-//! - 零写入：evaluate 前后 task_steps/task_leases/task_events/task_verdict_events 行数不变（§6 L612）。
+//! - 零写入：evaluate 前后 task_steps/task_leases/task_events/task_verdict_events 行数不变（§6 L612）；
+//! - REQ-PREQ-02：prerequisites 投影——硬依赖未满足 → 数组四元组语义正确；
+//!   无依赖/全部满足 → 字段存在且为 []；引擎 DB 失败 → 整体报错不省略字段。
 
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
@@ -1071,4 +1073,106 @@ fn binding_capture_recompute_mismatch_rejected_fail_closed() {
     let err = evaluate_next_action(&conn, "ws-inst-1", "t-a")
         .expect_err("binding capture 重算不一致必须 fail-closed");
     assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
+}
+
+// ---------------------------------------------------------------------------
+// REQ-PREQ-02：next_action 投影 prerequisites 字段（前置条件告知·投影层）
+// ---------------------------------------------------------------------------
+
+/// 直接插入 consumer 视角的依赖声明（is_informational=0 → 硬依赖）。
+fn setup_hard_dependency(conn: &Connection, consumer: &str, provider: &str, dep_type: &str) {
+    conn.execute(
+        "INSERT INTO task_dependencies \
+             (workspace_id, task_id, contract_id, contract_revision, \
+              dependency_type, target_ref, target_task_id, is_informational, declared_at) \
+         VALUES (1, ?1, 'c-dep', 1, ?2, ?3, ?4, 0, 0.0)",
+        rusqlite::params![consumer, dep_type, format!("ref-{provider}"), provider],
+    )
+    .unwrap();
+}
+
+fn setup_pending_step_with_binding(conn: &mut Connection, task_id: &str, requirement_id: &str) {
+    let rcr = setup_contract(conn, task_id, "implementer");
+    setup_task_contract(conn, task_id, "tc-test");
+    setup_step(conn, task_id, 1, "implement", "pending");
+    setup_binding(conn, task_id, "1", &rcr, requirement_id);
+}
+
+#[test]
+fn next_action_prerequisites_lists_unmet_hard_dependency() {
+    // AC-01：硬依赖未满足 → 投影含 prerequisites 数组，
+    // provider_task_id/lifecycle_status/dep_type/unmet_reason 语义正确。
+    let mut conn = fresh_db();
+    conn.execute(
+        "INSERT INTO tasks (id, title, status, created_at, updated_at) \
+         VALUES ('t-dep', 'provider task', 'open', 0.0, 0.0)",
+        [],
+    )
+    .unwrap();
+    setup_task(&mut conn, "t-1");
+    setup_pending_step_with_binding(&mut conn, "t-1", "req-c-preq-unmet");
+    setup_hard_dependency(&conn, "t-1", "t-dep", "requires_existing");
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    let preq = resp["prerequisites"]
+        .as_array()
+        .expect("prerequisites 必须为数组");
+    assert_eq!(preq.len(), 1);
+    assert_eq!(preq[0]["provider_task_id"], serde_json::json!("t-dep"));
+    assert_eq!(preq[0]["lifecycle_status"], serde_json::json!("open"));
+    assert_eq!(
+        preq[0]["dep_type"],
+        serde_json::json!("requires_existing")
+    );
+    assert_eq!(
+        preq[0]["unmet_reason"],
+        serde_json::json!("provider_not_completed")
+    );
+}
+
+#[test]
+fn next_action_prerequisites_empty_array_when_no_dependency() {
+    // AC-05：无依赖声明 → 字段必须存在且为 []（空数组语义，不省略）。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    setup_pending_step_with_binding(&mut conn, "t-1", "req-c-preq-empty");
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    assert_eq!(resp["prerequisites"], serde_json::json!([]));
+}
+
+#[test]
+fn next_action_prerequisites_empty_when_provider_completed() {
+    // provider 已 applied（生命周期满足）→ 无 unmet → prerequisites == []。
+    let mut conn = fresh_db();
+    conn.execute(
+        "INSERT INTO tasks (id, title, status, created_at, updated_at) \
+         VALUES ('t-dep', 'provider task', 'applied', 0.0, 0.0)",
+        [],
+    )
+    .unwrap();
+    setup_task(&mut conn, "t-1");
+    setup_pending_step_with_binding(&mut conn, "t-1", "req-c-preq-met");
+    setup_hard_dependency(&conn, "t-1", "t-dep", "requires_existing");
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    assert_eq!(resp["prerequisites"], serde_json::json!([]));
+}
+
+#[test]
+fn next_action_prerequisite_engine_failure_fails_whole_evaluation() {
+    // AC-03（失败分支）：引擎 DB 查询失败 → DaemonRpcError 向上抛，
+    // evaluate_next_action 整体失败，不静默省略 prerequisites 字段。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    setup_pending_step_with_binding(&mut conn, "t-1", "req-c-preq-fail");
+    conn.execute_batch("DROP TABLE task_dependencies;")
+        .unwrap();
+
+    let err = evaluate_next_action(&conn, "ws-inst-1", "t-1")
+        .expect_err("引擎 DB 失败必须整体失败而非省略字段");
+    assert_eq!(err.code, "internal_error");
 }

@@ -4276,7 +4276,7 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
             if hasattr(rpc_client, "call_with_autostart")
             else rpc_client.call
         )
-        return call(rpc_method, params)
+        result = call(rpc_method, params)
     except DaemonRemoteError:
         # 结构化业务错误原样透传（不伪装成连接失败）
         raise
@@ -4285,6 +4285,12 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
             f"{E_HTTP_DAEMON_UNAVAILABLE}: daemon RPC 调用失败 "
             f"({rpc_method}): {exc}（fail-closed，不回退本地 SQLite）"
         ) from exc
+    # MCP 响应预算出口（server/response_budget.py）：env 缺省 0=不限制，
+    # CLI/MCP 默认行为不变；配置 CALLWARDEN_MCP_DEFAULT_MAX_TOKENS 后
+    # deepest-first 裁剪超预算结果并注入 _budget 元数据。
+    from callwarden.server.response_budget import enforce_budget
+
+    return enforce_budget(result)
 
 
 @contextmanager

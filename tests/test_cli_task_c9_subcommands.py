@@ -616,6 +616,13 @@ class TestEndToEnd:
         route_stub.reply("task.split", {
             "task_id": parent_id, "status": "pending",
             "subtask_count": 2, "subtasks": ["T-sub-0", "T-sub-1"]})
+        # stale 修正（族8，2026-11-24）：status-tree 现走
+        # `route_task_read("task.status_tree", ...)`（cli/main.py:6722），
+        # 缺回包时 handler 按「任务不存在」raise SystemExit(1)。补最小合法树。
+        route_stub.reply("task.status_tree", {
+            "task_id": parent_id, "title": "parent", "status": "pending",
+            "children": [],
+        })
 
         # 执行 split：经 daemon RPC 拆分（本地无写入副作用）
         result = cli_main._handle_task(

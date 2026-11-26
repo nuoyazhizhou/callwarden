@@ -1,11 +1,13 @@
-== AC-06 Python audit regression (CARD-R2 step0) ==
-date: 2026-11-24T18:35:23+08:00
-repo: c:/git_work/callwarden (main repo, Python sources untouched by fix1)
+== AC-06 Python audit regression (T-1795513688143-b324cb64 / S-1795513688155-b3da8c4c) ==
+date: 2026-11-26T06:23:08+08:00
+repo: c:\git_work\callwarden-worker\runs\pytest_20261126_061617_5f3a (identifier-safe worktree at master 9add67d, clean checkout;
+      root conftest editable-rebind per repo doc: worktree dir must be a valid identifier)
+env: PYTHONPATH=C:\git_work CW_TEST_MODE=1 C:\Python314\python.exe -m pytest -p no:cacheprovider --tb=short
 files: tests/test_audit_chain.py tests/test_audit_chain_mixin.py tests/test_audit_chain_full_flow.py tests/test_audit_key_rotation.py tests/test_mcp_audit_verify_chain_http_rpc.py tests/test_phase8_audit_log.py tests/test_remote_write_governance.py
 ==
 ........................................................................ [ 30%]
 ........................................................................ [ 60%]
 ........................................................................ [ 90%]
 .....................ss                                                  [100%]
-237 passed, 2 skipped in 132.74s (0:02:12)
+237 passed, 2 skipped in 19.15s
 EXIT=0

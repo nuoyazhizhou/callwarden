@@ -215,9 +215,15 @@ def test_search_authority_failure_wrong_workspace(live_daemon):
             "limit": 10,
         })
     err = ei.value
+    # stale 修正（族6/族8，2026-11-24）：dispatch 前置 principal 门禁要求已认证
+    # principal 的 workspace_instance_id 可解析（registry 或 task-DB capture），
+    # 未注册实例在进入 handler 之前即被拒绝为 E_PRINCIPAL_WORKSPACE_REQUIRED
+    # （rust_ext/src/daemon/dispatch.rs principal 范围门禁）。原元组只列 handler
+    # 层 ACL/param 错误码，故补入该码；仍保留原集合，不弱化断言。
     assert getattr(err, "code", "") in ("E_WORKSPACE_NOT_OWNED", "workspace_not_owned",
                                         "workspace_not_found", "invalid_params",
-                                        "E_WORKSPACE_NOT_FOUND")
+                                        "E_WORKSPACE_NOT_FOUND",
+                                        "E_PRINCIPAL_WORKSPACE_REQUIRED")
 
 
 def test_search_missing_query_invalid_params(live_daemon):
@@ -230,8 +236,12 @@ def test_search_missing_query_invalid_params(live_daemon):
             "limit": 10,
         })
     err = ei.value
+    # stale 修正（族6/族8，2026-11-24）：未注册 workspace_instance_id 在
+    # dispatch principal 门禁处即 fail-closed（E_PRINCIPAL_WORKSPACE_REQUIRED），
+    # 早于 handler 的参数校验（invalid_params）。补入该码，保留原集合。
     assert getattr(err, "code", "") in ("invalid_params", "E_WORKSPACE_NOT_OWNED",
-                                        "workspace_not_owned")
+                                        "workspace_not_owned",
+                                        "E_PRINCIPAL_WORKSPACE_REQUIRED")
 
 
 def test_search_daemon_unavailable_fail_closed():

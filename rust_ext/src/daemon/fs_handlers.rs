@@ -820,8 +820,8 @@ fn resolve_filtered_calls(
 /// 返回 (resolved_edges, ambiguous_names)。按 distinct callee_name 逐名
 /// 处理，SQL 语句数 ≈ 2×去重名数，与边数解耦。
 ///
-/// P3-1：`names_filter` 提供时只处理给定名字（增量建图的边重算裁剪），
-/// `None` 表示全库扫描（build_directory / refresh_file 仍走全量语义）。
+/// P3-1：`names_filter` 提供时只处理给定名字（增量建图 / 单文件刷新的边
+/// 重算裁剪），`None` 表示全库扫描（build_directory 全量兜底路径仍走全量）。
 fn resolve_raw_calls(
     conn: &rusqlite::Connection,
     workspace_id: i64,
@@ -1610,9 +1610,12 @@ fn run_build_graph(
 ///   `build_too_large`（默认 5000，0=不限制）；
 /// - 单飞：同 workspace 并发构建报 `build_in_progress`（附当前扫描进度），
 ///   超时转后台后同样持有单飞，直到后台跑完发布 lastBuild；
-/// - 超时：等待 [`build_flight::build_wait_bound`]（默认 15s）后返回
-///   `accepted=true` 结构化响应（HTTP 200，非错误），后台线程继续执行
-///   并发布 lastBuild——worker 永不中断（GitNexus "never interrupts"）；
+/// - 等待移出全局锁（Step 1）：spawn 后立即以零超时非阻塞探测后台结果，
+///   不在持有 daemon 全局状态锁的 dispatch 线程内同步等待
+///   [`build_flight::build_wait_bound`]（默认 15s）；未就绪即返回
+///   `accepted=true` 结构化响应（HTTP 200，非错误），后台线程继续执行并
+///   发布 lastBuild——worker 永不中断（GitNexus "never interrupts"），
+///   工具层用 dry_run=true 轮询收敛；单次 RPC 持锁时长降到 ms 级（<2s 验收线）。
 /// - dry_run：不占单飞，报 estimatedFiles/inProgress/wouldRun/lastBuild。
 pub fn handle_build_graph_async(
     registry: &WorkspaceRegistry,
@@ -1786,7 +1789,13 @@ pub fn handle_build_graph_async(
         return Err(DaemonRpcError::internal_error("build_graph 后台线程启动失败"));
     }
 
-    match rx.recv_timeout(build_flight::build_wait_bound()) {
+    // Step 1（等待移出全局锁）：零超时非阻塞探测——dispatch 在 http_server.rs
+    // 的 app.state.lock() 持有期间同步执行本函数，原 15s 同步等待会把所有只读
+    // RPC 拖入队头阻塞（watchdog 连续 2 次 /health 失败判死）。改为立即返回：
+    // 后台已就绪则取回同步结果，否则走下方 Timeout 分支返回 accepted=true，
+    // 由工具层 dry_run=true 轮询收敛。rx 仍在作用域内，三处 badpath 出口
+    // （db_path=None / spawn 失败 / recv Err）保持原样，交在途卡另行修复。
+    match rx.recv_timeout(std::time::Duration::ZERO) {
         Ok(Ok(stats)) => Ok(stats),
         Ok(Err(e)) => Err(e),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
@@ -2235,13 +2244,37 @@ pub fn handle_refresh_file(
     let fid = upsert_file_instance(
         &conn, workspace_id, &rel, &real, &hash, mtime, total_lines, parsed,
     )?;
+    // P3-1（refresh_file 增量同款）：重解析前先记录旧符号名——
+    // parse_and_store_symbols 内部会把其它文件指向这些旧 id 的已解析边
+    // 降级为 raw，这些名字必须参与重算。
+    let mut affected_names: BTreeSet<String> = BTreeSet::new();
+    if parsed {
+        collect_file_symbol_names(&conn, fid, &mut affected_names)?;
+    }
     let (symbol_count, call_count) = if parsed {
         parse_and_store_symbols(&conn, fid, &real, &rel, &hash, mtime, total_lines)?
     } else {
         (0, 0)
     };
-    // CR11：单文件刷新收尾也做批量解析（顺带把历史 raw 边随全库数据补挂）
-    let (resolved, ambiguous) = resolve_raw_calls(&conn, workspace_id)?;
+    // CR11（增量收口，T-1795491554078-3616ae10）：单文件刷新只重算本文件
+    // 受影响的名字集合（旧定义名 + 新定义名 + 新 raw 边名），不再做全仓
+    // resolve_raw_calls 同步扫描。后者是 O(全仓 raw 名 × 全仓边)：大仓上
+    // 单文件刷新即可在 dispatch 线程持 state 锁分钟级（2026-11-24
+    // hermes-agent 2071 文件实证：CPU 531s→602s、/health 与 /v1/rpc TLS
+    // 握手超时约 15 分钟），阻塞全部 RPC 探活。覆盖论证与 build_directory
+    // 增量一致：会改变解析结果的只有「名字被新增/删除定义」或「该名字的
+    // raw 边被新建/降级」，两类名字都已收进 affected_names。全仓历史 raw
+    // 边补挂由全量构建承担（cw refresh --all → workspace.build_graph →
+    // 后台线程全量 resolve，不占 dispatch 锁）。
+    if parsed {
+        collect_file_symbol_names(&conn, fid, &mut affected_names)?;
+        collect_file_raw_callee_names(&conn, fid, &mut affected_names)?;
+    }
+    let (resolved, ambiguous) = if affected_names.is_empty() {
+        (0, 0)
+    } else {
+        resolve_raw_calls_for_names(&conn, workspace_id, Some(&affected_names))?
+    };
     Ok(json!({
         "ok": true,
         "file_path": rel,
@@ -4152,6 +4185,70 @@ mod tests {
             .unwrap();
         assert!(callee_id > 0, "helper call must resolve to a symbol id");
         assert_eq!(cross, 1, "a.py→b.py call must be marked cross-file");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_refresh_file_incremental_resolve_cross_file_edges() {
+        // T-1795491554078-3616ae10：refresh_file 改为增量边重算后，新版本
+        // 文件内的跨文件调用仍须被解析（受影响名字集合覆盖新 raw 边名），
+        // 不再触发全仓 resolve_raw_calls 扫描。handler 直连验证端到端行为。
+        let tmp = std::env::temp_dir().join(format!(
+            "cw_refresh_file_test_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let ws_root = tmp.join("ws");
+        std::fs::create_dir_all(&ws_root).unwrap();
+        let db_path = tmp.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let peer = PeerCredential::new_unix(0, 0, 77); // root：避开 Unix ACL（同 make_peer(0) 惯例）
+        let reg = registry
+            .register_workspace(
+                0,
+                ws_root.to_str().unwrap(),
+                ws_root.to_str().unwrap(),
+                "https://example.com/t.git",
+                "abc123",
+                "test",
+            )
+            .unwrap();
+        let instance_id = reg["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // a.py 定义 helper；b.py v1 不调用它
+        std::fs::write(ws_root.join("a.py"), "def helper():\n    return 1\n").unwrap();
+        std::fs::write(ws_root.join("b.py"), "def caller():\n    return 2\n").unwrap();
+        let params_a = json!({"workspace_instance_id": instance_id, "file_path": "a.py"});
+        let params_b = json!({"workspace_instance_id": instance_id, "file_path": "b.py"});
+        let r1 = handle_refresh_file(&registry, &peer, &params_a, Some(&db_path)).unwrap();
+        assert_eq!(r1["ok"], true);
+        let r2 = handle_refresh_file(&registry, &peer, &params_b, Some(&db_path)).unwrap();
+        assert_eq!(r2["ok"], true);
+
+        // b.py v2：调用 helper —— 跨文件 raw 边，refresh 后必须被增量重算解析
+        std::fs::write(ws_root.join("b.py"), "def caller():\n    return helper()\n").unwrap();
+        let r3 = handle_refresh_file(&registry, &peer, &params_b, Some(&db_path)).unwrap();
+        assert_eq!(r3["ok"], true);
+        assert!(
+            r3["calls_resolved"].as_i64().unwrap_or(0) >= 1,
+            "refresh_file 增量重算应解析新 raw 边"
+        );
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let (callee_id, cross): (i64, i64) = conn
+            .query_row(
+                "SELECT callee_id, is_cross_file FROM calls WHERE callee_name = 'helper'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(callee_id > 0, "跨文件 raw 边应被解析为具体符号 id");
+        assert_eq!(cross, 1, "跨文件调用应标记 is_cross_file=1");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

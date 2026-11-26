@@ -71,22 +71,20 @@ def ensure_fresh_binary():
 @pytest.fixture(scope="class")
 def query_file_env():
     """启动隔离 HTTPS daemon（_w3_harness 权威栈），返回 (client, tmp, proc)。"""
-    from _w3_harness import setup_w3_client
+    from _w3_harness import restore_w3_env, setup_w3_client
 
-    prev_pki = os.environ.get("CW_PKI_DIR")
-    os.environ["CW_PKI_DIR"] = _REAL_PKI_DIR
+    # stale 修正（族8，2026-11-24）：旧实现强制 CW_PKI_DIR=真实用户 PKI，
+    # 但 spawn_isolated_daemon 会剔除 CW_PKI_DIR、让隔离 daemon 使用自身
+    # USERPROFILE 下的 LocalCa（_w3_harness.py:773-775）。两侧 CA 不同 →
+    # 客户端连不上（unable to get local issuer certificate）。改为不指定
+    # CW_PKI_DIR，由 setup_w3_client 注入同源隔离 owner 身份。
     tmp = tempfile.mkdtemp(prefix="cw_query_file_")
     client = proc = None
-    try:
-        client, _inst, _endpoint, proc = setup_w3_client(
-            tmp, os.path.join(tmp, "repo"), ws_id=1
-        )
-    finally:
-        if prev_pki is None:
-            os.environ.pop("CW_PKI_DIR", None)
-        else:
-            os.environ["CW_PKI_DIR"] = prev_pki
+    client, _inst, _endpoint, proc = setup_w3_client(
+        tmp, os.path.join(tmp, "repo"), ws_id=1
+    )
     if client is None:
+        restore_w3_env()
         shutil.rmtree(tmp, ignore_errors=True)
         pytest.skip("隔离 HTTPS daemon 不可用（缺少二进制或 manifest 失败）")
     try:
@@ -94,6 +92,7 @@ def query_file_env():
     finally:
         if proc.poll() is None:
             proc.kill()
+        restore_w3_env()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -261,7 +260,10 @@ class TestQueryFileRpc:
         client, _tmp, _proc = query_file_env
         with pytest.raises(DaemonRemoteError) as exc:
             _query_file(client, "deadbeefdeadbeef01", "a.py")
-        assert exc.value.code == "workspace_not_found"
+        # stale 修正（族8，2026-11-24）：未知实例由 dispatch 前置门禁
+        # （dispatch.rs:3284-3309）拒绝为 E_PRINCIPAL_WORKSPACE_REQUIRED，
+        # 不再落到 handler 的 workspace_not_found；fail-closed 语义不变。
+        assert exc.value.code == "E_PRINCIPAL_WORKSPACE_REQUIRED"
 
     @requires_binaries
     def test_query_file_out_of_bounds_traversal_rejected(self, query_file_env):
