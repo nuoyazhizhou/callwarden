@@ -1260,16 +1260,17 @@ def _run_subcommand_mode():
         if workspace_root and not skip_workspace_write:
             try:
                 ws_name = get_default_workspace_name(workspace_root)
-                existing = None
-                for ws in db.list_workspaces():
-                    if ws["root_path"] == workspace_root:
-                        existing = ws
-                        break
-                if not existing:
-                    ws_id = db.register_workspace(ws_name, workspace_root)
-                    db.set_active_workspace(ws_id)
-                elif not existing.get("is_active"):
-                    db.set_active_workspace(existing["id"])
+                # 根治（2026-11-26）：客户端不再字符串匹配 registry 行——
+                # 形态敏感匹配曾命中 archived 历史行（1194，root_path 形态
+                # 恰好等于 detect_project_root 输出），set_active 被 principal
+                # 门禁拦截。改为直接 workspace.register：daemon 侧 CR7 归一化
+                # + find_adoptable_instance 收编同 root 历史分裂行（含
+                # archived），返回权威 workspace_id。客户端只传 root，解析
+                # 权威归 daemon（AGENTS.md：禁止客户端 derive workspace）。
+                ws_id = db.register_workspace(ws_name, workspace_root)
+                if not ws_id:
+                    raise RuntimeError("workspace.register 未返回 workspace_id")
+                db.set_active_workspace(ws_id)
             except Exception as e:
                 if "locked" in str(e).lower():
                     cprint(get_error("db_locked"), "red")
