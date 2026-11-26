@@ -42,6 +42,8 @@ pub mod task_contract_revise;
 pub mod role_worker;
 // P0-F：Bootstrap Evidence / Review Bridge（A′ 冷启动治理死锁修复）。
 pub mod bootstrap_review_bridge;
+// 前置条件告知（prerequisite gate）：分层前置满足判定引擎 + capability 声明。
+pub mod prerequisites;
 
 #[cfg(test)]
 mod capability_control_test;
