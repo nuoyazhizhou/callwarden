@@ -532,7 +532,10 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 <!-- CALLWARDEN_RULES_END -->
 
 <!-- cw-agent-rules:start -->
-
+<!-- 由 cw rule sync-agents-md 自动维护，请勿手改 -->
+- **no-bare-except**: 禁止裸 except（应捕获具体异常类型）
+- **no-print-in-lib**: 库代码禁止 print 调试输出（应使用 logger）
+- **no-todo-in-commit**: 代码提交不得包含 TODO/FIXME 占位（P0 质量门槛）
 <!-- cw-agent-rules:end -->
 
 
