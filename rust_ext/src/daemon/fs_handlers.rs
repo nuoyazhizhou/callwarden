@@ -2021,6 +2021,11 @@ fn commit_batch(
 ///
 /// 崩溃原子性：任一批失败整批回滚 → file_instances 保持旧状态 → 下次重跑
 /// hash 不匹配重新导入（幂等重放）。全部成功后由调用方删除分片。
+///
+/// F3（T-1795750243362-00f0ad70）：结束时把实际导入的 file 事件组数与
+/// `expected_files`（阶段一成功写出 File 事件的文件数）对账，不一致返回
+/// Err——防线覆盖 worker 静默丢文件（send 失败被吞 / 任务取走后异常未写
+/// 事件）等 fatal 槽兜不住的场景（plan §Verification V6）。
 #[allow(clippy::too_many_arguments)]
 fn import_shards(
     conn: &rusqlite::Connection,
@@ -2030,6 +2035,7 @@ fn import_shards(
     shard_paths: &[PathBuf],
     batch_files: usize,
     batch_events: usize,
+    expected_files: usize,
     affected_names: &mut BTreeSet<String>,
     inserted: &mut usize,
     unchanged: &mut usize,
@@ -2039,6 +2045,8 @@ fn import_shards(
     let mut batch: Vec<Vec<BuildEvent>> = Vec::new();
     let mut batch_files_n = 0usize;
     let mut batch_events_n = 0usize;
+    // F3：实际导入的 file 事件组数（批边界切批时累计，不随 commit 清零）
+    let mut imported_file_groups = 0usize;
 
     for shard in shard_paths {
         if !build_journal::shard_exists(shard) {
@@ -2058,6 +2066,7 @@ fn import_shards(
                         batch_events_n += group.len();
                         batch.push(std::mem::take(&mut group));
                         batch_files_n += 1;
+                        imported_file_groups += 1;
                     }
                     group.push(e);
                 }
@@ -2068,6 +2077,7 @@ fn import_shards(
             batch_events_n += group.len();
             batch.push(group);
             batch_files_n += 1;
+            imported_file_groups += 1;
         }
         // 批边界只在文件组边界切（单文件事件组原子，不跨批拆分）
         if batch_files_n >= batch_files || batch_events_n >= batch_events {
@@ -2101,6 +2111,14 @@ fn import_shards(
             skipped_unparsed,
             progress,
         )?;
+    }
+    // F3 对账：实际导入的 file 事件组数必须等于阶段一成功解析文件数。
+    // 不一致说明有文件在阶段一被静默丢弃（send 失败被吞 / 任务取走后异常
+    // 未写事件）——fail-closed 返回 Err，交由上层整体失败（下次重跑幂等重放）。
+    if imported_file_groups != expected_files {
+        return Err(DaemonRpcError::internal_error(format!(
+            "build_graph 分片对账失败: 实际导入 file 组数 {imported_file_groups} != 阶段一解析文件数 {expected_files}（存在静默丢文件，拒绝静默通过）"
+        )));
     }
     Ok(())
 }
@@ -2138,6 +2156,8 @@ fn run_build_graph(
     let mut archived = 0usize;
     let mut symbol_total = 0usize;
     let mut call_total = 0usize;
+    // F3：阶段一成功写出 File 事件的文件数（worker stats 归并），阶段二对账基准
+    let mut expected_files = 0usize;
     let now = now_ts_secs();
     // REQ-05：流水线四项参数（daemon.toml，缺省内置 4/256/200/5000）
     let cfg = build_journal::BuildPipelineConfig::load();
@@ -2380,6 +2400,8 @@ fn run_build_graph(
             Ok(stats) => {
                 symbol_total += stats.symbols;
                 call_total += stats.calls;
+                // F3：阶段一成功写出 File 事件的文件数（供阶段二对账）
+                expected_files += stats.files;
             }
             Err(_) => {
                 set_fatal(&fatal, "解析 worker panic".to_string());
@@ -2407,6 +2429,7 @@ fn run_build_graph(
         &shard_paths,
         cfg.import_batch_files,
         cfg.import_batch_events,
+        expected_files,
         &mut affected_names,
         &mut inserted,
         &mut unchanged,
@@ -6517,7 +6540,7 @@ mod tests {
         let shards = vec![s0, missing];
         let mut affected = BTreeSet::new();
         let (mut ins, mut unc, mut skip) = (0, 0, 0);
-        import_shards(&conn, ws_id, &root, 1000.0, &shards, 200, 5000, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        import_shards(&conn, ws_id, &root, 1000.0, &shards, 200, 5000, 2, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
         assert_eq!(ins, 2);
         assert_eq!(count_rows(&conn, "symbols"), 3);
         assert_eq!(count_rows(&conn, "calls"), 1);
@@ -6535,7 +6558,7 @@ mod tests {
         let mut affected = BTreeSet::new();
         let (mut ins, mut unc, mut skip) = (0, 0, 0);
         // batch_files=2 → 5 组分 3 批（2+2+1），结果应与单批一致
-        import_shards(&conn, ws_id, &root, 1000.0, &[s0], 2, 5000, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        import_shards(&conn, ws_id, &root, 1000.0, &[s0], 2, 5000, 5, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
         assert_eq!(ins, 5);
         assert_eq!(count_rows(&conn, "symbols"), 10);
         assert_eq!(count_rows(&conn, "calls"), 5);
@@ -6679,6 +6702,30 @@ mod tests {
         assert_eq!(st_old, "parsed");
     }
 
+    /// F3 对账单测（T-1795750243362-00f0ad70）：
+    /// 实际导入 file 组数 == expected_files → Ok；少导（静默丢文件）→ Err。
+    #[test]
+    fn test_import_shards_file_group_reconciliation() {
+        let (_tmp, conn, ws_id, root) = setup_pipeline_db("f3_reconcile");
+        let shard_dir = _tmp.path().join("build-tmp");
+        std::fs::create_dir_all(&shard_dir).unwrap();
+        let s0 = write_shard(&shard_dir, 5000, 0, &[
+            pipeline_file_group("a.py", 1, 0),
+            pipeline_file_group("b.py", 1, 0),
+        ]);
+        let mut affected = BTreeSet::new();
+        let (mut ins, mut unc, mut skip) = (0, 0, 0);
+
+        // 一致：expected_files=2（分片里恰好 2 个文件组）→ Ok
+        import_shards(&conn, ws_id, &root, 1000.0, &[s0.clone()], 200, 5000, 2,
+            &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+
+        // 不一致：expected_files=3 > 实际 2（模拟 worker 静默丢 1 个文件）→ Err
+        let err = import_shards(&conn, ws_id, &root, 1000.0, &[s0], 200, 5000, 3,
+            &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap_err();
+        assert!(format!("{err}").contains("对账失败"), "应返回对账失败错误: {err}");
+    }
+
     #[test]
     fn test_import_shards_truncated_tail_dropped() {
         let (_tmp, conn, ws_id, root) = setup_pipeline_db("import_truncated");
@@ -6693,7 +6740,7 @@ mod tests {
         let mut affected = BTreeSet::new();
         let (mut ins, mut unc, mut skip) = (0, 0, 0);
         // 截断尾丢弃，不报错；只有 a.py 完整导入
-        import_shards(&conn, ws_id, &root, 1000.0, &[s0], 200, 5000, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        import_shards(&conn, ws_id, &root, 1000.0, &[s0], 200, 5000, 1, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
         assert_eq!(ins, 1, "半行组丢弃，只导入完整组");
         assert_eq!(count_rows(&conn, "symbols"), 1);
     }
