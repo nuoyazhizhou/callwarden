@@ -2167,9 +2167,11 @@ fn run_build_graph(
     let mut affected_names: BTreeSet<String> = BTreeSet::new();
 
     // ===== 阶段 0：file_instances 全量预取 + mtime 快路径（单线程，零解析） =====
-    // 旧实现 per-file 查询（主循环逐文件回查）+ 尾部删除感知全量查询，合并为
-    // 一次全量查询共用。NULL hash/status 行旧实现会让 per-file 查询报错并中止
-    // 整个 build；预取侧用 Option 容忍（视为无旧行，走重新解析），更健壮。
+    // 旧实现 per-file 查询（主循环逐文件回查）改为一次全量查询预取；尾部删除
+    // 感知的全量查询（stored_rows）保留未动，仍为两次全量查询（plan §3「替代
+    // L1535 二次全量查询」未落地，见交接文档 §4 #11）。NULL hash/status 行旧
+    // 实现会让 per-file 查询报错并中止整个 build；预取侧用 Option 容忍（视为
+    // 无旧行，走重新解析），更健壮。
     let mut stored_map: HashMap<String, (Option<String>, Option<String>, f64, String)> =
         HashMap::with_capacity(files.len());
     {
