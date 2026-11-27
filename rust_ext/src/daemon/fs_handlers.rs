@@ -6635,6 +6635,121 @@ mod tests {
         assert!(old_snap.2 > 0, "应有 resolved 调用边");
     }
 
+    /// R2 真实仓库语料双路径等价对账（T-1795750243195-f6f69ba4，plan §Verification V1）：
+    /// 用本仓库真实 .rs 源文件（include_str! 编译期读入，覆盖多符号 / 嵌套
+    /// mod tests / 跨文件调用），旧路径 parse_and_store_symbols vs 新路径
+    /// parse_file_to_events + commit_batch，逐维度对账（symbols / calls
+    /// resolved+raw / file_versions / file_instances status 分布）。
+    /// 空符号场景：某文件先有符号（旧路径建版本），再置空内容走新路径，
+    /// 断言旧行保留且与旧路径同样置空的结果一致（「空符号不清旧数据」）。
+    #[test]
+    fn test_equivalence_real_repo_sources_old_vs_new() {
+        // 语料：本仓库真实源文件（多符号、嵌套 mod tests、跨文件调用）
+        let corpus: Vec<(&str, &str)> = vec![
+            ("storage.rs", include_str!("../storage.rs")),
+            ("daemon/fs_handlers.rs", include_str!("fs_handlers.rs")),
+            ("daemon/build_journal.rs", include_str!("build_journal.rs")),
+        ];
+
+        let run_old_path = |conn: &rusqlite::Connection,
+                            ws: i64,
+                            root: &std::path::Path,
+                            rel: &str,
+                            code: &str| {
+            let src = root.join(rel);
+            std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+            std::fs::write(&src, code).unwrap();
+            let hash = sha256_hex(std::fs::read(&src).unwrap().as_slice());
+            let total_lines = code.lines().count() as i64;
+            conn.execute(
+                "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
+                 VALUES (?1, 'rust', ?2, 0.0)",
+                rusqlite::params![hash, total_lines],
+            ).unwrap();
+            let fid = upsert_file_instance(conn, ws, rel, &src, &hash, 0.0, total_lines, true).unwrap();
+            parse_and_store_symbols(conn, fid, &src, rel, &hash, 0.0, total_lines).unwrap();
+        };
+
+        // ---------- 旧路径：真实语料全量导入 ----------
+        let (_tmp_old, conn_old, ws_old, root_old) = setup_pipeline_db("r2_equiv_old");
+        for (rel, code) in &corpus {
+            run_old_path(&conn_old, ws_old, &root_old, rel, code);
+        }
+        resolve_raw_calls(&conn_old, ws_old).unwrap();
+
+        // ---------- 新路径：同一语料 parse_file_to_events + commit_batch ----------
+        let (_tmp_new, conn_new, ws_new, root_new) = setup_pipeline_db("r2_equiv_new");
+        let mut batch: Vec<Vec<build_journal::BuildEvent>> = Vec::new();
+        for (rel, code) in &corpus {
+            let src = root_new.join(rel);
+            std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+            std::fs::write(&src, code).unwrap();
+            let hash = sha256_hex(std::fs::read(&src).unwrap().as_slice());
+            let total_lines = code.lines().count() as i64;
+            let group = parse_file_to_events(rel, &src, &hash, 0.0, total_lines, true, None, None);
+            batch.push(group);
+        }
+        let mut affected = BTreeSet::new();
+        let (mut ins, mut unc, mut skip) = (0, 0, 0);
+        commit_batch(&conn_new, ws_new, &root_new, 0.0, &batch, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        resolve_raw_calls(&conn_new, ws_new).unwrap();
+
+        // ---------- 对账 SQL ----------
+        let snapshot = |conn: &rusqlite::Connection| -> (i64, i64, i64, i64, i64, Vec<(String, i64)>) {
+            let symbols: i64 = count_rows(conn, "symbols");
+            let calls: i64 = count_rows(conn, "calls");
+            let resolved: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM calls WHERE callee_id > 0", [], |r| r.get(0)).unwrap();
+            let raw: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM calls WHERE callee_id = 0", [], |r| r.get(0)).unwrap();
+            let versions: i64 = count_rows(conn, "file_versions");
+            let mut stmt = conn.prepare(
+                "SELECT status, COUNT(*) FROM file_instances GROUP BY status ORDER BY status").unwrap();
+            let status: Vec<(String, i64)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap().map(|r| r.unwrap()).collect();
+            (symbols, calls, resolved, raw, versions, status)
+        };
+        let old_snap = snapshot(&conn_old);
+        let new_snap = snapshot(&conn_new);
+        eprintln!("R2_EQUIV_REAL_OLD=(symbols,calls,resolved,raw,versions,status)={old_snap:?}");
+        eprintln!("R2_EQUIV_REAL_NEW=(symbols,calls,resolved,raw,versions,status)={new_snap:?}");
+        assert_eq!(old_snap, new_snap,
+            "真实语料等价对账失败：旧={:?} 新={:?}", old_snap, new_snap);
+        // sanity：真实语料必须解析出大量符号（fs_handlers.rs 单文件数千行）
+        assert!(old_snap.0 > 100, "真实语料应解析出 >100 符号，实际 {}", old_snap.0);
+
+        // ---------- 空符号场景：build_journal.rs 置空后走新路径 ----------
+        // 先记录置空前 build_journal.rs 的符号数
+        let sym_before: i64 = conn_old.query_row(
+            "SELECT COUNT(*) FROM symbols WHERE file_instance_id IN \
+             (SELECT id FROM file_instances WHERE rel_path = 'daemon/build_journal.rs')",
+            [], |r| r.get(0)).unwrap();
+        assert!(sym_before > 0, "build_journal.rs 置空前应有符号");
+        // 旧路径：置空后 parse_and_store_symbols（旧实现空符号早退 → 旧行保留）
+        run_old_path(&conn_old, ws_old, &root_old, "daemon/build_journal.rs", "");
+        // 新路径：置空后 parse_file_to_events + commit_batch（F1 跳过重建 → 旧行保留）
+        let src_empty = root_new.join("daemon/build_journal.rs");
+        std::fs::write(&src_empty, "").unwrap();
+        let hash_empty = sha256_hex(std::fs::read(&src_empty).unwrap().as_slice());
+        let g_empty = parse_file_to_events("daemon/build_journal.rs", &src_empty, &hash_empty, 0.0, 0, true, None, None);
+        let mut affected2 = BTreeSet::new();
+        let (mut i2, mut u2, mut s2) = (0, 0, 0);
+        commit_batch(&conn_new, ws_new, &root_new, 0.0, &[g_empty], &mut affected2, &mut i2, &mut u2, &mut s2, None).unwrap();
+        // 两库对账：空符号场景旧行保留一致
+        let old_after = snapshot(&conn_old);
+        let new_after = snapshot(&conn_new);
+        eprintln!("R2_EQUIV_REAL_EMPTY_OLD={old_after:?}");
+        eprintln!("R2_EQUIV_REAL_EMPTY_NEW={new_after:?}");
+        assert_eq!(old_after, new_after,
+            "空符号场景对账失败：旧={:?} 新={:?}", old_after, new_after);
+        let sym_after: i64 = conn_new.query_row(
+            "SELECT COUNT(*) FROM symbols WHERE file_instance_id IN \
+             (SELECT id FROM file_instances WHERE rel_path = 'daemon/build_journal.rs')",
+            [], |r| r.get(0)).unwrap();
+        assert_eq!(sym_after, sym_before,
+            "置空后 build_journal.rs 旧符号必须保留（旧 {} 新 {}）", sym_before, sym_after);
+    }
+
     /// F1 空符号等价单测（T-1795750226259-057fdb08）：
     /// 同一文件先有符号版本（旧/新路径各自建立），再换成空符号内容，
     /// 分别走旧路径（parse_and_store_symbols）与新路径
@@ -6829,5 +6944,120 @@ mod tests {
         import_shards(&conn, ws_id, &root, 1000.0, &[s0], 200, 5000, 1, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
         assert_eq!(ins, 1, "半行组丢弃，只导入完整组");
         assert_eq!(count_rows(&conn, "symbols"), 1);
+    }
+
+    /// R2 全量 build probe（T-1795750243195-f6f69ba4，plan §Verification V3/V4/V5）：
+    /// #[ignore] 手动触发。环境变量：
+    /// - R2_PROBE_ROOT：build 语料根目录（拷贝的 rust_ext 源码副本，非共享 worktree）
+    /// - R2_PROBE_DB：输出 SQLite 库路径
+    /// - R2_PROBE_PHASE：first（仅全量 build，供 kill/重放场景）| full（全量 +
+    ///   删 2 文件 + 二次 build，触发删除感知）
+    /// 打印耗时与 run_build_graph 返回统计；断言 build-tmp 分片「生成→导入→删除」
+    /// 全流程收口（build 后无残留分片）；进程内采样私有内存峰值（V4）。
+    #[cfg(windows)]
+    fn r2_current_private_bytes() -> u64 {
+        use windows_sys::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+        };
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+        unsafe {
+            let mut pmc: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+            pmc.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+            let ok = GetProcessMemoryInfo(
+                GetCurrentProcess(),
+                &mut pmc as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
+                pmc.cb,
+            );
+            if ok != 0 { pmc.PrivateUsage.max(0) as u64 } else { 0 }
+        }
+    }
+
+    #[ignore]
+    #[test]
+    fn r2_full_build_probe() {
+        let root = std::env::var("R2_PROBE_ROOT").expect("R2_PROBE_ROOT 未设置");
+        let db_path = std::env::var("R2_PROBE_DB").expect("R2_PROBE_DB 未设置");
+        let phase = std::env::var("R2_PROBE_PHASE").unwrap_or_else(|_| "full".into());
+        let _ = std::fs::remove_file(&db_path);
+        crate::storage::initialize_or_migrate(
+            std::path::Path::new(&db_path),
+            crate::storage::SCHEMA_VERSION,
+        )
+        .unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
+             VALUES ('r2probe', ?1, 0.0, 1, '')",
+            rusqlite::params![root],
+        )
+        .unwrap();
+        let ws = conn.last_insert_rowid();
+        let root_path = std::fs::canonicalize(&root).unwrap();
+
+        // V4：进程内私有内存峰值采样线程（50ms 周期，贯穿两次 build）
+        let mem_peak = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let sampler = {
+            let mem_peak = mem_peak.clone();
+            let running = running.clone();
+            std::thread::spawn(move || {
+                while running.load(std::sync::atomic::Ordering::Relaxed) {
+                    let b = r2_current_private_bytes();
+                    mem_peak.fetch_max(b, std::sync::atomic::Ordering::Relaxed);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            })
+        };
+
+        let t0 = std::time::Instant::now();
+        let result = run_build_graph(&conn, ws, &root_path, &root_path, None).unwrap();
+        let first_secs = t0.elapsed().as_secs_f64();
+        eprintln!("R2_PROBE_FIRST_BUILD_SECONDS={first_secs}");
+        eprintln!("R2_PROBE_FIRST_RESULT={result}");
+
+        // 分片全流程：build 完成后 .callwarden/build-tmp 分片应已全部导入并删除
+        let build_tmp = root_path.join(".callwarden").join("build-tmp");
+        let leftover = if build_tmp.exists() {
+            std::fs::read_dir(&build_tmp)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().map_or(false, |x| x == "jsonl"))
+                .count()
+        } else {
+            0
+        };
+        eprintln!("R2_PROBE_BUILD_TMP_JSONL_LEFTOVER={leftover}");
+        // 干净 build（空 build-tmp 起）必须零残留；kill 重放场景（库已存在，
+        // R2_PROBE_STRICT_SHARDS=0）允许旧 runid 孤儿分片——cleanup_expired_shards
+        // 仅回收 >24h 分片（近期分片保留供诊断），且本次 run 只读本次 runid 分片，
+        // 旧分片不会被重复导入（实测 inserted 无重复）。
+        let strict = std::env::var("R2_PROBE_STRICT_SHARDS")
+            .map(|v| v == "1")
+            .unwrap_or(true);
+        if strict {
+            assert_eq!(leftover, 0, "build-tmp 分片应在导入后全部删除");
+        }
+
+        if phase == "full" {
+            // 删除感知：删 2 个真实 .rs 文件再 build（deleted 计数）
+            let victims = [
+                root_path.join("src").join("daemon").join("cas.rs"),
+                root_path.join("src").join("canonicalize.rs"),
+            ];
+            for v in &victims {
+                std::fs::remove_file(v).unwrap();
+            }
+            let t1 = std::time::Instant::now();
+            let result2 = run_build_graph(&conn, ws, &root_path, &root_path, None).unwrap();
+            eprintln!("R2_PROBE_SECOND_BUILD_SECONDS={}", t1.elapsed().as_secs_f64());
+            eprintln!("R2_PROBE_SECOND_RESULT={result2}");
+        }
+
+        running.store(false, std::sync::atomic::Ordering::Relaxed);
+        sampler.join().unwrap();
+        eprintln!(
+            "R2_PROBE_PEAK_PRIVATE_MB={}",
+            mem_peak.load(std::sync::atomic::Ordering::Relaxed) / 1024 / 1024
+        );
     }
 }
