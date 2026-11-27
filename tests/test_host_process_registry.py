@@ -340,3 +340,126 @@ def test_mcp_startup_reports_already_running_diagnostic(monkeypatch, capsys):
     assert "4242" in captured and "4523" in captured, captured
     # 结构化诊断 JSON 必须出现（pid/endpoint/restart_hint 可复核）
     assert '"pid": 4242' in captured or '"pid":4242' in captured, captured
+
+
+# ---------------------------------------------------------------------------
+# 5) F1 整改（reviewer BLOCKER）：acquire_host_daemon_mutex 不 mock 的真实测试
+# ---------------------------------------------------------------------------
+
+
+def test_acquire_host_daemon_mutex_real_no_unbound_error():
+    """F1 核心：不 mock 直接调用，绝不再抛 UnboundLocalError。
+
+    reviewer 指出既有 :246/:281 用 _FakeMutex mock 掉了真实函数，掩盖了
+    `authority_id` 未初始化的 bug。本测试直接走真实函数：返回 DaemonMutex
+    实例或 None（锁被占）都合法，但绝不能抛异常；且 lock_id 必须按 host
+    身份派生（authority+task_db），不是 endpoint 派生的 legacy 值。
+    """
+    import callwarden.server.daemon_mutex as dmu
+
+    # 取真实 authority，核对 host 级 lock_id 派生
+    from callwarden.config import get_http_authority_id
+    aid = get_http_authority_id()
+    expected_host_lock_id = dmu.DaemonMutex(authority_id=aid).lock_id
+
+    acquired = None
+    try:
+        acquired = dmu.acquire_host_daemon_mutex()  # 不 mock，F1 回归点
+        assert acquired is None or isinstance(acquired, dmu.DaemonMutex)
+        if acquired is not None:
+            assert acquired.lock_id == expected_host_lock_id, (
+                f"host 级 lock_id 不符: {acquired.lock_id} != {expected_host_lock_id}")
+    finally:
+        if acquired is not None:
+            acquired.release()
+
+
+def test_acquire_host_daemon_mutex_host_level_shared_lock():
+    """host 级语义：acquire_host_daemon_mutex 与显式 authority 派生同一把锁。"""
+    import callwarden.server.daemon_mutex as dmu
+    from callwarden.config import get_http_authority_id
+
+    aid = get_http_authority_id()
+    host_id = dmu.DaemonMutex(authority_id=aid).lock_id
+    # acquire_host_daemon_mutex 拿到的锁 id 恒为 host 级（authority+task_db），
+    # 与 legacy endpoint 派生不同——兼容语义破坏与否由 test_daemon_mutex 覆盖。
+    acquired = dmu.acquire_host_daemon_mutex()
+    try:
+        if acquired is not None:
+            assert acquired.lock_id == host_id
+    finally:
+        if acquired is not None:
+            acquired.release()
+
+
+def test_spawn_alive_false_full_path_with_real_mutex(monkeypatch):
+    """F1 验收：alive=False 全路径在真实 host 锁下不崩溃，三段皆可达。
+
+    只 mock 外部副作用（Popen/注册表/health/resolve），**不 mock**
+    acquire_host_daemon_mutex —— 它必须走真实函数（reviewer 抓的点）。
+    验证：显式 bind(:569-589) / 注册表 upsert(:621-636) / health 等待(:638-652)
+    三段都真正执行到。
+    """
+    import callwarden.server.daemon_autostart as da
+    import callwarden.server.daemon_mutex as dmu
+
+    _reset_cooldown()
+
+    # 先确保真实 host 锁空闲（进程内串行，获取后立即释放）
+    warm = dmu.acquire_host_daemon_mutex()
+    if warm is not None:
+        warm.release()
+
+    # alive=False + 有权威 endpoint
+    monkeypatch.setattr(
+        da, "authority_daemon_diagnostic",
+        lambda authority_id="": {
+            "code": "E_DAEMON_ALREADY_RUNNING", "pid": None,
+            "process_start_time": None,
+            "endpoint": "https://127.0.0.1:4523", "alive": False,
+        })
+    monkeypatch.setattr(da, "_authoritative_bind_spec", lambda diag: "127.0.0.1:4523")
+    monkeypatch.setattr(da, "_find_daemon_binary", lambda: "/fake/cw-daemon.exe")
+
+    # 关键：不 mock dmu.acquire_host_daemon_mutex，走真实 OS 锁
+    class _FakeProc:
+        pid = 42424
+
+    popen_calls = []
+    registry_calls = []
+    health_calls = []
+
+    def fake_popen(cmd, **kwargs):
+        popen_calls.append((cmd, kwargs))
+        return _FakeProc()
+
+    monkeypatch.setattr(da.subprocess, "Popen", fake_popen)
+
+    import callwarden.server.host_process_registry as hpr_mod
+    monkeypatch.setattr(
+        hpr_mod, "register_process", lambda **k: registry_calls.append(k) or {})
+
+    def fake_resolve(**k):
+        health_calls.append("resolve")
+        return ("https://127.0.0.1:4523", {})
+
+    def fake_connect(*a, **k):
+        health_calls.append("health")
+        return True
+
+    monkeypatch.setattr(da, "resolve_http_endpoint_and_manifest", fake_resolve)
+    monkeypatch.setattr(da, "try_http_connect", fake_connect)
+
+    result = da.spawn_http_daemon(wait_window=0.5)
+
+    # 真实锁下应拿到锁并走完三段（若被外部进程占用则跳过强断言，但不得抛异常）
+    if result is not None:
+        assert result == "https://127.0.0.1:4523"
+        # 段1：显式 bind
+        assert popen_calls and "--http-bind" in popen_calls[0][0]
+        assert popen_calls[0][0][popen_calls[0][0].index("--http-bind") + 1] == "127.0.0.1:4523"
+        # 段2：注册表 upsert
+        assert registry_calls and registry_calls[0]["role"] == "daemon"
+        assert registry_calls[0]["pid"] == 42424
+        # 段3：health 等待
+        assert "health" in health_calls

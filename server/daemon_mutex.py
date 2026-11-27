@@ -309,6 +309,9 @@ def acquire_host_daemon_mutex() -> Optional[DaemonMutex]:
     这是「同一台机只允许一个 daemon 实例」的权威互斥，白名单内自愈路径
     （daemon_autostart.spawn_http_daemon）必须用它，而非按 endpoint 的旧锁。
     """
+    # F1 整改（reviewer BLOCKER）：本函数不带参数，必须先初始化 authority_id；
+    # 否则下方 `if not authority_id` 读未绑定局部变量 → UnboundLocalError。
+    authority_id = ""
     if not authority_id:
         from callwarden.config import get_http_authority_id
         authority_id = get_http_authority_id()
