@@ -30,3 +30,134 @@
 ## 交接包清单
 
 `task-map.md`（本文件）+ `requirements-brief.md` + `ac-map.md` + `symbol-anchor.md` + `contracts.md` + `mindmap.md` + `flowchart.md`。executor 用自身注册身份领取，身份不跨会话借用。
+
+---
+
+# 整改回路追加（BLOCKED，loop_count=1）— 2026-11-26 23:58:06 +0800 planner（蓝图远）
+
+> 本节为**追加**记录，上方 §批次1/§批次2/§放行判据/§交接包清单（原 1–32 行）保持原样，不覆盖、不重排。
+> **依据 HEAD**：`0d6fa326a75451c1f5aeadaf3c04a691af3a0a3c`（commit 0d6fa32，D3 自愈守卫，5 文件 +1080/-71）。
+> **评审对象**：根修卡 `T-1795507699058-41d9fcbc`（合同 r3 hash `c347042f…14e`, identity_policy=legacy_identity_v1）/ Step 3 = `S-1795507699843-70a0bea0`；reviewer `reviewer-roofix-alm01` / `sess-reviewer-roofix-alm01-20261125` 判 **BLOCKED**。
+> **REQ 首行决策**：根修卡 description 仅「REQ：…」散文 + D1/D2/D3 目标，DB 复核 `REQ-xx` token = []（无 formal 编号），故五张整改单首行统一 `REQ-GAP`（G6.5：无对应需求写 REQ-GAP）。
+
+## 13. daemon 可达性与建单状态（**已建单**，2026-11-27 由 team lead 代为落库）
+
+> **落库回执（2026-11-27）**：daemon 以 detached 方式恢复（PID 30908，commit 1af24548d239，manifest 双键一致）后，经 `cw task create` CLI（parent-aware + identity_policy=legacy_identity_v1 + workspace 显式配对 1/4baea3ff12c2ea5c）成功落库 5/5。§14 表 task_id 列已回填，daemon 回执为准。
+
+- planner 自有 session 注册身份五元组：`agent_id=planner-roofix-alm01` / `agent_instance_id=planner-roofix-alm01-inst` / `session_id=sess-planner-roofix-alm01-20261125-l1` / `model_id=hunyuan-hy` / `role=planner`（未借用 executor/reviewer 身份）。
+- **卡在建单第 1 步：身份注册即失败**。实测三条路径全部 `E_HTTP_MANIFEST_STALE`：
+  1. `mcp__callwarden__bootstrap_status` → `E_HTTP_MANIFEST_STALE: manifest PID 6520 已不存活（stale manifest）`；
+  2. `cw daemon ping` → 同上；`agent.register`（rpc_helper 直连）→ `DaemonRemoteError E_HTTP_MANIFEST_STALE`；
+  3. `task.create`（rpc_helper 直连，含三角色合同 + identity_policy + workspace 配对）→ `DaemonRemoteError E_HTTP_MANIFEST_STALE`。
+- stale manifest：`~/.callwarden/http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json`（pid=6520，endpoint https://127.0.0.1:7473）。
+- 次生问题：MCP `task_create` 工具层将 `steps`/`role_contracts` 数组序列化为字符串导致参数校验失败（非 daemon 问题）；daemon 恢复后应走 RPC 直连通道（见 §12 先例），显式传 `role_contracts` + `identity_policy` + `workspace_id=1` + `workspace_instance_id=4baea3ff12c2ea5c`。
+- **结论：本轮 0 张整改单落库、0 个 task_id 产生**。下方 §14 为完整 payload 文本，daemon 恢复后代为落库或指示重试。
+
+## 14. findings → 整改单 payload 映射（追加；findings 原文一字不改）
+
+| finding | 处置 | 优先级 | 依赖 | action | title（符号锚定，无行号） | REQ 首行 | 落库 task_id |
+|---|---|---|---|---|---|---|---|
+| F1 | 建单 | P0 🔴 | 无（F2 依赖本单） | fix | `daemon_mutex.py:acquire_host_daemon_mutex fix 定义 authority_id 消除 UnboundLocalError 并补真实测试` | REQ-GAP | `T-1795744093604-26d3cb28` |
+| F2 | 建单 | P1 🔴 | **F1 先修** | fix | `daemon_autostart.py:spawn_http_daemon fix host 锁设为唯一权威守卫并补双会话并发负向测试` | REQ-GAP | `T-1795744094146-4722555c` |
+| F3 | 建单 | P2 🟡 | 无 | fix | `web_gateway.py:main fix 启动钩子注册 role=webui 条目并补集成测试` | REQ-GAP | `T-1795744094756-6b7ea004` |
+| F4 | 建单 | P2 🟡 | 无 | fix | `T-1795507699058-41d9fcbc.Step3 fix 回填 commit 0d6fa32 其余 4 文件 changes 记录` | REQ-GAP | `T-1795744095778-a85ae668` |
+| F5 | 建单（低优先级/可选） | P3 💭 | 无 | fix | `host_process_registry.py:compare_with_manifest fix 删除死代码或在 authority_daemon_diagnostic 复用` | REQ-GAP | `T-1795744096454-d0aa2a70` |
+
+- 全部条目 provenance：`finding=F1..F5 / loop=1 / verdict=BLOCKED / source_reviewer=reviewer-roofix-alm01 / root_card=T-1795507699058-41d9fcbc / step=S-1795507699843-70a0bea0`。
+- 执行顺序：F1 → F2 → F3/F4（可并行）→ F5（可选）。F2 的 `blocked-by:` 为 description 文本约定，daemon 不强制，须在派工时显式确认 F1 已闭环。
+- 一条 finding 一张单，**未合并、未改写、未删减** findings 原文。F5 建为低优先级可选单（不并入口径，便于主理人取舍）。
+- **无计划缺陷判定**：F1–F4 均指向实现/治理证据缺口，非契约漏项或 AC 写错或锚定错符号；无需回退 R0/R2/R3。F3 的「书面说明由哪个组件承担」为 finding 原文给出的合规出口，已写入 steps。
+
+### 14.1 公共 payload 段（每张单都带）
+
+```json
+"creator": "planner-roofix-alm01",
+"identity_policy": "legacy_identity_v1",
+"workspace_id": 1,
+"workspace_instance_id": "4baea3ff12c2ea5c",
+"parent_id": "T-1795507699058-41d9fcbc",
+"role_contracts": [
+  {"role":"executor","prompt":"cw.aprime.executor.startup.v1","description":"Execute steps under the frozen contract; stop and report on failure.","instructions":"Read the contract and steps before acting. Execute within the authorized paths. Record evidence for each check item. On failure stop and escalate."},
+  {"role":"reviewer","prompt":"cw.aprime.reviewer.audit.v1","description":"Verify step evidence against acceptance criteria; request changes when unmet.","instructions":"Audit the evidence only; do not rewrite the implementation. Verify each check item against the diff. Escalate unresolved findings."},
+  {"role":"adjudicator","prompt":"cw.aprime.adjudicator.decision.v1","description":"Adjudicate escalation and completion decisions from reviewer evidence.","instructions":"Decide on the reviewer's evidence. Allowed decisions: approve, request-changes, reject. Do not execute tasks."}
+]
+```
+
+> `task_id` 未预生成：避免假 task_id，daemon `task.create` 回执为准。
+
+### 14.2 F1 payload（P0 🔴）
+
+```json
+{
+  "title": "daemon_mutex.py:acquire_host_daemon_mutex fix 定义 authority_id 消除 UnboundLocalError 并补真实测试",
+  "description": "REQ-GAP | finding=F1 | 🔴 BLOCKER | loop=1 | verdict=BLOCKED | source_reviewer=reviewer-roofix-alm01\n归属：根修卡 T-1795507699058-41d9fcbc / Step 3（S-1795507699843-70a0bea0）/ commit 0d6fa32，合同 r3 hash c347042f…14e。\nREQ 说明：根修卡无 formal REQ-xx 编号（DB 复核 token=[]），首行按 G6.5 记 REQ-GAP。\n依赖：无；F2 依赖本单先修（blocked-by 文本约定，daemon 不强制）。\n【reviewer finding 原文，一字不改】\nF1【🔴 BLOCKER】`server/daemon_mutex.py:304-315` `acquire_host_daemon_mutex()` 引用未定义局部变量\n- 位置：`if not authority_id:`（:312）—函数无任何参数、模块级也无 `authority_id` 定义。\n- 问题：每次调用必抛 `UnboundLocalError`。\n- 影响：① `spawn_http_daemon:555` 在\"无存活 daemon\"路径崩溃，整个合法启动/重启路径（显式 bind :569-589、注册表 upsert :621-636、health 等待 :638-652）全部成为死代码；② host 级互斥（消 TOCTOU 的 :553-567 临界区）从未真正生效；③ `cw daemon start`（无活 daemon 时）、`call_with_autostart` 调用将抛未捕获异常。\n- 修正方向：函数内先定义 `authority_id = \"\"`（或 `authority_id = get_http_authority_id()`）再判空；**补一个不 mock 的真实测试**直接调用 `acquire_host_daemon_mutex()` 并覆盖 spawn 的 alive=False 全路径。\n【G6】title 符号锚定无行号；check_items 字符串；action=fix；steps 非空。",
+  "steps": [
+    {"action":"fix","target_file":"server/daemon_mutex.py","target_symbol":"acquire_host_daemon_mutex","check_items":"函数内先定义 authority_id=''（或调用 get_http_authority_id()）再判空；不 mock 直接调用 acquire_host_daemon_mutex() 不再抛 UnboundLocalError；host 级锁按 authority+task_db 派生、同机所有 endpoint 共享"},
+    {"action":"fix","target_file":"server/daemon_autostart.py","target_symbol":"spawn_http_daemon","check_items":"alive=False 路径不再崩溃：显式 bind、注册表 upsert、health 等待三段均可达；消 TOCTOU 的 :553-567 临界区 host 锁真正获取"},
+    {"action":"fix","target_file":"tests/test_host_process_registry.py","target_symbol":"spawn_http_daemon","check_items":"补不 mock 的真实测试直接调用 acquire_host_daemon_mutex() 并覆盖 spawn alive=False 全路径；相关既有回归零破坏（基线 51 passed 9 skipped）"}
+  ]
+}
+```
+
+### 14.3 F2 payload（P1 🔴，依赖 F1）
+
+```json
+{
+  "title": "daemon_autostart.py:spawn_http_daemon fix host 锁设为唯一权威守卫并补双会话并发负向测试",
+  "description": "REQ-GAP | finding=F2 | 🔴 BLOCKER | loop=1 | verdict=BLOCKED | source_reviewer=reviewer-roofix-alm01\n归属：根修卡 T-1795507699058-41d9fcbc / Step 3 / commit 0d6fa32。\nREQ 说明：根修卡无 formal REQ-xx 编号，首行按 G6.5 记 REQ-GAP。\n依赖：F1 先修（blocked-by=F1 payload，daemon 不强制，派工须显式确认 F1 已闭环）。\n【reviewer finding 原文，一字不改】\nF2【🔴 BLOCKER】host 级防双实例守卫实际不可用，双 daemon bypass 未消除\n- 位置：`daemon_mutex.py:304-315` + `daemon_client.py:1931` + `daemon_autostart.py:554-555`。\n- 问题：F1 导致 spawn 内 host 锁从未获取；外层 `call_with_autostart` 仍用旧 endpoint 级锁。\n- 影响：D3 核心目标\"禁止两个 daemon 共写同一主库\"未强制，两会话不同 endpoint 可各自通过。\n- 修正方向：F1 修复后，确认 `spawn_http_daemon` 的 host 锁为唯一权威守卫并实测并发两会话竞争；若保留 `call_with_autostart` 的 endpoint 锁，须显式标注其为非权威并在 spawn 前统一走 host 锁，补并发负向测试。\n【G6】title 符号锚定无行号；check_items 字符串；action=fix；steps 非空。",
+  "steps": [
+    {"action":"fix","target_file":"server/daemon_autostart.py","target_symbol":"spawn_http_daemon","check_items":"F1 修复后确认 spawn 内 host 锁（acquire_host_daemon_mutex）为唯一权威守卫；消 TOCTOU 的临界区真实生效"},
+    {"action":"fix","target_file":"server/daemon_client.py","target_symbol":"call_with_autostart","check_items":"若保留 endpoint 级 DaemonMutex(:511/:1931)，须显式标注非权威，并在 spawn 前统一走 host 锁；不得出现两套锁各自放行的路径"},
+    {"action":"fix","target_file":"tests/test_host_process_registry.py","target_symbol":"concurrent_spawn","check_items":"补并发负向测试：两会话不同 endpoint 并发竞争，仅一个 daemon 成功启动，杜绝双 daemon 共写同一主库"}
+  ]
+}
+```
+
+### 14.4 F3 payload（P2 🟡）
+
+```json
+{
+  "title": "web_gateway.py:main fix 启动钩子注册 role=webui 条目并补集成测试",
+  "description": "REQ-GAP | finding=F3 | 🟡 需整改 | loop=1 | verdict=BLOCKED | source_reviewer=reviewer-roofix-alm01\n归属：根修卡 T-1795507699058-41d9fcbc / Step 3 / commit 0d6fa32。\nREQ 说明：根修卡无 formal REQ-xx 编号，首行按 G6.5 记 REQ-GAP。\n依赖：无。\n【reviewer finding 原文，一字不改】\nF3【🟡 需整改】webui role=webui 生产注册未落地\n- 位置：`host_process_registry.py:264-304` 支持 role=webui，但 `web_gateway.py`（不在 commit）无注册调用。\n- 影响：验收栏②仅单测通过，生产环境注册表无 webui 条目。\n- 修正方向：在 web_gateway 启动钩子注册 role=webui 条目并正常退出注销，或书面说明由哪个组件承担；补集成测试。\n【G6】title 符号锚定无行号；check_items 字符串；action=fix；steps 非空。",
+  "steps": [
+    {"action":"fix","target_file":"server/web_gateway.py","target_symbol":"main","check_items":"启动钩子调用 host_process_registry 注册 role=webui 条目（pid+process_start_time 双键），正常退出注销；或书面指定承担组件并留痕"},
+    {"action":"fix","target_file":"tests/test_host_process_registry.py","target_symbol":"webui_registration_integration","check_items":"补集成测试：生产启动路径在注册表可见 role=webui 条目、退出后注销；daemon 重启不误清 webui 条目"}
+  ]
+}
+```
+
+### 14.5 F4 payload（P2 🟡）
+
+```json
+{
+  "title": "T-1795507699058-41d9fcbc.Step3 fix 回填 commit 0d6fa32 其余 4 文件 changes 记录",
+  "description": "REQ-GAP | finding=F4 | 🟡 治理证据缺陷 | loop=1 | verdict=BLOCKED | source_reviewer=reviewer-roofix-alm01\n归属：根修卡 T-1795507699058-41d9fcbc / Step 3 / commit 0d6fa32。\nREQ 说明：根修卡无 formal REQ-xx 编号，首行按 G6.5 记 REQ-GAP。\n依赖：无。\n【reviewer finding 原文，一字不改】\nF4【🟡 治理证据缺陷】changes 覆盖不完整\n- 位置：task card Step3 target_file 与 changes-json 仅登记 daemon_autostart.py；commit 实含 5 文件。\n- 修正方向：planner 回填其余 4 文件（host_process_registry.py/daemon_mutex.py/mcp_server.py/test_host_process_registry.py）的 changes 记录。\n【G6】title 符号锚定无行号（根修卡 Step3 changes 字段，非源码行号）；check_items 字符串；action=fix；steps 非空。",
+  "steps": [
+    {"action":"fix","target_file":"server/daemon_autostart.py","target_symbol":"spawn_http_daemon","check_items":"回填 commit 0d6fa32 其余 4 文件（host_process_registry.py/daemon_mutex.py/mcp_server.py/test_host_process_registry.py）的 changes 记录到 Step3 target_file 与 changes-json；5 文件全覆盖、逐文件可追溯"},
+    {"action":"fix","target_file":".design/preq/task-map.md","target_symbol":"task-map","check_items":"task-map 追加 F4 整改条目并注明 finding=F4/loop=1/verdict=BLOCKED；不改历史行"}
+  ]
+}
+```
+
+### 14.6 F5 payload（P3 💭 可选）
+
+```json
+{
+  "title": "host_process_registry.py:compare_with_manifest fix 删除死代码或在 authority_daemon_diagnostic 复用",
+  "description": "REQ-GAP | finding=F5 | 💭 可选 | loop=1 | verdict=BLOCKED | source_reviewer=reviewer-roofix-alm01\n归属：根修卡 T-1795507699058-41d9fcbc / Step 3 / commit 0d6fa32。\nREQ 说明：根修卡无 formal REQ-xx 编号，首行按 G6.5 记 REQ-GAP。\n依赖：无；低优先级可选，主理人可决定书面记录取舍并搁置。\n【reviewer finding 原文，一字不改】\nF5【💭 可选】`compare_with_manifest()` 为生产死代码（仅测试调用），可删除或在 `authority_daemon_diagnostic` 中复用。\n【G6】title 符号锚定无行号；check_items 字符串；action=fix；steps 非空。",
+  "steps": [
+    {"action":"fix","target_file":"server/host_process_registry.py","target_symbol":"compare_with_manifest","check_items":"二选一并留痕：删除 compare_with_manifest 生产死代码，或在 authority_daemon_diagnostic（daemon_autostart.py:446）中复用；补相应测试；低优先级可选"}
+  ]
+}
+```
+
+## 15. 未决项（open）
+
+- **O-R1（resolved 2026-11-27）— 建单落库已完成**：daemon detached 恢复后经 `cw task create` 落库 5/5（回执见 §13）。验证方式：5 张卡 `task.status` 均 open、workspace provenance 与 §14.1 公共段一致（workspace_id=1 / 4baea3ff12c2ea5c / parent=T-1795507699058-41d9fcbc）。
+- **O-R2（open）— task_id 派工序**：F2 的 blocked-by 仅为文本约定，daemon 不强制；派工时须人工确认 F1 已闭环再放 F2。F1=`T-1795744093604-26d3cb28`，F2=`T-1795744094146-4722555c`。验证方式：F1 回执状态闭环后派工。
+- **O-R3（open）— F3 承担组件**：若不在 web_gateway 注册，须书面指定承担组件；验证方式：整改单 step 1 的 check_items 留痕，复评核验。
+- **O-R4（open）— MCP task_create 数组序列化**：工具层把 `steps`/`role_contracts` 序列化为字符串（参数校验失败），属工具缺口，非本次 plan 缺陷；登记主理人工具缺口清单，daemon 恢复后走 RPC 直连规避。
+
+## 16. 本轮边界声明
+
+planner 本轮**未**写生产代码、**未**改判 BLOCKED、**未**动 `task.apply`/`task.close`/`task.supersede`、**未**认领/lease 任何步骤、**未**改写上方历史行；仅追加本节 + 准备 §14 payload 文本。
