@@ -7053,6 +7053,113 @@ mod tests {
             eprintln!("R2_PROBE_SECOND_RESULT={result2}");
         }
 
+        // REQ-07（T-1795773359203-146ba600）step1：phase-2（import_shards）
+        // 专项计时尺子。端到端耗时混着阶段一（解析）与阶段二（DB 写），无法
+        // 单独考核 DB 写优化；这里单线程复刻阶段一产出分片（不碰 DB），再在
+        // **独立空库**上单独跑 import_shards——冷库语义、DB 写主导，与端到端
+        // 解耦。基线与优化后同用这把尺子（结构指标：phase-2 降幅 ≥25%）。
+        // 仅 full 协议执行（first 协议服务 kill 重放场景，不拖长耗时）。
+        if phase == "full" {
+            let skip_p2 = load_ignore_dir_names(&root_path);
+            let files_p2 = scan_files(&root_path, true, &skip_p2);
+            // 毫秒级 run_id：与 build 的秒级 run_id 数值必然不同，不撞分片名
+            let run_id_p2 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            let shard_dir_p2 = build_journal::shard_dir(&root_path);
+            let mut writer_p2 =
+                build_journal::ShardWriter::create(&shard_dir_p2, run_id_p2, 0)
+                    .expect("phase-2 probe 分片创建失败");
+            let mut rebuilt = 0usize;
+            for path in &files_p2 {
+                let rel = path
+                    .strip_prefix(&root_path)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+                // 读文件失败：与阶段一读线程同语义（该文件不产生事件组）
+                let bytes = match std::fs::read(path) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let hash = sha256_hex(&bytes);
+                let total_lines = bytes.iter().filter(|&&b| b == b'\n').count() as i64;
+                drop(bytes);
+                let mtime = std::fs::metadata(path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+                // prev_hash/prev_status 传 None：冷库语义（空库导入，全量重建）
+                let events = parse_file_to_events(
+                    &rel,
+                    path,
+                    &hash,
+                    mtime,
+                    total_lines,
+                    parser_lang_id(&rel).is_some(),
+                    None,
+                    None,
+                );
+                for ev in &events {
+                    writer_p2.append(ev).expect("phase-2 probe 分片写入失败");
+                }
+                writer_p2.flush().expect("phase-2 probe 分片刷盘失败");
+                rebuilt += 1;
+            }
+            drop(writer_p2);
+
+            // 独立空库：与端到端库解耦（同库会带 DELETE 旧行开销，冷库语义失真）
+            let db_p2_path = format!("{db_path}.phase2.db");
+            let _ = std::fs::remove_file(&db_p2_path);
+            crate::storage::initialize_or_migrate(
+                std::path::Path::new(&db_p2_path),
+                crate::storage::SCHEMA_VERSION,
+            )
+            .unwrap();
+            let conn_p2 = rusqlite::Connection::open(&db_p2_path).unwrap();
+            conn_p2
+                .execute(
+                    "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
+                     VALUES ('r2probe-p2', ?1, 0.0, 1, '')",
+                    rusqlite::params![root],
+                )
+                .unwrap();
+            let ws_p2 = conn_p2.last_insert_rowid();
+
+            let cfg_p2 = build_journal::BuildPipelineConfig::load();
+            let now_p2 = now_ts_secs();
+            let mut affected_p2 = std::collections::BTreeSet::new();
+            let mut ins_p2 = 0usize;
+            let mut unch_p2 = 0usize;
+            let mut skipu_p2 = 0usize;
+            let shard_path_p2 =
+                shard_dir_p2.join(build_journal::shard_file_name(run_id_p2, 0));
+            let t_p2 = std::time::Instant::now();
+            import_shards(
+                &conn_p2,
+                ws_p2,
+                &root_path,
+                now_p2,
+                &[shard_path_p2.clone()],
+                cfg_p2.import_batch_files,
+                cfg_p2.import_batch_events,
+                rebuilt,
+                &mut affected_p2,
+                &mut ins_p2,
+                &mut unch_p2,
+                &mut skipu_p2,
+                None,
+            )
+            .expect("phase-2 probe 导入失败");
+            eprintln!("R2_PROBE_PHASE2_SECONDS={}", t_p2.elapsed().as_secs_f64());
+            eprintln!(
+                "R2_PROBE_PHASE2_RESULT=files={rebuilt} inserted={ins_p2} unchanged={unch_p2} skipped_unparsed={skipu_p2}"
+            );
+            let _ = build_journal::remove_shard(&shard_path_p2);
+        }
+
         running.store(false, std::sync::atomic::Ordering::Relaxed);
         sampler.join().unwrap();
         eprintln!(
