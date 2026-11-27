@@ -857,11 +857,14 @@ fn apply_file_events(
     let rest = &events[1..];
 
     // file_contents upsert（所有到达此处的文件都登记，含不可解析文件）
-    conn.execute(
+    // REQ-07：固定 SQL 全部 prepare_cached（每文件现场编译是 phase-2 主要
+    // 开销之一；SQL 文本与语义不变，仅复用预编译语句）
+    conn.prepare_cached(
         "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
          VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![hash, infer_language(&rel), total_lines, now],
     )
+    .map_err(|e| DaemonRpcError::internal_error(format!("file_contents upsert: {e}")))?
+    .execute(rusqlite::params![hash, infer_language(&rel), total_lines, now])
     .map_err(|e| DaemonRpcError::internal_error(format!("file_contents upsert: {e}")))?;
     // upsert file_instances 拿真实 id（语言可解析时标记 parsed）
     let abs_path = root_canon.join(&rel);
@@ -925,7 +928,7 @@ fn apply_file_events(
                 else {
                     continue;
                 };
-                conn.execute(
+                conn.prepare_cached(
                     "INSERT INTO symbol_contents \
                      (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', ?7) \
@@ -933,22 +936,22 @@ fn apply_file_events(
                        name = excluded.name, kind = excluded.kind, content = excluded.content, \
                        signature = excluded.signature, has_comment = excluded.has_comment, \
                        qualified_name = excluded.qualified_name",
-                    rusqlite::params![
-                        symbol_hash,
-                        name,
-                        kind,
-                        content,
-                        signature,
-                        *has_comment as i64,
-                        qualified_name
-                    ],
-                )?;
+                )?
+                .execute(rusqlite::params![
+                    symbol_hash,
+                    name,
+                    kind,
+                    content,
+                    signature,
+                    *has_comment as i64,
+                    qualified_name
+                ])?;
             }
 
             // 2. 清理该文件旧调用边与旧符号（幂等重建；CR12 入边降级）
             let old_ids: Vec<i64> = {
                 let mut stmt =
-                    conn.prepare("SELECT id FROM symbols WHERE file_instance_id = ?1")?;
+                    conn.prepare_cached("SELECT id FROM symbols WHERE file_instance_id = ?1")?;
                 let rows = stmt
                     .query_map(rusqlite::params![fid], |r| r.get::<_, i64>(0))?
                     .filter_map(Result::ok)
@@ -967,16 +970,14 @@ fn apply_file_events(
                     ),
                     params.as_slice(),
                 )?;
-                conn.execute(
+                conn.prepare_cached(
                     "DELETE FROM calls WHERE caller_id IN \
                      (SELECT id FROM symbols WHERE file_instance_id = ?1)",
-                    rusqlite::params![fid],
-                )?;
+                )?
+                .execute(rusqlite::params![fid])?;
             }
-            conn.execute(
-                "DELETE FROM symbols WHERE file_instance_id = ?1",
-                rusqlite::params![fid],
-            )?;
+            conn.prepare_cached("DELETE FROM symbols WHERE file_instance_id = ?1")?
+                .execute(rusqlite::params![fid])?;
 
             // 3. 写 symbols，按 local_id 建 file 内 id 映射（供调用边 caller_id 挂接）
             let mut local_id_map: std::collections::HashMap<u32, i64> =
@@ -1001,33 +1002,36 @@ fn apply_file_events(
                 };
                 // INSERT OR IGNORE：minified 单行 bundle 撞 UNIQUE(file_instance_id,
                 // name,start_line) 时回查既有行（与旧实现一致）
-                let inserted = conn.execute(
+                // REQ-07：逐行 last_insert_rowid 映射与 UNIQUE 撞车回查语义原样保留
+                //（仅 prepare_cached 复用预编译，不改批量形态）
+                let inserted = conn.prepare_cached(
                     "INSERT OR IGNORE INTO symbols \
                      (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line, \
                       start_col, end_col, signature, has_comment, comment_status, module_path, qualified_name) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8, ?9, 'pending', ?10, ?11)",
-                    rusqlite::params![
-                        fid,
-                        symbol_hash,
-                        name,
-                        kind,
-                        visibility,
-                        start_line,
-                        end_line,
-                        signature,
-                        *has_comment as i64,
-                        sym_module_path,
-                        qualified_name
-                    ],
-                )?;
+                )?
+                .execute(rusqlite::params![
+                    fid,
+                    symbol_hash,
+                    name,
+                    kind,
+                    visibility,
+                    start_line,
+                    end_line,
+                    signature,
+                    *has_comment as i64,
+                    sym_module_path,
+                    qualified_name
+                ])?;
                 let row_id = if inserted > 0 {
                     conn.last_insert_rowid()
                 } else {
-                    conn.query_row(
+                    conn.prepare_cached(
                         "SELECT id FROM symbols WHERE file_instance_id = ?1 AND name = ?2 AND start_line = ?3",
-                        rusqlite::params![fid, name, start_line],
-                        |r| r.get::<_, i64>(0),
-                    )
+                    )?
+                    .query_row(rusqlite::params![fid, name, start_line], |r| {
+                        r.get::<_, i64>(0)
+                    })
                     .unwrap_or(0)
                 };
                 if *local_id > 0 && row_id > 0 {
@@ -1036,27 +1040,25 @@ fn apply_file_events(
             }
 
             // 3.5 镜像到版本化 schema（幂等重建）
-            conn.execute(
+            conn.prepare_cached(
                 "DELETE FROM file_symbol_versions WHERE file_version_id IN \
                  (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
-                rusqlite::params![fid],
-            )?;
+            )?
+            .execute(rusqlite::params![fid])?;
             // 现场库（旧 DDL）call_versions 外键 NO ACTION：先删子行
-            conn.execute(
+            conn.prepare_cached(
                 "DELETE FROM call_versions WHERE file_version_id IN \
                  (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
-                rusqlite::params![fid],
-            )?;
-            conn.execute(
-                "DELETE FROM file_versions WHERE file_instance_id = ?1",
-                rusqlite::params![fid],
-            )?;
-            conn.execute(
+            )?
+            .execute(rusqlite::params![fid])?;
+            conn.prepare_cached("DELETE FROM file_versions WHERE file_instance_id = ?1")?
+                .execute(rusqlite::params![fid])?;
+            conn.prepare_cached(
                 "INSERT INTO file_versions \
                  (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, is_current, is_deleted) \
                  VALUES (?1, 1, ?2, ?3, ?4, ?5, 1, 0)",
-                rusqlite::params![fid, hash, mtime, total_lines, now_ts_secs()],
-            )?;
+            )?
+            .execute(rusqlite::params![fid, hash, mtime, total_lines, now_ts_secs()])?;
             let fv_id = conn.last_insert_rowid();
             for e in &syms {
                 let BuildEvent::Sym {
@@ -1071,20 +1073,20 @@ fn apply_file_events(
                 else {
                     continue;
                 };
-                conn.execute(
+                conn.prepare_cached(
                     "INSERT OR IGNORE INTO file_symbol_versions \
                      (file_version_id, symbol_hash, qualified_name, start_line, end_line, module_path, depth, is_deleted) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
-                    rusqlite::params![
-                        fv_id,
-                        symbol_hash,
-                        qualified_name,
-                        start_line,
-                        end_line,
-                        sym_module_path,
-                        depth
-                    ],
-                )?;
+                )?
+                .execute(rusqlite::params![
+                    fv_id,
+                    symbol_hash,
+                    qualified_name,
+                    start_line,
+                    end_line,
+                    sym_module_path,
+                    depth
+                ])?;
             }
 
             // 4. 写 raw calls（caller 必须能挂到本文件符号；顶层裸调用跳过）
@@ -1107,21 +1109,21 @@ fn apply_file_events(
                 let Some(&caller_id) = local_id_map.get(&caller_local) else {
                     continue;
                 };
-                conn.execute(
+                conn.prepare_cached(
                     "INSERT INTO calls \
                      (caller_id, caller_name, caller_module, callee_name, callee_module, \
                       callee_qualified, callee_file, callee_id, call_line, is_cross_file) \
                      VALUES (?1, ?2, ?3, ?4, ?5, '', '', 0, ?6, ?7)",
-                    rusqlite::params![
-                        caller_id,
-                        caller_name,
-                        module_path,
-                        callee_name,
-                        callee_module,
-                        call_line,
-                        *is_cross_file as i64
-                    ],
-                )?;
+                )?
+                .execute(rusqlite::params![
+                    caller_id,
+                    caller_name,
+                    module_path,
+                    callee_name,
+                    callee_module,
+                    call_line,
+                    *is_cross_file as i64
+                ])?;
             }
             Ok(())
         })();
@@ -1404,7 +1406,7 @@ fn upsert_file_instance(
     } else {
         (0.0, "pending")
     };
-    conn.execute(
+    conn.prepare_cached(
         "INSERT INTO file_instances (workspace_id, rel_path, abs_path, current_content_hash, mtime, total_lines, last_parsed, status, module_path)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(workspace_id, rel_path) DO UPDATE SET
@@ -1415,24 +1417,27 @@ fn upsert_file_instance(
            last_parsed = excluded.last_parsed,
            status = excluded.status,
            module_path = excluded.module_path",
-        rusqlite::params![
-            workspace_id,
-            rel,
-            abs_path.to_string_lossy(),
-            hash,
-            mtime,
-            total_lines,
-            last_parsed,
-            status,
-            module_path_of(rel)
-        ],
     )
+    .map_err(|e| DaemonRpcError::internal_error(format!("file_instances upsert: {e}")))?
+    .execute(rusqlite::params![
+        workspace_id,
+        rel,
+        abs_path.to_string_lossy(),
+        hash,
+        mtime,
+        total_lines,
+        last_parsed,
+        status,
+        module_path_of(rel)
+    ])
     .map_err(|e| DaemonRpcError::internal_error(format!("file_instances upsert: {e}")))?;
-    conn.query_row(
+    conn.prepare_cached(
         "SELECT id FROM file_instances WHERE workspace_id = ?1 AND rel_path = ?2",
-        rusqlite::params![workspace_id, rel],
-        |row| row.get::<_, i64>(0),
     )
+    .map_err(|e| DaemonRpcError::internal_error(format!("file_instance_id 回查失败: {e}")))?
+    .query_row(rusqlite::params![workspace_id, rel], |row| {
+        row.get::<_, i64>(0)
+    })
     .map_err(|e| DaemonRpcError::internal_error(format!("file_instance_id 回查失败: {e}")))
 }
 
@@ -1741,7 +1746,7 @@ fn collect_file_symbol_names(
     out: &mut BTreeSet<String>,
 ) -> Result<(), DaemonRpcError> {
     let mut stmt = conn
-        .prepare("SELECT name FROM symbols WHERE file_instance_id = ?1")
+        .prepare_cached("SELECT name FROM symbols WHERE file_instance_id = ?1")
         .map_err(|e| DaemonRpcError::internal_error(format!("收集符号名失败: {e}")))?;
     let rows = stmt
         .query_map(rusqlite::params![fid], |r| r.get::<_, String>(0))
@@ -1759,7 +1764,7 @@ fn collect_file_raw_callee_names(
     out: &mut BTreeSet<String>,
 ) -> Result<(), DaemonRpcError> {
     let mut stmt = conn
-        .prepare(
+        .prepare_cached(
             "SELECT DISTINCT c.callee_name FROM calls c \
              JOIN symbols s ON c.caller_id = s.id \
              WHERE s.file_instance_id = ?1 AND c.callee_id = 0 AND c.callee_name != ''",
@@ -1985,12 +1990,17 @@ fn commit_batch(
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| DaemonRpcError::internal_error(format!("失败登记事务开启失败: {e}")))?;
-        conn.execute(
+        conn.prepare_cached(
             "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![hash, infer_language(rel), total_lines, now],
         )
-        .map_err(|e| DaemonRpcError::internal_error(format!("失败登记 file_contents 写入失败: {e}")))?;
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("失败登记 file_contents 写入失败: {e}"))
+        })?
+        .execute(rusqlite::params![hash, infer_language(rel), total_lines, now])
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("失败登记 file_contents 写入失败: {e}"))
+        })?;
         upsert_file_instance(
             conn,
             workspace_id,
@@ -2001,12 +2011,17 @@ fn commit_batch(
             *total_lines,
             *parsed,
         )?;
-        conn.execute(
+        conn.prepare_cached(
             "UPDATE file_instances SET status = 'pending', last_parsed = 0
              WHERE workspace_id = ?1 AND rel_path = ?2",
-            rusqlite::params![workspace_id, rel],
         )
-        .map_err(|e| DaemonRpcError::internal_error(format!("失败登记 pending 补偿失败: {e}")))?;
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("失败登记 pending 补偿失败: {e}"))
+        })?
+        .execute(rusqlite::params![workspace_id, rel])
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("失败登记 pending 补偿失败: {e}"))
+        })?;
         tx.commit()
             .map_err(|e| DaemonRpcError::internal_error(format!("失败登记事务提交失败: {e}")))?;
         return Err(DaemonRpcError::internal_error(format!(
