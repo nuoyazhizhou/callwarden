@@ -1,4 +1,4 @@
-﻿﻿#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 
 [CmdletBinding()]
 param(
@@ -420,11 +420,8 @@ function Ensure-DaemonSingleInstance {
     # 直接用 daemon 的 --http-bind 命令行参数显式启用 HTTP loopback transport，
     # 不依赖环境变量继承；并保留 daemon stderr 以便排障。
     $daemonLog = Join-Path $EvidenceRoot "cw-daemon.stderr.log"
-    $proc = Start-Process -FilePath $DaemonPath `
-        -ArgumentList @("--http-bind", "127.0.0.1:6374") `
-        -WorkingDirectory $RepoRoot -WindowStyle Hidden -PassThru `
-        -RedirectStandardError $daemonLog
-    return [pscustomobject]@{ action = "start"; pid = $proc.Id }
+    Info "stderr 日志路径（供 daemon 自身/排障参考）：$daemonLog"
+    return Start-DaemonDetached $DaemonPath $daemonLog
 }
 
 function Endpoint {
@@ -452,6 +449,59 @@ function Atomic-Json([string]$Path, [object]$Value) {
     $tmp = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
     $Value | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $tmp -Encoding utf8
     Move-Item -LiteralPath $tmp -Destination $Path -Force
+}
+
+# D3 稳定性：daemon 必须以脱离调用方会话/作业对象的方式启动，否则部署脚本
+# 所在的后台 shell 会话结束时，daemon 作为子进程被连坐回收（manifest 变 stale，
+# stderr 停在 ready、无 shutdown 日志）。Start-Process 无法脱离 job object；
+# 这里用 kernel32.CreateProcess + DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|
+# CREATE_BREAKAWAY_FROM_JOB 三个标志创建真正独立的进程。
+# 若进程不在 job 中，CREATE_BREAKAWAY_FROM_JOB 会失败（ERROR_NOT_IN_JOB=801），
+# 此时去掉该标志只保留 DETACHED|NEW_PROCESS_GROUP 重试。
+function Start-DaemonDetached([string]$BinPath, [string]$LogPath) {
+    $signature = @'
+using System;
+using System.Runtime.InteropServices;
+public static class CwDaemonSpawn {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct STARTUPINFO {
+        public int cb; public string lpReserved, lpDesktop, lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION {
+        public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool CreateProcess(string app, string cmdline, IntPtr psa, IntPtr tsa,
+        bool inherit, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+}
+'@
+    if (-not ("CwDaemonSpawn" -as [type])) { Add-Type -TypeDefinition $signature }
+    $si = New-Object CwDaemonSpawn+STARTUPINFO
+    $si.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
+    $pi = New-Object CwDaemonSpawn+PROCESS_INFORMATION
+    $cmdLine = "`"$BinPath`" --http-bind 127.0.0.1:6374"
+    # DETACHED_PROCESS(0x8) | CREATE_NEW_PROCESS_GROUP(0x200) | CREATE_BREAKAWAY_FROM_JOB(0x1000000)
+    $flagsBreakaway = [uint32](0x00000008 -bor 0x00000200 -bor 0x01000000)
+    $flagsNoJob = [uint32](0x00000008 -bor 0x00000200)
+    $ok = [CwDaemonSpawn]::CreateProcess($BinPath, $cmdLine, [IntPtr]::Zero, [IntPtr]::Zero,
+        $false, $flagsBreakaway, [IntPtr]::Zero, $RepoRoot, [ref]$si, [ref]$pi)
+    if (-not $ok) {
+        $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if ($err -eq 801) {  # ERROR_NOT_IN_JOB：调用方不在 job 中，去掉 breakaway 重试
+            Info "CreateProcess breakaway 返回 ERROR_NOT_IN_JOB，改用 DETACHED|NEW_PROCESS_GROUP 重试"
+            $ok = [CwDaemonSpawn]::CreateProcess($BinPath, $cmdLine, [IntPtr]::Zero, [IntPtr]::Zero,
+                $false, $flagsNoJob, [IntPtr]::Zero, $RepoRoot, [ref]$si, [ref]$pi)
+            if (-not $ok) { throw "CreateProcess 重试失败 Win32Error=$([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+        } else {
+            throw "CreateProcess 失败 Win32Error=$err"
+        }
+    }
+    $pidNew = $pi.dwProcessId
+    Info "daemon 以 detached 方式启动 PID=$pidNew（breakaway from job，脱离调用方会话）"
+    return [pscustomobject]@{ action = "start"; pid = $pidNew; detached = $true }
 }
 
 
@@ -615,14 +665,14 @@ catch {
         Move-Item -LiteralPath $oldCurrent -Destination $CurrentRoot
         $oldDaemon = Join-Path $CurrentRoot "cw-daemon.exe"
         [Environment]::SetEnvironmentVariable("CW_DAEMON_BIN", $oldDaemon, "User")
-        Start-Process -FilePath $oldDaemon -ArgumentList @("--http-bind", "127.0.0.1:6374") -WorkingDirectory $RepoRoot -WindowStyle Hidden | Out-Null
+        Start-DaemonDetached $oldDaemon $null | Out-Null
     } elseif ($oldDaemonPath -and (Test-Path -LiteralPath $oldDaemonPath -PathType Leaf)) {
         $result.rollback = $true
         $existingDaemon = @(Get-AllDaemons)
         if ($existingDaemon.Count -eq 0) {
             Info "安装失败，重新启动停止前的 daemon: $oldDaemonPath"
             [Environment]::SetEnvironmentVariable("CW_DAEMON_BIN", $oldDaemonPath, "User")
-            Start-Process -FilePath $oldDaemonPath -ArgumentList @("--http-bind", "127.0.0.1:6374") -WorkingDirectory $RepoRoot -WindowStyle Hidden | Out-Null
+            Start-DaemonDetached $oldDaemonPath $null | Out-Null
         } else {
             Info "安装失败，保留已有 daemon，避免回滚重复启动；PID=$($existingDaemon.pid -join ',')"
         }
