@@ -887,6 +887,13 @@ fn apply_file_events(
         // 已解析边降级为 raw，这些名字必须参与重算
         collect_file_symbol_names(conn, fid, affected_names)?;
 
+        // F1（T-1795750226259-057fdb08）：空符号组（解析结果无符号，rest 中
+        // 只有 File 事件）不执行「DELETE symbols + 版本镜像」重建——旧实现
+        // parse_and_store_symbols 在事务开启前对空符号早退返回 (0,0)，旧
+        // symbols/calls/file_versions 全部保留（plan §2 / 交接文档 §4 #2 的
+        // 「空符号不清旧数据」约束）。重建主体在闭包内 syms 为空时直接
+        // 返回，前后 collect 调用照旧执行（旧主循环对空符号文件同样无条件
+        // collect，affected_names 行为与旧路径一致）。
         let outcome = (|| -> Result<(), rusqlite::Error> {
             let syms: Vec<&build_journal::BuildEvent> = rest
                 .iter()
@@ -896,6 +903,12 @@ fn apply_file_events(
                 .iter()
                 .filter(|e| matches!(e, BuildEvent::Call { .. }))
                 .collect();
+
+            // 空符号组：不重建符号/版本镜像/调用边（旧空符号早退语义），
+            // file_instances/file_contents 已由前置逻辑登记。
+            if syms.is_empty() {
+                return Ok(());
+            }
 
             // 1. symbol_contents upsert（写入真实 content）
             for e in &syms {
@@ -6595,6 +6608,75 @@ mod tests {
         //  sanity：确有符号与跨文件解析边，避免空对比假通过
         assert!(old_snap.0 > 0, "应有符号");
         assert!(old_snap.2 > 0, "应有 resolved 调用边");
+    }
+
+    /// F1 空符号等价单测（T-1795750226259-057fdb08）：
+    /// 同一文件先有符号版本（旧/新路径各自建立），再换成空符号内容，
+    /// 分别走旧路径（parse_and_store_symbols）与新路径
+    /// （parse_file_to_events → commit_batch），断言旧 symbols/calls/
+    /// file_versions 行保留一致——「空符号不清旧数据」。
+    #[test]
+    fn test_apply_file_events_empty_symbols_preserves_old_rows() {
+        let code_with_syms = "def helper():\n    return 1\n";
+        let code_empty = ""; // 空文件 → 解析 0 符号
+
+        // ---------- 旧路径 ----------
+        let (_tmp_old, conn_old, ws_old, root_old) = setup_pipeline_db("empty_sym_old");
+        let src_old = root_old.join("a.py");
+        std::fs::write(&src_old, code_with_syms).unwrap();
+        let hash1_old = sha256_hex(&std::fs::read(&src_old).unwrap());
+        conn_old.execute(
+            "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
+             VALUES (?1, 'python', 2, 0.0)", rusqlite::params![hash1_old]).unwrap();
+        let fid_old = upsert_file_instance(&conn_old, ws_old, "a.py", &src_old, &hash1_old, 0.0, 2, true).unwrap();
+        parse_and_store_symbols(&conn_old, fid_old, &src_old, "a.py", &hash1_old, 0.0, 2).unwrap();
+        let syms_first_old: i64 = count_rows(&conn_old, "symbols");
+        assert!(syms_first_old > 0, "旧路径首版应有符号");
+        // 空符号内容再走旧路径：parse_and_store_symbols 空符号早退 → 旧行保留
+        std::fs::write(&src_old, code_empty).unwrap();
+        let hash2_old = sha256_hex(&std::fs::read(&src_old).unwrap());
+        conn_old.execute(
+            "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
+             VALUES (?1, 'python', 0, 0.0)", rusqlite::params![hash2_old]).unwrap();
+        let fid2_old = upsert_file_instance(&conn_old, ws_old, "a.py", &src_old, &hash2_old, 0.0, 0, true).unwrap();
+        parse_and_store_symbols(&conn_old, fid2_old, &src_old, "a.py", &hash2_old, 0.0, 0).unwrap();
+        let syms_after_old: i64 = count_rows(&conn_old, "symbols");
+
+        // ---------- 新路径 ----------
+        let (_tmp_new, conn_new, ws_new, root_new) = setup_pipeline_db("empty_sym_new");
+        let src_new = root_new.join("a.py");
+        std::fs::write(&src_new, code_with_syms).unwrap();
+        let hash1_new = sha256_hex(&std::fs::read(&src_new).unwrap());
+        let g1 = parse_file_to_events("a.py", &src_new, &hash1_new, 0.0, 2, true, None, None);
+        let mut affected1 = BTreeSet::new();
+        let (mut i1, mut u1, mut s1) = (0, 0, 0);
+        commit_batch(&conn_new, ws_new, &root_new, 0.0, &[g1], &mut affected1, &mut i1, &mut u1, &mut s1, None).unwrap();
+        let syms_first_new: i64 = count_rows(&conn_new, "symbols");
+        // 空符号内容再走新路径
+        std::fs::write(&src_new, code_empty).unwrap();
+        let hash2_new = sha256_hex(&std::fs::read(&src_new).unwrap());
+        let g2 = parse_file_to_events("a.py", &src_new, &hash2_new, 0.0, 0, true, None, None);
+        let mut affected2 = BTreeSet::new();
+        let (mut i2, mut u2, mut s2) = (0, 0, 0);
+        commit_batch(&conn_new, ws_new, &root_new, 0.0, &[g2], &mut affected2, &mut i2, &mut u2, &mut s2, None).unwrap();
+        let syms_after_new: i64 = count_rows(&conn_new, "symbols");
+
+        // ---------- 对账 ----------
+        assert_eq!(syms_first_old, syms_first_new, "首版符号数应一致");
+        assert_eq!(syms_after_old, syms_after_new, "空符号后符号数应一致（旧行保留）");
+        assert_eq!(syms_after_old, syms_first_old, "空符号必须保留旧 symbols 行，不得清空");
+        // file_versions 同样保留（旧路径空符号早退不动镜像；新路径跳过重建）
+        let fv_old: i64 = count_rows(&conn_old, "file_versions");
+        let fv_new: i64 = count_rows(&conn_new, "file_versions");
+        assert_eq!(fv_old, fv_new, "版本镜像行数应一致");
+        assert!(fv_old >= 1, "旧版本行应保留");
+        // file_instances 均已登记/更新（status parsed）
+        let st_old: String = conn_old.query_row(
+            "SELECT status FROM file_instances WHERE id = ?1", rusqlite::params![fid2_old], |r| r.get(0)).unwrap();
+        let st_new: String = conn_new.query_row(
+            "SELECT status FROM file_instances WHERE rel_path = 'a.py'", [], |r| r.get(0)).unwrap();
+        assert_eq!(st_old, st_new);
+        assert_eq!(st_old, "parsed");
     }
 
     #[test]
