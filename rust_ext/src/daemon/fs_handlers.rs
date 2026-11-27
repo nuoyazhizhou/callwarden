@@ -1060,6 +1060,12 @@ fn apply_file_events(
             )?
             .execute(rusqlite::params![fid, hash, mtime, total_lines, now_ts_secs()])?;
             let fv_id = conn.last_insert_rowid();
+            // REQ-07 step③：file_symbol_versions 批量写入——OR IGNORE 多行 VALUES
+            // 与逐行 OR IGNORE 等价（每行独立忽略 UNIQUE 冲突）；分块 128 行 ×
+            // 7 参数 = 896 < 999。
+            const FSV_INSERT_CHUNK: usize = 128;
+            let mut fsv_chunk: Vec<(&str, &str, u32, u32, &str, i32)> =
+                Vec::with_capacity(FSV_INSERT_CHUNK);
             for e in &syms {
                 let BuildEvent::Sym {
                     symbol_hash,
@@ -1073,23 +1079,39 @@ fn apply_file_events(
                 else {
                     continue;
                 };
-                conn.prepare_cached(
-                    "INSERT OR IGNORE INTO file_symbol_versions \
-                     (file_version_id, symbol_hash, qualified_name, start_line, end_line, module_path, depth, is_deleted) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
-                )?
-                .execute(rusqlite::params![
-                    fv_id,
-                    symbol_hash,
-                    qualified_name,
-                    start_line,
-                    end_line,
-                    sym_module_path,
-                    depth
-                ])?;
+                fsv_chunk.push((
+                    symbol_hash.as_str(),
+                    qualified_name.as_str(),
+                    *start_line,
+                    *end_line,
+                    sym_module_path.as_str(),
+                    *depth,
+                ));
+                if fsv_chunk.len() == FSV_INSERT_CHUNK {
+                    insert_file_symbol_versions_chunk(conn, fv_id, &fsv_chunk)?;
+                    fsv_chunk.clear();
+                }
+            }
+            if !fsv_chunk.is_empty() {
+                insert_file_symbol_versions_chunk(conn, fv_id, &fsv_chunk)?;
             }
 
             // 4. 写 raw calls（caller 必须能挂到本文件符号；顶层裸调用跳过）
+            // REQ-07 step③：calls 是纯 INSERT（无冲突处理/无回查），多行 VALUES
+            // 批量与逐行语义等价（行序一致）；分块 128 行 × 7 参数 = 896 <
+            // SQLITE_MAX_VARIABLE_NUMBER 保守下限 999，固定块长 SQL 文本一致，
+            // prepare_cached 仍命中。symbols 逐行 INSERT OR IGNORE 不批量
+            //（last_insert_rowid 映射与 UNIQUE 撞车回查语义保留，见上）。
+            const CALLS_INSERT_CHUNK: usize = 128;
+            let mut calls_chunk: Vec<(
+                i64,
+                &str,
+                &str,
+                &str,
+                &str,
+                u32,
+                i64,
+            )> = Vec::with_capacity(CALLS_INSERT_CHUNK);
             for e in &calls {
                 let BuildEvent::Call {
                     caller_local_id,
@@ -1109,21 +1131,22 @@ fn apply_file_events(
                 let Some(&caller_id) = local_id_map.get(&caller_local) else {
                     continue;
                 };
-                conn.prepare_cached(
-                    "INSERT INTO calls \
-                     (caller_id, caller_name, caller_module, callee_name, callee_module, \
-                      callee_qualified, callee_file, callee_id, call_line, is_cross_file) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, '', '', 0, ?6, ?7)",
-                )?
-                .execute(rusqlite::params![
+                calls_chunk.push((
                     caller_id,
-                    caller_name,
-                    module_path,
-                    callee_name,
-                    callee_module,
-                    call_line,
-                    *is_cross_file as i64
-                ])?;
+                    caller_name.as_str(),
+                    module_path.as_str(),
+                    callee_name.as_str(),
+                    callee_module.as_str(),
+                    *call_line,
+                    *is_cross_file as i64,
+                ));
+                if calls_chunk.len() == CALLS_INSERT_CHUNK {
+                    insert_calls_chunk(conn, &calls_chunk)?;
+                    calls_chunk.clear();
+                }
+            }
+            if !calls_chunk.is_empty() {
+                insert_calls_chunk(conn, &calls_chunk)?;
             }
             Ok(())
         })();
@@ -1141,6 +1164,90 @@ fn apply_file_events(
     }
 
     Ok(FileApplyResult { class })
+}
+
+/// REQ-07 step③：calls 多行 VALUES 批量插入（apply_file_events 的分块 flush）。
+/// 与逐行 INSERT 等价：同列同值序、无冲突处理；每行 7 个匿名 `?` 占位
+///（callee_qualified/callee_file 固定 ''、callee_id 固定 0，与原语句一致）。
+fn insert_calls_chunk(
+    conn: &rusqlite::Connection,
+    chunk: &[(i64, &str, &str, &str, &str, u32, i64)],
+) -> Result<(), rusqlite::Error> {
+    let mut sql = String::with_capacity(112 + chunk.len() * 24);
+    sql.push_str(
+        "INSERT INTO calls \
+         (caller_id, caller_name, caller_module, callee_name, callee_module, \
+          callee_qualified, callee_file, callee_id, call_line, is_cross_file) VALUES ",
+    );
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 7);
+    for (
+        i,
+        (
+            caller_id,
+            caller_name,
+            caller_module,
+            callee_name,
+            callee_module,
+            call_line,
+            is_cross_file,
+        ),
+    ) in chunk.iter().enumerate()
+    {
+        if i > 0 {
+            sql.push(',');
+        }
+        sql.push_str("(?,?,?,?,?, '', '', 0, ?, ?)");
+        params.push(caller_id);
+        params.push(caller_name);
+        params.push(caller_module);
+        params.push(callee_name);
+        params.push(callee_module);
+        params.push(call_line);
+        params.push(is_cross_file);
+    }
+    conn.prepare_cached(&sql)?.execute(params.as_slice())?;
+    Ok(())
+}
+
+/// REQ-07 step③：file_symbol_versions 多行 VALUES + OR IGNORE 批量插入。
+/// 每行独立忽略 UNIQUE 冲突，与逐行 OR IGNORE 等价；is_deleted 固定 0。
+fn insert_file_symbol_versions_chunk(
+    conn: &rusqlite::Connection,
+    fv_id: i64,
+    chunk: &[(&str, &str, u32, u32, &str, i32)],
+) -> Result<(), rusqlite::Error> {
+    let mut sql = String::with_capacity(128 + chunk.len() * 24);
+    sql.push_str(
+        "INSERT OR IGNORE INTO file_symbol_versions \
+         (file_version_id, symbol_hash, qualified_name, start_line, end_line, module_path, depth, is_deleted) VALUES ",
+    );
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 7);
+    for (
+        i,
+        (
+            symbol_hash,
+            qualified_name,
+            start_line,
+            end_line,
+            module_path,
+            depth,
+        ),
+    ) in chunk.iter().enumerate()
+    {
+        if i > 0 {
+            sql.push(',');
+        }
+        sql.push_str("(?,?,?,?,?,?,?,0)");
+        params.push(&fv_id);
+        params.push(symbol_hash);
+        params.push(qualified_name);
+        params.push(start_line);
+        params.push(end_line);
+        params.push(module_path);
+        params.push(depth);
+    }
+    conn.prepare_cached(&sql)?.execute(params.as_slice())?;
+    Ok(())
 }
 
 /// 按调用行 id 批量写回已解析边（分块避免 SQLite 变量数上限）。
