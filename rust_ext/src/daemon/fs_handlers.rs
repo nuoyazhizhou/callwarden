@@ -6728,6 +6728,90 @@ mod tests {
         assert!(format!("{err}").contains("对账失败"), "应返回对账失败错误: {err}");
     }
 
+    /// F4 批回滚 + 幂等重放直接单测（T-1795750251586-eb2810f8，plan §Verification V5）：
+    /// 注入必失败组（DB 触发器 RAISE(ABORT)，挂在 symbols INSERT 上，按
+    /// symbol_hash 前缀只命中 b.py 组），断言：
+    /// 1. 批内之前组（a.py）的写入被整批回滚不残留（symbols/calls/
+    ///    file_instances/file_contents/file_versions 全部为 0）；
+    /// 2. 移除注入后同批重放，落库结果与「一次成功导入」的对照库逐表一致
+    ///    （幂等重放：file_instances 保持旧状态 → hash 不匹配重新导入）。
+    #[test]
+    fn test_commit_batch_db_error_rolls_back_and_replays() {
+        let batch = vec![
+            pipeline_file_group("a.py", 3, 2),
+            pipeline_file_group("b.py", 2, 1),
+        ];
+
+        // ---------- 对照库：一次成功导入 ----------
+        let (_tmp_ref, conn_ref, ws_ref, root_ref) = setup_pipeline_db("f4_replay_ref");
+        let mut affected_ref = BTreeSet::new();
+        let (mut i_ref, mut u_ref, mut s_ref) = (0, 0, 0);
+        commit_batch(
+            &conn_ref, ws_ref, &root_ref, 1000.0, &batch,
+            &mut affected_ref, &mut i_ref, &mut u_ref, &mut s_ref, None,
+        ).unwrap();
+        assert_eq!(i_ref, 2, "对照库应完整导入 2 个文件");
+        assert!(count_rows(&conn_ref, "symbols") > 0);
+
+        // ---------- 故障库：同批 + 注入 DB 层失败组 ----------
+        let (_tmp, conn, ws_id, root) = setup_pipeline_db("f4_replay_fail");
+        conn.execute(
+            "CREATE TRIGGER fail_b_symbols BEFORE INSERT ON symbols \
+             WHEN NEW.symbol_hash LIKE 'b.py-%' \
+             BEGIN SELECT RAISE(ABORT, 'injected db failure'); END;",
+            [],
+        ).unwrap();
+        let mut affected = BTreeSet::new();
+        let (mut i, mut u, mut s) = (0, 0, 0);
+        let err = commit_batch(
+            &conn, ws_id, &root, 1000.0, &batch,
+            &mut affected, &mut i, &mut u, &mut s, None,
+        ).unwrap_err();
+        assert!(
+            format!("{err}").contains("injected db failure"),
+            "应含注入的 DB 层错误: {err}"
+        );
+        // 整批回滚：a.py 组写入不残留（事务原子性）
+        assert_eq!(count_rows(&conn, "symbols"), 0, "a.py 符号应随整批回滚");
+        assert_eq!(count_rows(&conn, "calls"), 0, "a.py 调用边应随整批回滚");
+        assert_eq!(count_rows(&conn, "file_instances"), 0, "a.py 文件登记应随整批回滚");
+        assert_eq!(count_rows(&conn, "file_contents"), 0, "file_contents 应随整批回滚");
+        assert_eq!(count_rows(&conn, "file_versions"), 0, "版本镜像应随整批回滚");
+        // 计数为软状态：a.py apply 成功时已推进（DB 权威状态已回滚）
+        assert_eq!(i, 1, "a.py apply 成功推进 inserted（软状态，DB 已回滚）");
+
+        // ---------- 幂等重放：移除注入，同批重跑 ----------
+        conn.execute("DROP TRIGGER fail_b_symbols;", []).unwrap();
+        let mut affected2 = BTreeSet::new();
+        let (mut i2, mut u2, mut s2) = (0, 0, 0);
+        commit_batch(
+            &conn, ws_id, &root, 1000.0, &batch,
+            &mut affected2, &mut i2, &mut u2, &mut s2, None,
+        ).unwrap();
+        assert_eq!(i2, 2, "重放应完整导入 2 个文件");
+        // 与一次成功导入的对照库逐表对账
+        for table in ["symbols", "calls", "file_instances", "file_contents", "file_versions"] {
+            assert_eq!(
+                count_rows(&conn, table),
+                count_rows(&conn_ref, table),
+                "重放后 {table} 行数应与一次成功导入一致"
+            );
+        }
+        // 符号名集合与文件状态逐项对账
+        let names_fail: Vec<String> = conn
+            .prepare("SELECT name FROM symbols ORDER BY name").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().filter_map(Result::ok).collect();
+        let names_ref: Vec<String> = conn_ref
+            .prepare("SELECT name FROM symbols ORDER BY name").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().filter_map(Result::ok).collect();
+        assert_eq!(names_fail, names_ref, "重放后符号集合应与对照库一致");
+        let statuses: Vec<String> = conn
+            .prepare("SELECT status FROM file_instances ORDER BY rel_path").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().filter_map(Result::ok).collect();
+        assert_eq!(statuses.len(), 2, "重放后应有 2 个文件登记");
+        assert!(statuses.iter().all(|s| s == "parsed"), "重放后文件应为 parsed: {statuses:?}");
+    }
+
     #[test]
     fn test_import_shards_truncated_tail_dropped() {
         let (_tmp, conn, ws_id, root) = setup_pipeline_db("import_truncated");
