@@ -35,7 +35,13 @@ use super::workspace::{
 #[path = "build_flight.rs"]
 pub mod build_flight;
 
+/// 建图 jsonl 中间日志（两阶段流水线 REQ-01）。
+/// 内联子模块：同 build_flight，经 `#[path]` 挂载。
+#[path = "build_journal.rs"]
+pub mod build_journal;
+
 use build_flight::{BuildFlights, BuildProgress};
+use build_journal::BuildEvent;
 
 /// 可索引的源文件扩展名（文件面扫描白名单，与 db 层解析面一致）。
 const INDEXABLE_EXTS: &[&str] = &[
@@ -674,6 +680,452 @@ fn parse_and_store_symbols(
             )))
         }
     }
+}
+
+/// REQ-02：阶段二单文件 apply 结果（归类，供批量导入器累加 inserted/unchanged）。
+/// 符号/调用计数由阶段一 worker 统计（事件计数），apply 不再回传。
+#[derive(Debug)]
+struct FileApplyResult {
+    class: BuildGraphFileClass,
+}
+
+/// REQ-02：阶段一纯 CPU 解析——把单文件解析为 BuildEvent 序列（零 DB 写）。
+///
+/// [`parse_and_store_symbols`] 的解析半边拆分，行为等价：
+/// - 语言不支持 / LangConfig 缺失 / 空符号 → 仅 File 事件（旧 (0,0) 早退，
+///   不清旧数据）；
+/// - caller_local_id 为 None 或不在本文件符号 local_id 集合 → 丢弃调用边
+///   （旧 local_id_map 未命中跳过语义）；
+/// - 符号 module_path 为空时在事件侧回退文件级 module_path（旧 INSERT 时的
+///   fallback 前移，apply 直写）；
+/// - File 事件 module_path 取解析结果的 result.module_path（raw calls 的
+///   caller_module 落库值）；早退分支取 module_path_of(rel)。
+///
+/// prev_hash/prev_status 是阶段 0 预取的库内旧行（旧主循环 per-file stored
+/// 查询的替代），阶段二据此 classify_build_graph_file 判 Inserted/Unchanged。
+/// 解析失败（parser panic 由 worker catch_unwind 捕获）时 error 字段置 Some，
+/// 阶段二做 status='pending' 补偿并整体失败。
+fn parse_file_to_events(
+    rel: &str,
+    abs_path: &Path,
+    hash: &str,
+    mtime: f64,
+    total_lines: i64,
+    parsed: bool,
+    prev_hash: Option<String>,
+    prev_status: Option<String>,
+) -> Vec<BuildEvent> {
+    let file_module_path = module_path_of(rel);
+    let mut events: Vec<BuildEvent> = Vec::new();
+    let mut push_file = |module_path: String, error: Option<String>| {
+        events.push(BuildEvent::File {
+            rel: rel.to_string(),
+            hash: hash.to_string(),
+            mtime,
+            total_lines,
+            module_path,
+            parsed,
+            prev_hash: prev_hash.clone(),
+            prev_status: prev_status.clone(),
+            error,
+        });
+    };
+
+    let Some(lang_id) = parser_lang_id(rel) else {
+        push_file(file_module_path, None);
+        return events;
+    };
+    let Some(config) = crate::multi_lang::LangConfig::get(lang_id) else {
+        push_file(file_module_path, None);
+        return events;
+    };
+    let parser = crate::multi_lang::GenericParser::new(std::sync::Arc::new(config));
+    let result = parser.parse_file(&abs_path.to_string_lossy(), &file_module_path);
+    if result.symbols.is_empty() {
+        // 旧语义：空符号早退，不清旧数据、不写新数据（仅登记文件）
+        push_file(result.module_path, None);
+        return events;
+    }
+    push_file(result.module_path.clone(), None);
+
+    // caller 挂接集合：local_id > 0 的本文件符号（旧 local_id_map 的键集）
+    let symbol_local_ids: std::collections::HashSet<u32> = result
+        .symbols
+        .iter()
+        .filter(|s| s.local_id > 0)
+        .map(|s| s.local_id)
+        .collect();
+    for s in &result.symbols {
+        events.push(BuildEvent::Sym {
+            rel: rel.to_string(),
+            hash: hash.to_string(),
+            symbol_hash: s.symbol_hash.clone(),
+            name: s.name.clone(),
+            kind: s.kind.clone(),
+            content: s.content.clone(),
+            signature: s.signature.clone(),
+            has_comment: s.has_comment,
+            qualified_name: s.qualified_name.clone(),
+            visibility: s.visibility.clone(),
+            start_line: s.start_line,
+            end_line: s.end_line,
+            module_path: if s.module_path.is_empty() {
+                file_module_path.clone()
+            } else {
+                s.module_path.clone()
+            },
+            local_id: s.local_id,
+            depth: s.depth,
+        });
+    }
+    for rc in &result.calls {
+        let Some(caller_local) = rc.caller_local_id else {
+            continue;
+        };
+        if !symbol_local_ids.contains(&caller_local) {
+            continue;
+        }
+        events.push(BuildEvent::Call {
+            rel: rel.to_string(),
+            hash: hash.to_string(),
+            caller_local_id: rc.caller_local_id,
+            caller_name: rc.caller_name.clone(),
+            callee_name: rc.callee_name.clone(),
+            callee_module: rc.callee_module.clone(),
+            call_line: rc.call_line,
+            is_cross_file: rc.is_cross_file,
+        });
+    }
+    events
+}
+
+/// REQ-02：阶段二纯 DB 写——单文件事件组合入库（在调用方的批事务内执行，
+/// 本函数不再 BEGIN/COMMIT；旧实现每文件一个 BEGIN IMMEDIATE，新实现整批
+/// 一个，崩溃整批回滚 + jsonl 幂等重放）。
+///
+/// 与 run_build_graph 旧主循环的逐文件段行为等价（落库半边）：
+/// 1. error 事件 → 直接 Err（导入器回滚批后对该文件做 status='pending'
+///    补偿并整体失败，保留旧解析失败语义）；
+/// 2. file_contents upsert（INSERT OR IGNORE）→ upsert_file_instance 拿 fid；
+/// 3. classify_build_graph_file 用事件携带的 prev_hash/prev_status 判类；
+/// 4. parsed 且 Inserted：旧名收集 → symbol_contents upsert → 旧符号清理
+///    （CR12 入边降级）→ 新 symbols 写入（local_id_map）→ 版本镜像 →
+///    raw calls 写入 → 新名/raw 名收集；
+/// 5. 返回归类（inserted/unchanged/skipped_unparsed 统计由调用方累加）。
+fn apply_file_events(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    root_canon: &Path,
+    now: f64,
+    events: &[BuildEvent],
+    affected_names: &mut BTreeSet<String>,
+) -> Result<FileApplyResult, DaemonRpcError> {
+    let (rel, hash, mtime, total_lines, module_path, parsed, prev_hash, prev_status, error) =
+        match events.first() {
+            Some(BuildEvent::File {
+                rel,
+                hash,
+                mtime,
+                total_lines,
+                module_path,
+                parsed,
+                prev_hash,
+                prev_status,
+                error,
+            }) => (
+                rel.clone(),
+                hash.clone(),
+                *mtime,
+                *total_lines,
+                module_path.clone(),
+                *parsed,
+                prev_hash.clone(),
+                prev_status.clone(),
+                error.clone(),
+            ),
+            _ => {
+                return Err(DaemonRpcError::internal_error(
+                    "事件组必须以 file 事件开头".to_string(),
+                ));
+            }
+        };
+    if let Some(err) = &error {
+        return Err(DaemonRpcError::internal_error(format!(
+            "解析失败（{rel}）: {err}"
+        )));
+    }
+    let rest = &events[1..];
+
+    // file_contents upsert（所有到达此处的文件都登记，含不可解析文件）
+    conn.execute(
+        "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![hash, infer_language(&rel), total_lines, now],
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("file_contents upsert: {e}")))?;
+    // upsert file_instances 拿真实 id（语言可解析时标记 parsed）
+    let abs_path = root_canon.join(&rel);
+    let fid = upsert_file_instance(
+        conn,
+        workspace_id,
+        &rel,
+        &abs_path,
+        &hash,
+        mtime,
+        total_lines,
+        parsed,
+    )?;
+
+    let stored: Option<(&str, &str)> = match (prev_hash.as_deref(), prev_status.as_deref()) {
+        (Some(h), Some(s)) => Some((h, s)),
+        _ => None,
+    };
+    let class = classify_build_graph_file(parsed, stored, &hash);
+
+    if parsed && class == BuildGraphFileClass::Inserted {
+        // P3-1：重解析前先记录旧符号名——apply 会把其它文件指向旧 id 的
+        // 已解析边降级为 raw，这些名字必须参与重算
+        collect_file_symbol_names(conn, fid, affected_names)?;
+
+        let outcome = (|| -> Result<(), rusqlite::Error> {
+            let syms: Vec<&build_journal::BuildEvent> = rest
+                .iter()
+                .filter(|e| matches!(e, BuildEvent::Sym { .. }))
+                .collect();
+            let calls: Vec<&build_journal::BuildEvent> = rest
+                .iter()
+                .filter(|e| matches!(e, BuildEvent::Call { .. }))
+                .collect();
+
+            // 1. symbol_contents upsert（写入真实 content）
+            for e in &syms {
+                let BuildEvent::Sym {
+                    symbol_hash,
+                    name,
+                    kind,
+                    content,
+                    signature,
+                    has_comment,
+                    qualified_name,
+                    ..
+                } = e
+                else {
+                    continue;
+                };
+                conn.execute(
+                    "INSERT INTO symbol_contents \
+                     (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', ?7) \
+                     ON CONFLICT(content_hash) DO UPDATE SET \
+                       name = excluded.name, kind = excluded.kind, content = excluded.content, \
+                       signature = excluded.signature, has_comment = excluded.has_comment, \
+                       qualified_name = excluded.qualified_name",
+                    rusqlite::params![
+                        symbol_hash,
+                        name,
+                        kind,
+                        content,
+                        signature,
+                        *has_comment as i64,
+                        qualified_name
+                    ],
+                )?;
+            }
+
+            // 2. 清理该文件旧调用边与旧符号（幂等重建；CR12 入边降级）
+            let old_ids: Vec<i64> = {
+                let mut stmt =
+                    conn.prepare("SELECT id FROM symbols WHERE file_instance_id = ?1")?;
+                let rows = stmt
+                    .query_map(rusqlite::params![fid], |r| r.get::<_, i64>(0))?
+                    .filter_map(Result::ok)
+                    .collect();
+                rows
+            };
+            if !old_ids.is_empty() {
+                let placeholders = old_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let params: Vec<&dyn rusqlite::ToSql> =
+                    old_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+                // P3-1：先清无 CASCADE 的符号引用行（coverage/clone/test 映射）
+                purge_symbol_references(conn, &old_ids)?;
+                conn.execute(
+                    &format!(
+                        "UPDATE calls SET callee_id = 0 WHERE callee_id IN ({placeholders})"
+                    ),
+                    params.as_slice(),
+                )?;
+                conn.execute(
+                    "DELETE FROM calls WHERE caller_id IN \
+                     (SELECT id FROM symbols WHERE file_instance_id = ?1)",
+                    rusqlite::params![fid],
+                )?;
+            }
+            conn.execute(
+                "DELETE FROM symbols WHERE file_instance_id = ?1",
+                rusqlite::params![fid],
+            )?;
+
+            // 3. 写 symbols，按 local_id 建 file 内 id 映射（供调用边 caller_id 挂接）
+            let mut local_id_map: std::collections::HashMap<u32, i64> =
+                std::collections::HashMap::new();
+            for e in &syms {
+                let BuildEvent::Sym {
+                    symbol_hash,
+                    name,
+                    kind,
+                    visibility,
+                    start_line,
+                    end_line,
+                    signature,
+                    has_comment,
+                    qualified_name,
+                    module_path: sym_module_path,
+                    local_id,
+                    ..
+                } = e
+                else {
+                    continue;
+                };
+                // INSERT OR IGNORE：minified 单行 bundle 撞 UNIQUE(file_instance_id,
+                // name,start_line) 时回查既有行（与旧实现一致）
+                let inserted = conn.execute(
+                    "INSERT OR IGNORE INTO symbols \
+                     (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line, \
+                      start_col, end_col, signature, has_comment, comment_status, module_path, qualified_name) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8, ?9, 'pending', ?10, ?11)",
+                    rusqlite::params![
+                        fid,
+                        symbol_hash,
+                        name,
+                        kind,
+                        visibility,
+                        start_line,
+                        end_line,
+                        signature,
+                        *has_comment as i64,
+                        sym_module_path,
+                        qualified_name
+                    ],
+                )?;
+                let row_id = if inserted > 0 {
+                    conn.last_insert_rowid()
+                } else {
+                    conn.query_row(
+                        "SELECT id FROM symbols WHERE file_instance_id = ?1 AND name = ?2 AND start_line = ?3",
+                        rusqlite::params![fid, name, start_line],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .unwrap_or(0)
+                };
+                if *local_id > 0 && row_id > 0 {
+                    local_id_map.insert(*local_id, row_id);
+                }
+            }
+
+            // 3.5 镜像到版本化 schema（幂等重建）
+            conn.execute(
+                "DELETE FROM file_symbol_versions WHERE file_version_id IN \
+                 (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+                rusqlite::params![fid],
+            )?;
+            // 现场库（旧 DDL）call_versions 外键 NO ACTION：先删子行
+            conn.execute(
+                "DELETE FROM call_versions WHERE file_version_id IN \
+                 (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+                rusqlite::params![fid],
+            )?;
+            conn.execute(
+                "DELETE FROM file_versions WHERE file_instance_id = ?1",
+                rusqlite::params![fid],
+            )?;
+            conn.execute(
+                "INSERT INTO file_versions \
+                 (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, is_current, is_deleted) \
+                 VALUES (?1, 1, ?2, ?3, ?4, ?5, 1, 0)",
+                rusqlite::params![fid, hash, mtime, total_lines, now_ts_secs()],
+            )?;
+            let fv_id = conn.last_insert_rowid();
+            for e in &syms {
+                let BuildEvent::Sym {
+                    symbol_hash,
+                    qualified_name,
+                    start_line,
+                    end_line,
+                    module_path: sym_module_path,
+                    depth,
+                    ..
+                } = e
+                else {
+                    continue;
+                };
+                conn.execute(
+                    "INSERT OR IGNORE INTO file_symbol_versions \
+                     (file_version_id, symbol_hash, qualified_name, start_line, end_line, module_path, depth, is_deleted) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
+                    rusqlite::params![
+                        fv_id,
+                        symbol_hash,
+                        qualified_name,
+                        start_line,
+                        end_line,
+                        sym_module_path,
+                        depth
+                    ],
+                )?;
+            }
+
+            // 4. 写 raw calls（caller 必须能挂到本文件符号；顶层裸调用跳过）
+            for e in &calls {
+                let BuildEvent::Call {
+                    caller_local_id,
+                    caller_name,
+                    callee_name,
+                    callee_module,
+                    call_line,
+                    is_cross_file,
+                    ..
+                } = e
+                else {
+                    continue;
+                };
+                let Some(caller_local) = caller_local_id else {
+                    continue;
+                };
+                let Some(&caller_id) = local_id_map.get(&caller_local) else {
+                    continue;
+                };
+                conn.execute(
+                    "INSERT INTO calls \
+                     (caller_id, caller_name, caller_module, callee_name, callee_module, \
+                      callee_qualified, callee_file, callee_id, call_line, is_cross_file) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, '', '', 0, ?6, ?7)",
+                    rusqlite::params![
+                        caller_id,
+                        caller_name,
+                        module_path,
+                        callee_name,
+                        callee_module,
+                        call_line,
+                        *is_cross_file as i64
+                    ],
+                )?;
+            }
+            Ok(())
+        })();
+
+        if let Err(e) = outcome {
+            return Err(DaemonRpcError::internal_error(format!(
+                "符号落库失败（{}）: {}",
+                rel, e
+            )));
+        }
+
+        // 新定义名（其它文件的 raw 边可能因此可解析）+ 本文件新 raw 边名
+        collect_file_symbol_names(conn, fid, affected_names)?;
+        collect_file_raw_callee_names(conn, fid, affected_names)?;
+    }
+
+    Ok(FileApplyResult { class })
 }
 
 /// 按调用行 id 批量写回已解析边（分块避免 SQLite 变量数上限）。
@@ -1381,10 +1833,276 @@ fn prepare_build_graph(
     Ok((root, scan_root))
 }
 
+// ============================== 两阶段流水线（REQ-03/04） ==============================
+
+// 流水线四项可调参数（parse_threads / channel_depth / import_batch_files /
+// import_batch_events）由 build_journal::BuildPipelineConfig 从
+// ~/.callwarden/daemon.toml 读取，缺省内置（4 / 256 / 200 / 5000）。
+
+/// 阶段 0 产物：mtime 快路径未命中、需要重新读盘+解析的文件。
+struct PendingFile {
+    rel: String,
+    abs_path: PathBuf,
+    mtime: f64,
+    parsed: bool,
+    prev_hash: Option<String>,
+    prev_status: Option<String>,
+}
+
+/// IO 读线程 → 解析 worker 的任务（hash/行数已在读线程算好，解析 worker 不再回读元数据）。
+struct ParseJob {
+    rel: String,
+    abs_path: PathBuf,
+    hash: String,
+    mtime: f64,
+    total_lines: i64,
+    parsed: bool,
+    prev_hash: Option<String>,
+    prev_status: Option<String>,
+}
+
+/// 阶段一解析 worker 统计（线程内累加，join 后由主线程归并）。
+#[derive(Debug, Default)]
+struct ParseWorkerStats {
+    files: usize,
+    symbols: usize,
+    calls: usize,
+}
+
+/// fatal 错误槽（写侧容忍锁毒化：worker panic 后其他线程仍能记录错误）。
+fn set_fatal(slot: &std::sync::Mutex<Option<String>>, msg: String) {
+    *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+}
+
+/// fatal 错误槽读取（毒化容忍）。
+fn get_fatal(slot: &std::sync::Mutex<Option<String>>) -> Option<String> {
+    slot.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// 提取 panic payload 的可读消息（worker catch_unwind 用）。
+fn panic_message(p: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "parser panic".to_string()
+    }
+}
+
+/// 阶段二批提交：批内文件组在**一个事务**内逐组 apply。
+///
+/// - 正常组：apply_file_events（classify/符号重建/版本镜像/raw 边写入）；
+/// - DB 错误：整批回滚（file_instances 未更新 → 下次重跑 hash 不匹配重新导入）；
+/// - 解析失败（error 事件组）：正常组照常提交（等价旧实现「失败点之前的
+///   文件已提交」），随后单独事务登记失败文件（file_contents + file_instances
+///   照写，status='pending'，等价旧实现 parse 失败后的 pending 补偿），整体返回
+///   Err。error 组之后的组本轮跳过（旧实现同样停在失败点），下次重跑幂等重放。
+#[allow(clippy::too_many_arguments)]
+fn commit_batch(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    root_canon: &Path,
+    now: f64,
+    batch: &[Vec<BuildEvent>],
+    affected_names: &mut BTreeSet<String>,
+    inserted: &mut usize,
+    unchanged: &mut usize,
+    skipped_unparsed: &mut usize,
+    progress: Option<&BuildProgress>,
+) -> Result<(), DaemonRpcError> {
+    use std::sync::atomic::Ordering::Relaxed;
+
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let error_pos = batch.iter().position(|g| {
+        matches!(
+            g.first(),
+            Some(BuildEvent::File {
+                error: Some(_),
+                ..
+            })
+        )
+    });
+    let normal_len = error_pos.unwrap_or(batch.len());
+
+    // 正常组：单事务逐组 apply
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| DaemonRpcError::internal_error(format!("批事务开启失败: {e}")))?;
+    for group in &batch[..normal_len] {
+        match apply_file_events(conn, workspace_id, root_canon, now, group, affected_names) {
+            Ok(fr) => match fr.class {
+                BuildGraphFileClass::Inserted => *inserted += 1,
+                BuildGraphFileClass::Unchanged => *unchanged += 1,
+                BuildGraphFileClass::SkippedUnparsed => *skipped_unparsed += 1,
+            },
+            Err(e) => {
+                let _ = tx.rollback();
+                return Err(e);
+            }
+        }
+    }
+    tx.commit()
+        .map_err(|e| DaemonRpcError::internal_error(format!("批事务提交失败: {e}")))?;
+    if let Some(p) = progress {
+        p.inserted.store(*inserted as u64, Relaxed);
+        p.unchanged.store(*unchanged as u64, Relaxed);
+        p.skipped_unparsed.store(*skipped_unparsed as u64, Relaxed);
+    }
+
+    // 解析失败组：登记失败文件 + pending 补偿 + 整体失败
+    if let Some(pos) = error_pos {
+        let group = &batch[pos];
+        let Some(BuildEvent::File {
+            rel,
+            hash,
+            mtime,
+            total_lines,
+            parsed,
+            error: Some(err),
+            ..
+        }) = group.first()
+        else {
+            return Err(DaemonRpcError::internal_error(
+                "error 组首事件不是 File 事件（内部不变量破坏）".to_string(),
+            ));
+        };
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| DaemonRpcError::internal_error(format!("失败登记事务开启失败: {e}")))?;
+        conn.execute(
+            "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![hash, infer_language(rel), total_lines, now],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("失败登记 file_contents 写入失败: {e}")))?;
+        upsert_file_instance(
+            conn,
+            workspace_id,
+            rel,
+            &root_canon.join(rel),
+            hash,
+            *mtime,
+            *total_lines,
+            *parsed,
+        )?;
+        conn.execute(
+            "UPDATE file_instances SET status = 'pending', last_parsed = 0
+             WHERE workspace_id = ?1 AND rel_path = ?2",
+            rusqlite::params![workspace_id, rel],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("失败登记 pending 补偿失败: {e}")))?;
+        tx.commit()
+            .map_err(|e| DaemonRpcError::internal_error(format!("失败登记事务提交失败: {e}")))?;
+        return Err(DaemonRpcError::internal_error(format!(
+            "解析失败（{rel}）: {err}"
+        )));
+    }
+    Ok(())
+}
+
+/// 阶段二批量导入器：按 worker 序号顺序流式读分片，按批（文件组边界切）
+/// 单事务导入。批大小 = 文件数或事件数阈值先到者。
+///
+/// 崩溃原子性：任一批失败整批回滚 → file_instances 保持旧状态 → 下次重跑
+/// hash 不匹配重新导入（幂等重放）。全部成功后由调用方删除分片。
+#[allow(clippy::too_many_arguments)]
+fn import_shards(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    root_canon: &Path,
+    now: f64,
+    shard_paths: &[PathBuf],
+    batch_files: usize,
+    batch_events: usize,
+    affected_names: &mut BTreeSet<String>,
+    inserted: &mut usize,
+    unchanged: &mut usize,
+    skipped_unparsed: &mut usize,
+    progress: Option<&BuildProgress>,
+) -> Result<(), DaemonRpcError> {
+    let mut batch: Vec<Vec<BuildEvent>> = Vec::new();
+    let mut batch_files_n = 0usize;
+    let mut batch_events_n = 0usize;
+
+    for shard in shard_paths {
+        if !build_journal::shard_exists(shard) {
+            continue; // 该 worker 无任务（无分片）
+        }
+        let mut reader = build_journal::ShardReader::open(shard)
+            .map_err(|e| DaemonRpcError::internal_error(format!("分片打开失败: {e}")))?;
+        let mut group: Vec<BuildEvent> = Vec::new();
+        loop {
+            let ev = reader
+                .next_event()
+                .map_err(|e| DaemonRpcError::internal_error(format!("分片读取失败: {e}")))?;
+            match ev {
+                Some(e) => {
+                    // File 事件 = 新文件组开始（上一组在此切出；同文件事件组连续存放）
+                    if matches!(e, BuildEvent::File { .. }) && !group.is_empty() {
+                        batch_events_n += group.len();
+                        batch.push(std::mem::take(&mut group));
+                        batch_files_n += 1;
+                    }
+                    group.push(e);
+                }
+                None => break,
+            }
+        }
+        if !group.is_empty() {
+            batch_events_n += group.len();
+            batch.push(group);
+            batch_files_n += 1;
+        }
+        // 批边界只在文件组边界切（单文件事件组原子，不跨批拆分）
+        if batch_files_n >= batch_files || batch_events_n >= batch_events {
+            commit_batch(
+                conn,
+                workspace_id,
+                root_canon,
+                now,
+                &batch,
+                affected_names,
+                inserted,
+                unchanged,
+                skipped_unparsed,
+                progress,
+            )?;
+            batch.clear();
+            batch_files_n = 0;
+            batch_events_n = 0;
+        }
+    }
+    if !batch.is_empty() {
+        commit_batch(
+            conn,
+            workspace_id,
+            root_canon,
+            now,
+            &batch,
+            affected_names,
+            inserted,
+            unchanged,
+            skipped_unparsed,
+            progress,
+        )?;
+    }
+    Ok(())
+}
+
 /// build_graph 重活（无 registry/peer 依赖，可在后台线程执行）。
 ///
 /// `progress` 为单飞登记表的进度埋点（GitNexus progress notifications 的
 /// daemon 侧等价物：经 `workspace.build_graph` dry_run=true 轮询读取）。
+///
+/// 两阶段流水线（daemon-build-graph-jsonl-pipeline plan）：
+/// - 阶段 0：扫描 + file_instances 全量预取 + mtime 快路径（单线程，零解析）；
+/// - 阶段一：IO 读线程（读文件+hash）→ 解析 worker 池（每 worker 独立分片
+///   顺序 append jsonl，零 DB 写）→ join 归并统计；
+/// - 阶段二：单写者按批合并事务导入（批边界只在文件组边界切），崩溃整批
+///   回滚（file_instances 未更新，下次重跑 hash 不匹配重新导入），成功删分片。
 fn run_build_graph(
     conn: &rusqlite::Connection,
     workspace_id: i64,
@@ -1408,10 +2126,46 @@ fn run_build_graph(
     let mut symbol_total = 0usize;
     let mut call_total = 0usize;
     let now = now_ts_secs();
+    // REQ-05：流水线四项参数（daemon.toml，缺省内置 4/256/200/5000）
+    let cfg = build_journal::BuildPipelineConfig::load();
     // P3-1：本轮磁盘上现存的可索引文件（删除感知差集基准）
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: HashSet<String> = HashSet::with_capacity(files.len());
     // P3-1：本轮受影响的名字（边重算裁剪输入）
     let mut affected_names: BTreeSet<String> = BTreeSet::new();
+
+    // ===== 阶段 0：file_instances 全量预取 + mtime 快路径（单线程，零解析） =====
+    // 旧实现 per-file 查询（主循环逐文件回查）+ 尾部删除感知全量查询，合并为
+    // 一次全量查询共用。NULL hash/status 行旧实现会让 per-file 查询报错并中止
+    // 整个 build；预取侧用 Option 容忍（视为无旧行，走重新解析），更健壮。
+    let mut stored_map: HashMap<String, (Option<String>, Option<String>, f64, String)> =
+        HashMap::with_capacity(files.len());
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT rel_path, current_content_hash, status, mtime, abs_path
+                 FROM file_instances WHERE workspace_id = ?1",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 列表失败: {e}")))?;
+        let rows = stmt
+            .query_map(rusqlite::params![workspace_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, f64>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 列表失败: {e}")))?;
+        for row in rows {
+            let (rel, hash, status, mtime, abs_path) = row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("file_instances 列表失败: {e}"))
+            })?;
+            stored_map.insert(rel, (hash, status, mtime, abs_path));
+        }
+    }
+
+    let mut pending: Vec<PendingFile> = Vec::new();
     for path in files {
         let rel = path
             .strip_prefix(&root_canon)
@@ -1431,24 +2185,12 @@ fn run_build_graph(
             .map(|d| d.as_secs_f64())
             .unwrap_or(now);
         let parsed = parser_lang_id(&rel).is_some();
-        let stored: Option<(String, String, f64)> = conn
-            .query_row(
-                "SELECT current_content_hash, status, mtime FROM file_instances
-                 WHERE workspace_id = ?1 AND rel_path = ?2",
-                rusqlite::params![workspace_id, rel],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, f64>(2)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 回查失败: {e}")))?;
+        let stored = stored_map
+            .get(&rel)
+            .map(|(h, s, mt, _)| (h.clone(), s.clone(), *mt));
         // P3-1 快路径：mtime 未变且已解析 → 免读 / 免 hash / 免解析
         if parsed {
-            if let Some((stored_hash, status, stored_mtime)) = &stored {
+            if let Some((Some(stored_hash), Some(status), stored_mtime)) = &stored {
                 if is_mtime_cache_hit(status, stored_hash, *stored_mtime, mtime) {
                     unchanged += 1;
                     skipped_cached += 1;
@@ -1461,72 +2203,207 @@ fn run_build_graph(
                 }
             }
         }
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(_) => continue,
+        // prev_hash/prev_status 供事件侧 classify 判类（阶段二不再回查 DB）
+        let (prev_hash, prev_status) = match &stored {
+            Some((Some(h), Some(s), _)) => (Some(h.clone()), Some(s.clone())),
+            _ => (None, None),
         };
-        let hash = sha256_hex(&bytes);
-        let total_lines = bytes.iter().filter(|&&b| b == b'\n').count() as i64;
-        // P3-3：`unchanged` 的语义收敛为「可解析且内容未变化」。此前它统计的是
-        // 「不可解析」文件（vue/svelte/cxx 等无 parser 的扩展名），首次全建就会
-        // 返回 unchanged>0，与 Python 契约（unchanged = 未变化文件）相反。
-        // 不可解析文件改计入新的 skipped_unparsed，文件清单仍照常登记。
-        let class = classify_build_graph_file(
+        pending.push(PendingFile {
+            rel,
+            abs_path: path,
+            mtime,
             parsed,
-            stored.as_ref().map(|(h, st, _)| (h.as_str(), st.as_str())),
-            &hash,
-        );
-        // file_contents upsert
-        conn.execute(
-            "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![hash, infer_language(&rel), total_lines, now],
-        )
-        .map_err(|e| DaemonRpcError::internal_error(format!("file_contents upsert: {e}")))?;
-        // 先 upsert file_instances 拿真实 id（语言可解析时标记 parsed），再做符号落库
-        let fid = upsert_file_instance(
-            &conn, workspace_id, &rel, &path, &hash, mtime, total_lines, parsed,
-        )?;
-        if parsed && class == BuildGraphFileClass::Inserted {
-            // P3-1：重解析前先记录旧符号名——parse_and_store_symbols 内部会把
-            // 其它文件指向这些旧 id 的已解析边降级为 raw，这些名字必须参与重算。
-            collect_file_symbol_names(&conn, fid, &mut affected_names)?;
-            // P0-CR1：符号抽取随建图落库（tree-sitter 管线）
-            let parse_result = parse_and_store_symbols(
-                &conn, fid, &path, &rel, &hash, mtime, total_lines,
-            );
-            match parse_result {
-                Ok((sym, calls)) => {
-                    symbol_total += sym;
-                    call_total += calls;
+            prev_hash,
+            prev_status,
+        });
+    }
+
+    // ===== 阶段一：IO 读线程 + 解析 worker 池 → 每 worker jsonl 分片 =====
+    let run_id = now as u64;
+    let shard_dir = build_journal::shard_dir(&root_canon);
+    // 回收上次阶段一中途 kill 留下的过期分片（run_id 距今 >24h）
+    build_journal::cleanup_expired_shards(&shard_dir, run_id, build_journal::DEFAULT_SHARD_MAX_AGE)
+        .map_err(|e| DaemonRpcError::internal_error(format!("过期分片清理失败: {e}")))?;
+
+    let n_workers = cfg
+        .parse_threads
+        .min(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
+        .max(1);
+    let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<ParseJob>(cfg.channel_depth);
+    let job_rx = std::sync::Arc::new(std::sync::Mutex::new(job_rx));
+    let fatal: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+
+    // IO 读线程：读文件 + sha256 + 行数 → 有界 channel（背压：解析慢时阻塞读侧）
+    let reader_handle = {
+        let fatal = std::sync::Arc::clone(&fatal);
+        std::thread::spawn(move || {
+            for f in pending {
+                if get_fatal(&fatal).is_some() {
+                    break;
                 }
-                Err(e) => {
-                    // P3-1：解析失败时 file_instances 已被 upsert 成 parsed。
-                    // 若不回退，下一轮的 mtime 快路径会把这行当成「已解析」永久
-                    // 跳过（旧实现每次全量重解析天然自愈，增量化后必须显式补偿）。
-                    let _ = conn.execute(
-                        "UPDATE file_instances SET status = 'pending', last_parsed = 0 \
-                         WHERE id = ?1",
-                        rusqlite::params![fid],
-                    );
-                    return Err(e);
+                // 读文件失败：不产生事件（保持旧行为：该文件仅计入 scanned/seen）
+                let bytes = match std::fs::read(&f.abs_path) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let hash = sha256_hex(&bytes);
+                let total_lines = bytes.iter().filter(|&&b| b == b'\n').count() as i64;
+                drop(bytes);
+                let job = ParseJob {
+                    rel: f.rel,
+                    abs_path: f.abs_path,
+                    hash,
+                    mtime: f.mtime,
+                    total_lines,
+                    parsed: f.parsed,
+                    prev_hash: f.prev_hash,
+                    prev_status: f.prev_status,
+                };
+                if job_tx.send(job).is_err() {
+                    break; // 解析 worker 全部退出（fatal），无需继续读
                 }
             }
-            // 新定义名（其它文件的 raw 边可能因此可解析）+ 本文件新 raw 边名
-            collect_file_symbol_names(&conn, fid, &mut affected_names)?;
-            collect_file_raw_callee_names(&conn, fid, &mut affected_names)?;
+        })
+    };
+
+    // 解析 worker 池：每 worker 顺序 append 自己的分片（无锁；每文件组 flush 一次）
+    let mut worker_handles = Vec::with_capacity(n_workers);
+    for worker_idx in 0..n_workers {
+        let job_rx = std::sync::Arc::clone(&job_rx);
+        let shard_dir = shard_dir.clone();
+        let fatal = std::sync::Arc::clone(&fatal);
+        worker_handles.push(std::thread::spawn(move || -> ParseWorkerStats {
+            let mut stats = ParseWorkerStats::default();
+            let mut writer: Option<build_journal::ShardWriter> = None;
+            loop {
+                // 锁只在取任务时持有（解析不持锁）
+                let job = {
+                    let guard = job_rx.lock().unwrap_or_else(|e| e.into_inner());
+                    guard.recv()
+                };
+                let job = match job {
+                    Ok(job) => job,
+                    Err(_) => break, // channel 关闭，全部任务已处理
+                };
+                if get_fatal(&fatal).is_some() {
+                    break;
+                }
+                if writer.is_none() {
+                    match build_journal::ShardWriter::create(&shard_dir, run_id, worker_idx) {
+                        Ok(w) => writer = Some(w),
+                        Err(e) => {
+                            set_fatal(&fatal, format!("分片创建失败: {e}"));
+                            break;
+                        }
+                    }
+                }
+                // parser panic → error 事件组（等价解析失败语义），不炸 worker
+                let events = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    parse_file_to_events(
+                        &job.rel,
+                        &job.abs_path,
+                        &job.hash,
+                        job.mtime,
+                        job.total_lines,
+                        job.parsed,
+                        job.prev_hash.clone(),
+                        job.prev_status.clone(),
+                    )
+                }))
+                .unwrap_or_else(|p| {
+                    let msg = panic_message(p);
+                    vec![BuildEvent::File {
+                        rel: job.rel.clone(),
+                        hash: job.hash.clone(),
+                        mtime: job.mtime,
+                        total_lines: job.total_lines,
+                        module_path: module_path_of(&job.rel),
+                        parsed: job.parsed,
+                        prev_hash: job.prev_hash.clone(),
+                        prev_status: job.prev_status.clone(),
+                        error: Some(msg),
+                    }]
+                });
+                let mut append_failed = false;
+                {
+                    let w = writer.as_mut().unwrap();
+                    for ev in &events {
+                        if let Err(e) = w.append(ev) {
+                            set_fatal(&fatal, format!("分片写失败（{}）: {e}", job.rel));
+                            append_failed = true;
+                            break;
+                        }
+                    }
+                    if !append_failed && w.flush().is_err() {
+                        set_fatal(&fatal, format!("分片刷盘失败（{}）", job.rel));
+                        append_failed = true;
+                    }
+                }
+                if append_failed {
+                    break;
+                }
+                stats.files += 1;
+                stats.symbols += events
+                    .iter()
+                    .filter(|e| matches!(e, BuildEvent::Sym { .. }))
+                    .count();
+                stats.calls += events
+                    .iter()
+                    .filter(|e| matches!(e, BuildEvent::Call { .. }))
+                    .count();
+            }
+            if let Some(w) = writer.as_mut() {
+                let _ = w.flush();
+            }
+            stats
+        }));
+    }
+
+    // 回收：join 读线程与解析 worker；任一 fatal → 清理本 run 分片并整体失败
+    let _ = reader_handle.join();
+    for handle in worker_handles {
+        match handle.join() {
+            Ok(stats) => {
+                symbol_total += stats.symbols;
+                call_total += stats.calls;
+            }
+            Err(_) => {
+                set_fatal(&fatal, "解析 worker panic".to_string());
+            }
         }
-        match class {
-            BuildGraphFileClass::Inserted => inserted += 1,
-            BuildGraphFileClass::Unchanged => unchanged += 1,
-            BuildGraphFileClass::SkippedUnparsed => skipped_unparsed += 1,
+    }
+    if let Some(err) = get_fatal(&fatal) {
+        for idx in 0..n_workers {
+            let _ = build_journal::remove_shard(&shard_dir.join(build_journal::shard_file_name(
+                run_id, idx,
+            )));
         }
-        if let Some(p) = progress {
-            use std::sync::atomic::Ordering::Relaxed;
-            p.inserted.store(inserted as u64, Relaxed);
-            p.unchanged.store(unchanged as u64, Relaxed);
-            p.skipped_unparsed.store(skipped_unparsed as u64, Relaxed);
-        }
+        return Err(DaemonRpcError::internal_error(err));
+    }
+
+    // ===== 阶段二：单写者按批合并事务导入（批边界只在文件组边界切） =====
+    let shard_paths: Vec<PathBuf> = (0..n_workers)
+        .map(|i| shard_dir.join(build_journal::shard_file_name(run_id, i)))
+        .collect();
+    import_shards(
+        conn,
+        workspace_id,
+        &root_canon,
+        now,
+        &shard_paths,
+        cfg.import_batch_files,
+        cfg.import_batch_events,
+        &mut affected_names,
+        &mut inserted,
+        &mut unchanged,
+        &mut skipped_unparsed,
+        progress,
+    )?;
+
+    // 导入成功 → 删除本 run 分片（临时中间产物，导入即删）
+    for p in &shard_paths {
+        let _ = build_journal::remove_shard(p);
     }
     // P3-1 删除感知：库里存在、磁盘上已消失的文件清理图行。
     // 以「磁盘上是否真的不存在」为准（而非「本轮是否扫描到」），这样
@@ -5472,5 +6349,270 @@ mod tests {
             "根内普通路径（含尚不存在的前缀）必须放行"
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ==================== REQ-06：commit_batch / import_shards 单测 ====================
+
+    /// 临时库：fresh schema + 一个 workspace，返回 (tempdir, conn, ws_id, root_canon)。
+    fn setup_pipeline_db(tag: &str) -> (tempfile::TempDir, rusqlite::Connection, i64, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
+             VALUES (?1, ?2, 0.0, 1, 'pipeline-test')",
+            rusqlite::params![tag, tmp.path().to_string_lossy().to_string()],
+        )
+        .unwrap();
+        let ws_id = conn.last_insert_rowid();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        (tmp, conn, ws_id, root)
+    }
+
+    /// 构造一个文件事件组：1 个 File + n 个 Sym + m 个 Call。
+    fn pipeline_file_group(
+        rel: &str,
+        symbol_count: usize,
+        call_count: usize,
+    ) -> Vec<build_journal::BuildEvent> {
+        use build_journal::BuildEvent::{Call, File, Sym};
+        let hash = format!("hash-{rel}");
+        let mut group = vec![File {
+            rel: rel.to_string(),
+            hash: hash.clone(),
+            mtime: 1000.0,
+            total_lines: 50,
+            module_path: String::new(),
+            parsed: true,
+            prev_hash: None,
+            prev_status: None,
+            error: None,
+        }];
+        for i in 0..symbol_count {
+            let local_id = i as u32 + 1;
+            group.push(Sym {
+                rel: rel.to_string(),
+                hash: hash.clone(),
+                symbol_hash: format!("{rel}-h{i}"),
+                name: format!("sym{i}"),
+                kind: "function".to_string(),
+                content: format!("def sym{i}(): pass"),
+                signature: format!("def sym{i}()"),
+                has_comment: false,
+                qualified_name: format!("{rel}::sym{i}"),
+                visibility: "public".to_string(),
+                start_line: i as u32 + 1,
+                end_line: i as u32 + 2,
+                module_path: String::new(),
+                local_id,
+                depth: -1,
+            });
+        }
+        for i in 0..call_count {
+            group.push(Call {
+                rel: rel.to_string(),
+                hash: hash.clone(),
+                caller_local_id: if symbol_count > 0 { Some(1) } else { None },
+                caller_name: "sym0".to_string(),
+                callee_name: format!("callee{i}"),
+                callee_module: String::new(),
+                call_line: 10 + i as u32,
+                is_cross_file: false,
+            });
+        }
+        group
+    }
+
+    fn count_rows(conn: &rusqlite::Connection, table: &str) -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_commit_batch_normal_multi_file() {
+        let (_tmp, conn, ws_id, root) = setup_pipeline_db("batch_normal");
+        let batch = vec![
+            pipeline_file_group("a.py", 3, 2),
+            pipeline_file_group("b.py", 2, 1),
+        ];
+        let mut affected = BTreeSet::new();
+        let (mut ins, mut unc, mut skip) = (0, 0, 0);
+        commit_batch(&conn, ws_id, &root, 1000.0, &batch, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        assert_eq!(ins, 2, "两文件均 inserted");
+        assert_eq!(count_rows(&conn, "symbols"), 5);
+        assert_eq!(count_rows(&conn, "calls"), 3);
+        assert_eq!(count_rows(&conn, "file_instances"), 2);
+        assert!(affected.contains("sym0"), "affected_names 应收集符号名");
+    }
+
+    #[test]
+    fn test_commit_batch_error_event_pending_and_err() {
+        let (_tmp, conn, ws_id, root) = setup_pipeline_db("batch_error");
+        use build_journal::BuildEvent::File;
+        let good = pipeline_file_group("good.py", 1, 0);
+        let bad = vec![File {
+            rel: "bad.py".to_string(),
+            hash: "hash-bad".to_string(),
+            mtime: 1000.0,
+            total_lines: 5,
+            module_path: String::new(),
+            parsed: true,
+            prev_hash: None,
+            prev_status: None,
+            error: Some("parse boom".to_string()),
+        }];
+        let batch = vec![good, bad];
+        let mut affected = BTreeSet::new();
+        let (mut ins, mut unc, mut skip) = (0, 0, 0);
+        let err = commit_batch(&conn, ws_id, &root, 1000.0, &batch, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap_err();
+        assert!(format!("{err}").contains("parse boom"), "应返回解析失败错误: {err}");
+        // 失败点之前的文件已提交（等价旧行为）
+        assert_eq!(count_rows(&conn, "symbols"), 1, "good.py 的符号已提交");
+        // error 文件做 pending 补偿：file_instances 登记且 status='pending'
+        let status: String = conn.query_row(
+            "SELECT status FROM file_instances WHERE workspace_id = ?1 AND rel_path = 'bad.py'",
+            rusqlite::params![ws_id], |r| r.get(0)).unwrap();
+        assert_eq!(status, "pending");
+    }
+
+    /// 写 n 个文件组到单个分片（模拟 worker 分片）。
+    fn write_shard(dir: &std::path::Path, run_id: u64, worker: usize, groups: &[Vec<build_journal::BuildEvent>]) -> std::path::PathBuf {
+        let mut w = build_journal::ShardWriter::create(dir, run_id, worker).unwrap();
+        for g in groups {
+            for e in g {
+                w.append(e).unwrap();
+            }
+            w.flush().unwrap();
+        }
+        let p = w.path().to_path_buf();
+        p
+    }
+
+    #[test]
+    fn test_import_shards_normal_and_missing_shard() {
+        let (_tmp, conn, ws_id, root) = setup_pipeline_db("import_normal");
+        let shard_dir = _tmp.path().join("build-tmp");
+        std::fs::create_dir_all(&shard_dir).unwrap();
+        let s0 = write_shard(&shard_dir, 2000, 0, &[
+            pipeline_file_group("a.py", 2, 1),
+            pipeline_file_group("b.py", 1, 0),
+        ]);
+        // worker 1 无分片（该 worker 无任务）→ 应跳过
+        let missing = shard_dir.join(build_journal::shard_file_name(2000, 1));
+        assert!(!missing.exists());
+        let shards = vec![s0, missing];
+        let mut affected = BTreeSet::new();
+        let (mut ins, mut unc, mut skip) = (0, 0, 0);
+        import_shards(&conn, ws_id, &root, 1000.0, &shards, 200, 5000, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        assert_eq!(ins, 2);
+        assert_eq!(count_rows(&conn, "symbols"), 3);
+        assert_eq!(count_rows(&conn, "calls"), 1);
+    }
+
+    #[test]
+    fn test_import_shards_batch_boundary() {
+        let (_tmp, conn, ws_id, root) = setup_pipeline_db("import_boundary");
+        let shard_dir = _tmp.path().join("build-tmp");
+        std::fs::create_dir_all(&shard_dir).unwrap();
+        let groups: Vec<Vec<build_journal::BuildEvent>> = (0..5)
+            .map(|i| pipeline_file_group(&format!("f{i}.py"), 2, 1))
+            .collect();
+        let s0 = write_shard(&shard_dir, 3000, 0, &groups);
+        let mut affected = BTreeSet::new();
+        let (mut ins, mut unc, mut skip) = (0, 0, 0);
+        // batch_files=2 → 5 组分 3 批（2+2+1），结果应与单批一致
+        import_shards(&conn, ws_id, &root, 1000.0, &[s0], 2, 5000, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        assert_eq!(ins, 5);
+        assert_eq!(count_rows(&conn, "symbols"), 10);
+        assert_eq!(count_rows(&conn, "calls"), 5);
+    }
+
+    /// 功能等价对账（plan §Verification 1）：同一组源文件分别走
+    /// 旧路径（parse_and_store_symbols 逐文件直接落库）与新路径
+    /// （parse_file_to_events → commit_batch 批量导入），对账：
+    /// symbols 数、calls 数（resolved/raw）、file_instances 数 + status 分布。
+    #[test]
+    fn test_pipeline_equivalence_old_vs_new() {
+        let sources: Vec<(&str, &str)> = vec![
+            ("a.py", "def helper():\n    return 1\n\ndef add(x, y):\n    return x + y\n"),
+            ("b.py", "def caller():\n    return helper()\n"),
+            ("c.py", "def run():\n    z = add(1, 2)\n    return caller()\n"),
+        ];
+
+        // ---------- 旧路径 ----------
+        let (_tmp_old, conn_old, ws_old, root_old) = setup_pipeline_db("equiv_old");
+        for (rel, code) in &sources {
+            let src = root_old.join(rel);
+            std::fs::write(&src, code).unwrap();
+            let hash = sha256_hex(&std::fs::read(&src).unwrap());
+            conn_old.execute(
+                "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
+                 VALUES (?1, 'python', 5, 0.0)",
+                rusqlite::params![hash],
+            ).unwrap();
+            let fid = upsert_file_instance(&conn_old, ws_old, rel, &src, &hash, 0.0, 5, true).unwrap();
+            parse_and_store_symbols(&conn_old, fid, &src, rel, &hash, 0.0, 5).unwrap();
+        }
+        resolve_raw_calls(&conn_old, ws_old).unwrap();
+
+        // ---------- 新路径 ----------
+        let (_tmp_new, conn_new, ws_new, root_new) = setup_pipeline_db("equiv_new");
+        let mut batch: Vec<Vec<build_journal::BuildEvent>> = Vec::new();
+        for (rel, code) in &sources {
+            let src = root_new.join(rel);
+            std::fs::write(&src, code).unwrap();
+            let hash = sha256_hex(&std::fs::read(&src).unwrap());
+            let group = parse_file_to_events(rel, &src, &hash, 0.0, 5, true, None, None);
+            batch.push(group);
+        }
+        let mut affected = BTreeSet::new();
+        let (mut ins, mut unc, mut skip) = (0, 0, 0);
+        commit_batch(&conn_new, ws_new, &root_new, 0.0, &batch, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        resolve_raw_calls(&conn_new, ws_new).unwrap();
+
+        // ---------- 对账 SQL ----------
+        let snapshot = |conn: &rusqlite::Connection| -> (i64, i64, i64, i64, Vec<(String, i64)>) {
+            let symbols: i64 = count_rows(conn, "symbols");
+            let calls: i64 = count_rows(conn, "calls");
+            let resolved: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM calls WHERE callee_id > 0", [], |r| r.get(0)).unwrap();
+            let raw: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM calls WHERE callee_id = 0", [], |r| r.get(0)).unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT status, COUNT(*) FROM file_instances GROUP BY status ORDER BY status").unwrap();
+            let status: Vec<(String, i64)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap().map(|r| r.unwrap()).collect();
+            (symbols, calls, resolved, raw, status)
+        };
+        let old_snap = snapshot(&conn_old);
+        let new_snap = snapshot(&conn_new);
+        eprintln!("EQUIV_OLD=(symbols,calls,resolved,raw,status)={old_snap:?}");
+        eprintln!("EQUIV_NEW=(symbols,calls,resolved,raw,status)={new_snap:?}");
+        assert_eq!(old_snap, new_snap,
+            "功能等价对账失败：旧={:?} 新={:?}（symbols,calls,resolved,raw,status分布）",
+            old_snap, new_snap);
+        //  sanity：确有符号与跨文件解析边，避免空对比假通过
+        assert!(old_snap.0 > 0, "应有符号");
+        assert!(old_snap.2 > 0, "应有 resolved 调用边");
+    }
+
+    #[test]
+    fn test_import_shards_truncated_tail_dropped() {
+        let (_tmp, conn, ws_id, root) = setup_pipeline_db("import_truncated");
+        let shard_dir = _tmp.path().join("build-tmp");
+        std::fs::create_dir_all(&shard_dir).unwrap();
+        let s0 = write_shard(&shard_dir, 4000, 0, &[pipeline_file_group("a.py", 1, 0)]);
+        // 追加半行（无换行符）模拟崩溃截断
+        let mut bytes = std::fs::read(&s0).unwrap();
+        let partial = serde_json::to_string(&pipeline_file_group("b.py", 1, 0)[0]).unwrap();
+        bytes.extend_from_slice(&partial.as_bytes()[..partial.len() / 2]);
+        std::fs::write(&s0, bytes).unwrap();
+        let mut affected = BTreeSet::new();
+        let (mut ins, mut unc, mut skip) = (0, 0, 0);
+        // 截断尾丢弃，不报错；只有 a.py 完整导入
+        import_shards(&conn, ws_id, &root, 1000.0, &[s0], 200, 5000, &mut affected, &mut ins, &mut unc, &mut skip, None).unwrap();
+        assert_eq!(ins, 1, "半行组丢弃，只导入完整组");
+        assert_eq!(count_rows(&conn, "symbols"), 1);
     }
 }
