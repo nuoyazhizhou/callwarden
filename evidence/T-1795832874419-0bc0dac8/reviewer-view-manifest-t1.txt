@@ -1,0 +1,15 @@
+# Reviewer view manifest — T-1795832874419-0bc0dac8 (blind review input view)
+reviewed_head: 7584807bb4b26314b47819b4142b7ccb5f71e6b5
+note: files reviewed at commit 7584807 working tree state (identical to committed state; resources.rs untouched in worktree)
+
+100644 blob 0493ebe69dd37634aac424dc4fab4bb19754615b	.design/daemon-resource-governance/ac-map.md
+100644 blob b94d2bfba5edcbf931de4a43aec6186e0ccc7e92	.design/daemon-resource-governance/contracts.md
+100644 blob b2688df2bda26d2c43f1dd85ac0b60b186c15c97	.design/daemon-resource-governance/payloads/t1-steps.json
+100644 blob 1c6b78a1d8b8d481e077db054d4cecabc18b2e15	.design/daemon-resource-governance/symbol-anchor.md
+100644 blob c57fcd289ec9e39244bf7fad8bc13554216d83c9	evidence/T-1795832874419-0bc0dac8/t1-evidence.md
+100644 blob a3bd2c05406191a475c1a4cb8da41e3961d2288a	rust_ext/Cargo.toml
+100644 blob 48f5d0e78dcc98288ab5521e915fe8531084221d	rust_ext/src/daemon/build_journal.rs
+100644 blob 0ff03f700a59b216b55023202eaeb56542f08633	rust_ext/src/daemon/config.rs
+100644 blob 9333bd3b5415bb0276e1a7cc8117142b5452cdd0	rust_ext/src/daemon/mod.rs
+100644 blob afdc2ff09132c278ea7d029735b2cefa9767b1a0	rust_ext/src/daemon/resources.rs
+100644 blob a83d649b84130ed8da75a7984cf1c9824011538c	server/daemon_config.py

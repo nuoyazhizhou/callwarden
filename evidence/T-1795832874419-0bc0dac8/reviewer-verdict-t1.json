@@ -1,0 +1,62 @@
+{
+  "task_id": "T-1795832874419-0bc0dac8",
+  "review": "T1 独立评审（第 1 轮，结论 PASS）",
+  "reviewer": {
+    "agent_id": "callwarden-alm-reviewer",
+    "agent_instance_id": "callwarden-alm-reviewer",
+    "session_id": "sess-reviewer-alm01-20261128",
+    "model_id": "glm",
+    "role": "reviewer"
+  },
+  "reviewed_commits": ["26cfda3", "98a9255", "f3c0f42", "6171641", "7584807", "dc528f4"],
+  "scope_files": [
+    "rust_ext/src/daemon/resources.rs",
+    "rust_ext/src/daemon/mod.rs",
+    "rust_ext/Cargo.toml",
+    "evidence/T-1795832874419-0bc0dac8/t1-evidence.md"
+  ],
+  "scope_check": "提交链逐 commit --stat 核对：resources.rs 1213 行（C1.1-C1.4 全部实现）+ mod.rs +4（pub mod resources 接线）+ Cargo.toml +5（windows-sys +2 feature，无新依赖）+ evidence 文档。resources.rs 为纯新增模块，grep 全 rust_ext/src 仅 mod.rs:123 一处引用，生产调用方为零（T2 才接线，符合本单独立模块+单测定位）。并行会话提交（17ab257/5216c43/9e7459d/f56ccd9）与本链文件面零交集，未触碰。",
+  "verification": [
+    {
+      "check": "契约逐条核对（contracts.md C1.1-C1.4 vs 实现）",
+      "result": "PASS：C1.1 七字段+explicit_keys 与 Default 对齐（32/4/1800/2GB/0/true/Auto）；C1.2 容错解析照 BuildPipelineConfig::from_toml_str 先例（config_path 同源且有同源断言测试）；C1.3 三平台 fail-soft 侦测（Windows GlobalMemoryStatusEx 实测 RAM>0、Unix /proc/meminfo、IOCTL/rotational 磁盘）；C1.4 纯函数映射两档+HDD 封顶+显式键跳过+RAM=0 走档1，逐字对齐"
+    },
+    {
+      "check": "测试独立复跑",
+      "result": "PASS：CARGO_BUILD_JOBS=2 cargo test --manifest-path rust_ext/Cargo.toml --lib daemon::resources → 24 passed; 0 failed; 0 ignored（复现 executor 自报，commit 7584807 工作树状态）"
+    },
+    {
+      "check": "fail-soft 扫描",
+      "result": "PASS：非测试代码零 unwrap/expect/panic!/todo!（expect 仅存在于 #[cfg(test)]），所有 IO/解析/侦测失败路径均 WARN+回退，不 panic 不阻断"
+    },
+    {
+      "check": "AC-RG-01-2 显式覆盖神圣",
+      "result": "PASS：ac_rg_01_2_explicit_overrides_mapping 跨步断言（from_toml_str 显式 1G/6 → apply_profile 档1 后仍保持）；explicit_keys 出现即记录（含类型错键），映射永不触碰显式键，语义自洽"
+    },
+    {
+      "check": "AC-RG-01-3 损坏容错",
+      "result": "PASS：损坏 toml→整体回退默认+WARN；单键非法/类型错→仅该键回退（隔离测试），启动不失败"
+    },
+    {
+      "check": "AC-RG-01-4 侦测容错",
+      "result": "PASS：纯函数单测（parse_proc_meminfo_fail_soft/bus_type/rotational）+ 当前平台 smoke（不 panic，Windows RAM>0 断言通过）"
+    },
+    {
+      "check": "口径对齐（Python _is_valid_size_string）",
+      "result": "PASS：K/M/G/T 大小写不敏感、拒小数/负数/溢出；拒 0 为有记录的加固（防字节预算退化为常驱逐），memory_soft_limit_bytes=0 合法（禁用语义）"
+    }
+  ],
+  "clause_results": [
+    {"clause": "影响半径封闭", "result": "pass", "evidence": "纯新增模块零生产调用方；mod.rs/Cargo.toml 纯增量无既有符号签名变化；全量编译+测试通过无回归面"},
+    {"clause": "偏差裁决 5+3 项", "result": "pass", "evidence": "executor 5 项自报偏差全部属实且均非代码缺陷（Cargo.toml 白名单外=流程登记事项/不复制 disk_type=符合 C1.4 字面/8GB 两档按卡面/缺文件静默不违反 AC-RG-01-3/两键不映射=C1.4 未列）；3 项请复核点中档2 soft 公式按契约字面无偏差（max(2GB,RAM×20%) 两档同式为设计基线原文）、显式 disk_type 优先与 AC-RG-01-2 自洽、Unix 未实测如实登记"}
+  ],
+  "findings": [
+    {"severity": "suggestion", "location": "26cfda3 rust_ext/src/daemon/mod.rs:121-123", "summary": "mod.rs +4 接线同属步骤 target_file 白名单外文件，executor 偏差登记此前仅列 Cargo.toml。已由 executor 补记（dc528f4，evidence 偏差登记节第 6 条）——已关闭。"},
+    {"severity": "suggestion", "location": "resources.rs:484-503,619-647 #[cfg(unix)] 分支", "summary": "Unix 侦测分支在 Windows 不参与编译，未在真实 Linux 编译运行验证（纯函数单测覆盖平台中立逻辑）。建议 T2 验收前跑一次 Linux cargo check。"},
+    {"severity": "nit", "location": "resources.rs:217-223 vs build_journal.rs:340-347", "summary": "from_toml_str 顶层优先语义与先例的边界差异：先例『首个合法值胜出』（顶层类型错落 [build] 表），实现『顶层出现即胜出』（顶层类型错回退默认、忽略表内合法值）。仅病态场景有差异且 WARN 明示回退值，行为可观测。建议改注释或对齐语义，不阻塞。"},
+    {"severity": "nit", "location": "resources.rs:656-663 bus_type_to_disk_type", "summary": "Windows 侧 BusType 仅 NVMe(17)→Ssd、其余 Unknown（step#2 卡面原文即如此规定），Windows 上 SATA 机械盘不会自动触发 HDD 封顶，自动封顶仅剩显式 disk_type='hdd' 一条路。属卡面固有口径非实现偏差，提请设计层知悉（O2 范围）。"},
+    {"severity": "nit", "location": "apply_profile tests", "summary": "cache_max_workspaces/memory_soft_limit_bytes 的显式跳过无直接断言（只直接断言了 cache_max_bytes/build_parse_threads），四键逻辑同构风险低，可 T2 补一条。"}
+  ],
+  "verdict": "PASS",
+  "notes": "无 🔴 blocker。评审以无 lease 只读方式完成（评审时 executor lease 仍 active；入库前已由 executor 释放 L-5cf369b6af72ddd6，task 转 review_pending/current_role=reviewer）。未改任何代码；未动任务状态；未借用 executor 身份。"
+}
