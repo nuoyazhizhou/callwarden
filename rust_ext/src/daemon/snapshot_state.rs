@@ -318,10 +318,6 @@ impl SnapshotDaemonState {
 
         // ACL（复用 owned_workspace 现状；失败原样传播 workspace_forbidden）
         let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-        let registry_rowid = workspace
-            .get("workspace_id")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| DaemonRpcError::internal_error("workspace_id 字段缺失或非数值"))?;
         let client_view_root = workspace
             .get("client_view_root")
             .and_then(Value::as_str)
@@ -333,11 +329,76 @@ impl SnapshotDaemonState {
             &self.base.codegraph_db_path_template,
             workspace_instance_id,
         )?;
-        let workspace_id_num = resolve_true_workspace_id(
-            db_path.to_str().unwrap_or(""),
-            client_view_root,
-            registry_rowid,
-        );
+
+        // 前置判据 + 真实 id 解析（T4，严格模式）：
+        // client_view_root 必须在主库 workspaces 表严格匹配到行（复刻
+        // resolve_true_workspace_id 的规范化口径，但**无 fallback**），
+        // 且该 id 在 file_instances 有非 archived 数据。两条件缺一 =
+        // 该 ws 从未在此库发布过 → snapshot_not_ready（不凭空构建空快照
+        // 掩盖「未发布」状态，也不触碰用户库 WAL）。
+        //
+        // 为什么不能用 resolve_true_workspace_id 的 fallback rowid：
+        // 测试/新 ws 的 registry ROWID 与真实主库 workspace_id 空间无关联，
+        // fallback 会碰撞到无关 ws 的数据（如 rowid=1 命中生产大库），
+        // 导致「未发布」被误判为「可重建」。
+        let workspace_id_num = {
+            let strict = (|| -> Option<i64> {
+                let conn = Connection::open_with_flags(
+                    db_path.to_str().unwrap_or(""),
+                    OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                )
+                .ok()?;
+                let key = normalize_path_key(client_view_root);
+                if key.is_empty() {
+                    return None;
+                }
+                let key_lower = key.to_lowercase();
+                let key_hash_prefix = format!("{}#", key_lower);
+                let mut stmt = conn.prepare("SELECT id, root_path FROM workspaces").ok()?;
+                let rows = stmt
+                    .query_map([], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .ok()?;
+                let mut matched: Option<i64> = None;
+                for row in rows.flatten() {
+                    let (id, root_path) = row;
+                    let norm = normalize_path_key(&root_path).to_lowercase();
+                    if norm == key_lower || norm.starts_with(&key_hash_prefix) {
+                        matched = Some(id);
+                        break;
+                    }
+                }
+                let ws_id = matched?;
+                let data_rows: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM file_instances \
+                         WHERE workspace_id = ?1 AND status != 'archived'",
+                        params![ws_id],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .unwrap_or(0);
+                if data_rows > 0 {
+                    Some(ws_id)
+                } else {
+                    None
+                }
+            })();
+            match strict {
+                Some(id) => id,
+                None => {
+                    eprintln!(
+                        "[snapshot_state] [INFO] 冷加载: workspace {} 主库无匹配 \
+                         file_instances 数据（未发布过），不重建",
+                        workspace_instance_id
+                    );
+                    return Err(DaemonRpcError::new(
+                        "snapshot_not_ready",
+                        format!("workspace {workspace_instance_id} 未发布 snapshot"),
+                    ));
+                }
+            }
+        };
 
         // 生产发布路径（复用 A2）：manager 单例（get_or_create）+
         // build_and_publish_blocking（内部含 wal_checkpoint + load + publish）。
@@ -409,15 +470,27 @@ impl SnapshotDaemonState {
             .get("client_view_root")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let db_path = self
-            .get_snapshot_manager(workspace_instance_id)
-            .and_then(|manager| manager.current_query_db_path())
-            .ok_or_else(|| {
-                DaemonRpcError::new(
-                    "snapshot_not_ready",
-                    format!("workspace {workspace_instance_id} 未发布 snapshot"),
-                )
-            })?;
+        let db_path = {
+            // T4/REQ-RG-02（AC-RG-02-2）：查询冷加载自愈——cache miss 时先走
+            // get_store_or_load 单飞重建（内部复用 ACL/db path/生产发布路径），
+            // 驱逐后查询不再直接失败。ACL 已在前置 owned_workspace 校验，
+            // 此处重复校验幂等无害。失败（ACL/snapshot_not_ready）原样传播。
+            if self
+                .get_snapshot_manager(workspace_instance_id)
+                .and_then(|m| m.current_store())
+                .is_none()
+            {
+                self.get_store_or_load(peer, workspace_instance_id)?;
+            }
+            self.get_snapshot_manager(workspace_instance_id)
+                .and_then(|manager| manager.current_query_db_path())
+                .ok_or_else(|| {
+                    DaemonRpcError::new(
+                        "snapshot_not_ready",
+                        format!("workspace {workspace_instance_id} 未发布 snapshot"),
+                    )
+                })?
+        };
         let conn = Connection::open_with_flags(
             db_path.as_str(),
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -1678,12 +1751,8 @@ impl DaemonStateExt for SnapshotDaemonState {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
 
-        let store = self.get_store(workspace_instance_id).ok_or_else(|| {
-            DaemonRpcError::new(
-                "snapshot_not_ready",
-                format!("workspace {} 未发布 snapshot", workspace_instance_id),
-            )
-        })?;
+        // T4/REQ-RG-02：查询路径冷加载自愈（miss 时单飞重建，AC-RG-02-2）
+        let store = self.get_store_or_load(peer, workspace_instance_id)?;
 
         let mut stats = store.stats_rust();
         // 附加 snapshot 元信息
@@ -2353,12 +2422,8 @@ impl DaemonStateExt for SnapshotDaemonState {
         let limit = get_int_param_or(params, "limit", 20) as usize;
 
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-        let store = self.get_store(workspace_instance_id).ok_or_else(|| {
-            DaemonRpcError::new(
-                "snapshot_not_ready",
-                format!("workspace {} 未发布 snapshot", workspace_instance_id),
-            )
-        })?;
+        // T4/REQ-RG-02：查询路径冷加载自愈（miss 时单飞重建，AC-RG-02-2）
+        let store = self.get_store_or_load(peer, workspace_instance_id)?;
 
         let sym_ids = store.search_symbols_rust(query, kind, limit);
         let mut results = Vec::with_capacity(sym_ids.len());
@@ -2386,12 +2451,8 @@ impl DaemonStateExt for SnapshotDaemonState {
         let qualified_name = get_str_param(params, "qualified_name");
 
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-        let store = self.get_store(workspace_instance_id).ok_or_else(|| {
-            DaemonRpcError::new(
-                "snapshot_not_ready",
-                format!("workspace {} 未发布 snapshot", workspace_instance_id),
-            )
-        })?;
+        // T4/REQ-RG-02：查询路径冷加载自愈（miss 时单飞重建，AC-RG-02-2）
+        let store = self.get_store_or_load(peer, workspace_instance_id)?;
 
         let symbols = store
             .symbols_table()
@@ -2472,12 +2533,8 @@ impl DaemonStateExt for SnapshotDaemonState {
         let qualified_name = get_str_param(params, "qualified_name");
 
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-        let store = self.get_store(workspace_instance_id).ok_or_else(|| {
-            DaemonRpcError::new(
-                "snapshot_not_ready",
-                format!("workspace {} 未发布 snapshot", workspace_instance_id),
-            )
-        })?;
+        // T4/REQ-RG-02：查询路径冷加载自愈（miss 时单飞重建，AC-RG-02-2）
+        let store = self.get_store_or_load(peer, workspace_instance_id)?;
 
         let symbols = store
             .symbols_table()
@@ -2666,12 +2723,8 @@ impl DaemonStateExt for SnapshotDaemonState {
         let max_depth = get_int_param_or(params, "max_depth", 5).max(0) as usize;
 
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-        let store = self.get_store(workspace_instance_id).ok_or_else(|| {
-            DaemonRpcError::new(
-                "snapshot_not_ready",
-                format!("workspace {} 未发布 snapshot", workspace_instance_id),
-            )
-        })?;
+        // T4/REQ-RG-02：查询路径冷加载自愈（miss 时单飞重建，AC-RG-02-2）
+        let store = self.get_store_or_load(peer, workspace_instance_id)?;
 
         let edges = store.call_chain_down_rust(qualified_name, max_depth);
         let results: Vec<Value> = edges
@@ -2750,12 +2803,8 @@ impl DaemonStateExt for SnapshotDaemonState {
     ) -> Result<Value, DaemonRpcError> {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-        let store = self.get_store(workspace_instance_id).ok_or_else(|| {
-            DaemonRpcError::new(
-                "snapshot_not_ready",
-                format!("workspace {} 未发布 snapshot", workspace_instance_id),
-            )
-        })?;
+        // T4/REQ-RG-02：查询路径冷加载自愈（miss 时单飞重建，AC-RG-02-2）
+        let store = self.get_store_or_load(peer, workspace_instance_id)?;
 
         let limit = get_int_param_or(params, "limit", 20).max(0) as usize;
         let detail = params
@@ -2794,12 +2843,8 @@ impl DaemonStateExt for SnapshotDaemonState {
     ) -> Result<Value, DaemonRpcError> {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-        let store = self.get_store(workspace_instance_id).ok_or_else(|| {
-            DaemonRpcError::new(
-                "snapshot_not_ready",
-                format!("workspace {} 未发布 snapshot", workspace_instance_id),
-            )
-        })?;
+        // T4/REQ-RG-02：查询路径冷加载自愈（miss 时单飞重建，AC-RG-02-2）
+        let store = self.get_store_or_load(peer, workspace_instance_id)?;
 
         let cycles = store.detect_cycles_rust();
         let results: Vec<Value> = cycles
