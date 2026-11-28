@@ -40,6 +40,7 @@
 3. **8GB 档口径差异**：派工口径提过「8GB→减半」，但任务卡与 contracts.md C1.4 只有 RAM<24GB / ≥24GB 两档。**按卡面两档实现**，8GB 主机走档1（512MB/8/2），无第三档。
 4. **缺文件静默默认**：C1.2 卡面要求「文件缺失/损坏…回退默认」，实现细分：缺文件=静默（首启常态，避免每次首启 WARN 刷屏；T2 write-once 会补 [resources] 段），损坏/不可读=WARN。语义均为 fail-soft 不阻断。
 5. **idle_evict_secs / build_priority_low 不参与映射**：C1.4 映射规则未列这两键，保持配置值/默认值。
+6. **mod.rs 接线（+4）【评审官 🟡#1 补记】**：`rust_ext/src/daemon/mod.rs` 追加 `pub mod resources;` 模块注册（commit 26cfda3，随 step#0 入库），同属步骤 target_file 白名单之外文件——此前仅登记了 Cargo.toml 一项，此处补记。改动为单行模块声明，无逻辑影响。
 
 ## 边界与未覆盖
 
