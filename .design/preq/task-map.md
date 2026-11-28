@@ -63,11 +63,14 @@
 | F4 | 建单 | P2 🟡 | 无 | fix | `T-1795507699058-41d9fcbc.Step3 fix 回填 commit 0d6fa32 其余 4 文件 changes 记录` | REQ-GAP | `T-1795744095778-a85ae668` |
 | F5 | 建单（低优先级/可选） | P3 💭 | 无 | fix | `host_process_registry.py:compare_with_manifest fix 删除死代码或在 authority_daemon_diagnostic 复用` | REQ-GAP | `T-1795744096454-d0aa2a70` |
 | F6（追加 2026-11-27） | 建单 | P2 🟡 | 与 F3/F5 串行（同测试文件） | fix | `daemon_autostart.py:spawn_http_daemon fix 追加 CREATE_BREAKAWAY_FROM_JOB 带降级 fallback 使自愈 spawn 脱离 job object` | REQ-GAP | `T-1795829524399-0ef7f8ac` |
+| F7（追加 2026-11-28） | 建单 | P2 🟡 | **F6 之后串行**（同 daemon_autostart.py + 测试文件） | fix | `host_process_registry.py:reconcile_stale fix 接入生产周期/启动清理消除崩溃残留永活` | REQ-GAP | `T-1795831521518-0c880ea4` |
 
 - 全部条目 provenance：`finding=F1..F5 / loop=1 / verdict=BLOCKED / source_reviewer=reviewer-roofix-alm01 / root_card=T-1795507699058-41d9fcbc / step=S-1795507699843-70a0bea0`。
 - F6 追加条目 provenance：`finding=F6 / loop=1 / verdict=BLOCKED / source_reviewer=reviewer-roofix-alm01 / root_card=T-1795507699058-41d9fcbc / step=S-1795507699843-70a0bea0`（reviewer 复评 F1 时立的新 finding，归根修卡 D3 scope）。
-- 执行顺序：F1 → F2 → F3/F4（可并行）→ F5（可选）。F2 的 `blocked-by:` 为 description 文本约定，daemon 不强制，须在派工时显式确认 F1 已闭环。
+- F7 追加条目 provenance：`finding=F7 / loop=1 / verdict=BLOCKED / source_reviewer=reviewer-roofix-alm01 / root_card=T-1795507699058-41d9fcbc / step=S-1795507699843-70a0bea0`（reviewer 复评 F3 时立的新 finding，归根修卡 D3 scope；附录 `evidence/T-1795744094756-6b7ea004/f3-evidence.md`，引用时 sha256 以文件当前值为准 `510ac75c…`，team-lead 转述的 `5151a68f…` 为早期版本）。
+- 执行顺序：F1 → F2 → F3/F4（可并行）→ F5（可选）→ F6 → F7。F2 的 `blocked-by:` 为 description 文本约定，daemon 不强制，须在派工时显式确认 F1 已闭环。
 - F6 执行顺序约束：与 F3/F5 **串行**（F6 测试与 F3/F5 改同一个 `tests/test_host_process_registry.py`，避免同文件并发）；F6 与 F3/F4/F5 源文件无冲突（F6 动 daemon_autostart.py 两处 spawn flags + 测试，F3 动 web_gateway.py，F4 动任务记录，F5 动 host_process_registry.py）。
+- F7 执行顺序约束：**F6 之后串行**（F7 与 F6 同改 `server/daemon_autostart.py` + `tests/test_host_process_registry.py`）；F7 与 F3/F4/F5 源文件无冲突（F7 动 daemon_autostart.py 启动清理落点 + web_gateway.py 注释 + f3-evidence.md 更正 + 测试；host_process_registry.py 预期零改动，复用 reconcile_stale 既有签名）。
 - 一条 finding 一张单，**未合并、未改写、未删减** findings 原文。F5 建为低优先级可选单（不并入口径，便于主理人取舍）。
 - **无计划缺陷判定**：F1–F4 均指向实现/治理证据缺口，非契约漏项或 AC 写错或锚定错符号；无需回退 R0/R2/R3。F3 的「书面说明由哪个组件承担」为 finding 原文给出的合规出口，已写入 steps。
 
@@ -162,6 +165,8 @@
 - **O-R4（resolved 2026-11-27）— MCP task_create 数组序列化**：F6 建单改走 `cw task create` CLI 通道（parent-aware + 显式 identity_policy + workspace 配对），绕开 MCP 工具层数组序列化 bug；回执 task_id=`T-1795829524399-0ef7f8ac`，读回验证 3 步 check_items 全为字符串、blocking_reasons=[]、workflow=queued。该工具缺口仍建议登记主理人工具缺口清单（后续 MCP 面修复）。
 - **O-R5（open）— F6 与 F3/F5 同文件串行**：F6 测试与 F3/F5 都可能改 `tests/test_host_process_registry.py`，派工须串行；验证方式：F3/F5 任一闭环后再放 F6，或在 F6 description 已注明的串行约束下由 executor 自律。
 - **O-R6（open）— F6 定级可能升 🔴**：reviewer 定性若实锤 6520/46340 死因即 job 连坐，建议对根修卡升格 🔴（daemon 可用性是 D3 目标本体）；该裁决属 reviewer/adjudicator 权限，planner 仅登记不预设结论。验证方式：F6 整改中复现「IDE job object 内 spawn 被回收」证据后由 reviewer 复核定级。
+- **O-R7（open）— F7 与 F6 同文件串行派工**：F7 与 F6 同改 `server/daemon_autostart.py` + `tests/test_host_process_registry.py`，F7 须排 F6（`T-1795829524399-0ef7f8ac`）之后；验证方式：F6 回执状态闭环后派工 F7。
+- **O-R8（open）— F7 选型留痕与①周期清理备选**：F7 选 reviewer 修正方向②「启动时 reconcile 一次」（落点 `spawn_http_daemon` 临界区，覆盖「重启清理」+长期运行积压）；①周期清理（Rust watchdog/Python 常驻循环）列为备选，因更重（需常驻循环/跨语言）暂不纳入本单。若长效 daemon 永不重启场景被实锤为高频，①是否补入由 reviewer 复核 F7 整改时裁决。验证方式：F7 整改 result 留痕选型理由 + reviewer 复核。
 
 ## 16. 本轮边界声明
 
@@ -206,3 +211,44 @@ planner 本轮**未**写生产代码、**未**改判 BLOCKED、**未**动 `task.
 ## 19. F6 追加边界声明
 
 planner 本轮 F6 建单**未**写生产代码、**未**改判 BLOCKED/🟡 定级、**未**动 `task.apply`/`task.close`/`task.supersede`、**未**认领/lease 步骤、**未**改写上方历史行；仅追加 F6 行（§14 表）+ §17 建单回执 / §18 payload 存档 + §15/§16 未决项与边界更新 + 本节声明。
+
+---
+
+# F7 追加建单（BLOCKED loop=1 新 finding）— 2026-11-28 planner（蓝图远）
+
+> 本节为**追加**记录，上方 §1–§19 历史行保持原样，不覆盖、不重排。
+> 背景：reviewer 复评 F3 时立新 finding **F7**（附录 `evidence/T-1795744094756-6b7ea004/f3-evidence.md`），按分岔流程由 planner 建独立整改单；executor 当前 F5 刚完成、F6 待做，F7 排 F6 之后。
+> planner 身份沿用已注册：`agent_id=planner-roofix-alm01` / `agent_instance_id=planner-roofix-alm01-inst` / `session_id=sess-planner-roofix-alm01-20261125-l1` / `model_id=hunyuan-hy` / `role=planner`。
+
+## 20. F7 建单回执（daemon 返回原文）
+
+- **task_id**：`T-1795831521518-0c880ea4`
+- **title**：`host_process_registry.py:reconcile_stale fix 接入生产周期/启动清理消除崩溃残留永活`
+- **通道**：`cw task create` CLI（cwd c:\git_work\callwarden，绕开 MCP 数组序列化 bug O-R4），参数：`--parent-id T-1795507699058-41d9fcbc --identity-policy legacy_identity_v1 --workspace-id 1 --workspace-instance-id 4baea3ff12c2ea5c`
+- **读回验证（task.status）**：
+  - `status=open` / `lifecycle=open` / `workflow=queued` / `blocking_reasons=[]`（governance READY，三角色合同已注入）
+  - `parent_id=T-1795507699058-41d9fcbc`；workspace 配对 `workspace_id=1` / `workspace_instance_id=4baea3ff12c2ea5c` / `workspace_binding_id=tb-T-1795831521518-0c880ea4-4baea3ff12c2ea5c`
+  - steps=3，action 全 `fix`，check_items 全为**字符串**（len 312/186/199，非转义 JSON），非空
+  - **F4 防复发全量声明落实**：step#0 逗号声明 `server/daemon_autostart.py,server/host_process_registry.py`；step#1 逗号声明 `server/web_gateway.py,evidence/T-1795744094756-6b7ea004/f3-evidence.md`；step#2 `tests/test_host_process_registry.py`——实际会动的全部文件逐 step 全量声明，禁止只写一个
+  - description 首行 `REQ-GAP | finding=F7 | 🟡 需整改 | loop=1 | verdict=BLOCKED | source_reviewer=reviewer-roofix-alm01`；reviewer 定性原文一字不改（5 处关键句逐字校验通过）；含「F7 排 F6 之后串行」依赖说明 + F4 防复发全量声明说明
+- **planner 锚定备注（写入 description）**：reviewer 引 `:297` 行号在当前 HEAD（`0d5f3170`）已漂移至 `host_process_registry.py:323`（`def reconcile_stale`），故 title/steps 全用符号锚定不用行号；spawn 路径 upsert 落点实测 `daemon_autostart.py:663-676`。
+- **F7 选型留痕（写入 step#0 check_items）**：选 reviewer 修正方向②「启动时 reconcile 一次」，落点 `spawn_http_daemon` 临界区（registry upsert 前后调 `reconcile_stale(authority_id)`），理由=自然「重启清理」点+处理长期运行积压+单文件收敛（与 D3 守卫同文件）；①周期清理列为备选（更重），长效运行永不重启残留场景登记 O-R8 交 reviewer 复核。
+
+## 21. F7 payload 存档（daemon 已落库）
+
+```json
+{
+  "title": "host_process_registry.py:reconcile_stale fix 接入生产周期/启动清理消除崩溃残留永活",
+  "steps": [
+    {"action":"fix","target_file":"server/daemon_autostart.py,server/host_process_registry.py","target_symbol":"spawn_http_daemon","check_items":"选型留痕：选 reviewer 修正方向②「启动时 reconcile 一次」——在 spawn_http_daemon 临界区内、registry upsert 前后调 reconcile_stale(authority_id) 一次；理由=自然「重启清理」点+处理长期运行积压+单文件收敛（与 D3 守卫同文件）；①周期清理列为备选（需 Rust watchdog/Python 常驻循环，更重），长效运行永不重启的残留场景登记 open 项交 reviewer 裁决。复用 reconcile_stale 既有签名（预期 host_process_registry.py 零改动；如需改动须在 result 留痕理由）"},
+    {"action":"fix","target_file":"server/web_gateway.py,evidence/T-1795744094756-6b7ea004/f3-evidence.md","target_symbol":"main","check_items":"修正 web_gateway.py:403 误导注释：改为「崩溃残留由 daemon spawn 路径启动时调 reconcile_stale 标 stale」，不再声称权威 daemon 周期清理；F3 commit message 为不可变历史不改写，在 f3-evidence.md 追加更正说明留痕（实际调用方=daemon_autostart spawn 路径）"},
+    {"action":"fix","target_file":"tests/test_host_process_registry.py","target_symbol":"reconcile_stale_startup","check_items":"补测试：①崩溃残留 active 条目经 spawn 路径启动清理被标 stale（read_all 不再把死进程当活进程返回）；②webui 残留条目同样被 reconcile 且不误伤活 webui；③回归零破坏。与 F6 串行执行（F7 与 F6 同改 daemon_autostart.py + tests/test_host_process_registry.py），F7 排 F6 之后"}
+  ]
+}
+```
+
+> F7 description 完整文本（含 reviewer 定性原文一字不改）见 daemon 卡 `T-1795831521518-0c880ea4`，此处不重复粘贴以免漂移。
+
+## 22. F7 追加边界声明
+
+planner 本轮 F7 建单**未**写生产代码、**未**改判 BLOCKED/🟡 定级、**未**动 `task.apply`/`task.close`/`task.supersede`、**未**认领/lease 步骤、**未**改写上方历史行；仅追加 F7 行（§14 表）+ provenance/执行顺序约束 + §15 新增 O-R7/O-R8 + §20 建单回执 / §21 payload 存档 + 本节声明。临时脚本（_f7_steps.json / _create_f7.py / _verify_f7.py）已清理。
