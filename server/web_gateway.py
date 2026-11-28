@@ -399,8 +399,11 @@ def main(argv: list[str] | None = None) -> int:
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
     finally:
-        # 正常退出注销自身 entry（role=webui）；崩溃残留由权威 daemon 的
+        # 正常退出注销自身 entry（role=webui）；崩溃残留由 daemon spawn 路径
+        # (daemon_autostart.spawn_http_daemon) 启动时调 host_process_registry.
         # reconcile_stale 按 pid + process_start_time 判活后标 stale（不删历史）。
+        # F7 更正：原注释误称「权威 daemon 周期清理」，实际无周期任务，唯一生产
+        # 调用方是 spawn 路径的启动清理（见 F7 / T-1795831521518-0c880ea4）。
         if _webui_authority:
             try:
                 from callwarden.server.host_process_registry import unregister_process

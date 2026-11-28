@@ -658,7 +658,23 @@ def spawn_http_daemon(wait_window: float = 15.0) -> Optional[str]:
             logger.error("spawn_http_daemon: 启动失败: %s", exc)
             return None
 
-        # ---- 4) 注册自身进 host 进程注册表（role=daemon）----
+        # ---- 4) 启动清理 + 注册自身进 host 进程注册表（role=daemon）----
+        # F7（finding F7）：completion of D3 registry 权威性。reconcile_stale 此前
+        # 只有测试调用、无生产调用方——崩溃/断电残留的 active 条目永不清理。
+        # 选 reviewer 修正方向②「启动时 reconcile 一次」：spawn 是本机的自然
+        # 重启清理点，一次调用既覆盖「重启清理」又消化长期运行积压，且与 D3
+        # 守卫同文件收敛。失败不阻断启动（注册表只是索引，manifest 仍权威）。
+        try:
+            from .host_process_registry import reconcile_stale
+            marked = reconcile_stale(authority_id)
+            if marked:
+                logger.info(
+                    "spawn_http_daemon: 启动清理 %s 条崩溃残留 active 条目",
+                    marked)
+        except Exception as exc:
+            logger.warning(
+                "spawn_http_daemon: 启动 reconcile_stale 失败（不阻断）: %s", exc)
+
         try:
             from .host_process_registry import register_process
             import hashlib

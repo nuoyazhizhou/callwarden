@@ -747,3 +747,107 @@ def test_spawn_http_daemon_uses_breakaway_helper(monkeypatch):
     # 第二处 spawn 点必须调用 helper，而非保留裸 Popen creationflags
     assert "_popen_detached_win32(cmd, child_env)" in src, (
         "spawn_http_daemon win32 分支未复用 breakaway helper")
+
+
+# ---------------------------------------------------------------------------
+# 9) F7：reconcile_stale 生产接入——spawn 启动清理（T-1795831521518）
+# ---------------------------------------------------------------------------
+
+
+def test_reconcile_stale_startup_via_spawn(monkeypatch, tmp_path):
+    """F7 ①：崩溃残留 active 条目经 spawn 路径启动清理被标 stale。
+
+    不 mock reconcile_stale / register_process——走真实生产模块
+    callwarden.server.host_process_registry 的隔离实例（tmp_path），
+    只 mock spawn 的外部副作用（Popen / 诊断 / bind / health）。
+    """
+    import callwarden.server.daemon_autostart as da
+    import callwarden.server.daemon_mutex as dmu
+    import callwarden.server.host_process_registry as hpr_prod
+
+    _reset_cooldown()
+    warm = dmu.acquire_host_daemon_mutex()
+    if warm is not None:
+        warm.release()
+
+    # 隔离生产侧注册表到 tmp_path（daemon_autostart 用 .host_process_registry）
+    monkeypatch.setattr(hpr_prod, "_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        hpr_prod, "_UNIX_LOCK_FILE", str(tmp_path / "registry.lock"))
+
+    # 双键判活映射：登记阶段返回匹配值（写入条目），reconcile 阶段对死 pid
+    # 返回不同值 → 判死。活 pid=9999 始终匹配。
+    alive_pid, alive_start = 9999, 1_700_000_000
+    phase = {"registering": True}
+
+    def _fake_start_time(pid):
+        if pid == alive_pid:
+            return alive_start
+        # 死 pid：登记时返回匹配值，登记完成后返回不匹配值.PID 复用语义
+        return alive_start if phase["registering"] else alive_start - 1000
+
+    monkeypatch.setattr(hpr_prod, "_process_start_time", _fake_start_time)
+
+    authority = "auth-f7"
+    # 三个 active 残留：死 daemon(1001)、死 webui(1002)、活 webui(9999)
+    hpr_prod.register_process(authority_id=authority, role="daemon", pid=1001)
+    hpr_prod.register_process(authority_id=authority, role="webui", pid=1002)
+    hpr_prod.register_process(authority_id=authority, role="webui", pid=alive_pid)
+    # 登记完成：切换为「死 pid 的 start_time 已变」——模拟崩溃后 PID 被复用/进程已换
+    phase["registering"] = False
+
+    def _fake_diag(authority_id=""):
+        return {
+            "code": "E_DAEMON_ALREADY_RUNNING", "pid": None,
+            "process_start_time": None,
+            "endpoint": "https://127.0.0.1:4523", "alive": False,
+        }
+
+    monkeypatch.setattr(da, "authority_daemon_diagnostic", _fake_diag)
+    monkeypatch.setattr(da, "_authoritative_bind_spec", lambda diag: "127.0.0.1:4523")
+    monkeypatch.setattr(da, "_find_daemon_binary", lambda: "/fake/cw-daemon.exe")
+
+    # 让 spawn 用的 authority_id 与测试分区一致（daemon_autostart._authority_id）
+    monkeypatch.setattr(da, "_authority_id", lambda: authority)
+
+    class _FakeProc:
+        pid = 55555
+
+    monkeypatch.setattr(da.subprocess, "Popen", lambda cmd, **kw: _FakeProc())
+    monkeypatch.setattr(da, "resolve_http_endpoint_and_manifest",
+                        lambda **k: ("https://127.0.0.1:4523", {}))
+    monkeypatch.setattr(da, "try_http_connect", lambda *a, **k: True)
+
+    result = da.spawn_http_daemon(wait_window=0.3)
+    assert result == "https://127.0.0.1:4523"
+
+    # ① 死 daemon + 死 webui 被标 stale；活 webui 保持 active（不误伤）
+    by_pid = {e["pid"]: e for e in hpr_prod.read_all(authority)}
+    assert by_pid[1001]["status"] == hpr_prod.STATUS_STALE, by_pid.get(1001)
+    assert by_pid[1002]["status"] == hpr_prod.STATUS_STALE, by_pid.get(1002)
+    assert by_pid[alive_pid]["status"] == hpr_prod.STATUS_ACTIVE, by_pid.get(alive_pid)
+
+    # ② read_all 不再把死进程当活进程返回：active 里只剩活 webui + 新注册的 daemon
+    active_pids = {e["pid"] for e in hpr_prod.read_all(authority)
+                   if e["status"] == hpr_prod.STATUS_ACTIVE}
+    assert 1001 not in active_pids and 1002 not in active_pids, active_pids
+    assert alive_pid in active_pids, active_pids
+
+
+def test_reconcile_stale_helper_static_wiring(monkeypatch):
+    """F7 ②/③ 静态接线 + 回归：spawn 源码含 reconcile_stale 调用且失败不阻断。
+
+    inspect 校验 spawn_http_daemon 真调用 reconcile_stale（防只改注释不改逻辑），
+    并校验 reconcile_stale 抛异常时 spawn 仍继续（失败不阻断：注册表只是索引）。
+    """
+    import inspect
+
+    import callwarden.server.daemon_autostart as da
+
+    src = inspect.getsource(da.spawn_http_daemon)
+    assert "reconcile_stale(authority_id)" in src, (
+        "spawn_http_daemon 未调 reconcile_stale(authority_id)")
+
+    # reconcile_stale 抛异常时不得中断 spawn：直接调 helper 块无法隔离，
+    # 这里用源码断言其被 try/except 包裹（静态），行为级由上一测试覆盖正常路径。
+    assert "启动 reconcile_stale 失败（不阻断）" in src
