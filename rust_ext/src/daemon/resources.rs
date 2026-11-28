@@ -688,6 +688,79 @@ fn home_drive_letter() -> Option<String> {
     }
 }
 
+/// 档位映射（C1.4）：把 [`HostProfile`] 映射进 [`ResourceConfig`]。
+///
+/// 纯函数，原地修改，返回本次被映射覆盖的键名（canonical 名，固定顺序：
+/// `cache_max_bytes` → `cache_max_workspaces` → `build_parse_threads` →
+/// `memory_soft_limit_bytes`，供启动日志）。
+///
+/// 规则（contracts.md C1.4 / t1-steps.json step#4）：
+/// - RAM < 24GB → 档1：cache 512MB / workspaces 8 / workers 2 /
+///   soft = max(2GB, RAM×20%)
+/// - RAM ≥ 24GB → 档2：翻倍（cache 1GB / workspaces 16 / workers 4），
+///   soft 公式同档1（RAM≥24GB 时 RAM×20% ≥ 4.8GB，2GB 下限不触发）
+/// - 生效 disk_type = Hdd → `cache_max_bytes` 封顶 512MB（档2 也封顶）；
+///   生效值取显式 `disk_type`（≠ Auto），否则取 profile 侦测值
+/// - RAM = 0（侦测失败）→ 走档1（16GB 保守档）
+/// - `explicit_keys` 中的键**不覆盖**（显式覆盖神圣，AC-RG-01-2），也
+///   不进入返回列表；HDD 封顶同样不触碰显式键
+/// - `idle_evict_secs` / `build_priority_low` 不参与映射（卡面未列）
+pub fn apply_profile(cfg: &mut ResourceConfig, profile: &HostProfile) -> Vec<String> {
+    let mut covered: Vec<String> = Vec::with_capacity(4);
+
+    // RAM=0（侦测失败）< 24GB → 档1（保守档）
+    let tier2 = profile.total_ram_bytes >= TIER2_RAM_THRESHOLD_BYTES;
+
+    if !cfg.explicit_keys.contains("cache_max_bytes") {
+        cfg.cache_max_bytes = if tier2 {
+            TIER1_CACHE_MAX_BYTES * TIER2_MULTIPLIER
+        } else {
+            TIER1_CACHE_MAX_BYTES
+        };
+        covered.push("cache_max_bytes".to_string());
+    }
+    if !cfg.explicit_keys.contains("cache_max_workspaces") {
+        cfg.cache_max_workspaces = if tier2 {
+            TIER1_CACHE_MAX_WORKSPACES * TIER2_MULTIPLIER as usize
+        } else {
+            TIER1_CACHE_MAX_WORKSPACES
+        };
+        covered.push("cache_max_workspaces".to_string());
+    }
+    if !cfg.explicit_keys.contains("build_parse_threads") {
+        cfg.build_parse_threads = if tier2 {
+            TIER1_BUILD_PARSE_THREADS * TIER2_MULTIPLIER as usize
+        } else {
+            TIER1_BUILD_PARSE_THREADS
+        };
+        covered.push("build_parse_threads".to_string());
+    }
+    if !cfg.explicit_keys.contains("memory_soft_limit_bytes") {
+        // max(2GB, RAM×20%)；saturating_mul 防 u64 溢出
+        let by_ram = profile
+            .total_ram_bytes
+            .saturating_mul(MEMORY_SOFT_LIMIT_RAM_PERCENT)
+            / 100;
+        cfg.memory_soft_limit_bytes = MEMORY_SOFT_LIMIT_MIN_BYTES.max(by_ram);
+        covered.push("memory_soft_limit_bytes".to_string());
+    }
+
+    // HDD 封顶：档2 的 1GB 也压回 512MB；显式键不封顶
+    let effective_disk = if cfg.disk_type != DiskType::Auto {
+        cfg.disk_type
+    } else {
+        profile.disk_type
+    };
+    if effective_disk == DiskType::Hdd
+        && !cfg.explicit_keys.contains("cache_max_bytes")
+        && cfg.cache_max_bytes > HDD_CACHE_MAX_BYTES
+    {
+        cfg.cache_max_bytes = HDD_CACHE_MAX_BYTES;
+    }
+
+    covered
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -979,5 +1052,162 @@ build_parse_threads = 3
         assert_eq!(extract(r"d:\data").as_deref(), Some("D:"));
         assert_eq!(extract(r"\\server\share"), None, "UNC 路径无盘符");
         assert_eq!(extract("relative/path"), None);
+    }
+
+    // ---------- apply_profile（C1.4 / step#4）----------
+
+    const GB: u64 = 1024 * 1024 * 1024;
+
+    /// 档1（16GB）：512MB / 8 / 2 / soft = max(2GB, 16GB×20%) = 3.2GB。
+    #[test]
+    fn apply_profile_tier1_16gb() {
+        let mut cfg = ResourceConfig::default();
+        let profile = HostProfile {
+            total_ram_bytes: 16 * GB,
+            cpu_cores: 8,
+            disk_type: DiskType::Ssd,
+        };
+        let covered = apply_profile(&mut cfg, &profile);
+        assert_eq!(cfg.cache_max_bytes, TIER1_CACHE_MAX_BYTES);
+        assert_eq!(cfg.cache_max_workspaces, TIER1_CACHE_MAX_WORKSPACES);
+        assert_eq!(cfg.build_parse_threads, TIER1_BUILD_PARSE_THREADS);
+        assert_eq!(cfg.memory_soft_limit_bytes, 16 * GB * 20 / 100);
+        assert_eq!(cfg.idle_evict_secs, DEFAULT_IDLE_EVICT_SECS, "映射不触及 idle_evict_secs");
+        // 固定顺序：供启动日志断言
+        assert_eq!(
+            covered,
+            vec![
+                "cache_max_bytes".to_string(),
+                "cache_max_workspaces".to_string(),
+                "build_parse_threads".to_string(),
+                "memory_soft_limit_bytes".to_string(),
+            ]
+        );
+    }
+
+    /// 档2（32GB 与 24GB 整阈值）：翻倍 1GB / 16 / 4；soft 公式同档1。
+    #[test]
+    fn apply_profile_tier2_32gb() {
+        for ram in [32 * GB, 24 * GB] {
+            let mut cfg = ResourceConfig::default();
+            let profile = HostProfile {
+                total_ram_bytes: ram,
+                cpu_cores: 16,
+                disk_type: DiskType::Ssd,
+            };
+            apply_profile(&mut cfg, &profile);
+            assert_eq!(cfg.cache_max_bytes, TIER1_CACHE_MAX_BYTES * TIER2_MULTIPLIER);
+            assert_eq!(
+                cfg.cache_max_workspaces,
+                TIER1_CACHE_MAX_WORKSPACES * TIER2_MULTIPLIER as usize
+            );
+            assert_eq!(
+                cfg.build_parse_threads,
+                TIER1_BUILD_PARSE_THREADS * TIER2_MULTIPLIER as usize
+            );
+            assert_eq!(cfg.memory_soft_limit_bytes, ram * 20 / 100);
+        }
+    }
+
+    /// HDD 封顶：档2 的 1GB 被压回 512MB；Ssd 不封顶（对照）。
+    #[test]
+    fn apply_profile_hdd_caps_cache() {
+        let mut cfg = ResourceConfig::default();
+        let profile = HostProfile {
+            total_ram_bytes: 32 * GB,
+            cpu_cores: 16,
+            disk_type: DiskType::Hdd,
+        };
+        apply_profile(&mut cfg, &profile);
+        assert_eq!(cfg.cache_max_bytes, HDD_CACHE_MAX_BYTES, "档2 1GB 被 HDD 封顶");
+        assert_eq!(cfg.cache_max_workspaces, 16, "其余档2 值不受影响");
+        assert_eq!(cfg.build_parse_threads, 4);
+
+        let mut cfg_ssd = ResourceConfig::default();
+        let profile_ssd = HostProfile {
+            total_ram_bytes: 32 * GB,
+            cpu_cores: 16,
+            disk_type: DiskType::Ssd,
+        };
+        apply_profile(&mut cfg_ssd, &profile_ssd);
+        assert_eq!(cfg_ssd.cache_max_bytes, TIER1_CACHE_MAX_BYTES * TIER2_MULTIPLIER);
+    }
+
+    /// 显式键跳过：explicit_keys 中的键保持原值且不进返回列表。
+    #[test]
+    fn apply_profile_explicit_keys_skip() {
+        let mut cfg = ResourceConfig::default();
+        cfg.cache_max_bytes = 7 * GB;
+        cfg.build_parse_threads = 9;
+        cfg.explicit_keys
+            .insert("cache_max_bytes".to_string());
+        cfg.explicit_keys
+            .insert("build_parse_threads".to_string());
+        let profile = HostProfile {
+            total_ram_bytes: 32 * GB,
+            cpu_cores: 16,
+            disk_type: DiskType::Ssd,
+        };
+        let covered = apply_profile(&mut cfg, &profile);
+        assert_eq!(cfg.cache_max_bytes, 7 * GB, "显式 cache_max_bytes 神圣不被覆盖");
+        assert_eq!(cfg.build_parse_threads, 9, "显式 build_parse_threads 神圣不被覆盖");
+        assert_eq!(cfg.cache_max_workspaces, 16, "非显式键正常映射");
+        assert_eq!(
+            covered,
+            vec!["cache_max_workspaces".to_string(), "memory_soft_limit_bytes".to_string()],
+            "返回列表只含实际被覆盖的键"
+        );
+    }
+
+    /// 侦测失败（RAM=0）→ 档1 且 soft=2GB 下限。
+    #[test]
+    fn apply_profile_detect_failure_takes_tier1() {
+        let mut cfg = ResourceConfig::default();
+        let profile = HostProfile {
+            total_ram_bytes: 0,
+            cpu_cores: 1,
+            disk_type: DiskType::Unknown,
+        };
+        let covered = apply_profile(&mut cfg, &profile);
+        assert_eq!(cfg.cache_max_bytes, TIER1_CACHE_MAX_BYTES);
+        assert_eq!(cfg.cache_max_workspaces, TIER1_CACHE_MAX_WORKSPACES);
+        assert_eq!(cfg.build_parse_threads, TIER1_BUILD_PARSE_THREADS);
+        assert_eq!(
+            cfg.memory_soft_limit_bytes,
+            MEMORY_SOFT_LIMIT_MIN_BYTES,
+            "RAM=0 → 20% 项为 0，取 2GB 下限"
+        );
+        assert_eq!(covered.len(), 4);
+    }
+
+    /// AC-RG-01-2 跨步断言：from_toml_str 显式值 → apply_profile 映射后仍保持。
+    #[test]
+    fn ac_rg_01_2_explicit_overrides_mapping() {
+        let toml_str = r#"
+[resources]
+cache_max_bytes = "1G"
+build_parse_threads = 6
+"#;
+        let mut cfg = ResourceConfig::from_toml_str(toml_str);
+        let profile = HostProfile {
+            total_ram_bytes: 16 * GB,
+            cpu_cores: 8,
+            disk_type: DiskType::Ssd,
+        };
+        let covered = apply_profile(&mut cfg, &profile);
+        assert_eq!(
+            cfg.cache_max_bytes,
+            1024 * 1024 * 1024,
+            "显式 1G 不被档1 的 512MB 覆盖"
+        );
+        assert_eq!(cfg.build_parse_threads, 6, "显式 6 不被档1 的 2 覆盖");
+        assert_eq!(cfg.cache_max_workspaces, TIER1_CACHE_MAX_WORKSPACES);
+        assert_eq!(
+            covered,
+            vec!["cache_max_workspaces".to_string(), "memory_soft_limit_bytes".to_string()],
+            "covered 只含非显式键"
+        );
+        assert!(cfg.explicit_keys.contains("cache_max_bytes"));
+        assert!(cfg.explicit_keys.contains("build_parse_threads"));
     }
 }
