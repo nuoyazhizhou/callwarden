@@ -86,3 +86,21 @@
 ## 产物核验
 
 本整改不涉及二进制/构建产物改动（纯 Python 源码 + 静态 HTML + 设计文档）。
+
+## 提交归属记录（并行会话共享工作树异常）
+
+本整改的 4 个文件（server/web_gateway.py、server/web_static/index.html、
+docs/design/web-observer-read-model.md、本 evidence）在 executor 完成 hunk 级
+`git add -f` 精确暂存后、尚未执行 commit 时，被**并行会话的 T3 snapshot 整改提交
+8590c73（fix(snapshot): T3-R-S1 evict_idle 候选判定删 managers 交集——消除 AB-BA
+死锁, T-1795860336241-ffddc8e8 F1）一并带走提交**。该提交共 5 文件：上述 4 个
+本整改文件 + rust_ext/src/snapshot.rs（T3 整改自身改动）。
+
+处置（按并行会话纪律）：
+- **不回滚历史、不 reset、不 --force**：8590c73 保持原样。
+- 已核对 `git diff 8590c73 -- <4 文件>` 为空：工作树版本与提交版本逐字节一致，
+  整改内容完整落库，无丢失、无篡改。
+- 归属异常如实记录于此：**8590c73 的提交信息只描述 T3 snapshot 整改，未体现
+  本任务（T-1795469778065-1686c8a0）的 web-observer 整改内容**。task report 与
+  复审请以本文件 + 提交内容（而非 8590c73 的 message）核对本整改。
+- 已通过 SendMessage 向主理人 team-lead 报告该归属异常。
