@@ -510,6 +510,13 @@ impl SnapshotCache {
         let mut order = self.order.write();
         let mut last = self.last_access.write();
         for k in candidates {
+            // F2 TOCTOU 重验：remove 前重读 last_access（在已持写锁内，不引入
+            // 新锁序）——候选判定与驱逐之间刚被 touch 的条目 last_access 已
+            // 更新，空闲不再超限，跳过驱逐（契约 C2 字面语义）
+            match last.get(&k) {
+                Some(t) if now.duration_since(*t) > idle => {}
+                _ => continue,
+            }
             if mgrs.remove(&k).is_some() {
                 order.retain(|x| x != &k);
                 last.remove(&k);
