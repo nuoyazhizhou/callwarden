@@ -1,0 +1,4 @@
+[
+  {"action":"implement","target_file":"rust_ext/src/daemon/resources.rs","target_symbol":"set_build_thread_priority_low","check_items":"新增 pub fn set_build_thread_priority_low() -> bool：Windows 用 SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)（线程级；禁止 SetPriorityClass 进程级——会殃及查询线程）；Unix 用 gettid+setpriority(PRIO_PROCESS, tid, 10)（线程级 nice，禁用进程级 setpriority(0)）；失败返回 false 由调用方 WARN 继续（fail-soft，AC-RG-04-2）；平台测试：Windows 断言读回优先级低于 normal（AC-RG-04-1），Unix 平台允许 false+WARN"},
+  {"action":"implement","target_file":"rust_ext/src/daemon/fs_handlers.rs","target_symbol":"run_build_graph","check_items":"两处线程入口注入：①handle_build_graph spawn 的 cw-build-graph 线程入口首行调用 set_build_thread_priority_low()（WARN 忽略失败）；②run_build_graph 阶段一解析 worker 池每个 worker 线程入口同调；spawn 语句结构不动（只加入口调用）；不重做 jsonl 分片/背压逻辑（REQ-07 已闭环）；测试断言 build 功能不受优先级设置影响（fail-soft 路径）"}
+]

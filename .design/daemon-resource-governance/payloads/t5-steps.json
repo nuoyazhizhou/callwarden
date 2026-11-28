@@ -1,0 +1,4 @@
+[
+  {"action":"implement","target_file":"rust_ext/src/bin/cw_daemon.rs","target_symbol":"main","check_items":"主循环 100ms tick 块新增 resource tick 分支（每 300 tick=30s，照证书巡检的 tick 计数模式）：Normal 路径执行 snapshot_cache.evict_idle(idle_evict_secs) + 字节预算检查（approx_bytes>cache_max_bytes 时按访问序从最旧驱逐直到低于预算）；驱逐时输出日志（ws、空闲时长、估算字节）；ResourceConfig 从 T2 接线传入"},
+  {"action":"test","target_file":"rust_ext/src/bin/cw_daemon.rs","target_symbol":"main","check_items":"集成测试：短 idle_evict_secs 注入→tick 后断言 cache 收缩且日志含驱逐记录（AC-RG-02-1）；构造 approx_bytes 超预算场景→断言按访问序驱逐至预算内（AC-RG-02-4）；驱逐后查询走冷加载自愈不失败（联动 T4）"}
+]

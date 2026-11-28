@@ -1,0 +1,4 @@
+[
+  {"action":"audit","target_file":".design/daemon-resource-governance/evidence/startup-load-inventory.md","target_symbol":"recover_all_workspaces_with_snapshot","check_items":"产出启动加载路径盘点证据文档：①recover_all_workspaces_with_snapshot（cw_daemon.rs）遍历所有注册 ws 逐个 dispatch workspace.recover；②handle_workspace_recover 对 pending staging entries==0 的 ws 直接返回成功不构建 snapshot（workspace.rs L4110-4115 实读证据）；③parse_retry 重放仅在有序时 publish；④结论：启动无全量索引进内存点，内存驱动在查询/发布后常驻+history 不自动 GC+无空闲驱逐；⑤逐项代码位置与行号证据（AC-RG-03-3）"},
+  {"action":"test","target_file":"rust_ext/src/bin/cw_daemon.rs","target_symbol":"recover_all_workspaces_with_snapshot","check_items":"回归锁测试：注册无 pending staging entries 的 ws→执行启动恢复→断言 SnapshotCache 中该 ws 无 snapshot（0-pending 不构建，锁住现状懒加载语义防劣化，AC-RG-03-1）；启动日志逐 ws 报告 built/reused/skipped 三类计数（有 pending 构建=built，cache 已有=reused，无 pending=skipped），集成测试捕获 eprintln 断言（AC-RG-03-2）"}
+]

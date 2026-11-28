@@ -1,0 +1,5 @@
+[
+  {"action":"implement","target_file":"rust_ext/src/graph.rs","target_symbol":"GraphStore","check_items":"新增 pub fn approximate_bytes(&self) -> u64：by_id 字节+CSR forward/backward 边字节+字符串池字节+文件路径表字节求和；单测构造已知规模 store 断言估值在合理区间（>0 且 <10×元素原始字节和）；口径校准记录到 .design/daemon-resource-governance/evidence/（未决项 O3，±20% 容忍）"},
+  {"action":"implement","target_file":"rust_ext/src/snapshot.rs","target_symbol":"SnapshotCache","check_items":"新增 last_access 跟踪（cache 侧 HashMap 或 manager 侧 AtomicU64，executor 择一）+ pub fn touch(&self, workspace_id)（更新 last_access，不存在则无操作）；修正 get_or_create 命中路径调用 touch——现状注释称 LRU 实为 FIFO（命中不更新顺序），改为真实访问序驱逐（AC-RG-02-3：A 持续 touch、B/C 不访问→B 先被驱逐）"},
+  {"action":"implement","target_file":"rust_ext/src/snapshot.rs","target_symbol":"SnapshotCache","check_items":"新增 pub fn evict_idle(&self, idle: Duration) -> Vec<String>：驱逐 now-last_access>idle 的 workspace 并返回列表（供日志/指标）；新增 pub fn approx_bytes(&self) -> u64（各 ws 当前 snapshot 的 GraphStore::approximate_bytes 求和，未发布=0）；驱逐后 in-flight 查询 Guard 持有到查询结束才释放（Arc 语义，AC-RG-02-5 单测：Guard 存活时 evict 查询正常返回）；单测覆盖 AC-RG-02-1（短超时驱逐）与 AC-RG-02-4 前置（估值聚合）"}
+]

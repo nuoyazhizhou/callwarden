@@ -1,0 +1,5 @@
+[
+  {"action":"implement","target_file":"rust_ext/src/daemon/snapshot_state.rs","target_symbol":"get_store_or_load","check_items":"新增 fn get_store_or_load(&mut self, peer, workspace_instance_id) -> Result<Arc<GraphStore>, DaemonRpcError>：cache hit→touch→返回；miss→registry 查 ws（ACL 复用 owned_workspace）→resolve_codegraph_db_path→build_and_publish_blocking（复用生产发布路径）→touch→返回；任一步失败→保留现状 snapshot_not_ready 错误码+WARN（不恶化，可重试）；并发冷加载同一 ws 合并为一次重建（单飞，AC-RG-02-6 断言 build 计数=1）"},
+  {"action":"implement","target_file":"rust_ext/src/daemon/snapshot_state.rs","target_symbol":"get_store","check_items":"将 snapshot_state.rs 内所有查询 handler 的 get_store(ws).ok_or(snapshot_not_ready) 调用点（grep 清单 20+ 处，见 symbol-anchor.md A4）逐个切换为 get_store_or_load；只换取 store 方式不改业务逻辑；每处切换保持 ACL 与错误码语义不变；全量切换后 grep 确认无残留直查点（测试路径除外）"},
+  {"action":"test","target_file":"rust_ext/src/daemon/snapshot_state.rs","target_symbol":"get_store_or_load","check_items":"集成测试：发布 snapshot→evict 驱逐→query.symbol 断言返回正确结果（自愈，AC-RG-02-2）；两线程并发冷加载同一 ws 断言 build 只执行一次（AC-RG-02-6）；重建失败场景断言 snapshot_not_ready 错误码不恶化"}
+]
