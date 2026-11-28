@@ -661,3 +661,89 @@ def test_webui_registration_integration(monkeypatch, tmp_path, capsys):
     # 3. 正常退出后 webui 条目注销
     final = [e for e in hpr_local.read_all(authority) if e.get("role") == "webui"]
     assert final == [], f"退出后 webui 条目应注销: {final}"
+
+
+# ---------------------------------------------------------------------------
+# 8) F6：Windows spawn breakaway-from-job + 降级 fallback（T-1795829524399）
+# ---------------------------------------------------------------------------
+
+
+BREAKAWAY = 0x01000000
+DETACHED = 0x00000008
+NEW_PROCESS_GROUP = 0x00000200
+NO_WINDOW = 0x08000000
+_BASE_FLAGS = DETACHED | NEW_PROCESS_GROUP | NO_WINDOW
+
+
+def test_spawn_breakaway_job_flags_and_fallback(monkeypatch):
+    """F6：两处 spawn 经 helper 带 breakaway 位；job 拒绝时降级原 flags 重试成功。
+
+    直接验证 helper（两处 spawn 点的唯一实现），并分别经 _start_daemon_windows
+    与 spawn_http_daemon 入口各触发一次，避免只测 helper 却漏接线的假阳性。
+    """
+    import callwarden.server.daemon_autostart as da
+
+    # --- (a) 正常路径：flags 含 breakaway 位，Popen 只调一次 ---
+    calls = []
+
+    class _FakeProc:
+        pid = 54321
+
+    def _fake_popen_ok(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("creationflags")))
+        return _FakeProc()
+
+    monkeypatch.setattr(da, "_find_daemon_binary", lambda: r"C:/fake/cw-daemon.exe")
+    monkeypatch.setattr(da.subprocess, "Popen", _fake_popen_ok)
+    monkeypatch.setattr(da.sys, "platform", "win32")
+
+    assert da._start_daemon_windows() is True
+    assert len(calls) == 1, f"正常路径应只 Popen 一次: {calls}"
+    flags = calls[0][1]
+    assert flags & BREAKAWAY, f"flags 缺 breakaway 位: {hex(flags)}"
+    assert flags & _BASE_FLAGS == _BASE_FLAGS
+    assert da._WIN32_BREAKAWAY_FALLBACK_ERRORS == frozenset({5, 801})
+
+    # --- (b) 降级路径：第一次 winerror=5 (ERROR_ACCESS_DENIED) → 降级重试 ---
+    calls_b = []
+
+    def _fake_popen_denied_once(cmd, **kwargs):
+        flags = kwargs.get("creationflags")
+        calls_b.append(flags)
+        if len(calls_b) == 1:
+            err = OSError("access denied")
+            err.winerror = 5  # ERROR_ACCESS_DENIED
+            raise err
+        return _FakeProc()
+
+    monkeypatch.setattr(da.subprocess, "Popen", _fake_popen_denied_once)
+    assert da._start_daemon_windows() is True
+    assert len(calls_b) == 2, f"应触发降级重试共两次 Popen: {calls_b}"
+    assert calls_b[0] & BREAKAWAY, "第一次应带 breakaway"
+    assert not (calls_b[1] & BREAKAWAY), "降级重试必须去掉 breakaway"
+    assert calls_b[1] == _BASE_FLAGS, "降级 flags 应等于原三 flags"
+
+    # --- (c) 不可降级错误：winerror=2 (ERROR_FILE_NOT_FOUND) 原样抛出，不重试 ---
+    calls_c = []
+
+    def _fake_popen_other_error(cmd, **kwargs):
+        calls_c.append(kwargs.get("creationflags"))
+        err = OSError("file not found")
+        err.winerror = 2
+        raise err
+
+    monkeypatch.setattr(da.subprocess, "Popen", _fake_popen_other_error)
+    assert da._start_daemon_windows() is False  # 被 helper 抛给 except OSError → False
+    assert len(calls_c) == 1, f"非降级错误不应重试: {calls_c}"
+
+
+def test_spawn_http_daemon_uses_breakaway_helper(monkeypatch):
+    """F6：smoke 入口 spawn_http_daemon 的 win32 分支也走 breakaway helper。"""
+    import inspect
+
+    import callwarden.server.daemon_autostart as da
+
+    src = inspect.getsource(da.spawn_http_daemon)
+    # 第二处 spawn 点必须调用 helper，而非保留裸 Popen creationflags
+    assert "_popen_detached_win32(cmd, child_env)" in src, (
+        "spawn_http_daemon win32 分支未复用 breakaway helper")

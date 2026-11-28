@@ -59,6 +59,47 @@ D3_SPAWN_COOLDOWN: float = float(
     os.environ.get("CW_DAEMON_SPAWN_COOLDOWN", "5.0"))
 _spawn_last_attempt_monotonic: Optional[float] = None
 
+# F6（根修卡 T-1795507699058-41d9fcbc / finding F6）：Windows 分离进程必须
+# CREATE_BREAKAWAY_FROM_JOB 才能脱离 IDE/宿主 job object 的 kill-on-close 连坐。
+# DETACHED_PROCESS 只脱离控制台、不脱离 job object，故需显式 breakaway 位。
+DETACHED_PROCESS: int = 0x00000008
+CREATE_NEW_PROCESS_GROUP: int = 0x00000200
+CREATE_NO_WINDOW: int = 0x08000000
+CREATE_BREAKAWAY_FROM_JOB: int = 0x01000000
+_WIN32_DETACHED_BASE_FLAGS: int = (
+    DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
+# job 未开放 breakaway 权限 / 调用方不在 job 中时 CreateProcess 会失败，降级原 flags 重试。
+# ERROR_ACCESS_DENIED=5（job 无 BREAKAWAY_OK 权限）/ ERROR_NOT_IN_JOB=801（不在 job 中）。
+_WIN32_BREAKAWAY_FALLBACK_ERRORS = frozenset({5, 801})
+
+
+def _popen_detached_win32(cmd: List[str], child_env: Dict[str, str]):
+    """F6: Windows 分离进程，带 breakaway-from-job + 降级 fallback。
+
+    先以 ``DETACHED|NEW_PROCESS_GROUP|NO_WINDOW|BREAKAWAY_FROM_JOB`` 启动；
+    若 job 不允许 breakaway（winerror 5/801），捕获后降级为原三 flags 重试，
+    避免「加守卫反而让本来能起的 daemon 起失败」。其他 OSError 原样抛出，
+    由调用方既有 ``except OSError`` 处理。返回 subprocess.Popen 对象。
+    """
+    with_breakaway = _WIN32_DETACHED_BASE_FLAGS | CREATE_BREAKAWAY_FROM_JOB
+    common = dict(
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        close_fds=True,
+        env=child_env,
+    )
+    try:
+        return subprocess.Popen(cmd, creationflags=with_breakaway, **common)
+    except OSError as exc:
+        winerror = getattr(exc, "winerror", None)
+        if winerror not in _WIN32_BREAKAWAY_FALLBACK_ERRORS:
+            raise
+        logger.warning(
+            "CREATE_BREAKAWAY_FROM_JOB 不被允许(winerror=%s)，降级原 flags 重试",
+            winerror)
+        return subprocess.Popen(cmd, creationflags=_WIN32_DETACHED_BASE_FLAGS, **common)
+
 
 # ---------------------------------------------------------------------------
 # 公开 API
@@ -300,12 +341,6 @@ def _start_daemon_windows() -> bool:
         logger.error("未找到 cw_daemon 可执行文件，无法自动唤起")
         return False
 
-    # DETACHED_PROCESS: 进程不继承控制台，父进程退出后仍存活
-    # CREATE_NEW_PROCESS_GROUP: 新进程组，不受父进程 Ctrl+C 影响
-    DETACHED_PROCESS = 0x00000008
-    CREATE_NEW_PROCESS_GROUP = 0x00000200
-    CREATE_NO_WINDOW = 0x08000000
-
     # P0 修复：显式注入权威任务库路径（~/.callwarden/callwarden.db），
     # 确保 daemon 与 Python `cw task` CLI 共享同一套任务状态。
     # daemon 通过环境变量 CW_DAEMON_TASK_DB 覆盖默认推导路径。
@@ -314,15 +349,9 @@ def _start_daemon_windows() -> bool:
     child_env["CW_DAEMON_TASK_DB"] = _AUTHORITY_TASK_DB
 
     try:
-        subprocess.Popen(
-            [daemon_bin],
-            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            close_fds=True,
-            env=child_env,
-        )
+        # F6: 经 helper 以 breakaway-from-job flags 启动（job 不允许时自动降级），
+        # 脱离 IDE/宿主 job object 的 kill-on-close 连坐。
+        _popen_detached_win32([daemon_bin], child_env)
         logger.info("Windows 分离进程已启动: %s", daemon_bin)
         return True
     except OSError as exc:
@@ -610,18 +639,9 @@ def spawn_http_daemon(wait_window: float = 15.0) -> Optional[str]:
 
         try:
             if sys.platform == "win32":
-                DETACHED_PROCESS = 0x00000008
-                CREATE_NEW_PROCESS_GROUP = 0x00000200
-                CREATE_NO_WINDOW = 0x08000000
-                proc = subprocess.Popen(
-                    cmd,
-                    creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL,
-                    close_fds=True,
-                    env=child_env,
-                )
+                # F6: 与 _start_daemon_windows 同一 helper——breakaway-from-job
+                # 脱离 IDE/宿主 job object 连坐，job 不允许时自动降级重试。
+                proc = _popen_detached_win32(cmd, child_env)
             else:
                 proc = subprocess.Popen(
                     cmd,
