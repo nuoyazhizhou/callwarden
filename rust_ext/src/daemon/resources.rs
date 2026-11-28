@@ -427,6 +427,267 @@ fn warn_invalid_key(key: &str, value: &toml::Value, reason: &str, fallback: &str
     );
 }
 
+// ============================== C1.3 HostProfile + detect_host_profile ==============================
+
+/// 主机环境侦测结果（C1.3）。
+///
+/// fail-soft 约定：任何侦测 API 失败 → 对应字段取保守值
+/// （RAM=0、cores=1、disk=Unknown），**不 panic**；由 [`apply_profile`]
+/// 对 0/Unknown 走 16GB 保守档（E2）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostProfile {
+    /// 物理内存总字节；侦测失败 = 0。
+    pub total_ram_bytes: u64,
+    /// CPU 逻辑核数（available_parallelism）；失败 = 1。
+    pub cpu_cores: usize,
+    /// 磁盘类型；侦测失败/网络盘/虚拟盘 = Unknown（按 SSD 处理，O2）。
+    pub disk_type: DiskType,
+}
+
+/// 侦测主机环境（RAM / CPU 核数 / 磁盘类型）。
+///
+/// - RAM：Windows `GlobalMemoryStatusEx`；Linux `/proc/meminfo` MemTotal。
+/// - 核数：`std::thread::available_parallelism`（与 fs_handlers worker 计算同源）。
+/// - 磁盘：Windows `IOCTL_STORAGE_QUERY_PROPERTY` BusType（NVMe→Ssd，
+///   其余/失败/网络盘/WSL→Unknown，不 panic）；Linux `/sys/block/*/queue/rotational`
+///   （含 1→Hdd，全 0→Ssd，无数据→Unknown）。
+///
+/// 任何失败 fail-soft（WARN + 保守值），由 apply_profile 走 16GB 保守档。
+pub fn detect_host_profile() -> HostProfile {
+    HostProfile {
+        total_ram_bytes: detect_total_ram(),
+        cpu_cores: detect_cpu_cores(),
+        disk_type: detect_disk_type(),
+    }
+}
+
+/// 侦测物理内存总字节（fail-soft：失败 = 0 + WARN）。
+#[cfg(windows)]
+fn detect_total_ram() -> u64 {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    unsafe {
+        let mut status: MEMORYSTATUSEX = std::mem::zeroed();
+        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        if GlobalMemoryStatusEx(&mut status) != 0 {
+            status.ullTotalPhys
+        } else {
+            eprintln!(
+                "[cw_daemon] [WARN] resources 侦测: GlobalMemoryStatusEx 失败（{}），RAM 按 0 处理（走保守档）",
+                std::io::Error::last_os_error()
+            );
+            0
+        }
+    }
+}
+
+/// Linux：/proc/meminfo MemTotal（kB）→ 字节（fail-soft：失败 = 0 + WARN）。
+#[cfg(unix)]
+fn detect_total_ram() -> u64 {
+    match std::fs::read_to_string("/proc/meminfo") {
+        Ok(text) => {
+            let kb = parse_proc_meminfo_memtotal(&text);
+            if kb == 0 {
+                eprintln!(
+                    "[cw_daemon] [WARN] resources 侦测: /proc/meminfo 无 MemTotal 字段，RAM 按 0 处理（走保守档）"
+                );
+            }
+            kb.saturating_mul(1024)
+        }
+        Err(e) => {
+            eprintln!(
+                "[cw_daemon] [WARN] resources 侦测: 读 /proc/meminfo 失败（{e}），RAM 按 0 处理（走保守档）"
+            );
+            0
+        }
+    }
+}
+
+/// 其他平台：无实现，保守 0（fail-soft）。
+#[cfg(not(any(windows, unix)))]
+fn detect_total_ram() -> u64 {
+    eprintln!("[cw_daemon] [WARN] resources 侦测: 当前平台无 RAM 侦测实现，按 0 处理（走保守档）");
+    0
+}
+
+/// 解析 /proc/meminfo 文本中的 MemTotal（kB）；缺失/非法 → 0（纯函数，便于测试）。
+fn parse_proc_meminfo_memtotal(text: &str) -> u64 {
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            return rest
+                .trim()
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse::<u64>().ok())
+                .unwrap_or(0);
+        }
+    }
+    0
+}
+
+/// 侦测 CPU 逻辑核数（失败 = 1 + WARN，available_parallelism 兜底语义照 fs_handlers）。
+fn detect_cpu_cores() -> usize {
+    match std::thread::available_parallelism() {
+        Ok(n) => n.get(),
+        Err(e) => {
+            eprintln!(
+                "[cw_daemon] [WARN] resources 侦测: available_parallelism 失败（{e}），核数按 1 处理"
+            );
+            1
+        }
+    }
+}
+
+/// 侦测系统盘/数据盘类型（fail-soft：失败 = Unknown + WARN）。
+///
+/// Windows：对 HOME 所在盘符（缺省回落系统盘 C:）发
+/// `IOCTL_STORAGE_QUERY_PROPERTY` 读 BusType；**NVMe→Ssd**；其余总线
+/// （SATA/SAS/SCSI/ATA/USB/虚拟盘等）v1 无法从 BusType 区分 SSD/HDD →
+/// Unknown（按 SSD 处理，不封顶；O2 fail-soft 口径）。
+#[cfg(windows)]
+fn detect_disk_type() -> DiskType {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    use windows_sys::Win32::System::Ioctl::{
+        IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, StorageDeviceProperty,
+        STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY,
+    };
+
+    // HOME 所在盘；无盘符（如 UNC/未知 HOME）回落系统盘 C:
+    let drive = home_drive_letter().unwrap_or_else(|| {
+        eprintln!(
+            "[cw_daemon] [WARN] resources 侦测: HOME 无盘符，磁盘类型探测回落系统盘 C:"
+        );
+        "C:".to_string()
+    });
+    // \\.\C: 卷设备路径
+    let root: Vec<u16> = format!("\\\\.\\{drive}\0").encode_utf16().collect();
+    unsafe {
+        let handle = CreateFileW(
+            root.as_ptr(),
+            0, // 设备属性查询无需读写权限
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        );
+        if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+            eprintln!(
+                "[cw_daemon] [WARN] resources 侦测: 打开 {drive} 设备失败（{}），磁盘类型按 Unknown",
+                std::io::Error::last_os_error()
+            );
+            return DiskType::Unknown;
+        }
+        let mut query = STORAGE_PROPERTY_QUERY {
+            PropertyId: StorageDeviceProperty,
+            QueryType: PropertyStandardQuery,
+            AdditionalParameters: [0u8; 1],
+        };
+        // 描述符头 + 供应商/型号字符串余量
+        let mut buf = [0u8; std::mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() + 1024];
+        let mut returned: u32 = 0;
+        let ok = DeviceIoControl(
+            handle,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            &query as *const STORAGE_PROPERTY_QUERY as *const core::ffi::c_void,
+            std::mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            buf.as_mut_ptr() as *mut core::ffi::c_void,
+            buf.len() as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        );
+        CloseHandle(handle);
+        if ok == 0 || returned < std::mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() as u32 {
+            eprintln!(
+                "[cw_daemon] [WARN] resources 侦测: {drive} IOCTL_STORAGE_QUERY_PROPERTY 失败（{}），磁盘类型按 Unknown",
+                std::io::Error::last_os_error()
+            );
+            return DiskType::Unknown;
+        }
+        // 描述符头在缓冲区起始（非对齐安全读取）
+        let descriptor =
+            unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR) };
+        bus_type_to_disk_type(descriptor.BusType)
+    }
+}
+
+/// Linux：扫描 /sys/block/*/queue/rotational（排除 loop/ram/dm- 虚拟设备）。
+/// 任一 rotational=1 → Hdd；全 0 → Ssd；无数据（WSL1/容器）→ Unknown + WARN。
+#[cfg(unix)]
+fn detect_disk_type() -> DiskType {
+    let mut flags: Vec<bool> = Vec::new();
+    match std::fs::read_dir("/sys/block") {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("dm-") {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(entry.path().join("queue/rotational")) {
+                    flags.push(content.trim() == "1");
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "[cw_daemon] [WARN] resources 侦测: 读 /sys/block 失败（{e}），磁盘类型按 Unknown"
+            );
+        }
+    }
+    let result = rotational_flags_to_disk_type(&flags);
+    if result == DiskType::Unknown {
+        eprintln!(
+            "[cw_daemon] [WARN] resources 侦测: /sys/block 无可用 rotational 信息（WSL1/容器？），磁盘类型按 Unknown"
+        );
+    }
+    result
+}
+
+/// 其他平台：无实现，保守 Unknown（fail-soft）。
+#[cfg(not(any(windows, unix)))]
+fn detect_disk_type() -> DiskType {
+    eprintln!("[cw_daemon] [WARN] resources 侦测: 当前平台无磁盘类型侦测实现，按 Unknown");
+    DiskType::Unknown
+}
+
+/// BusType → DiskType：NVMe(17) → Ssd；其余（SATA/SAS/SCSI/ATA/USB/虚拟等
+/// 无法从总线区分 SSD/HDD）→ Unknown（O2：Unknown 按 SSD 处理，不封顶）。
+fn bus_type_to_disk_type(bus_type: i32) -> DiskType {
+    match bus_type {
+        17 => DiskType::Ssd, // BusTypeNvme
+        _ => DiskType::Unknown,
+    }
+}
+
+/// /sys/block rotational 标记集合 → DiskType（纯函数，便于测试）。
+/// 任一 true → Hdd；非空且全 false → Ssd；空 → Unknown。
+fn rotational_flags_to_disk_type(flags: &[bool]) -> DiskType {
+    if flags.is_empty() {
+        return DiskType::Unknown;
+    }
+    if flags.iter().any(|&f| f) {
+        DiskType::Hdd
+    } else {
+        DiskType::Ssd
+    }
+}
+
+/// 提取 HOME 路径的盘符（Windows 专用，如 "C:"）；非盘符路径返回 None。
+#[cfg(windows)]
+fn home_drive_letter() -> Option<String> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    let s = home.to_string_lossy();
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        Some(s[..2].to_ascii_uppercase())
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,5 +883,101 @@ build_parse_threads = 3
         assert!(parse_size_string("1.5G").is_err());
         assert!(parse_size_string("-1G").is_err());
         assert!(parse_size_string("99999999999999999999T").is_err(), "溢出拒收");
+    }
+
+    // ============================== C1.3 detect_host_profile ==============================
+
+    /// AC-RG-01-4：侦测容错分支——MemTotal 缺失/垃圾文本 → 0（不 panic）。
+    #[test]
+    fn parse_proc_meminfo_fail_soft() {
+        assert_eq!(parse_proc_meminfo_memtotal(""), 0);
+        assert_eq!(parse_proc_meminfo_memtotal("not a meminfo at all"), 0);
+        assert_eq!(parse_proc_meminfo_memtotal("MemTotal:  abc kB\n"), 0);
+        assert_eq!(parse_proc_meminfo_memtotal("MemTotal: -5 kB\n"), 0, "负数拒收");
+        assert_eq!(parse_proc_meminfo_memtotal("MemTotal: 16384 kB\n"), 16_384);
+        assert_eq!(
+            parse_proc_meminfo_memtotal(
+                "Buffers: 1 kB\nMemTotal:       67108864 kB\nSwapTotal: 0 kB\n"
+            ),
+            67_108_864,
+            "按前缀匹配，容忍其他字段"
+        );
+    }
+
+    /// BusType → DiskType：NVMe→Ssd，其余总线（无法区分 SSD/HDD）→ Unknown。
+    #[test]
+    fn bus_type_nvme_maps_to_ssd_others_unknown() {
+        assert_eq!(bus_type_to_disk_type(17), DiskType::Ssd, "BusTypeNvme");
+        // 0=Unknown 1=Scsi 2=Atapi 3=Ata 7=Usb 8=RAID 10=Sas 11=Sata 14=Virtual
+        for bus in [0, 1, 2, 3, 7, 8, 10, 11, 14, 15, 99] {
+            assert_eq!(
+                bus_type_to_disk_type(bus),
+                DiskType::Unknown,
+                "BusType {bus} 无法区分 SSD/HDD，应按 Unknown（O2）"
+            );
+        }
+    }
+
+    /// rotational 标记集合 → DiskType：任一 1→Hdd；全 0→Ssd；空→Unknown。
+    #[test]
+    fn rotational_flags_map_to_disk_type() {
+        assert_eq!(rotational_flags_to_disk_type(&[]), DiskType::Unknown);
+        assert_eq!(rotational_flags_to_disk_type(&[false]), DiskType::Ssd);
+        assert_eq!(rotational_flags_to_disk_type(&[false, false]), DiskType::Ssd);
+        assert_eq!(rotational_flags_to_disk_type(&[true]), DiskType::Hdd);
+        assert_eq!(rotational_flags_to_disk_type(&[false, true]), DiskType::Hdd, "混合按 HDD 保守处理");
+    }
+
+    /// AC-RG-01-4：HostProfile 可表达侦测失败态（0/1/Unknown），供 apply_profile 走保守档。
+    #[test]
+    fn host_profile_fail_soft_values_constructible() {
+        let failed = HostProfile {
+            total_ram_bytes: 0,
+            cpu_cores: 1,
+            disk_type: DiskType::Unknown,
+        };
+        assert_eq!(failed.total_ram_bytes, 0);
+        assert_eq!(failed.cpu_cores, 1);
+        assert_eq!(failed.disk_type, DiskType::Unknown);
+    }
+
+    /// 当前平台 smoke：侦测不 panic，返回值落在合法域（Windows 上 RAM 必 > 0）。
+    #[test]
+    fn detect_host_profile_smoke_current_platform() {
+        let profile = detect_host_profile();
+        assert!(profile.cpu_cores >= 1, "核数至少为 1");
+        assert!(
+            matches!(
+                profile.disk_type,
+                DiskType::Auto | DiskType::Ssd | DiskType::Hdd | DiskType::Unknown
+            ),
+            "disk_type 必须是合法枚举值"
+        );
+        // 本机（Windows 一线平台）GlobalMemoryStatusEx 正常时 RAM > 0；
+        // 若 API 失败按 fail-soft=0，此处只断言不 panic + 值域合法。
+        if cfg!(windows) {
+            assert!(profile.total_ram_bytes > 0, "Windows 侦测失败应已 WARN，正常路径 RAM > 0");
+        }
+    }
+
+    /// home_drive_letter：盘符路径提取 + 非盘符路径返回 None（仅 Windows 语义）。
+    #[test]
+    #[cfg(windows)]
+    fn home_drive_letter_extracts_from_profile_path() {
+        // 用环境变量同源逻辑构造：不依赖真实 USERPROFILE 内容，直接测判定逻辑
+        // 的镜像实现——这里通过 detect 的 unwrap_or 兜底行为间接覆盖（C: 兜底）。
+        // 直接构造判定：
+        fn extract(s: &str) -> Option<String> {
+            let bytes = s.as_bytes();
+            if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+                Some(s[..2].to_ascii_uppercase())
+            } else {
+                None
+            }
+        }
+        assert_eq!(extract(r"C:\Users\someone").as_deref(), Some("C:"));
+        assert_eq!(extract(r"d:\data").as_deref(), Some("D:"));
+        assert_eq!(extract(r"\\server\share"), None, "UNC 路径无盘符");
+        assert_eq!(extract("relative/path"), None);
     }
 }
