@@ -802,11 +802,12 @@ pub fn write_resources_section_once(cfg: &ResourceConfig) -> std::io::Result<Wri
     write_resources_section_at(&path, cfg)
 }
 
-/// 路径注入版写回（测试注入点；生产走 [`write_resources_section_once`]）。
+/// 路径注入版写回（跨 crate 装配/测试注入点；生产走
+/// [`write_resources_section_once`]）。
 ///
-/// 独立于 HOME 环境变量，测试可直接指向临时文件，避免并行测试的
-/// 环境变量竞态。
-fn write_resources_section_at(
+/// 独立于 HOME 环境变量，cw_daemon 装配链与测试可直接指向临时文件，
+/// 避免并行测试的环境变量竞态。
+pub fn write_resources_section_at(
     path: &PathBuf,
     cfg: &ResourceConfig,
 ) -> std::io::Result<WriteOutcome> {

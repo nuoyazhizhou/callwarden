@@ -165,6 +165,97 @@ fn format_startup_recover_summary_line(
 //   通过 cfg 切换被测副本，Windows/Linux CI 均可执行）
 // ============================================
 
+// ============================================
+// T2 / REQ-RG-01：启动资源装配链（侦测→映射→write-once 写回）
+// （unix/windows 两平台 serve 共用；symbol-anchor A5）
+// ============================================
+
+/// 启动资源装配结果（T2）。
+struct ResourcesAssembly {
+    /// 档位映射后的生效值（snapshot cache 容量等取值来源）。
+    effective: callwarden_core::daemon::resources::ResourceConfig,
+    /// daemon.toml 文件原始解析值（映射前；SIGHUP reload diff 基准）。
+    file_config: callwarden_core::daemon::resources::ResourceConfig,
+    /// 本次档位映射覆盖的键（启动日志）。
+    covered_keys: Vec<String>,
+    /// `[resources]` 写回结果（write-once）。
+    write_outcome: callwarden_core::daemon::resources::WriteOutcome,
+}
+
+/// 装配链（路径注入版；生产传 `ResourceConfig::config_path()`，测试传临时
+/// 路径避免 HOME 环境变量竞态）。
+///
+/// load（容错同 `load_resource_config`：缺失 → 默认静默，其他读错误 →
+/// 默认 + WARN）→ `apply_profile`（显式键神圣）→ `write_resources_section_at`
+/// （write-once，失败 WARN 不阻断启动，C1.5）。
+fn assemble_resources_at(
+    path: Option<&std::path::Path>,
+    profile: &callwarden_core::daemon::resources::HostProfile,
+) -> ResourcesAssembly {
+    use callwarden_core::daemon::resources::{
+        apply_profile, write_resources_section_at, ResourceConfig, WriteOutcome,
+    };
+    let file_config = match path {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(content) => ResourceConfig::from_toml_str(&content),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => ResourceConfig::default(),
+            Err(e) => {
+                eprintln!(
+                    "[cw_daemon] [WARN] resources 配置: 读取 {} 失败（{e}），全部回退默认值",
+                    p.display()
+                );
+                ResourceConfig::default()
+            }
+        },
+        None => ResourceConfig::default(),
+    };
+    let mut effective = file_config.clone();
+    let covered_keys = apply_profile(&mut effective, profile);
+    let write_outcome = match path {
+        Some(p) => match write_resources_section_at(&std::path::PathBuf::from(p), &effective) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                eprintln!(
+                    "[cw_daemon] [WARN] resources 写回: 意外异常（{e}），不阻断启动"
+                );
+                WriteOutcome::Failed
+            }
+        },
+        None => {
+            eprintln!(
+                "[cw_daemon] [WARN] resources 写回: HOME/USERPROFILE 未设置，无法定位 daemon.toml，跳过写回（不阻断启动）"
+            );
+            WriteOutcome::Failed
+        }
+    };
+    ResourcesAssembly {
+        effective,
+        file_config,
+        covered_keys,
+        write_outcome,
+    }
+}
+
+/// E8：SIGHUP reload 时 `[resources]` 变更的 WARN 消息（纯函数便于测试）。
+///
+/// 返回 `None` = 文件 [resources] 与启动快照一致（无告警）；`Some(msg)` =
+/// 已变更，v1 不热重载（write-once），需重启生效（与 snapshot_cache_capacity
+/// 同口径）。
+fn resources_reload_diff_message(
+    startup: &callwarden_core::daemon::resources::ResourceConfig,
+    current: &callwarden_core::daemon::resources::ResourceConfig,
+) -> Option<String> {
+    if current == startup {
+        return None;
+    }
+    Some(format!(
+        "[cw_daemon] [WARN] SIGHUP reload: daemon.toml [resources] 已变更（启动时 \
+         cache_max_bytes={}，当前文件 cache_max_bytes={}），v1 不热重载 \
+         （write-once），需重启生效",
+        startup.cache_max_bytes, current.cache_max_bytes
+    ))
+}
+
 #[cfg(test)]
 mod startup_recover_tests {
     use std::fs;
@@ -176,7 +267,7 @@ mod startup_recover_tests {
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
     use callwarden_core::snapshot::SnapshotCache;
     use super::{
-        classify_startup_recover, format_startup_recover_summary_line,
+        assemble_resources_at, classify_startup_recover, format_startup_recover_summary_line,
         format_startup_recover_ws_line,
     };
 
@@ -422,7 +513,7 @@ mod unix {
     use callwarden_core::daemon::task_loop::capability_control::CapabilityMutationGate;
     use callwarden_core::snapshot::SnapshotCache;
     use super::{
-        classify_startup_recover, format_startup_recover_summary_line,
+        assemble_resources_at, classify_startup_recover, format_startup_recover_summary_line,
         format_startup_recover_ws_line,
     };
     use tokio::sync::Mutex as TokioMutex;
@@ -728,8 +819,36 @@ mod unix {
         // G11: 共享 Arc<SnapshotCache> + Arc<SnapshotCachePublisher>
         // —— 所有 worker 共用同一个 cache（per-workspace ArcSwap 在 cache 内部），
         // 避免 snapshot 重复构建 + 内存浪费。publisher 是只读包装，可安全共享。
+        // T2/REQ-RG-01（A5）：启动资源装配——DaemonConfig 加载后、SnapshotCache
+        // 构造前：侦测→档位映射→write-once 写回 [resources]；失败 WARN 不阻断
+        // 启动（C1.5）。
+        let resource_profile = callwarden_core::daemon::resources::detect_host_profile();
+        let resource_assembly = assemble_resources_at(
+            callwarden_core::daemon::resources::ResourceConfig::config_path().as_deref(),
+            &resource_profile,
+        );
+        eprintln!(
+            "[cw_daemon] [INFO] resources: ram={}MB cores={} disk={} mapped=[{}] write={:?} | \
+             effective cache_max_bytes={} cache_max_workspaces={} build_parse_threads={} \
+             memory_soft_limit_bytes={}",
+            resource_profile.total_ram_bytes / (1024 * 1024),
+            resource_profile.cpu_cores,
+            resource_profile.disk_type.as_str(),
+            resource_assembly.covered_keys.join(","),
+            resource_assembly.write_outcome,
+            resource_assembly.effective.cache_max_bytes,
+            resource_assembly.effective.cache_max_workspaces,
+            resource_assembly.effective.build_parse_threads,
+            resource_assembly.effective.memory_soft_limit_bytes
+        );
         let registry_db_path = config.registry_db_path.to_string_lossy().to_string();
-        let cache_capacity = config.snapshot_cache_capacity;
+        // T2/A5：cache 容量默认取值改为来自 [resources] 生效值；
+        // CLI --cache-capacity 显式覆盖优先（既有语义，apply_cli_overrides 已写入 config）。
+        let cache_capacity = if cli.cache_capacity.is_some() {
+            config.snapshot_cache_capacity
+        } else {
+            resource_assembly.effective.cache_max_workspaces
+        };
         let data_root = config.data_root.clone();
         let codegraph_db_path_template = config.codegraph_db_path_template.clone();
         let audit_db_path = config.audit_db_path.clone();
@@ -915,7 +1034,7 @@ mod unix {
             }
             if reload_flag.swap(false, Ordering::SeqCst) {
                 eprintln!("[cw_daemon] [INFO] received SIGHUP, reload requested");
-                handle_reload(&cli.config, &config);
+                handle_reload(&cli.config, &config, &resource_assembly.file_config);
             }
             if drain_flag.swap(false, Ordering::SeqCst) {
                 eprintln!("[cw_daemon] [INFO] received SIGUSR1, drain requested");
@@ -1283,8 +1402,15 @@ mod unix {
     /// 当前没有可热重载的字段（snapshot_cache_capacity 用 Arc，容量已固定），
     /// 函数主要价值是验证 config file 仍可读 + 输出 diff 日志，便于运维确认。
     ///
+    /// daemon.toml [resources] 段（E8）：v1 write-once 不热重载，
+    /// 与启动时的文件快照 startup_resources 对比，变更则 WARN 需重启生效。
+    ///
     /// 如果未指定 --config，仅输出 "no config file" 日志。
-    fn handle_reload(config_path: &Option<PathBuf>, current_config: &DaemonConfig) {
+    fn handle_reload(
+        config_path: &Option<PathBuf>,
+        current_config: &DaemonConfig,
+        startup_resources: &callwarden_core::daemon::resources::ResourceConfig,
+    ) {
         let path = match config_path {
             Some(p) => p,
             None => {
@@ -1359,6 +1485,17 @@ mod unix {
             );
         }
 
+        // E8：daemon.toml [resources] v1 write-once 不热重载——与启动时的文件快照对比，
+        // 变更则 WARN 需重启生效（与 snapshot_cache_capacity 同口径）。
+        // 口径说明：这里重读 daemon.toml 标准路径（config_path()），与启动装配读的是同一文件；
+        // --config 指向的 DaemonConfig 文件是另一回事，不混用。
+        let current_resources = callwarden_core::daemon::resources::ResourceConfig::load_resource_config();
+        let resources_reload_msg =
+            resources_reload_diff_message(startup_resources, &current_resources);
+        if let Some(msg) = &resources_reload_msg {
+            eprintln!("{}", msg);
+        }
+
         // 无字段变更的提示
         if new_config.socket_path == current_config.socket_path
             && new_config.max_workers == current_config.max_workers
@@ -1368,6 +1505,7 @@ mod unix {
             && new_config.socket_mode == current_config.socket_mode
             && new_config.request_timeout_secs == current_config.request_timeout_secs
             && new_config.toolchain_db_path == current_config.toolchain_db_path
+            && resources_reload_msg.is_none()
         {
             eprintln!("[cw_daemon] [INFO] SIGHUP reload: 配置无变更");
         }
@@ -2150,7 +2288,11 @@ mod unix {
             // 未指定 --config：应输出 "无可重载内容" 并返回
             // 验证不 panic + 不修改 current_config
             let current = DaemonConfig::default();
-            handle_reload(&None, &current);
+            handle_reload(
+                &None,
+                &current,
+                &callwarden_core::daemon::resources::ResourceConfig::default(),
+            );
             // 无法捕获 stderr，仅验证不 panic
         }
 
@@ -2163,7 +2305,11 @@ mod unix {
             let json = serde_json::to_string_pretty(&cfg).unwrap();
             fs::write(&cfg_path, json).unwrap();
 
-            handle_reload(&Some(cfg_path), &cfg);
+            handle_reload(
+                &Some(cfg_path),
+                &cfg,
+                &callwarden_core::daemon::resources::ResourceConfig::default(),
+            );
             // 不 panic 即通过
         }
 
@@ -2181,7 +2327,11 @@ mod unix {
             fs::write(&cfg_path, json).unwrap();
 
             let current = DaemonConfig::default();
-            handle_reload(&Some(cfg_path), &current);
+            handle_reload(
+                &Some(cfg_path),
+                &current,
+                &callwarden_core::daemon::resources::ResourceConfig::default(),
+            );
             // 不 panic 即通过（diff 输出到 stderr，无法捕获）
         }
 
@@ -2191,7 +2341,11 @@ mod unix {
             let tmp = tempfile::tempdir().unwrap();
             let cfg_path = tmp.path().join("nonexistent.json");
             let current = DaemonConfig::default();
-            handle_reload(&Some(cfg_path), &current);
+            handle_reload(
+                &Some(cfg_path),
+                &current,
+                &callwarden_core::daemon::resources::ResourceConfig::default(),
+            );
             // 不 panic 即通过
         }
 
@@ -2519,7 +2673,7 @@ mod windows {
     use callwarden_core::daemon::task_loop::capability_control::CapabilityMutationGate;
     use callwarden_core::snapshot::SnapshotCache;
     use super::{
-        classify_startup_recover, format_startup_recover_summary_line,
+        assemble_resources_at, classify_startup_recover, format_startup_recover_summary_line,
         format_startup_recover_ws_line,
     };
     use tokio::sync::Mutex as TokioMutex;
@@ -2834,8 +2988,35 @@ mod windows {
         let workspace_count = registry.count_workspaces().unwrap_or(0);
 
         // 5. 构造 state_factory 闭包（每个 worker 线程调用一次，独立 WorkspaceRegistry 连接）
+        // T2/REQ-RG-01（A5）：启动资源装配——与 Unix 分支同一生产路径：
+        // 侦测→档位映射→write-once 写回 [resources]；失败 WARN 不阻断启动（C1.5）。
+        let resource_profile = callwarden_core::daemon::resources::detect_host_profile();
+        let resource_assembly = assemble_resources_at(
+            callwarden_core::daemon::resources::ResourceConfig::config_path().as_deref(),
+            &resource_profile,
+        );
+        eprintln!(
+            "[cw_daemon] [INFO] resources: ram={}MB cores={} disk={} mapped=[{}] write={:?} | \
+             effective cache_max_bytes={} cache_max_workspaces={} build_parse_threads={} \
+             memory_soft_limit_bytes={}",
+            resource_profile.total_ram_bytes / (1024 * 1024),
+            resource_profile.cpu_cores,
+            resource_profile.disk_type.as_str(),
+            resource_assembly.covered_keys.join(","),
+            resource_assembly.write_outcome,
+            resource_assembly.effective.cache_max_bytes,
+            resource_assembly.effective.cache_max_workspaces,
+            resource_assembly.effective.build_parse_threads,
+            resource_assembly.effective.memory_soft_limit_bytes
+        );
         let registry_db_path = config.registry_db_path.to_string_lossy().to_string();
-        let cache_capacity = config.snapshot_cache_capacity;
+        // T2/A5：cache 容量默认取值改为来自 [resources] 生效值；
+        // CLI --cache-capacity 显式覆盖优先（既有语义，apply_cli_overrides 已写入 config）。
+        let cache_capacity = if cli.cache_capacity.is_some() {
+            config.snapshot_cache_capacity
+        } else {
+            resource_assembly.effective.cache_max_workspaces
+        };
         let data_root = config.data_root.clone();
         let codegraph_db_path_template = config.codegraph_db_path_template.clone();
         let audit_db_path = config.audit_db_path.clone();
