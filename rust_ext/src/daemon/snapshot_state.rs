@@ -86,6 +86,12 @@ pub struct SnapshotDaemonState {
     bind_scope: String,
     /// ADR-002 §16.2：分块上传组装存储（daemon 内单实例，跨请求共享）。
     upload_slots: Arc<super::snapshot_guard::UploadSlotStore>,
+    /// T4/REQ-RG-02（AC-RG-02-6）：per-ws 冷加载重建互斥。
+    /// 外层 Mutex 只保护 map 本身；value 是该 ws 的重建锁（Arc 包裹以便
+    /// 拿锁期间不持 map 锁）。同一 ws 的并发冷加载串行化，后到者
+    /// double-check cache 命中即返回。条目量级 = ws 数，parking_lot::Mutex<()>
+    /// 零数据不做清理（与 cache 驱逐解耦，避免驱逐后重建锁丢失导致单飞失效）。
+    rebuild_locks: parking_lot::Mutex<HashMap<String, Arc<parking_lot::Mutex<()>>>>,
 }
 
 impl SnapshotDaemonState {
@@ -98,6 +104,7 @@ impl SnapshotDaemonState {
             task_db_path: None,
             bind_scope: "loopback".to_string(),
             upload_slots: Arc::new(super::snapshot_guard::UploadSlotStore::new()),
+            rebuild_locks: parking_lot::Mutex::new(HashMap::new()),
         }
     }
 
@@ -257,6 +264,135 @@ impl SnapshotDaemonState {
         self.snapshot_cache
             .get(workspace_id)
             .and_then(|mgr| mgr.current_store())
+    }
+
+    /// T4/REQ-RG-02（C4）：查询路径冷加载自愈。
+    ///
+    /// ①cache hit → touch → 返回；②miss → 单飞（per-ws 重建互斥，同 ws
+    /// 并发合并为一次重建，AC-RG-02-6）→ `owned_workspace` ACL（复用现状）
+    /// → `resolve_codegraph_db_path`（复用现状）→ `build_and_publish_blocking`
+    /// （复用 A2 生产发布路径）→ touch → 返回；③失败 → `snapshot_not_ready`
+    /// （现状错误码，不恶化）+ WARN，可重试。
+    ///
+    /// 契约 C4 签名原文为 `&mut self`；实落为 `&self`：`SnapshotCache` 全部
+    /// API 均为 `&self`（内部锁），per-ws 重建锁亦为内部 Mutex，无需 `&mut`
+    /// ——否则全部 `&self` 查询 handler 无法调用。
+    ///
+    /// 错误语义（「不恶化」原则的具体化）：
+    /// - ACL 失败保持 `workspace_forbidden` 原样传播（与既有查询语义一致：
+    ///   workspace_forbidden 优先于 snapshot_not_ready，见
+    ///   test_query_*_forbidden 用例；权限错误不得被掩盖为快照未就绪）；
+    /// - db path 失败保持 `codegraph_db_unconfigured` 原样传播（现状错误码）；
+    /// - 仅构建/发布失败转 `snapshot_not_ready`（与现状「未发布」同码）。
+    fn get_store_or_load(
+        &self,
+        peer: PeerCredential,
+        workspace_instance_id: &str,
+    ) -> Result<Arc<GraphStore>, DaemonRpcError> {
+        // ① hit → touch → 返回
+        if let Some(store) = self.get_store(workspace_instance_id) {
+            self.snapshot_cache.touch(workspace_instance_id);
+            return Ok(store);
+        }
+
+        eprintln!(
+            "[snapshot_state] [INFO] 冷加载: workspace {} cache miss，重建 snapshot",
+            workspace_instance_id
+        );
+
+        // ② 单飞：per-ws 重建锁（Arc 克隆后拿锁，不持 map 锁，避免交叉死锁）
+        let rebuild_lock = {
+            let mut locks = self.rebuild_locks.lock();
+            locks
+                .entry(workspace_instance_id.to_string())
+                .or_insert_with(|| Arc::new(parking_lot::Mutex::new(())))
+                .clone()
+        };
+        let _guard = rebuild_lock.lock();
+
+        // double-check：并发场景下可能已被前一个请求重建
+        if let Some(store) = self.get_store(workspace_instance_id) {
+            self.snapshot_cache.touch(workspace_instance_id);
+            return Ok(store);
+        }
+
+        // ACL（复用 owned_workspace 现状；失败原样传播 workspace_forbidden）
+        let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let registry_rowid = workspace
+            .get("workspace_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| DaemonRpcError::internal_error("workspace_id 字段缺失或非数值"))?;
+        let client_view_root = workspace
+            .get("client_view_root")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+
+        // db path（复用 resolve_codegraph_db_path 现状；失败保持
+        // codegraph_db_unconfigured 原样传播）
+        let db_path = resolve_codegraph_db_path(
+            &self.base.codegraph_db_path_template,
+            workspace_instance_id,
+        )?;
+        let workspace_id_num = resolve_true_workspace_id(
+            db_path.to_str().unwrap_or(""),
+            client_view_root,
+            registry_rowid,
+        );
+
+        // 生产发布路径（复用 A2）：manager 单例（get_or_create）+
+        // build_and_publish_blocking（内部含 wal_checkpoint + load + publish）。
+        // catch_unwind 与 handle_snapshot_publish 同款 panic 隔离。
+        let mgr = self.snapshot_cache.get_or_create(workspace_instance_id);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mgr.build_and_publish_blocking(
+                db_path.to_str().unwrap_or(""),
+                workspace_id_num,
+                // 冷加载无新 build 上下文：空 hash、无 snapshot_id
+                "",
+                None,
+            )
+        }));
+        match outcome {
+            Ok(Ok((generation, symbol_count, _call_count))) => {
+                self.snapshot_cache.touch(workspace_instance_id);
+                let store = self.get_store(workspace_instance_id).ok_or_else(|| {
+                    DaemonRpcError::new(
+                        "snapshot_not_ready",
+                        format!("workspace {workspace_instance_id} 冷加载后仍不可用"),
+                    )
+                })?;
+                eprintln!(
+                    "[snapshot_state] [INFO] 冷加载: workspace {} 重建完成 \
+                     generation={} symbols={}",
+                    workspace_instance_id, generation, symbol_count
+                );
+                Ok(store)
+            }
+            Ok(Err(msg)) => {
+                eprintln!(
+                    "[snapshot_state] [WARN] 冷加载: workspace {} 重建失败: {}",
+                    workspace_instance_id, msg
+                );
+                Err(DaemonRpcError::new(
+                    "snapshot_not_ready",
+                    format!(
+                        "workspace {workspace_instance_id} snapshot 冷加载失败（可重试）: {msg}"
+                    ),
+                ))
+            }
+            Err(_) => {
+                eprintln!(
+                    "[snapshot_state] [WARN] 冷加载: workspace {} 重建 panic（已隔离）",
+                    workspace_instance_id
+                );
+                Err(DaemonRpcError::new(
+                    "snapshot_not_ready",
+                    format!(
+                        "workspace {workspace_instance_id} snapshot 冷加载失败（内部异常，可重试）"
+                    ),
+                ))
+            }
+        }
     }
 
     fn open_query_connection(
