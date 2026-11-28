@@ -118,6 +118,10 @@ pub mod health;
 /// R7: cw_daemon binary 配置加载（DaemonConfig + 环境变量覆盖 + 文件加载）
 pub mod config;
 
+/// REQ-RG-01: daemon 资源治理面——[resources] 配置解析 + 主机环境侦测 + 档位映射
+/// 契约：.design/daemon-resource-governance/contracts.md C1.1-C1.4
+pub mod resources;
+
 /// G29: QueryBudget + BudgetTracker——查询预算控制（max_depth + max_nodes + timeout）
 /// 防止 BFS/DFS 在大型代码库中指数爆炸
 pub mod budget;
