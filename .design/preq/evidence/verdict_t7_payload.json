@@ -1,0 +1,28 @@
+{
+  "step_id": "S-1795663574851-eb21f084",
+  "contract_id": "TC-T-1795663574847-eaea3d24",
+  "contract_revision": 1,
+  "contract_hash": "sha256:200357c97cd8bd34542f187d5403d6663b8c654cbeed23a972dddc1412082168",
+  "role_contract_id": "rcr-T-1795663574847-eaea3d24-reviewer-r1",
+  "role_contract_revision": 1,
+  "role_contract_hash": "sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b",
+  "phase": "blind_first_pass",
+  "overall": "pass",
+  "view_manifest_hash": "e24f44ea5efded5c63ebe08a21e7cb939a38cfad6cc10f19da131ca278cc460c",
+  "snapshot_id": "37076736ac967564",
+  "request_id": "req-reviewer-t1-t7-t7-blind-20261128-01",
+  "attestation": "独立盲评（blind_first_pass）：未采信 executor handoff 与 evidence manifest 的自报结论，仅复算其文件 SHA-256 作为可复现事实。证据：git show 147742e 全量 diff（v2 amendment +84 行，仅该文档）；§8 全章逐条对照 .design/preq/ 冻结基线 8b1a1e3（contracts.md/ac-map.md/requirements-brief.md/task-map.md）及 T1 已实现 prerequisites.rs（e133f34）；§3.1 引用与相对链接可达性核实；孤儿提交状态经 git branch --contains 核实。评审未改任何源码/文档/证据/任务状态。",
+  "clause_results": [
+    {"clause": "AC-12-四要素", "result": "pass", "evidence": "§8.1 三层结构/§8.2 判定规则/§8.3 capability 门禁/§8.3 E_PREREQUISITE_NOT_MET 错误码齐备"},
+    {"clause": "check_item_1-四要素", "result": "pass", "evidence": "8.1 三层表（投影/领取/派工批次 2）+ 8.2 五类 dep_type 规则 + 8.5 批次与放行判据 + 8.6 六场景异常要点"},
+    {"clause": "check_item_2-错误码与shape可读", "result": "pass", "evidence": "§8.3 错误码与 message 样例（与卡 5 逐字一致）；§8.4 JSON 示例五字段 provider_task_id/lifecycle_status/dep_type/unmet_reason/freshness_status，空为 []"},
+    {"clause": "check_item_3-diff范围与基线无冲突", "result": "pass", "evidence": "git show 147742e --stat 仅 cw-role-handoff-task-loop-v2-amendment.md +84 行，.design/ 零触碰；章节语义与冻结基线逐条一致无冲突"},
+    {"clause": "与T1实现一致性", "result": "pass", "evidence": "capability 常量/判定规则/五字段 shape/错误码与 prerequisites.rs e133f34 逐项对齐，无文档承诺实现没有的行为"},
+    {"clause": "引用有效性", "result": "pass", "evidence": "§3.1 引用有效（capability 通道定义章）；父任务 T-1795661715269-f3611f48 与冻结基线 8b1a1e3 核实；相对链接 ../../.design/preq/requirements-brief.md 目标存在"}
+  ],
+  "findings": [
+    {"severity": "suggestion", "location": "commit 147742e（仓库治理）", "summary": "孤儿提交：git branch --contains 147742e 无输出，不在任何分支；证据链 b463184→147742e（文档）→c5c459e（ledger）→06a4d5b（evidence manifest）整段悬空。内容已独立核验通过。归位（cherry-pick/merge）由主理人处理，本评审不移动提交；归位前 docs/evidence/T-1795663574847-eaea3d24-prereq-gate-design.md 在任何分支不可达。"},
+    {"severity": "nit", "location": "§8.6", "summary": "异常要点表对 requirements-brief §4.3 八场景矩阵压缩重排（文档#1=DB失败=brief#5；文档#3=reverted=brief#7），语义无冲突但跨文档编号引用可能错位；建议后续引用带 brief §4.3 #N 原号。"},
+    {"severity": "nit", "location": "§8.2", "summary": "使用 is_hard=0 词汇描述信息性依赖，实际声明表列为 is_informational（1⟺0 等价）；词汇沿自冻结契约卡 1 原文，语义无歧义，记录供批次 2 文档统一。"}
+  ]
+}

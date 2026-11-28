@@ -1,0 +1,8 @@
+1299:warning: `callwarden-core` (lib test) generated 169 warnings (run `cargo fix --lib -p callwarden-core --tests` to apply 103 suggestions)
+1300:    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 20s
+1303:running 3 tests
+1304:test daemon::task_collab::tests::projection::tree_governance_projection_closed_task_prerequisites_empty ... ok
+1305:test daemon::task_collab::tests::projection::tree_governance_projection_lists_unmet_hard_dependency ... ok
+1306:test daemon::task_collab::tests::projection::tree_governance_status_tree_node_carries_prerequisites ... ok
+1308:test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 2150 filtered out; finished in 0.47s
+1310:CARGO_RC=0

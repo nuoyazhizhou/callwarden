@@ -1,0 +1,1343 @@
+warning: unused import: `rusqlite::Connection`
+  --> src\daemon\task_collab_tests_parent_create.rs:15:5
+   |
+15 | use rusqlite::Connection;
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::sync::Arc`
+  --> src\daemon\task_supersede.rs:34:5
+   |
+34 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: cannot test inner items
+   --> src\daemon\task_prompt\bundle_tests.rs:291:1
+    |
+291 | #[test]
+    | ^^^^^^^
+    |
+    = note: `#[warn(unnameable_test_items)]` on by default
+
+warning: unused import: `std::time::Duration`
+   --> src\daemon\compat_adapter.rs:614:9
+    |
+614 |     use std::time::Duration;
+    |         ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `json`
+  --> src\daemon\_mcp_common_handlers.rs:14:18
+   |
+14 | use serde_json::{json, Map, Value};
+   |                  ^^^^
+
+warning: unused import: `PathBuf`
+  --> src\daemon\audit_log_handlers.rs:15:23
+   |
+15 | use std::path::{Path, PathBuf};
+   |                       ^^^^^^^
+
+warning: unused import: `get_int_param_or`
+  --> src\daemon\cli_handle_tests_handlers.rs:13:23
+   |
+13 | use super::dispatch::{get_int_param_or, get_str_param_or, DaemonRpcError};
+   |                       ^^^^^^^^^^^^^^^^
+
+warning: unused import: `Map`
+  --> src\daemon\admin_handlers.rs:16:24
+   |
+16 | use serde_json::{json, Map, Value};
+   |                        ^^^
+
+warning: unused import: `Map`
+  --> src\daemon\edit_handlers.rs:17:24
+   |
+17 | use serde_json::{json, Map, Value};
+   |                        ^^^
+
+warning: unused import: `require_str_param`
+  --> src\daemon\semgrep_handlers.rs:15:41
+   |
+15 |     get_int_param_or, get_str_param_or, require_str_param, DaemonRpcError,
+   |                                         ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HashMap`
+  --> src\frontier.rs:14:24
+   |
+14 | use std::collections::{HashMap, HashSet, VecDeque};
+   |                        ^^^^^^^
+
+warning: unused imports: `PyDict` and `PySet`
+  --> src\frontier.rs:17:19
+   |
+17 | use pyo3::types::{PyDict, PyList, PySet};
+   |                   ^^^^^^          ^^^^^
+
+warning: unused import: `std::io::Write`
+   --> src\hash_diff.rs:412:9
+    |
+412 |     use std::io::Write;
+    |         ^^^^^^^^^^^^^^
+
+warning: unused imports: `PyDict` and `PyList`
+  --> src\toolchain.rs:13:19
+   |
+13 | use pyo3::types::{PyDict, PyList};
+   |                   ^^^^^^  ^^^^^^
+
+warning: unused import: `EventHandler`
+  --> src\watcher.rs:17:20
+   |
+17 |     Config, Event, EventHandler, RecommendedWatcher, RecursiveMode, Watcher,
+   |                    ^^^^^^^^^^^^
+
+warning: unused import: `std::thread`
+  --> src\watcher.rs:25:5
+   |
+25 | use std::thread;
+   |     ^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> src\cli\output.rs:13:5
+   |
+13 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `pyo3::prelude`
+  --> src\daemon\replicator.rs:18:5
+   |
+18 | use pyo3::prelude::*;
+   |     ^^^^^^^^^^^^^
+
+warning: unused import: `super`
+   --> src\manifest_query.rs:513:9
+    |
+513 |     use super::*;
+    |         ^^^^^
+
+warning: variable does not need to be mutable
+   --> src\daemon\assignment_queue.rs:770:13
+    |
+770 |         let mut conn = conn();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src\daemon\assignment_queue.rs:843:13
+    |
+843 |         let mut conn = conn();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\assignment_queue.rs:908:13
+    |
+908 |         let mut conn = conn();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\assignment_queue.rs:986:13
+    |
+986 |         let mut conn = conn();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\assignment_queue.rs:1041:13
+     |
+1041 |         let mut conn = conn();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src\daemon\task_collab_contract.rs:75:13
+   |
+75 |         let mut conn = self.conn.lock().unwrap();
+   |             ----^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_contract.rs:405:13
+    |
+405 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_contract.rs:663:13
+    |
+663 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_contract.rs:830:13
+    |
+830 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_contract.rs:1074:13
+     |
+1074 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_contract.rs:1685:13
+     |
+1685 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_contract.rs:1804:13
+     |
+1804 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `owner_key`
+    --> src\daemon\task_collab_contract.rs:1802:13
+     |
+1802 |         let owner_key = peer.owner_key();
+     |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_owner_key`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_governance.rs:1049:13
+     |
+1049 |         let mut stmt = conn
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `version`
+    --> src\daemon\task_collab_governance.rs:1047:9
+     |
+1047 |         version: &str,
+     |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_version`
+
+warning: variable does not need to be mutable
+  --> src\daemon\task_collab_lease.rs:89:13
+   |
+89 |         let mut conn = self.conn.lock().unwrap();
+   |             ----^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_lease.rs:755:13
+    |
+755 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_lease.rs:1075:13
+     |
+1075 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_lease.rs:1256:13
+     |
+1256 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_lease.rs:1499:13
+     |
+1499 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_lease.rs:1691:13
+     |
+1691 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_lifecycle.rs:200:13
+    |
+200 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_lifecycle.rs:687:13
+    |
+687 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `step_id`
+   --> src\daemon\task_collab_lifecycle.rs:889:18
+    |
+889 |             let (step_id, status, result) = row.map_err(|e| {
+    |                  ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_step_id`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_lifecycle.rs:1073:13
+     |
+1073 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_lifecycle.rs:1320:13
+     |
+1320 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_lifecycle_apply.rs:115:13
+    |
+115 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_lifecycle_apply.rs:224:13
+    |
+224 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_lifecycle_apply.rs:482:13
+    |
+482 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src\daemon\task_collab_lifecycle_ops.rs:26:13
+   |
+26 |         let mut conn = self.conn.lock().unwrap();
+   |             ----^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src\daemon\task_collab_lifecycle_ops.rs:92:13
+   |
+92 |         let mut conn = self.conn.lock().unwrap();
+   |             ----^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_planning.rs:241:13
+    |
+241 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_planning.rs:467:13
+    |
+467 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `peer`
+   --> src\daemon\task_collab_planning.rs:598:9
+    |
+598 |         peer: PeerCredential,
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_peer`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_planning.rs:667:13
+    |
+667 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_query.rs:248:13
+    |
+248 |         let mut conn = self
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: value assigned to `final_status` is never read
+   --> src\daemon\task_collab_query.rs:545:32
+    |
+545 |         let mut final_status = String::new();
+    |                                ^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `status_val` is never read
+   --> src\daemon\task_collab_query.rs:607:30
+    |
+607 |         let mut status_val = String::new();
+    |                              ^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `parent_val` is never read
+   --> src\daemon\task_collab_query.rs:608:30
+    |
+608 |         let mut parent_val = String::new();
+    |                              ^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_verdict.rs:122:13
+    |
+122 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:1015:13
+     |
+1015 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:2725:13
+     |
+2725 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:3334:13
+     |
+3334 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:3653:13
+     |
+3653 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `peer`
+    --> src\daemon\task_collab.rs:3579:9
+     |
+3579 |         peer: PeerCredential,
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_peer`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:3833:13
+     |
+3833 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `peer`
+    --> src\daemon\task_collab.rs:3772:9
+     |
+3772 |         peer: PeerCredential,
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_peer`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_collab_tests_core.rs:833:17
+    |
+833 |             let mut conn = store.conn.lock().unwrap();
+    |                 ----^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab_tests_lease.rs:2102:13
+     |
+2102 |         let mut conn = store.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_supersede.rs:389:13
+    |
+389 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_supersede.rs:706:13
+    |
+706 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_supersede.rs:1309:17
+     |
+1309 |             let mut conn = store.conn.lock().unwrap();
+     |                 ----^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_supersede.rs:1720:13
+     |
+1720 |         let mut p = base_params("OLD", "OLD");
+     |             ----^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_supersede.rs:1725:13
+     |
+1725 |         let mut p = base_params("OLD", "NOPE");
+     |             ----^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src\daemon\task_loop\executor.rs:74:13
+   |
+74 |         let mut tx = conn
+   |             ----^^
+   |             |
+   |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_loop\promotion.rs:231:9
+    |
+231 |     let mut tx = conn
+    |         ----^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_loop\role_worker.rs:538:13
+    |
+538 |         let mut conn = self.conn.lock().unwrap();
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_loop\report_handoff_test.rs:727:9
+    |
+727 |     let mut conn = fresh_db();
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `conn`
+   --> src\daemon\task_loop\report_handoff_test.rs:727:9
+    |
+727 |     let mut conn = fresh_db();
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_conn`
+
+warning: variable does not need to be mutable
+   --> src\daemon\task_prompt\render.rs:278:26
+    |
+278 |     let (untrusted_json, mut omissions) = build_untrusted_block(untrusted)?;
+    |                          ----^^^^^^^^^
+    |                          |
+    |                          help: remove this `mut`
+
+warning: unused variable: `selection`
+   --> src\daemon\task_prompt\render_tests.rs:174:10
+    |
+174 |     let (selection, out) = render_for(&context);
+    |          ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_selection`
+
+warning: unused variable: `peer`
+    --> src\daemon\workspace.rs:7965:13
+     |
+7965 |         let peer = make_owner_peer();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_peer`
+
+warning: unused variable: `input`
+    --> src\daemon\cas.rs:1521:13
+     |
+1521 |         let input = make_input();
+     |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_input`
+
+warning: unused variable: `stats`
+    --> src\daemon\cas.rs:1708:13
+     |
+1708 |         let stats = store.gc(&live, 7.0).unwrap();
+     |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_stats`
+
+warning: unused variable: `bind`
+   --> src\daemon\pki_api.rs:925:5
+    |
+925 |     bind: &SocketAddr,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_bind`
+
+warning: unused variable: `bind`
+    --> src\daemon\pki_api.rs:1545:13
+     |
+1545 |         let bind: SocketAddr = "127.0.0.1:8457".parse().unwrap();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_bind`
+
+warning: unused variable: `cfg1`
+    --> src\daemon\pki_api.rs:1623:14
+     |
+1623 |         let (cfg1, ca1, prev1, server1) = load_tls_config_from_disk(root.path(), &bind).unwrap();
+     |              ^^^^ help: if this is intentional, prefix it with an underscore: `_cfg1`
+
+warning: unused variable: `cfg2`
+    --> src\daemon\pki_api.rs:1624:14
+     |
+1624 |         let (cfg2, ca2, prev2, server2) = load_tls_config_from_disk(root.path(), &bind).unwrap();
+     |              ^^^^ help: if this is intentional, prefix it with an underscore: `_cfg2`
+
+warning: unused variable: `env`
+   --> src\daemon\config.rs:690:13
+    |
+690 |         let env = IsolatedDaemonEnv::new(); // 已清理 USERPROFILE/HOME
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_env`
+
+warning: unused variable: `env`
+   --> src\daemon\config.rs:751:13
+    |
+751 |         let env = IsolatedDaemonEnv::new();
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_env`
+
+warning: value assigned to `core_version` is never read
+   --> src\daemon\parser_metrics.rs:286:32
+    |
+286 |         let mut core_version = String::new();
+    |                                ^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `registry`
+    --> src\daemon\fs_handlers.rs:2058:5
+     |
+2058 |     registry: &WorkspaceRegistry,
+     |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_registry`
+
+warning: unused variable: `peer`
+    --> src\daemon\fs_handlers.rs:2059:5
+     |
+2059 |     peer: &PeerCredential,
+     |     ^^^^ help: if this is intentional, prefix it with an underscore: `_peer`
+
+warning: unused variable: `workspace_instance_id`
+    --> src\daemon\fs_handlers.rs:2063:9
+     |
+2063 |     let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+     |         ^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_workspace_instance_id`
+
+warning: variable does not need to be mutable
+   --> src\daemon\query_compat_handlers.rs:369:21
+    |
+369 |                 let mut bk = Map::new();
+    |                     ----^^
+    |                     |
+    |                     help: remove this `mut`
+
+warning: unused variable: `v`
+    --> src\daemon\query_compat_handlers.rs:3036:56
+     |
+3036 |                     let version = parts.get(2).filter(|v| parts.len() > 3).unwrap_or(&"");
+     |                                                        ^ help: if this is intentional, prefix it with an underscore: `_v`
+
+warning: variable does not need to be mutable
+    --> src\daemon\query_compat_handlers.rs:4167:13
+     |
+4167 |         let mut pairs: Vec<(i64, String, String, String)> = syms
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\query_compat_handlers.rs:5102:9
+     |
+5102 |     let mut rows = if module_filter.is_empty() {
+     |         ----^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: unused variable: `workspace_id`
+    --> src\daemon\query_compat_handlers.rs:8022:5
+     |
+8022 |     workspace_id: i64,
+     |     ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_workspace_id`
+
+warning: variable does not need to be mutable
+   --> src\daemon\job_runner.rs:493:9
+    |
+493 |     let mut conn = open_db(ctx)?;
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `scan_id`
+   --> src\daemon\job_runner.rs:524:9
+    |
+524 |     let scan_id = conn
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_scan_id`
+
+warning: unused variable: `workspace_id`
+   --> src\daemon\edit_handlers.rs:252:5
+    |
+252 |     workspace_id: i64,
+    |     ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_workspace_id`
+
+warning: unused variable: `workspace_id`
+   --> src\daemon\edit_handlers.rs:459:5
+    |
+459 |     workspace_id: i64,
+    |     ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_workspace_id`
+
+warning: unused variable: `workspace_id`
+   --> src\daemon\edit_handlers.rs:501:5
+    |
+501 |     workspace_id: i64,
+    |     ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_workspace_id`
+
+warning: unused variable: `timeout`
+   --> src\daemon\semgrep_handlers.rs:129:5
+    |
+129 |     timeout: i64,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timeout`
+
+warning: unused variable: `scan_id`
+   --> src\daemon\semgrep_handlers.rs:260:9
+    |
+260 |     let scan_id = conn
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_scan_id`
+
+warning: unused variable: `py`
+   --> src\graph.rs:492:9
+    |
+492 |         py: Python<'_>,
+    |         ^^ help: if this is intentional, prefix it with an underscore: `_py`
+
+warning: unused variable: `py`
+   --> src\graph.rs:680:9
+    |
+680 |         py: Python<'_>,
+    |         ^^ help: if this is intentional, prefix it with an underscore: `_py`
+
+warning: unused variable: `fn_depth`
+    --> src\graph.rs:1195:17
+     |
+1195 |             let fn_depth = depth[fn_id as usize];
+     |                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_fn_depth`
+
+warning: unused variable: `name`
+    --> src\multi_lang.rs:1266:66
+     |
+1266 | fn extract_visibility(node: &Node, source: &[u8], lang_id: &str, name: &str, kind: &str) -> String {
+     |                                                                  ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `file_idx`
+    --> src\lib.rs:1446:18
+     |
+1446 |             for (file_idx, r) in results.iter().enumerate() {
+     |                  ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_file_idx`
+
+warning: type `http_server::DedupStore` is more private than the item `http_server::AppState::dedup`
+   --> src\daemon\http_server.rs:396:5
+    |
+396 |     pub dedup: Arc<DedupStore>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^ field `http_server::AppState::dedup` is reachable at visibility `pub`
+    |
+note: but type `http_server::DedupStore` is only usable at visibility `pub(self)`
+   --> src\daemon\http_server.rs:243:1
+    |
+243 | struct DedupStore {
+    | ^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `JobRecord` is more private than the item `http_server::AppState::jobs`
+   --> src\daemon\http_server.rs:397:5
+    |
+397 |     pub jobs: Arc<StdMutex<HashMap<String, JobRecord>>>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `http_server::AppState::jobs` is reachable at visibility `pub`
+    |
+note: but type `JobRecord` is only usable at visibility `pub(self)`
+   --> src\daemon\http_server.rs:380:1
+    |
+380 | struct JobRecord {
+    | ^^^^^^^^^^^^^^^^
+
+warning: constant `WORKSPACE_ID_UNFILTERED` is never used
+  --> src\abi_contract.rs:48:11
+   |
+48 | pub const WORKSPACE_ID_UNFILTERED: i64 = 0;
+   |           ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `baseline_commit`, `current_commit`, and `fixed_gaps` are never read
+   --> src\differential_baseline.rs:304:9
+    |
+303 | pub struct BaselineVerification {
+    |            -------------------- fields in this struct
+304 |     pub baseline_commit: String,
+    |         ^^^^^^^^^^^^^^^
+305 |     pub current_commit: String,
+    |         ^^^^^^^^^^^^^^
+...
+310 |     pub fixed_gaps: Vec<String>,
+    |         ^^^^^^^^^^
+    |
+    = note: `BaselineVerification` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `add_fixed_gap` is never used
+   --> src\differential_baseline.rs:342:12
+    |
+313 | impl BaselineVerification {
+    | ------------------------- method in this implementation
+...
+342 |     pub fn add_fixed_gap(&mut self, gap: String) {
+    |            ^^^^^^^^^^^^^
+
+warning: fields `generated_at`, `platform`, `language_capability`, and `performance_baseline` are never read
+   --> src\differential_baseline.rs:389:9
+    |
+388 | pub struct BaselineSnapshot {
+    |            ---------------- fields in this struct
+389 |     pub generated_at: String,
+    |         ^^^^^^^^^^^^
+390 |     pub commit_sha: String,
+391 |     pub platform: HashMap<String, String>,
+    |         ^^^^^^^^
+392 |     pub language_capability: HashMap<String, LanguageCapability>,
+    |         ^^^^^^^^^^^^^^^^^^^
+393 |     pub phase0_completion_gates: HashMap<String, bool>,
+394 |     pub performance_baseline: PerformanceBaseline,
+    |         ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `BaselineSnapshot` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `get_capability` is never used
+   --> src\differential_baseline.rs:421:12
+    |
+397 | impl BaselineSnapshot {
+    | --------------------- method in this implementation
+...
+421 |     pub fn get_capability(&self, lang: &str) -> Option<&LanguageCapability> {
+    |            ^^^^^^^^^^^^^^
+
+warning: fields `provider`, `model_mode`, `system_fingerprint`, and `runtime_hash` are never read
+  --> src\daemon\task_collab_types.rs:47:16
+   |
+43 | pub(crate) struct ActionIdentity {
+   |                   -------------- fields in this struct
+...
+47 |     pub(crate) provider: String,
+   |                ^^^^^^^^
+48 |     pub(crate) model_id: String,
+49 |     pub(crate) model_mode: String,
+   |                ^^^^^^^^^^
+50 |     pub(crate) system_fingerprint: String,
+   |                ^^^^^^^^^^^^^^^^^^
+...
+53 |     pub(crate) runtime_hash: String,
+   |                ^^^^^^^^^^^^
+   |
+   = note: `ActionIdentity` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: constant `FRESHNESS_STALE` is never used
+   --> src\daemon\task_collab_identity.rs:437:15
+    |
+437 |         const FRESHNESS_STALE: &str = "stale";
+    |               ^^^^^^^^^^^^^^^
+
+warning: function `p0l_task_exists` is never used
+   --> src\daemon\task_collab_test_support.rs:283:19
+    |
+283 |     pub(crate) fn p0l_task_exists(store: &TaskCollabStore, task_id: &str) -> bool {
+    |                   ^^^^^^^^^^^^^^^
+
+warning: function `p0l_seed_governance_task` is never used
+   --> src\daemon\task_collab_test_support.rs:335:19
+    |
+335 |     pub(crate) fn p0l_seed_governance_task(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `p0l_role_worker_envelope` is never used
+   --> src\daemon\task_collab_test_support.rs:396:19
+    |
+396 |     pub(crate) fn p0l_role_worker_envelope(task_id: &str) -> serde_json::Value {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `message` is never read
+   --> src\daemon\task_loop\create.rs:187:35
+    |
+187 |     Deterministic { code: String, message: String },
+    |     -------------                 ^^^^^^^
+    |     |
+    |     field in this variant
+
+warning: field `message` is never read
+   --> src\daemon\task_loop\contract_set.rs:298:35
+    |
+298 |     Deterministic { code: String, message: String },
+    |     -------------                 ^^^^^^^
+    |     |
+    |     field in this variant
+
+warning: associated function `infra` is never used
+   --> src\daemon\task_loop\lifecycle_lease.rs:291:8
+    |
+287 | impl LifecycleDomainError {
+    | ------------------------- associated function in this implementation
+...
+291 |     fn infra(e: DaemonRpcError) -> Self {
+    |        ^^^^^
+
+warning: field `message` is never read
+   --> src\daemon\task_loop\report_handoff.rs:276:35
+    |
+276 |     Deterministic { code: String, message: String },
+    |     -------------                 ^^^^^^^
+    |     |
+    |     field in this variant
+
+warning: associated function `fields_required` is never used
+   --> src\daemon\task_loop\report_handoff.rs:282:8
+    |
+281 | impl HandoffDomainError {
+    | ----------------------- associated function in this implementation
+282 |     fn fields_required(message: String) -> Self {
+    |        ^^^^^^^^^^^^^^^
+
+warning: field `message` is never read
+   --> src\daemon\task_loop\verdict_evidence_gate.rs:258:35
+    |
+258 |     Deterministic { code: String, message: String },
+    |     -------------                 ^^^^^^^
+    |     |
+    |     field in this variant
+
+warning: function `setup_task_contract_no_norm` is never used
+   --> src\daemon\task_loop\verdict_evidence_gate_test.rs:144:4
+    |
+144 | fn setup_task_contract_no_norm(conn: &Connection, task_id: &str, contract_id: &str) {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `GOLDEN_MANIFEST_HASH_AT_FREEZE` is never used
+   --> src\daemon\task_prompt\bundle_tests.rs:202:7
+    |
+202 | const GOLDEN_MANIFEST_HASH_AT_FREEZE: &str =
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `task_prompt_golden_manifest_hash_drift_guard` is never used
+   --> src\daemon\task_prompt\bundle_tests.rs:292:4
+    |
+292 | fn task_prompt_golden_manifest_hash_drift_guard() {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `sha256_hex` is never used
+  --> src\daemon\task_prompt\context_tests.rs:48:4
+   |
+48 | fn sha256_hex(bytes: &[u8]) -> String {
+   |    ^^^^^^^^^^
+
+warning: function `sha256_hex` is never used
+  --> src\daemon\task_prompt\rpc_tests.rs:65:4
+   |
+65 | fn sha256_hex(bytes: &[u8]) -> String {
+   |    ^^^^^^^^^^
+
+warning: field `0` is never read
+    --> src\daemon\workspace.rs:4754:20
+     |
+4754 |         GroupOwned(String),
+     |         ---------- ^^^^^^
+     |         |
+     |         field in this variant
+     |
+     = note: `TestPathOwnership` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+     |
+4754 -         GroupOwned(String),
+4754 +         GroupOwned(()),
+     |
+
+warning: field `0` is never read
+    --> src\daemon\workspace.rs:4755:15
+     |
+4755 |         Alien(String),
+     |         ----- ^^^^^^
+     |         |
+     |         field in this variant
+     |
+     = note: `TestPathOwnership` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+     |
+4755 -         Alien(String),
+4755 +         Alien(()),
+     |
+
+warning: function `placeholders` is never used
+   --> src\daemon\workspace_migration.rs:219:4
+    |
+219 | fn placeholders(n: usize) -> String {
+    |    ^^^^^^^^^^^^
+
+warning: fields `file_path`, `content_hash`, and `language` are never read
+    --> src\daemon\replicator.rs:1209:5
+     |
+1208 | struct MergedFile {
+     |        ---------- fields in this struct
+1209 |     file_path: String,
+     |     ^^^^^^^^^
+1210 |     content_hash: String,
+     |     ^^^^^^^^^^^^
+1211 |     language: String,
+     |     ^^^^^^^^
+     |
+     = note: `MergedFile` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: method `precedence` is never used
+  --> src\daemon\stage_toggle.rs:96:8
+   |
+85 | impl ToggleScope {
+   | ---------------- method in this implementation
+...
+96 |     fn precedence(&self) -> u8 {
+   |        ^^^^^^^^^^
+
+warning: field `params` is never read
+   --> src\daemon\http_server.rs:383:5
+    |
+380 | struct JobRecord {
+    |        --------- field in this struct
+...
+383 |     params: Value,
+    |     ^^^^^^
+    |
+    = note: `JobRecord` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: method `ca_dir` is never used
+   --> src\daemon\pki_api.rs:390:8
+    |
+389 | impl LocalCa {
+    | ------------ method in this implementation
+390 |     fn ca_dir(&self) -> PathBuf {
+    |        ^^^^^^
+
+warning: constant `DEFAULT_DEADLINE_MS` is never used
+  --> src\daemon\compat_adapter.rs:41:7
+   |
+41 | const DEFAULT_DEADLINE_MS: u64 = 30_000;
+   |       ^^^^^^^^^^^^^^^^^^^
+
+warning: field `metrics` is never read
+   --> src\daemon\parser_metrics.rs:265:5
+    |
+263 | pub struct ParserDoctor {
+    |            ------------ field in this struct
+264 |     /// 内部 metrics（可选，用于在报告中附加 metrics 摘要）
+265 |     metrics: Option<std::sync::Arc<ParserMetrics>>,
+    |     ^^^^^^^
+
+warning: field `started_at` is never read
+  --> src\daemon\job_runner.rs:72:5
+   |
+63 | struct JobEntry {
+   |        -------- field in this struct
+...
+72 |     started_at: Option<f64>,
+   |     ^^^^^^^^^^
+
+warning: method `total_delta` is never used
+   --> src\diff.rs:103:12
+    |
+ 95 | impl EdgeDeltaSummary {
+    | --------------------- method in this implementation
+...
+103 |     pub fn total_delta(&self) -> usize {
+    |            ^^^^^^^^^^^
+
+warning: method `edge_call_line` is never used
+    --> src\graph.rs:2721:19
+     |
+1669 | impl GraphStore {
+     | --------------- method in this implementation
+...
+2721 |     pub(crate) fn edge_call_line(&self, edge: &CallEdge) -> u32 {
+     |                   ^^^^^^^^^^^^^^
+
+warning: function `contains_ascii_ci` is never used
+    --> src\graph.rs:2998:4
+     |
+2998 | fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: associated items `with_hashes` and `register_hashes` are never used
+   --> src\hash_diff.rs:103:12
+    |
+ 94 | impl HashDiffStore {
+    | ------------------ associated items in this implementation
+...
+103 |     pub fn with_hashes(hashes: HashMap<PathBuf, String>) -> Self {
+    |            ^^^^^^^^^^^
+...
+250 |     pub fn register_hashes(&self, entries: HashMap<PathBuf, String>) {
+    |            ^^^^^^^^^^^^^^^
+
+warning: enum `StepKind` is never used
+  --> src\migration_manifest.rs:52:10
+   |
+52 | pub enum StepKind {
+   |          ^^^^^^^^
+
+warning: method `as_str` is never used
+  --> src\migration_manifest.rs:63:12
+   |
+62 | impl StepKind {
+   | ------------- method in this implementation
+63 |     pub fn as_str(self) -> &'static str {
+   |            ^^^^^^
+
+warning: fields `phase` and `task_id` are never read
+  --> src\migration_manifest.rs:79:9
+   |
+78 | pub struct MigrationItem {
+   |            ------------- fields in this struct
+79 |     pub phase: u8,
+   |         ^^^^^
+80 |     pub feature: String,
+81 |     pub task_id: String,
+   |         ^^^^^^^
+   |
+   = note: `MigrationItem` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `get` and `items_in_phase` are never used
+   --> src\migration_manifest.rs:131:12
+    |
+117 | impl MigrationManifest {
+    | ---------------------- methods in this implementation
+...
+131 |     pub fn get(&self, feature: &str) -> Option<&MigrationItem> {
+    |            ^^^
+...
+136 |     pub fn items_in_phase(&self, phase: u8) -> Vec<&MigrationItem> {
+    |            ^^^^^^^^^^^^^^
+
+warning: function `register` is never used
+   --> src\sqlite_query.rs:989:8
+    |
+989 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    |        ^^^^^^^^
+
+warning: function `register` is never used
+   --> src\cas_query.rs:347:8
+    |
+347 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    |        ^^^^^^^^
+
+warning: function `required_str` is never used
+  --> src\cas_write_query.rs:47:4
+   |
+47 | fn required_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
+   |    ^^^^^^^^^^^^
+
+warning: function `optional_i64` is never used
+  --> src\cas_write_query.rs:60:4
+   |
+60 | fn optional_i64(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<i64>> {
+   |    ^^^^^^^^^^^^
+
+warning: function `required_i64` is never used
+  --> src\cas_write_query.rs:74:4
+   |
+74 | fn required_i64(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<i64> {
+   |    ^^^^^^^^^^^^
+
+warning: function `register` is never used
+   --> src\cas_write_query.rs:453:8
+    |
+453 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    |        ^^^^^^^^
+
+warning: function `register` is never used
+   --> src\manifest_query.rs:495:8
+    |
+495 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    |        ^^^^^^^^
+
+warning: function `register` is never used
+  --> src\replicator_query.rs:58:8
+   |
+58 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+   |        ^^^^^^^^
+
+warning: function `register` is never used
+   --> src\cas_merge_query.rs:224:8
+    |
+224 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    |        ^^^^^^^^
+
+warning: function `register` is never used
+   --> src\batch_build_query.rs:400:8
+    |
+400 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    |        ^^^^^^^^
+
+warning: function `register` is never used
+    --> src\batch_calls_query.rs:1078:8
+     |
+1078 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+     |        ^^^^^^^^
+
+warning: function `register` is never used
+   --> src\staging_log_query.rs:183:8
+    |
+183 | pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    |        ^^^^^^^^
+
+warning: function `parse_diagnostics_from_result` is never used
+    --> src\multi_lang.rs:1729:8
+     |
+1729 | pub fn parse_diagnostics_from_result(result: &ParseResult) -> ParseDiagnostics {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `source_db_file` is never read
+  --> src\snapshot.rs:57:5
+   |
+49 | pub struct GraphSnapshot {
+   |            ------------- field in this struct
+...
+57 |     source_db_file: Option<File>,
+   |     ^^^^^^^^^^^^^^
+
+warning: unused `Result` that must be used
+   --> src\daemon\cli_admin_handlers.rs:403:9
+    |
+403 |         conn.close();
+    |         ^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+403 |         let _ = conn.close();
+    |         +++++++
+
+warning: unused `Result` that must be used
+   --> src\daemon\cli_admin_handlers.rs:504:9
+    |
+504 |         conn.close();
+    |         ^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+504 |         let _ = conn.close();
+    |         +++++++
+
+warning: `callwarden-core` (lib test) generated 167 warnings (run `cargo fix --lib -p callwarden-core --tests` to apply 103 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.58s
+     Running unittests src\lib.rs (C:/Users/wanpi/AppData/Local/Temp/cw_t4_target\debug\deps\callwarden_core-d70a32c5d02997ee.exe)
+cli::status::tests::enterprise_payload_does_not_claim_filesystem_freshness: test
+cli::task::tests::blocking_finding_blocks_normal_step_claim: test
+cli::task::tests::claim_report_and_reopen_preserve_parent_state_machine: test
+cli::task::tests::immediate_transaction_allows_only_one_claim: test
+daemon::assignment_queue::tests::claim_persists_normalized_row_into_task_assignments: test
+daemon::assignment_queue::tests::queue_claim_heartbeat_and_complete_are_replayable_events: test
+daemon::assignment_queue::tests::replayed_queue_and_same_holder_claim_are_idempotent: test
+daemon::dispatch::tests::test_task_next_action_projection_carries_policy_and_claim_requirements: test
+daemon::task_collab::tests::core::test_failed_report_preserves_scope_and_requires_remediation_claim: test
+daemon::task_collab::tests::governance::test_claim_contract_skill_mismatch_rejected: test
+daemon::task_collab::tests::governance::test_claim_contract_task_requires_identity: test
+daemon::task_collab::tests::governance::test_claim_envelope_returns_role_contract: test
+daemon::task_collab::tests::governance::test_claim_unregistered_identity_fail_closed: test
+daemon::task_collab::tests::governance::test_orphan_claim_recovery_rejects_fresh_owner: test
+daemon::task_collab::tests::governance::test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state: test
+daemon::task_collab::tests::governance::test_stale_claim_cannot_be_taken_over_by_different_role: test
+daemon::task_collab::tests::lease::test_same_role_fresh_claim_remains_conflict: test
+daemon::task_collab::tests::lease::test_same_role_stale_claim_is_taken_over_atomically: test
+daemon::task_collab::tests::lease::test_task_claim_concurrent_session_conflict: test
+daemon::task_collab::tests::lease::test_task_claim_dedup_idempotent: test
+daemon::task_collab::tests::lease::test_task_claim_marks_step_in_progress: test
+daemon::task_collab::tests::lease::test_task_claim_resume_same_session_returns_in_progress_step: test
+daemon::task_collab::tests::lease::test_task_claim_returns_step_details_contract: test
+daemon::task_collab::tests::lease::test_task_claim_without_steps_omits_step_fields: test
+daemon::task_collab::tests::projection::test_task_claim_legacy_and_policyless_tasks_keep_original_path: test
+daemon::task_collab::tests::projection::test_task_claim_role_worker_v1_requires_expected_worker_and_records_provenance: test
+daemon::task_collab::tests::projection::test_task_claim_role_worker_v1_role_anchor_is_worker_mapping_not_runtime_identity: test
+daemon::task_collab::tests::projection::test_task_claim_unknown_or_unresolved_policy_is_fail_closed: test
+daemon::task_loop::claim_test::claim_rejects_broken_binding_chain: test
+daemon::task_loop::claim_test::claim_rejects_cross_task_lineage: test
+daemon::task_loop::claim_test::claim_rejects_missing_revision: test
+daemon::task_loop::claim_test::claim_rejects_step_not_owned_by_task: test
+daemon::task_loop::claim_test::claim_rejects_task_without_binding: test
+daemon::task_loop::claim_test::deterministic_reject_persists_replayable_ledger_error: test
+daemon::task_loop::claim_test::first_claim_writes_binding_revision_1: test
+daemon::task_loop::claim_test::from_params_rejects_missing_fields: test
+daemon::task_loop::claim_test::no_remediation_but_provided_remediation_id_rejected: test
+daemon::task_loop::claim_test::prereq_disabled_bypasses_gate_and_matches_baseline: test
+daemon::task_loop::claim_test::prereq_engine_db_error_rolls_back_without_partial_write: test
+daemon::task_loop::claim_test::prereq_hard_satisfied_allows_claim: test
+daemon::task_loop::claim_test::prereq_hard_unmet_blocks_claim_with_zero_side_effect: test
+daemon::task_loop::claim_test::prereq_informational_unmet_warns_but_allows: test
+daemon::task_loop::claim_test::read_projection_unverified_when_lineage_mismatch: test
+daemon::task_loop::claim_test::remediation_exact_claim_succeeds: test
+daemon::task_loop::claim_test::remediation_requires_explicit_step: test
+daemon::task_loop::claim_test::replay_of_committed_key_does_not_dup: test
+daemon::task_loop::claim_test::second_claim_appends_revision_2_superseding_1: test
+daemon::task_loop::claim_test::task_level_provenance_cannot_bypass_failed_step: test
+daemon::task_loop::claim_test::task_level_remediation_claim_succeeds: test
+daemon::task_loop::claim_test::task_level_remediation_without_provenance_rejected: test
+daemon::task_loop::next_action_test::fresh_claimed_assignment_keeps_in_progress_step_waiting: test
+daemon::task_loop::next_action_test::orphaned_in_progress_step_without_claimed_assignment_is_ready_to_reclaim: test
+daemon::task_loop::next_action_test::stale_claimed_assignment_is_ready_for_atomic_takeover: test
+daemon::task_loop::next_action_test::unclaimed_executor_step_ready_claim: test
+daemon::task_prompt::context_tests::task_prompt_context_aggregates_ready_claim_snapshot: test
+daemon::task_prompt::route_tests::task_prompt_renderer_route_maps_ready_claim_to_executor_contract: test
+daemon::task_prompt::rpc_tests::task_prompt_rpc_happy_round_trip_ready_claim: test
+
+57 tests, 0 benchmarks
+CARGO_RC=0

@@ -1,0 +1,21 @@
+T5 capability 定向测试关键行（源：.t5_test.log，行号为该日志行号）
+===========================================
+line 1321: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 2136 filtered out; finished in 0.04s
+line 1323: CARGO_RC=0
+--- 16 个 capability 匹配测试（全部 ok）---
+test daemon::task_loop::capability_control_test::gate_release_allows_next_acquire_without_deadlock ... ok
+test daemon::http_server::tests::test_capability_registry_valid_rows_pass ... ok
+test daemon::http_server::tests::test_capability_registry_duplicate_method_fails_closed ... ok
+test daemon::http_server::tests::test_capability_registry_invalid_enum_fails_closed ... ok
+test differential_baseline::tests::test_language_capability_default ... ok
+test differential_baseline::tests::test_language_capability_known_diffs ... ok
+test daemon::task_loop::prerequisites::tests::capability_projection_shape ... ok
+test differential_baseline::tests::test_language_capability_diff ... ok
+test daemon::task_prompt::rpc_tests::task_prompt_rpc_capability_projection_fields ... ok
+test daemon::dispatch::tests::capability_health_aggregate_keeps_role_prompt_compiler_v1 ... ok
+test daemon::dispatch::tests::capability_health_projection_exposes_prerequisite_gate_v1 ... ok
+test daemon::task_loop::capability_control_test::gate_serializes_concurrent_store_mutations ... ok
+test daemon::task_loop::capability_control_test::poisoned_gate_returns_internal_error_not_deadlock ... ok
+test daemon::http_server::tests::test_capability_registry_task_plane_exclusion_contract ... ok
+test daemon::task_loop::capability_control_test::revalidate_public_permit_is_fail_closed ... ok
+test daemon::task_loop::capability_control_test::revalidate_public_permit_accepts_aligned_credentials ... ok

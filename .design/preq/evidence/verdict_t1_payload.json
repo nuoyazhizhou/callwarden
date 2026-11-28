@@ -1,0 +1,31 @@
+{
+  "step_id": "S-1795663519027-ebc74de8",
+  "contract_id": "TC-T-1795663519023-eb82b9a8",
+  "contract_revision": 1,
+  "contract_hash": "sha256:5c74010d062649c958cc018bb3862048e25e6e62aaff582cfbc562776ac06eb3",
+  "role_contract_id": "rcr-T-1795663519023-eb82b9a8-reviewer-r1",
+  "role_contract_revision": 1,
+  "role_contract_hash": "sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b",
+  "phase": "blind_first_pass",
+  "overall": "pass",
+  "view_manifest_hash": "45241c12275e1f103b35b2e71d64f74079bd33ddd36a00006ae49af8dea2fdbf",
+  "snapshot_id": "37076736ac967564",
+  "request_id": "req-reviewer-t1-t7-t1-blind-20261128-01",
+  "attestation": "独立盲评（blind_first_pass）：未采信 executor 自报结论（本单无 executor handoff，评审自行取证）。证据：git show e133f34 全量 diff（prerequisites.rs 651 行 + mod.rs 注册）；prerequisites.rs 全文逐条对照冻结契约 contracts.md 卡 1/卡 2；db/schema.py:1433-1521、db/db_task_dependencies.py、db/db_task_contracts.py 交叉验证；e133f34 干净 worktree 实测 cargo test（prerequisites 18 passed / task_loop 233 passed，MSVC 隔离构建，方法已在报告声明）。评审未改任何源码/文档/证据/任务状态。",
+  "clause_results": [
+    {"clause": "卡1-结构体与签名", "result": "pass", "evidence": "prerequisites.rs:40-95 PrerequisiteItem 五字段/PrerequisiteEvaluation 三字段/函数签名与冻结契约逐字一致"},
+    {"clause": "卡1-requires_existing", "result": "pass", "evidence": ":36 COMPLETED_LIFECYCLE={applied,closed}；reverted/缺失/空 target fail-closed；测试 open/applied/closed/reverted/缺失 五态全绿"},
+    {"clause": "卡1-requires_artifact", "result": "pass", "evidence": ":210-250 行缺失=artifact_unresolved、lifecycle 未完成=provider_not_completed、非 fresh=artifact_stale；freshness 关联与 db_task_dependencies.py:179 逐字对齐；测试 stale/producing/fresh/缺失/open 五态全绿"},
+    {"clause": "卡1-requires_interface", "result": "pass", "evidence": ":254-292 selection 行存在性（schema.py:1492-1503 实测无状态列，Assumption A2 落地正确）；测试有/无 selection 两分支全绿"},
+    {"clause": "卡1-未知dep_type", "result": "pass", "evidence": ":118-124 unknown_dep_type fail-closed；测试全绿"},
+    {"clause": "卡1-错误变体与副作用", "result": "pass", "evidence": "六处 DB 读失败均映射 DaemonRpcError::internal_error（:160/:172/:177/:227/:271/:306）；全文件无写路径；workspace 过滤+跨区测试"},
+    {"clause": "卡1-GWT八条", "result": "pass", "evidence": "契约 8 条 GWT 全部有对应测试且实测通过（18 passed 含 17 模块测试+1 stage_toggle 过滤命中）"},
+    {"clause": "卡2-三常量与投影", "result": "pass", "evidence": "prerequisites.rs:31/33/70-81 name/schema_version/enabled 三键；capability_projection_shape 测试通过；T5 e7164da dispatch.rs:456-459 接线交叉复核一致"},
+    {"clause": "调用图影响半径", "result": "pass", "evidence": "e133f34 上 evaluate_task_prerequisites 零生产调用点（静态 git grep + daemon 图查询空双确认），根任务影响半径封闭；无回归面"}
+  ],
+  "findings": [
+    {"severity": "suggestion", "location": "prerequisites.rs:88-90,147-182 vs contracts.md 卡1", "summary": "契约数据源文字（dependency_edges WHERE is_hard=1）与实现（task_dependencies is_informational==0）偏差。实现正确：dependency_edges 仅物化 artifact/interface 硬边且 is_hard 恒 1（schema.py:1505-1507、db_task_dependencies.py:438/517/545），requires_existing/未知类型/信息性边在该表不可表示；偏差已在 docstring 文档化。建议 planner 在 .design/preq/ 追加契约附录记录该决策，不阻断。"},
+    {"severity": "nit", "location": "prerequisites.rs:230-242", "summary": "requires_artifact 双故障（lifecycle 未完成+stale）时 unmet_reason 取 provider_not_completed（lifecycle 优先）；行缺失优先于 lifecycle。契约未规定优先级，实现取舍合理，记录供批次 2 参考。"},
+    {"severity": "nit", "location": "prerequisites.rs:147-158", "summary": "read_declarations 不按 contract_revision 过滤，旧 revision 声明残留会持续参与判定；与契约指定数据源 dependency_edges 的语义等价（同样不清理），非回归；批次 2 若敏感再统一设计。"}
+  ]
+}

@@ -1,0 +1,7 @@
+T5 全量回归日志（截断件，如实登记）
+====================
+文件: .t5_full_test.log（211798 字节，1878 条 ... ok 行）
+状态: 会话中断致后台进程被杀，日志无 test result 结论行、无 CARGO_RC——本件不得作为全量通过证据，仅证 1878 个测试逐条 ok。
+真实 FAILED 行: 0
+真实 panic 输出行（排除测试名含 panic 字样）: 0
+注: 3 处 'panic' 字样均为测试名（test_dispatch_all_known_methods_route_without_panic / test_handler_panic_releases_busy_flag / unparsable_envelope_fails_soft_without_panic），全部 ok，非真实 panic。

@@ -1,0 +1,8 @@
+1283:    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.37s
+1286:running 27 tests
+1288:test daemon::task_collab::tests::prerequisites::capability_projection_exposes_prerequisite_gate_v1 ... ok
+1310:test daemon::task_collab::tests::prerequisites::prerequisite_satisfied_allows_claim_and_projection_empty ... ok
+1312:test daemon::task_collab::tests::prerequisites::prerequisite_unmet_blocks_claim_and_three_projections_agree ... ok
+1313:test daemon::task_collab::tests::prerequisites::prerequisite_gate_disabled_keeps_claim_compatible ... ok
+1315:test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 2137 filtered out; finished in 4.19s
+1317:CARGO_RC=0
