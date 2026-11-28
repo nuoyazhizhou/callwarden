@@ -3361,3 +3361,214 @@ struct SnapshotHeader {
 
 /// 快照文件头大小（自动等于 sizeof(SnapshotHeader)）
 const HEADER_SIZE: usize = std::mem::size_of::<SnapshotHeader>();
+
+// ============================================
+// 内存占用近似估算（REQ-RG-02 / C3 / O3）
+// ============================================
+
+impl GraphStore {
+    /// 近似驻留字节（C3；未决项 O3：口径 ±20% 容忍，假设已登记 evidence）。
+    ///
+    /// 四项求和（与 contracts.md C3 字面一致）：
+    /// 1. **by_id 字节**：`by_id`（GraphSymbol POD）+ by_qname/by_simple_name
+    ///    排序数组 + search 索引数组（均为符号表的衍生索引，同属符号内存）
+    /// 2. **CSR 边字节**：`forward_edges`（CallEdge POD）+ forward/backward
+    ///    偏移与位置数组 + callee 名字索引数组 + roots
+    /// 3. **字符串池字节**：name/qname/module/search_lower 四池
+    /// 4. **文件路径表字节**：file_paths_pool + offsets
+    ///
+    /// 口径假设（O3 登记）：`Vec`/`String` 取 `capacity()`（真实堆分配量）
+    /// 而非 `len()`；不含 struct 自身/Arc 头部/对齐 padding（相对元素字节
+    /// 可忽略）。空 store（symbols/calls 均 None）返回 0。
+    pub fn approximate_bytes(&self) -> u64 {
+        const U32: u64 = std::mem::size_of::<u32>() as u64;
+        const USIZE: u64 = std::mem::size_of::<usize>() as u64;
+        let mut total: u64 = 0;
+        if let Some(sym) = self.symbols.as_ref() {
+            // 1. by_id 字节 + 衍生索引数组
+            total += sym.by_id.capacity() as u64 * std::mem::size_of::<GraphSymbol>() as u64;
+            total += sym.by_qname_sorted_ids.capacity() as u64 * U32;
+            total += sym.by_simple_name_sorted_ids.capacity() as u64 * U32;
+            total += sym.search_entry_offsets.capacity() as u64 * U32;
+            total += sym.search_entry_sym_ids.capacity() as u64 * U32;
+            // 3. 字符串池
+            total += sym.name_pool.capacity() as u64;
+            total += sym.qname_pool.capacity() as u64;
+            total += sym.module_pool.capacity() as u64;
+            total += sym.search_pool_lower.capacity() as u64;
+            // 4. 文件路径表
+            total += sym.file_paths_pool.capacity() as u64;
+            total += sym.file_paths_offsets.capacity() as u64 * U32;
+        }
+        if let Some(calls) = self.calls.as_ref() {
+            // 2. CSR forward/backward 边
+            total += calls.forward_edges.capacity() as u64 * std::mem::size_of::<CallEdge>() as u64;
+            total += calls.forward_offsets.capacity() as u64 * USIZE;
+            total += calls.backward_positions.capacity() as u64 * U32;
+            total += calls.backward_offsets.capacity() as u64 * USIZE;
+            total += calls.callee_position_offsets.capacity() as u64 * U32;
+            total += calls.callee_positions.capacity() as u64 * U32;
+            total += calls.callee_names_pool.capacity() as u64;
+            total += calls.callee_names_offsets.capacity() as u64 * U32;
+            total += calls.callee_name_sorted_idxs.capacity() as u64 * U32;
+            total += calls.roots.capacity() as u64 * U32;
+        }
+        total
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造已知规模的 GraphStore（直接装配 SymbolTable/CallGraph——
+    /// tests 子模块可访问父模块私有字段）。
+    fn build_store(n_symbols: usize, n_edges: usize) -> GraphStore {
+        let name = "sym_000000"; // 10 字节
+        let qname = "mod::sym_000000"; // 15 字节
+        let module = "mod"; // 3 字节
+        let pool_per_sym = name.len() + qname.len() + module.len() + name.len() + 1; // +\0
+
+        let mut by_id = Vec::with_capacity(n_symbols);
+        let mut by_qname_sorted_ids = Vec::with_capacity(n_symbols);
+        let mut by_simple_name_sorted_ids = Vec::with_capacity(n_symbols);
+        let mut name_pool = String::with_capacity(name.len() * n_symbols);
+        let mut qname_pool = String::with_capacity(qname.len() * n_symbols);
+        let mut module_pool = String::with_capacity(module.len() * n_symbols);
+        let mut search_pool_lower = String::with_capacity((name.len() + 1) * n_symbols);
+        let mut search_entry_offsets = Vec::with_capacity(n_symbols);
+        let mut search_entry_sym_ids = Vec::with_capacity(n_symbols);
+        let file_path = "src/lib.rs";
+        let mut file_paths_pool = String::with_capacity(file_path.len());
+        let mut file_paths_offsets = vec![0u32];
+        file_paths_pool.push_str(file_path);
+        file_paths_offsets.push(file_paths_pool.len() as u32);
+
+        for i in 0..n_symbols {
+            let off = name_pool.len() as u32;
+            name_pool.push_str(name);
+            let qoff = qname_pool.len() as u32;
+            qname_pool.push_str(qname);
+            let moff = module_pool.len() as u32;
+            module_pool.push_str(module);
+            by_id.push(GraphSymbol {
+                id: i as u32,
+                file_instance_id: 0,
+                kind: SymbolKind::Fn,
+                name_offset: off,
+                name_len: name.len() as u32,
+                qname_offset: qoff,
+                qname_len: qname.len() as u32,
+                module_offset: moff,
+                module_len: module.len() as u32,
+                start_line: 1,
+                end_line: 2,
+                depth: 0,
+            });
+            by_qname_sorted_ids.push(i as u32);
+            by_simple_name_sorted_ids.push(i as u32);
+            search_entry_offsets.push(search_pool_lower.len() as u32);
+            search_entry_sym_ids.push(i as u32);
+            search_pool_lower.push_str(&name.to_lowercase());
+            search_pool_lower.push('\0');
+        }
+
+        let symbols = SymbolTable {
+            by_id,
+            by_qname_sorted_ids,
+            by_simple_name_sorted_ids,
+            file_paths_pool,
+            file_paths_offsets,
+            name_pool,
+            qname_pool,
+            module_pool,
+            search_pool_lower,
+            search_entry_offsets,
+            search_entry_sym_ids,
+        };
+
+        let mut forward_edges = Vec::with_capacity(n_edges);
+        let mut backward_positions = Vec::with_capacity(n_edges);
+        for i in 0..n_edges {
+            forward_edges.push(CallEdge {
+                caller_id: i as u32,
+                callee_id: (i + 1) as u32,
+                call_line_packed: CallEdge::pack_call_line(10, false),
+                callee_name_idx: 0,
+            });
+            backward_positions.push(i as u32);
+        }
+        let calls = CallGraph {
+            forward_edges,
+            forward_offsets: vec![0, n_edges],
+            backward_positions,
+            backward_offsets: vec![0, n_edges],
+            callee_position_offsets: vec![0, 1],
+            callee_positions: vec![0],
+            callee_names_pool: "sym_000000".to_string(),
+            callee_names_offsets: vec![0, 10],
+            callee_name_sorted_idxs: vec![0],
+            roots: vec![0],
+        };
+
+        GraphStore {
+            symbols: Some(Arc::new(symbols)),
+            calls: Some(Arc::new(calls)),
+        }
+    }
+
+    /// C3：空 store（symbols/calls 均 None）→ 0。
+    #[test]
+    fn approximate_bytes_empty_store_is_zero() {
+        let store = GraphStore::new();
+        assert_eq!(store.approximate_bytes(), 0);
+    }
+
+    /// C3 主断言：已知规模 store，估值下界 >0（更强：≥ 元素原始字节和，
+    /// 因 capacity ≥ len 且含全部池与 POD 数组），上界 < 10× 元素原始字节和
+    /// （辅助索引数组与元素同阶，不会突破 10×）。
+    #[test]
+    fn approximate_bytes_known_scale_within_bounds() {
+        let n_symbols = 1_000usize;
+        let n_edges = 500usize;
+        let store = build_store(n_symbols, n_edges);
+        let est = store.approximate_bytes();
+
+        // 元素原始字节和（len 口径）：POD 数组 + 池内容字节
+        let raw = (n_symbols * std::mem::size_of::<GraphSymbol>()
+            + n_edges * std::mem::size_of::<CallEdge>()
+            + 10 * n_symbols // name_pool
+            + 15 * n_symbols // qname_pool
+            + 3 * n_symbols // module_pool
+            + 11 * n_symbols // search_pool_lower（10+1）
+            + 10 // file_paths_pool
+            + 8) as u64; // file_paths_offsets(2×u32)
+
+        assert!(est > 0, "非空 store 估值必须 >0");
+        assert!(
+            est >= raw,
+            "估值 {} 应 ≥ 元素原始字节和 {}（capacity ≥ len + 辅助索引）",
+            est,
+            raw
+        );
+        assert!(
+            est < 10 * raw,
+            "估值 {} 应 < 10× 元素原始字节和 {}（辅助数组同阶不越界）",
+            est,
+            10 * raw
+        );
+    }
+
+    /// 单调性：符号数翻倍 → 估值至少 1.5×（防漏算大头，O3 校准辅助）。
+    #[test]
+    fn approximate_bytes_scales_with_symbol_count() {
+        let small = build_store(1_000, 500).approximate_bytes();
+        let large = build_store(2_000, 1_000).approximate_bytes();
+        assert!(
+            large as f64 >= small as f64 * 1.5,
+            "规模翻倍后估值应显著增长: {} -> {}",
+            small,
+            large
+        );
+    }
+}
