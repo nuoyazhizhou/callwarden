@@ -252,3 +252,57 @@ planner 本轮 F6 建单**未**写生产代码、**未**改判 BLOCKED/🟡 定�
 ## 22. F7 追加边界声明
 
 planner 本轮 F7 建单**未**写生产代码、**未**改判 BLOCKED/🟡 定级、**未**动 `task.apply`/`task.close`/`task.supersede`、**未**认领/lease 步骤、**未**改写上方历史行；仅追加 F7 行（§14 表）+ provenance/执行顺序约束 + §15 新增 O-R7/O-R8 + §20 建单回执 / §21 payload 存档 + 本节声明。临时脚本（_f7_steps.json / _create_f7.py / _verify_f7.py）已清理。
+
+---
+
+# 批次 2 建单回执（放行判据满足后注入）— 2026-11-28 planner（蓝图远）
+
+> 本节为**追加**记录，上方 §1–§22 历史行保持原样，不覆盖、不重排。批次 2 原 deferred 的 T8 现按主理人批次落定裁定正式注入。
+> 背景：T6 关单回执已确认，批次 1 七单全部 daemon 核验 closed，放行判据（全 7 单到 review + 全程无 E_* + ≥1 单 apply/close 全链路）**正式满足**。
+> **新基线**：`run/preq-t6-integration @ 78d7ddc`（含 T1–T7 完整交付：T1/T2 引擎与投影 + T3/T4/T5 merge + T6 集成测试 + T7 文档）。三单均基于此提交。
+> findings 全量对账见 `findings-ledger.md` 追加记录 ⑥。
+
+## 23. 批次 2 三单回执表
+
+| 单 | task_id | title（符号锚定，无行号） | REQ 首行 | action | 公共绑定 |
+|---|---|---|---|---|---|
+| T11 | `T-1795837031464-eef45a20` | `rust_ext/src/daemon/task_loop/next_action_test.rs:prerequisite_projection_edges implement 投影测试补强（closed 终态/多依赖/无 binding）` | REQ-PREQ-01 \| must | implement（test-only） | workspace_id=1 / instance=4baea3ff12c2ea5c / 基线 78d7ddc / 契约 revision=1 / 三角色合同自动注入（executor/reviewer/adjudicator legacy） |
+| T8 | `T-1795837037942-710955b4` | `rust_ext/src/daemon/task_collab_lease.rs:handle_task_work_next implement work_next 派工过滤 hard_unmet 非空卡` | REQ-PREQ-05 \| should | implement | 同上 |
+| T10 | `T-1795837042787-91db8edc` | `docs/evidence:prerequisite_rerun_manifest test T5/T3/T6 tester 独立复跑取证` | REQ-GAP \| non-blocking | test | 同上 |
+
+- **T11 范围**（评审 findings T2-01/T2-02/T3-01，闭合批次 1 验收缺口，零生产逻辑改动）：① closed/reverted 终态投影 `prerequisites==[]`（锁定 `json!([])` 分支，场景对齐 b950e36 落选支）② 多条 unmet 依赖投影（len>1 断言）③ 无 binding 沿 Err `E_WORKSPACE_AUTHORITY_UNAVAILABLE` fail-closed。落点：前两项 `next_action_test.rs`，第三项 `task_collab_tests_projection.rs`（T3 既有测试文件，复用 `tree_governance_setup_hard_dependency` helper，经 T3 step result 核实）。
+- **T8 范围**（preq 卡 6）：过滤逻辑必交付——hard_unmet 非空卡不派工 / 引擎失败 fail-closed 整体报错 / 无硬依赖卡行为与存量一致；**provider 推荐与排序 deferred，不纳入本单验收**（brief O4 排序规则 open，按 brief §4.4「不定则仅缺推荐不阻塞」）。
+- **T10 范围**（评审 findings F-1/T3-04/T6-02，证据等级提升）：① T5 capability 定向复跑（16 passed/0 failed/CARGO_RC=0 复现）② T3 全量 --lib 复跑 ③ T6 全量复跑含 flaky 单测 `test_rpc_multipart_refresh_returns_202_async` 独立复跑确认。证据落盘 docs/evidence/ + sha256 manifest。
+
+## 24. T9 不建单声明
+
+按主理人批次落定裁定，T9 五条（F-2 / F-3 / T2-05 / T1-01 / T7-03，另附带 T7-02 备注）由契约附录工件 **`.design/preq/contracts-appendix.md`** 替代（append-only，不改写 contracts.md / ac-map.md / requirements-brief.md 历史行），**无 daemon 单**。附录含：A 聚合投影口径（键值映射透传、键名固化 `prerequisites`）/ B binding 缺失口径（依赖不可评估≠未满足，fail-closed）/ C 数据源口径（task_dependencies 声明行为主，is_informational==0 为 hard）/ D 词汇对照（批次 2 起统一 is_informational）。
+
+## 25. 执行顺序约束
+
+- **T11 → T8**：executor **串行**（同一条 preq 线，避免工作树争用）。T8 description 已写 `blocked-by: T-1795837031464-eef45a20`；**daemon 不强制拦截**（G6 已知约定），派工侧须显式确认 T11 闭环后再放 T8。
+- **T10**：tester **并行**（独立 worktree `preq-t10-rerun-j2k7d` @ 78d7ddc），与 executor 线互不阻塞。
+- 角色：T11/T8 派 executor；T10 派 tester（纪有据，本批次首次启用该角色）。
+
+## 26. steps / check_items 存档（daemon 已落库，回执原文）
+
+**T11** `T-1795837031464-eef45a20`：
+```json
+{"action":"implement","target_file":"rust_ext/src/daemon/task_loop/next_action_test.rs","target_symbol":"prerequisite_projection_edges","check_items":"1) Given provider closed/reverted 终态 → next_action 投影 prerequisites==[]（锁定 json!([]) 分支，场景对齐 b950e36 落选支）\n2) Given 多条 unmet 硬依赖 → prerequisites 数组 len>1 且逐元素 provider_task_id/unmet_reason 正确\n3) Given 无 binding → 沿 Err E_WORKSPACE_AUTHORITY_UNAVAILABLE fail-closed（不静默置 []），落点 task_collab_tests_projection.rs 复用 tree_governance helper\n4) test-only：零生产逻辑改动；git diff 仅测试文件\n5) 构建/测试: cd rust_ext; cargo test next_action && cargo test tree_governance"}
+```
+
+**T8** `T-1795837037942-710955b4`：
+```json
+{"action":"implement","target_file":"rust_ext/src/daemon/task_collab_lease.rs","target_symbol":"task_collab_lease::handle_task_work_next","check_items":"1) Given 池中有 hard_unmet 非空的卡 → 不出现在 work_next 派工结果\n2) Given 判定引擎查询失败 → work_next 整体报错（fail-closed），不降级为「无卡可派」\n3) Given 无硬依赖卡 → 行为与存量一致（回归分支）\n4) provider 推荐与排序 deferred：不在本单实现、不纳入验收（卡内标注防 scope 蔓延）\n5) 构建/测试: cd rust_ext; cargo test task_collab_lease（或 work_next 相关定向）"}
+```
+
+**T10** `T-1795837042787-91db8edc`：
+```json
+{"action":"test","target_file":"docs/evidence","target_symbol":"prerequisite_rerun_manifest","check_items":"1) T5 定向复跑（F-1）：cargo test capability 独立复跑，16 passed/0 failed/CARGO_RC=0 复现，独立 evidence manifest + sha256\n2) T3 全量复跑（T3-04）：cargo test --lib 全量复跑无失败，与 T3 交付口径（190 task_collab 回归）对照\n3) T6 全量复跑（T6-02）：T6 全量复跑；flaky 单测 test_rpc_multipart_refresh_returns_202_async 单独复跑确认稳定性\n4) 证据落盘 docs/evidence/ 并更新 manifest（sha256）；不宣称未执行的口径\n5) 独立身份执行（tester 角色，与 executor 会话不同 instance/session）"}
+```
+
+> 三单 description 完整文本（含 finding 溯源与依赖说明）见 daemon 卡，此处不重复粘贴以免漂移。
+
+## 27. 本轮边界声明
+
+本节为**纯文档追加**：零生产代码、零 daemon 写操作（建单 daemon 写动作发生于建单轮，本节仅存档回执）；未改写上方 §1–§22 任何历史行；未触碰主工作树在途改动；preq 线→master 合并（Option A）与 daemon 部署刷新仍按裁定暂缓，等用户确认时机。
