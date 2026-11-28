@@ -37,7 +37,7 @@
 |---|---|---|---|---|---|
 | Workspace 绑定横幅 | `workspace.list` → `workspace.status`（复用 `resolve_workspace_pair_from_daemon(项目根)`） | `project_root`=仓库根（显式，禁止回退连接默认） | 本身即 workspace_id/instance 的**权威来源**；解析 0 个或多个候选一律 fail-closed | READ_ONLY | 红色横幅「workspace 未绑定/解析失败」，其余数据面板全部禁用，不猜 id |
 | 7-section 总览 | `get_project_dashboard` | `quick=true`、`with_cycles=false`、`with_evolution=false`、`top_n=5`（quick 模式约 280ms@100K 文件） | **不需要**显式 workspace_id：convergence RPC，daemon 按 peer/cwd 权威解析 workspace 主库 | READ_ONLY | 面板显示错误卡片；7 个 section 槽位保留，缺数据显示「暂无数据」而非隐藏 |
-| 任务板列表 | `task.list` | `workspace_id`（必填，来自绑定横幅解析值）、`status`（可选）、`limit`（默认 100）、`offset`、`parent_id`（可选） | **需要 workspace_id**（daemon fail-closed：无显式 workspace 禁止全表列出）；instance 不参与本调用 | READ_ONLY | 503/400 结构化错误；列表为空 ≠ 隐藏面板。**读源实证（task_collab_query.rs `handle_task_list`）**：每行已内嵌 `tree_governance_projection`（`lifecycle_status / workflow_status / current_role / next_role / next_action / review / blocking_reasons` + 完整 `governance` 对象），并返回 `total / limit / offset / workspace` 分页与投影元数据——列表可见性零额外调用 |
+| 任务板列表 | `task.list` | `workspace_id`（必填，来自绑定横幅解析值）、`status`（可选）、`limit`（默认 100）、`offset`、`parent_id`（可选）。**默认（无 status）看板模式由网关合并 open/in_progress/review 三个活跃 lifecycle 查询**（F-1 整改，见 §4） | **需要 workspace_id**（daemon fail-closed：无显式 workspace 禁止全表列出）；instance 不参与本调用 | READ_ONLY | 503/400 结构化错误；列表为空 ≠ 隐藏面板。**读源实证（task_collab_query.rs `handle_task_list`）**：每行已内嵌 `tree_governance_projection`（`lifecycle_status / workflow_status / current_role / next_role / next_action / review / blocking_reasons` + 完整 `governance` 对象），并返回 `total / limit / offset / workspace` 分页与投影元数据——列表可见性零额外调用 |
 | 逐卡派工投影（下钻详情） | `task.next_action` | `task_id`、`workspace_instance_id` —— **双参数严格必填**（`NextActionInput::from_params` 缺一即 invalid_params） | **双参数都要**；instance 来自绑定横幅（task DB 侧 `4baea3ff…`） | READ_ONLY（纯只读派工 evaluator，无 mutation；BLOCKED/NONE 是合法响应） | 该卡显示「治理投影不可用」+ 错误原因，**不得静默隐藏该卡** |
 | 任务树下钻 | `task.status_tree` | `task_id` | **不需要**显式 workspace_id：与 `task.status` 同一 workspace 权威，按 task binding 解析并做 owner ACL | READ_ONLY | 任务不存在 → 404「任务不存在」 |
 | 证据新鲜度（下钻区） | `get_freshness_status` | `task_id`（或 `evidence_id`） | **不需要** workspace 双参数 | READ_ONLY | 无证据事件 → 显示「暂无证据」，不视为错误 |
@@ -59,10 +59,17 @@
 **governance_blocked 不允许被静默过滤。** 事实依据（2026-11-24 读源确认，两处）：
 
 1. `task.list` 的 `status` 过滤只作用于 **lifecycle_status**（open/in_progress/review/applied/closed）。
-   被 governance_blocked 的卡 lifecycle 仍是 `open`，所以**列表里一定可见**——被挡的是 claim，不是存在性。
    且 `handle_task_list`（task_collab_query.rs）对每一行内嵌 `tree_governance_projection`：
    daemon 注释明言「列表与 status/status_tree 使用同一份 daemon 治理投影……
    tree_governance_projection 会明确返回 governance_blocked，而不是按 raw status 猜测下一动作」。
+
+   **F-1 整改更正（2026-11-29）**：本条原断言「lifecycle 是 open，所以列表里一定可见」不成立——
+   `handle_task_list` 按 `created_at DESC` 返回，全量 total 上千时默认 `limit=100` 的页只含最新卡，
+   老 blocked 卡会被挤出默认页（静默消失）。修复：网关 `_task_list_payload` 在默认（无 status）
+   看板模式改为**合并 open / in_progress / review 三个活跃 lifecycle 查询**——终态卡按 GOV-FIX-04
+   短路不可能 blocked，活跃三态并集即 blocked 卡的完全覆盖（实测 36 行覆盖全部 blocked 卡）；
+   合并后按 `created_at` 倒序重排，前端再 blocked 置顶展示。某 lifecycle 截断时 payload 携带
+   `truncated` 说明（非静默丢弃）；显式 `status` 过滤保持 daemon 原单查语义。
 2. 阻挡语义字段：`workflow_status="governance_blocked"`、`action/decision="BLOCKED"`、
    `blocking_reasons[]`（列表行内嵌）；下钻时 `task.next_action` 另含 `blocking_conditions[]`（与 reasons 同源写入）、
    `claim_requirements.blocked=true + reason`、`next_role="adjudicator"`、`next_action="system_repair_required"`、
@@ -74,6 +81,12 @@
 
 - 任务板渲染以 `task.list` 行内嵌投影为准：`workflow_status="governance_blocked"` 或
   `action=BLOCKED` 的卡：保留在列表中、红色描边 + 「被治理门禁阻挡」徽标 + 展开显示 `blocking_reasons` 全文。
+- **blocked 置顶**（F-1 整改）：渲染前对行做稳定排序，blocked 卡排在最前（组内保持
+  `created_at` 倒序），保证默认页第一眼可见。
+- **孤儿卡不静默丢弃**（F-5 整改）：父卡不在当前页时，其子卡仍作为顶层行渲染
+  （`parent_id` 指向页外父卡的行直接进顶层），递归渲染不因父卡缺失而跳过子树。
+- 网关返回 `truncated` 字段时在任务板顶部显示琥珀色提示条，说明哪些 lifecycle 被截断——
+  截断必须可见，不允许静默过滤。
 - 单卡下钻时再调 `task.next_action` 补齐 `claim_requirements / blocking_conditions / assignment`；
   调用失败：卡片保留并显示错误，不得移除。
 - 列表空且无错误时才显示「无任务」——「运行器说无任务、其实卡被 governance_blocked」的盲区在本页不存在。

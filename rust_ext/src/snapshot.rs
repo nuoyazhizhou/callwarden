@@ -491,12 +491,13 @@ impl SnapshotCache {
     /// 查询持有的 `load()` Guard 引用计数仍存活，数据可读到查询结束。
     pub fn evict_idle(&self, idle: Duration) -> Vec<String> {
         let now = Instant::now();
-        // 1) last_access 读锁内判定候选（与 managers 交集，防 stale）
+        // 1) 候选判定：只持 last_access.read 单锁（F1 修复——不取 managers，
+        //    避免与 get_or_create 的 managers→last_access 顺序构成 AB-BA 死锁；
+        //    stale 防护由第 2 步 mgrs.remove(&k).is_some() 写锁内重验承担）
         let candidates: Vec<WorkspaceInstanceId> = {
             let last = self.last_access.read();
-            let mgrs = self.managers.read();
             last.iter()
-                .filter(|(k, v)| mgrs.contains_key(*k) && now.duration_since(**v) > idle)
+                .filter(|(_, v)| now.duration_since(**v) > idle)
                 .map(|(k, _)| k.clone())
                 .collect()
         };

@@ -91,6 +91,7 @@
 </header>
 
 <div id="daemonBanner" class="banner red"></div>
+<div id="dbStaleBanner" class="banner"></div>
 <div id="wsBanner"></div>
 
 <main>
@@ -118,7 +119,9 @@ const fmtAny = (v) => {
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2);
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "string") return v;
-  if (Array.isArray(v)) return v.length ? v.slice(0, 8).map(esc).join(", ")
+  // F-4：数组元素不再此处 esc——所有调用方（kvRows / renderDashboard）都
+  // 会对 fmtAny 结果统一 esc，此处预转义会造成 &amp;lt; 双重转义显示。
+  if (Array.isArray(v)) return v.length ? v.slice(0, 8).map(String).join(", ")
       + (v.length > 8 ? ` …(共 ${v.length} 项)` : "") : "[]";
   return JSON.stringify(v);
 };
@@ -187,11 +190,15 @@ function renderHealth(h) {
     banner.className = "banner";
   }
   const bs = h && h.bootstrap;
+  // F-2：db_stale 横幅用固定 id 节点复用（className 切换显示/隐藏），
+  // 不再每次刷新 banner.after 追加新节点——N 次刷新堆叠 N 条的修复。
+  const staleBanner = $("dbStaleBanner");
   if (bs && bs.db_stale === true) {
-    const extra = document.createElement("div");
-    extra.className = "banner amber";
-    extra.textContent = "⚠ 图谱滞后：最近 scan_run 的 git_head 与当前 HEAD 不一致（db_stale）";
-    banner.after(extra);
+    staleBanner.textContent =
+      "⚠ 图谱滞后：最近 scan_run 的 git_head 与当前 HEAD 不一致（db_stale）";
+    staleBanner.className = "banner amber";
+  } else {
+    staleBanner.className = "banner";
   }
 }
 
@@ -231,8 +238,15 @@ function reasonsOf(row) {
       || (row.governance && row.governance.blocking_reasons) || [];
 }
 
-function taskRowsHTML(rows, parentMap, parent, depth) {
-  const children = rows.filter((r) => (r.parent_id || null) === parent);
+function taskRowsHTML(rows, parentIds, parent, depth) {
+  // F-5：parent === null 的顶层调用同时接住「parent_id 为空」与
+  // 「parent_id 指向的父卡不在当前页」的孤儿卡——父卡不在页内时子卡
+  // 原先会被静默跳过（递归从 null 出发到不了孤儿子树）。
+  const children = rows.filter((r) => {
+    const p = r.parent_id || null;
+    if (parent === null) return p === null || !parentIds.has(p);
+    return p === parent;
+  });
   let html = "";
   for (const r of children) {
     const blocked = isBlocked(r);
@@ -254,7 +268,7 @@ ${esc(reasons.join("\n"))}</div>` : ""}
           <span class="muted" style="font-size:12px">${esc(r.next_action || (r.governance && r.governance.next_action) || "—")}</span></td>
       <td class="muted" style="font-size:12px">${esc(fmtTime(r.updated_at || r.created_at))}</td>
     </tr>`;
-    html += taskRowsHTML(rows, parentMap, r.task_id, depth + 1);
+    html += taskRowsHTML(rows, parentIds, r.task_id, depth + 1);
   }
   return html;
 }
@@ -271,14 +285,20 @@ function renderTasks(data) {
     el.innerHTML = `<div class="empty">当前过滤条件下无任务（仅在确无数据时显示此文案）</div>`;
     return;
   }
+  // F-1 前端配合：blocked 置顶（稳定排序，组内保持 created_at 倒序）——
+  // 被治理门禁阻挡的卡必须在默认页第一眼可见，而不是埋在页尾。
+  const ordered = rows.slice().sort((a, b) =>
+    (isBlocked(b) ? 1 : 0) - (isBlocked(a) ? 1 : 0));
+  const parentIds = new Set(rows.map((r) => r.task_id));
   el.innerHTML = `
+  ${data.truncated ? `<div class="banner amber" style="margin:0 0 10px">⚠ ${esc(data.truncated)}</div>` : ""}
   <table>
     <thead><tr><th style="width:46%">任务（点行看下钻详情）</th><th>状态</th>
       <th>workflow</th><th>下一棒 / 动作</th><th>更新时间</th></tr></thead>
-    <tbody>${taskRowsHTML(rows, null, null, 0)}</tbody>
+    <tbody>${taskRowsHTML(ordered, parentIds, null, 0)}</tbody>
   </table>
   <div class="muted" style="font-size:12px;margin-top:6px">
-    共 ${rows.length} 条${data.total > rows.length ? `（筛选命中 total=${esc(data.total)}，当前 limit=${esc(data.limit)} offset=${esc(data.offset)}）` : ""}
+    共 ${rows.length} 条${data.total > rows.length ? `（活跃任务 total=${esc(data.total)}，当前 limit=${esc(data.limit)} offset=${esc(data.offset)}；终态卡不在看板默认页）` : ""}
   </div>`;
   el.querySelectorAll("tr.task-row").forEach((tr) => {
     tr.addEventListener("click", () => showDetail(tr.dataset.tid));

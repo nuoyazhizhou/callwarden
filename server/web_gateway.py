@@ -71,6 +71,12 @@ DASHBOARD_DEFAULTS = {
 # 属下钻详情，仅在单卡端点调用。终态卡不再请求派工投影（GOV-FIX-04 短路）。
 _TERMINAL_TASK_STATUSES = frozenset({"applied", "closed", "reverted", "superseded"})
 
+# 活跃 lifecycle 三态。governance_blocked 投影只可能落在非终态卡上（终态卡
+# GOV-FIX-04 短路，见读模型文档 §4），因此三态并集即 blocked 卡的完全覆盖。
+# 默认看板模式必须合并这三态查询：单查全量按 created_at 倒序，total 上千时
+# 老 blocked 卡会被挤出默认 limit 页（F-1：blocked 卡静默消失）。
+_ACTIVE_LIFECYCLE_STATUSES = ("open", "in_progress", "review")
+
 # 非法查询参数钳制范围
 _MIN_LIMIT, _MAX_LIMIT = 1, 500
 
@@ -214,21 +220,72 @@ def _dashboard_payload(params: dict) -> dict:
 def _task_list_payload(
     root: str, status: str | None, limit: int, offset: int, parent_id: str | None
 ) -> dict:
-    """任务板：task.list（行内嵌治理投影）。可见性规则见读模型文档 §4。"""
+    """任务板：task.list（行内嵌治理投影）。可见性规则见读模型文档 §4。
+
+    F-1（整改 T-1795469778065-1686c8a0）：默认（无 status）看板模式不再单查
+    全量 task.list——daemon 按 created_at 倒序返回，total 上千时 governance
+    _blocked 的老卡会被挤出默认 limit 页（静默消失，违背验收 3「不允许被
+    静默过滤」）。改为合并 open/in_progress/review 三个活跃 lifecycle 查询：
+    终态卡按 GOV-FIX-04 短路不可能 blocked，活跃三态并集即 blocked 卡的
+    完全覆盖（实测 36 行覆盖全部 blocked 卡）。截断时在 payload 里如实
+    标记 ``truncated``，不静默丢弃。显式 ``status`` 过滤保持原单查语义。
+    """
     pair = resolve_workspace_pair_from_daemon(root)
-    params: dict[str, Any] = {
-        "workspace_id": pair["workspace_id"],  # daemon fail-closed：禁止无 workspace 全表列出
+
+    def _fetch(lifecycle_status: str | None) -> dict:
+        params: dict[str, Any] = {
+            "workspace_id": pair["workspace_id"],  # daemon fail-closed：禁止无 workspace 全表列出
+            "limit": limit,
+            "offset": offset,
+        }
+        if lifecycle_status:
+            params["status"] = lifecycle_status
+        if parent_id:
+            params["parent_id"] = parent_id
+        listing = route_task_read("task.list", params, _no_local_fallback)
+        if not isinstance(listing, dict):
+            listing = {"tasks": listing if isinstance(listing, list) else []}
+        return listing
+
+    if status:
+        return {"workspace": pair, **_fetch(status)}
+
+    merged: list[dict] = []
+    seen: set[str] = set()
+    total = 0
+    truncated: list[str] = []
+    for lifecycle_status in _ACTIVE_LIFECYCLE_STATUSES:
+        listing = _fetch(lifecycle_status)
+        listing_total = int(listing.get("total") or 0)
+        rows = listing.get("tasks") or []
+        total += listing_total
+        if listing_total > len(rows):
+            truncated.append(f"{lifecycle_status} {len(rows)}/{listing_total}")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            task_id = row.get("task_id")
+            if task_id and task_id in seen:
+                continue
+            if task_id:
+                seen.add(task_id)
+            merged.append(row)
+    # 三查询各自 created_at 倒序，合并后重排保持全局新→旧（与单查口径一致）。
+    merged.sort(key=lambda r: r.get("created_at") or 0, reverse=True)
+    payload: dict[str, Any] = {
+        "workspace": pair,
+        "tasks": merged,
+        "total": total,
         "limit": limit,
         "offset": offset,
+        "lifecycle_merge": list(_ACTIVE_LIFECYCLE_STATUSES),
     }
-    if status:
-        params["status"] = status
-    if parent_id:
-        params["parent_id"] = parent_id
-    listing = route_task_read("task.list", params, _no_local_fallback)
-    if not isinstance(listing, dict):
-        listing = {"tasks": listing if isinstance(listing, list) else []}
-    return {"workspace": pair, **listing}
+    if truncated:
+        payload["truncated"] = (
+            "活跃任务超出单页 limit，以下 lifecycle 已截断（非静默过滤）："
+            + "、".join(truncated)
+        )
+    return payload
 
 
 def _task_detail_payload(root: str, task_id: str, with_projection: bool) -> dict:
