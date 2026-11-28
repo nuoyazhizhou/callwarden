@@ -463,3 +463,85 @@ def test_spawn_alive_false_full_path_with_real_mutex(monkeypatch):
         assert registry_calls[0]["pid"] == 42424
         # 段3：health 等待
         assert "health" in health_calls
+
+
+# ---------------------------------------------------------------------------
+# 6) F2 并发负向（reviewer BLOCKER）：两会话不同 endpoint 并发仅一个 daemon 启动
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_spawn_two_endpoints_only_one_daemon(monkeypatch):
+    """F2 核心验收：两会话不同 endpoint 并发竞争，仅一个 daemon 真正启动。
+
+    不 mock 真实 host 锁（acquire_host_daemon_mutex）；只 mock 外部副作用
+    （Popen / 注册表 / health / resolve）来观测「真正 Popen 了几次」。
+    两线程用 barrier 同步起点，关闭进程内 cooldown，让竞争纯粹由 host 锁
+    串行化。断言 subprocess.Popen 恰好被调用 1 次——杜绝双 daemon 共写主库。
+    """
+    import threading
+    import callwarden.server.daemon_autostart as da
+    import callwarden.server.host_process_registry as hpr_mod
+
+    _reset_cooldown()
+    # 关闭进程内 cooldown，确保第二个会话是被 host 锁挡住而非 cooldown
+    monkeypatch.setattr(da, "D3_SPAWN_COOLDOWN", 0.0)
+
+    # 恒判死：让两个会话都认为「无存活 daemon」而进入 spawn 竞争。
+    # 真正的防双实例只靠 host 锁 —— 若锁失效，两个线程都会 Popen（测试失败）。
+    monkeypatch.setattr(
+        da, "authority_daemon_diagnostic",
+        lambda authority_id="": {
+            "code": "E_DAEMON_ALREADY_RUNNING", "pid": None,
+            "process_start_time": None,
+            "endpoint": "https://127.0.0.1:4523", "alive": False,
+        })
+    monkeypatch.setattr(da, "_authoritative_bind_spec", lambda diag: "127.0.0.1:4523")
+    monkeypatch.setattr(da, "_find_daemon_binary", lambda: "/fake/cw-daemon.exe")
+
+    class _FakeProc:
+        pid = 42424
+
+    popen_calls = []
+    popen_lock = threading.Lock()
+
+    def fake_popen(cmd, **kwargs):
+        with popen_lock:
+            popen_calls.append((cmd, kwargs))
+        # 模拟 daemon 启动有耗时，放大并发窗口，确保两线程真正重叠
+        time.sleep(0.2)
+        return _FakeProc()
+
+    monkeypatch.setattr(da.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(hpr_mod, "register_process", lambda **k: {})
+    monkeypatch.setattr(da, "resolve_http_endpoint_and_manifest",
+                        lambda **k: ("https://127.0.0.1:4523", {}))
+    monkeypatch.setattr(da, "try_http_connect", lambda *a, **k: True)
+
+    barrier = threading.Barrier(2)
+    results = []
+
+    def session(endpoint_label):
+        barrier.wait(timeout=5)  # 两会话同步起跑
+        try:
+            r = da.spawn_http_daemon(wait_window=0.3)
+            results.append((endpoint_label, r))
+        except Exception as exc:
+            results.append((endpoint_label, f"ERR:{type(exc).__name__}:{exc}"))
+
+    # 两会话用不同 endpoint 标签（模拟不同 endpoint 各自通过 endpoint 去重锁）
+    threads = [
+        threading.Thread(target=session, args=("https://127.0.0.1:4523",)),
+        threading.Thread(target=session, args=("https://127.0.0.1:5854",)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert len(results) == 2, f"两会话都应返回: {results}"
+    assert not any(isinstance(r, str) and r.startswith("ERR:") for _, r in results), (
+        f"并发路径不得抛异常: {results}")
+    # 核心断言：只有拿到 host 锁的一个会话真正启动 daemon
+    assert len(popen_calls) == 1, (
+        f"两会话并发只能有一个 daemon 真正 Popen（杜绝共写主库），实得 "
+        f"{len(popen_calls)} 次: {popen_calls}")
