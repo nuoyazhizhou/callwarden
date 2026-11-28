@@ -545,3 +545,67 @@ def test_concurrent_spawn_two_endpoints_only_one_daemon(monkeypatch):
     assert len(popen_calls) == 1, (
         f"两会话并发只能有一个 daemon 真正 Popen（杜绝共写主库），实得 "
         f"{len(popen_calls)} 次: {popen_calls}")
+
+
+# ---------------------------------------------------------------------------
+# 7) F3 集成（reviewer 需整改）：生产 web_gateway.main 路径的 webui 注册/注销
+# ---------------------------------------------------------------------------
+
+
+def test_webui_registration_integration(monkeypatch, tmp_path, capsys):
+    """F3 验收：生产启动路径(main)在注册表可见 role=webui，退出注销，daemon 重启不误清。
+
+    走真实 web_gateway.main（生产启动钩子），只 mock 阻塞的 uvicorn.run 做
+    「运行期探针」与 create_app。注册表隔离到 tmp_path。断言：
+    1. uvicorn.run 运行期注册表可见 role=webui 条目（含 pid+process_start_time 双键）；
+    2. main 返回后该条目注销；
+    3. 注册一个 daemon 条目并模拟 daemon 重启（reconcile_stale）不清理 webui 条目
+       —— 这里在 uvicorn.run 探针内额外验证 daemon 重启不动 webui。
+    """
+    import callwarden.server.web_gateway as wg
+    import callwarden.server.host_process_registry as hpr_local
+    from callwarden.config import get_http_authority_id
+
+    # 隔离注册表到 tmp_path（web_gateway 内绝对 import 的模块与此处同一对象）
+    monkeypatch.setattr(hpr_local, "_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        hpr_local, "_UNIX_LOCK_FILE", os.path.join(str(tmp_path), "registry.lock"))
+
+    authority = get_http_authority_id()
+    observed = {}
+
+    def fake_run(app, **kwargs):
+        # 运行期探针：此刻 webui 应已注册；再放一个 daemon 条目并 reconcile，
+        # 验证 daemon 重启不误清 webui。
+        entries = hpr_local.read_all(authority)
+        webui = [e for e in entries if e.get("role") == "webui"]
+        observed["during"] = webui
+        # 模拟 daemon 条目 + daemon 重启 reconcile（webui 进程 pid 仍活）
+        d = hpr_local.register_process(
+            authority_id=authority, role="daemon", pid=4242,
+            endpoint_or_bind="127.0.0.1:4523")
+        hpr_local.unregister_process(authority, "daemon", d["pid"])  # daemon 重启
+        hpr_local.reconcile_stale(authority)
+        after = hpr_local.read_all(authority)
+        observed["after_daemon_restart"] = [e for e in after if e.get("role") == "webui"]
+        # 清理 daemon 残留，便于退出后只判断 webui 注销
+        hpr_local.unregister_process(authority, "daemon", 4242)
+
+    monkeypatch.setattr(wg, "create_app", lambda root: object())
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    rc = wg.main(["--root", str(tmp_path), "--port", "18766"])
+
+    assert rc == 0
+    # 1. 运行期注册表可见 role=webui，双键齐全
+    assert len(observed["during"]) == 1, observed
+    entry = observed["during"][0]
+    assert entry["role"] == "webui"
+    assert entry["pid"] > 0
+    assert entry["process_start_time"] and entry["process_start_time"] > 0
+    assert "18766" in entry["endpoint_or_bind"]
+    # 2. daemon 重启不误清 webui 条目
+    assert len(observed["after_daemon_restart"]) == 1, observed
+    # 3. 正常退出后 webui 条目注销
+    final = [e for e in hpr_local.read_all(authority) if e.get("role") == "webui"]
+    assert final == [], f"退出后 webui 条目应注销: {final}"
