@@ -369,12 +369,47 @@ def main(argv: list[str] | None = None) -> int:
     import uvicorn
 
     app = create_app(root)
-    print(
-        f"[web-gateway] 只读观测面 http://{args.host}:{args.port}/  "
-        f"root={root}  (观测面，非操控台；全部端点 GET-only)"
-    )
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
-    return 0
+
+    # D3/F3：把本 webui 进程注册进 host 进程注册表（role=webui，独立于
+    # daemon 单实例守卫——webui 启停不触发、也不受 daemon 锁约束）。
+    # register_process 内部写 pid + process_start_time 双键，供判活防 PID 复用。
+    # 注册表只是轻量索引：注册失败不阻断网关本身（fail-open 到观测面），
+    # 但必须留痕；正常退出（含 KeyboardInterrupt / uvicorn 异常）在 finally 注销。
+    _webui_pid = os.getpid()
+    _webui_bind = f"{args.host}:{args.port}"
+    try:
+        from callwarden.config import get_http_authority_id
+        from callwarden.server.host_process_registry import register_process
+        _webui_authority = get_http_authority_id()
+        register_process(
+            authority_id=_webui_authority, role="webui", pid=_webui_pid,
+            endpoint_or_bind=_webui_bind)
+    except Exception as _reg_exc:
+        _webui_authority = ""
+        print(
+            f"[web-gateway] ⚠ webui 进程注册失败（不阻断观测面）: {_reg_exc}",
+            file=sys.stderr,
+        )
+
+    try:
+        print(
+            f"[web-gateway] 只读观测面 http://{args.host}:{args.port}/  "
+            f"root={root}  (观测面，非操控台；全部端点 GET-only)"
+        )
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        return 0
+    finally:
+        # 正常退出注销自身 entry（role=webui）；崩溃残留由权威 daemon 的
+        # reconcile_stale 按 pid + process_start_time 判活后标 stale（不删历史）。
+        if _webui_authority:
+            try:
+                from callwarden.server.host_process_registry import unregister_process
+                unregister_process(_webui_authority, "webui", _webui_pid)
+            except Exception as _unreg_exc:
+                print(
+                    f"[web-gateway] ⚠ webui 注销失败（将由 reconcile 收尾）: {_unreg_exc}",
+                    file=sys.stderr,
+                )
 
 
 if __name__ == "__main__":
