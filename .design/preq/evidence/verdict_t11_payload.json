@@ -1,0 +1,69 @@
+{
+  "step_id": "S-1795837031479-efd46b10",
+  "contract_id": "TC-T-1795837031464-eef45a20",
+  "contract_revision": 1,
+  "contract_hash": "sha256:20cbbba6726b6df90251cb35ede5f3dbacfcf5ce2da13af322eabea3bf071aeb",
+  "role_contract_id": "rcr-T-1795837031464-eef45a20-reviewer-r1",
+  "role_contract_revision": 1,
+  "role_contract_hash": "sha256:12957928b78275abdd0e0f0f35e68c5c994791dc0c31d44138fae5bde6f5b361",
+  "phase": "blind_first_pass",
+  "overall": "pass",
+  "view_manifest_hash": "b73d8a3fae7d87993ce3df05d8f44c0111c0931c403ff470f855cccdac7bf9f5",
+  "snapshot_id": "0b782e8d059e5593",
+  "request_id": "req-reviewer-t1-t7-t11-blind-20261129-01",
+  "attestation": "独立盲评（blind_first_pass）：未采信 executor 自报结论，全部关键数字独立取证。证据：8 份 T11 证据 sha256 前缀全量复算匹配；提交 0dc8992 在集成 worktree（run/preq-t6-integration，parent 78d7ddc）核验，2 files +189 纯测试；红轮1/红轮2/绿轮日志语义逐条比对 mutation；全量 2105 passed/1 failed/62 filtered 与 snapshot_state.rs @0dc8992 恰 62 个 #[test] 对账闭合（2164+4=2168=2106+62）；4 个定向测试在执行器遗留目标目录独立复跑 10 passed/RC=0（增量构建 1m31s）；治理链 18363→18572（handoff_structured）与租约链（fencing 1→4 最终 released）DB 核验。评审未改任何源码/文档/证据/任务状态。",
+  "clause_results": [
+    {
+      "clause": "提交核验（0dc8992 范围与纯测试性）",
+      "result": "pass",
+      "evidence": "git show 0dc8992：parent=78d7ddc，恰 2 files——next_action_test.rs +117 / task_collab_tests_projection.rs +72，合计 +189，零源码改动，全部为 #[test]；集成 worktree HEAD 即 0dc8992"
+    },
+    {
+      "clause": "红轮1语义（4 FAILED 逐条命中 mutation）",
+      "result": "pass",
+      "evidence": "red-round1.log RC=101：closed/reverted 终态测试返回依赖数组而非 []（mutation 摘除终态短路，两测试各断言失败）；multiple_unmet left=1 right=3（mutation push 后提前 break，len 1≠3）；旧版测试3 panic 于 E_TASK_BINDING_MISSING（证明入口门禁真实存在且先于投影层）"
+    },
+    {
+      "clause": "红轮2语义（精确红于 BLOCKED→COMPLETE 静默放行）",
+      "result": "pass",
+      "evidence": "red-round2.log 恰 1 FAILED：tree_governance_projection_unbound_task_fail_closed_not_unmet，left=COMPLETE right=BLOCKED——mutation 将 fail-closed 决策改放行后被该测试精确捕获，红点与被测语义一一对应"
+    },
+    {
+      "clause": "绿轮与独立复跑",
+      "result": "pass",
+      "evidence": "green-test.log 10 passed/0 failed/RC=0/1.25s；评审独立复跑（执行器遗留 CARGO_TARGET_DIR 增量）cargo test --lib -- next_action_prerequisites tree_governance：10 passed/0 failed/2158 filtered/3.43s/RC=0，与绿轮完全一致"
+    },
+    {
+      "clause": "全量与 snapshot_state skip（executor 核验点②）",
+      "result": "pass",
+      "evidence": "full-test.log 2105 passed/1 failed/62 filtered/1436.80s；snapshot_state.rs @0dc8992 恰 62 个 #[test]，与 filtered 数吻合；总数对账 2164+4=2168=2106+62 闭合；snapshot_state 在全量日志零出现（skip 生效）；62 测试与 T11 改动（next_action_test.rs/task_collab_tests_projection.rs）零交集，skip 系 T10-01 病灶（资源病态）之环境阻塞且已如实登记于 AC.md"
+    },
+    {
+      "clause": "decompress bomb 假失败判定（executor 核验点③）",
+      "result": "pass",
+      "evidence": "full-test.log 唯一失败 test_decompress_gz_bounded_rejects_decompression_bomb \"gzip stream error: out of memory\" @workspace.rs:8629——资源压力型；同日志多条 60s+ 编译警告佐证机器高压；rerun-flaky.log 单独重跑 1 passed/0.33s/RC=0；该测试与 T11 改动零代码关联（不同模块、未被 4 个定向测试覆盖范围包含）。判定充分，无需追加连续 3 次重跑"
+    },
+    {
+      "clause": "测试3两层断言口径（executor 核验点①）",
+      "result": "pass",
+      "evidence": "check item 本意是 fail-closed（unbound 任务必须 BLOCKED 而非放行或 unmet）。测试两层：①handle_task_status 入口 Err E_TASK_BINDING_MISSING（红轮1 panic 实证门禁在位）；②直调 tree_governance_projection 断言 decision==BLOCKED/workflow_status==governance_blocked/prerequisites==[]/blocking_reasons 含 binding。源码核验 @0dc8992：binding-miss 分支（let Some(instance)=else）产出 BLOCKED+prerequisites:[]，与断言逐字段一致。两层口径忠实且强于 check item 字面（daemon 原文写 E_WORKSPACE_AUTHORY_UNAVAILABLE 系笔误，实际调用链更早门禁为 E_TASK_BINDING_MISSING，测试覆盖了真实路径）"
+    },
+    {
+      "clause": "治理链与证据完整性",
+      "result": "pass",
+      "evidence": "DB 核验事件 18363(open→in_progress)→18364(assignment_claimed)→18569(reported, step S-1795837031479-efd46b10)→18570/18571(assignment)→18572(handoff_structured, review→review)；report req-bb9781a27429 与 handoff 事件 18572 一致；租约链 fencing 1→4 最终 released；8 份证据 sha256 前缀与 evidence-manifest.md（a8075b34…）逐条匹配；评审身份五元组独立（instance reviewer-t1-t7-inst ≠ session sess-reviewer-t1-t7-t11，未借用他人身份）"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "nit",
+      "location": "0dc8992 rust_ext/src/daemon/task_loop/next_action_test.rs 测试3注释",
+      "summary": "测试注释将第二层断言（直调 tree_governance_projection）描述为「沿引擎 Err 转 BLOCKED」，实际该层走的是 binding-miss 分支（let Some(instance) = else 提前返回 governance_blocked/BLOCKED/prerequisites:[]），并非引擎 Err 分支；引擎 Err 分支存在但对 unbound 输入不可达（入口门禁先拒）。断言本身逐字段正确、fail-closed 语义完全覆盖，仅注释路径归属措辞不精确。建议后续顺手修正注释，不阻塞。"
+    },
+    {
+      "severity": "nit",
+      "location": ".design/preq/evidence/AC.md 行 8",
+      "summary": "AC.md 写「+71 行」而实际提交 task_collab_tests_projection.rs +72 行（git show 核验）。文档漂移，不影响任何结论。建议后续修 AC.md 数字。"
+    }
+  ]
+}

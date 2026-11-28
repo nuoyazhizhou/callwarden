@@ -1,0 +1,64 @@
+{
+  "step_id": "S-1795837042794-923c0f8c",
+  "contract_id": "TC-T-1795837042787-91db8edc",
+  "contract_revision": 1,
+  "contract_hash": "sha256:39272b4396c59299aebf5ec5f99609ddcb3e4c5f975f11cd6df0325fa0387ea4",
+  "role_contract_id": "rcr-T-1795837042787-91db8edc-reviewer-r1",
+  "role_contract_revision": 1,
+  "role_contract_hash": "sha256:12957928b78275abdd0e0f0f35e68c5c994791dc0c31d44138fae5bde6f5b361",
+  "phase": "blind_first_pass",
+  "overall": "pass",
+  "view_manifest_hash": "3047cea8a90a2967a24561f8dcaeb68a2ab5c36e20fafb59eeca5a485fe3e32c",
+  "snapshot_id": "5fa3d5281290b9e3",
+  "request_id": "req-reviewer-t1-t7-t10-blind-20261128-02",
+  "attestation": "独立盲评（blind_first_pass）：未采信 tester 自报结论，全部关键数字独立取证。证据：manifest 与 9 份日志 sha256 全量复算匹配；重跑树 preq-t10-rerun-j2k7d（detached @78d7ddc）干净核验；T5 17vs16 双向 comm 逐名（0 丢失、恰 +1 新增）；task_collab 194vs190 结构核对（68e57a4 与 78d7ddc 逐文件 #[test] 计数 190/194、唯一差异 prerequisites.rs +4；原 190 回归日志未落盘，以源码计数闭环）加重跑日志 194 行逐名在案；flaky 单测 solo 与全量两次观测均绿；daemon 事件 18365-18394 与 lease L-f842b6c828c0c343 过期披露核验；T10-01 后续单 T-1795847624350-48202e98 立单核验。评审未改任何源码/文档/证据/任务状态。",
+  "clause_results": [
+    {
+      "clause": "复跑①关闭F-1（T5独立复跑）",
+      "result": "pass",
+      "evidence": "prerequisite-rerun-t5-capability.log：17 passed/0 failed/RC=0/2147 filtered。与原T5日志（16 passed）双向comm逐名：0丢失、恰+1（daemon::task_collab::tests::prerequisites::capability_projection_exposes_prerequisite_gate_v1，T6新增，亦ok）"
+    },
+    {
+      "clause": "复跑②关闭T3-04（全量--lib）",
+      "result": "pass",
+      "evidence": "prerequisite-rerun-t3-full-lib.log：2164 passed/0 failed/RC=0/2179.61s/0 filtered。task_collab子集194=190+4：68e57a4逐文件#[test]计数合计190、78d7ddc合计194、逐文件全部一致唯一差异prerequisites.rs+4；重跑日志task_collab行恰194且4条新测试以daemon::task_collab::tests::prerequisites::全路径出现并ok"
+    },
+    {
+      "clause": "复跑③④关闭T6-02（flaky稳定性）",
+      "result": "pass",
+      "evidence": "prerequisite-rerun-t6-flaky-solo.log：1 passed/RC=0/2.50s/2163 filtered；且全量复跑②中该测试亦通过。本轮两次观测均绿，未复现flaky"
+    },
+    {
+      "clause": "T10-01登记完整性（可重放/局域化/不刷绿）",
+      "result": "pass",
+      "evidence": "5次全量尝试3次病态：attempt1 STATUS_STACK_OVERFLOW@1151ok落盘；attempt3看门狗逐15s采样35MB→696MB→19,479,116KB落盘；snapshot_state模块隔离复现16挂起+22,164,456KB落盘。manifest③明确⚠️部分PASS未宣称全绿；后续单T-1795847624350-48202e98（register_workspace_for_test fix）已立"
+    },
+    {
+      "clause": "口径delta双向如实性",
+      "result": "pass",
+      "evidence": "17vs16与194vs190双向核对均闭合（见上两条）；全量总数2163→2164与+4新增并存的测试移除/合并，tester已在manifest §4.3主动披露并声明不深究——如实，非隐瞒"
+    },
+    {
+      "clause": "独立性（五元组/独立worktree/树外隔离构建）",
+      "result": "pass",
+      "evidence": "DB核验tester五元组注册（inst-t10-x4n9q≠sess-t10-x4n9q，未借用）；独立worktree preq-t10-rerun-j2k7d detached@78d7ddc工作树全程干净；基线树被并行executor污染5文件后依纪律换树并通报；MSVC树外隔离构建（独立CARGO_TARGET_DIR）"
+    },
+    {
+      "clause": "manifest sha256抽查",
+      "result": "pass",
+      "evidence": "manifest+9份日志sha256全量复算与manifest §9清单逐条匹配（含manifest自身145c411b…843303）"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "nit",
+      "location": "docs/evidence/prerequisite-rerun-t6-full-lib-attempt2.log vs manifest §4.2/§5",
+      "summary": "attempt2的「RSS 14.1GB」数字仅manifest文字记载，attempt2日志本身无任何RSS采样（日志尾仅CARGO_RC=TERMINATED_BY_TESTER(machine_protection)），严格意义上不可由日志独立重建。病态结论不单独依赖该数字（attempt1栈溢出、attempt3看门狗逐15s采样、隔离诊断21.1GB三路均已落盘）。建议：T10-01排查单补齐attempt2资源采样证据，或manifest标注该数字来源（tester口述/外部监控）。"
+    },
+    {
+      "severity": "nit",
+      "location": "docs/evidence/prerequisite_rerun_manifest.md 行17/55",
+      "summary": "manifest将task_collab +4称为「projection测试」，实际为task_collab::tests::prerequisites模块（capability投影1条+claim门禁集成3条：disabled兼容/satisfied放行+投影空/unmet阻断+三投影一致），命名欠精确；计数正确（194=190+4双向核对0丢失），仅措辞问题，不影响任何结论。"
+    }
+  ]
+}

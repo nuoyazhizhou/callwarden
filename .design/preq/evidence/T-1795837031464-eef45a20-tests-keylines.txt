@@ -1,0 +1,40 @@
+# T11 红绿两轮定向测试关键行（4 个新测试 + 存量回归）
+# 绿轮（生产逻辑恢复后）：
+test daemon::task_loop::next_action_test::next_action_prerequisites_empty_when_task_closed_terminal ... ok
+test daemon::task_loop::next_action_test::next_action_prerequisites_empty_when_task_reverted_terminal ... ok
+test daemon::task_loop::next_action_test::next_action_prerequisites_empty_when_provider_completed ... ok
+test daemon::task_loop::next_action_test::next_action_prerequisites_lists_unmet_hard_dependency ... ok
+test daemon::task_loop::next_action_test::next_action_prerequisites_lists_multiple_unmet_hard_dependencies ... ok
+test daemon::task_loop::next_action_test::next_action_prerequisites_empty_array_when_no_dependency ... ok
+test daemon::task_collab::tests::projection::tree_governance_projection_unbound_task_fail_closed_not_unmet ... ok
+test daemon::task_collab::tests::projection::tree_governance_status_tree_node_carries_prerequisites ... ok
+test daemon::task_collab::tests::projection::tree_governance_projection_lists_unmet_hard_dependency ... ok
+test daemon::task_collab::tests::projection::tree_governance_projection_closed_task_prerequisites_empty ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2158 filtered out; finished in 1.25s
+CARGO_RC=0
+# 红轮 1（终态短路 ×2 + hard_unmet break mutation）：
+test daemon::task_loop::next_action_test::next_action_prerequisites_empty_when_task_reverted_terminal ... FAILED
+test daemon::task_loop::next_action_test::next_action_prerequisites_lists_multiple_unmet_hard_dependencies ... FAILED
+test daemon::task_loop::next_action_test::next_action_prerequisites_empty_when_task_closed_terminal ... FAILED
+test daemon::task_collab::tests::projection::tree_governance_projection_unbound_task_fail_closed_not_unmet ... FAILED
+test result: FAILED. 6 passed; 4 failed; 0 ignored; 0 measured; 2158 filtered out; finished in 5.14s
+test result: FAILED. 6 passed; 4 failed; 0 ignored; 0 measured; 2158 filtered out; finished in 5.14s
+CARGO_RC=101
+# 红轮 2（无 binding 分支 decision BLOCKED→COMPLETE mutation）：
+test daemon::task_collab::tests::projection::tree_governance_projection_unbound_task_fail_closed_not_unmet ... FAILED
+  left: String("COMPLETE")
+ right: "BLOCKED"
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 2158 filtered out; finished in 4.47s
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 2158 filtered out; finished in 4.47s
+CARGO_RC=101
+# T11 全量回归（skip snapshot_state）关键行
+# 命令：cargo test --lib -- --skip snapshot_state（T10-01 病灶模块 T-1795847624350-48202e98，62 filtered out）
+test result: FAILED. 2105 passed; 1 failed; 0 ignored; 0 measured; 62 filtered out; finished in 1436.80s
+CARGO_RC=101
+# 唯一 FAILED（资源压力型假失败，单独重跑通过）：
+test daemon::workspace::tests::test_decompress_gz_bounded_rejects_decompression_bomb ... FAILED
+test result: FAILED. 2105 passed; 1 failed; 0 ignored; 0 measured; 62 filtered out; finished in 1436.80s
+# 单独重跑：
+test daemon::workspace::tests::test_decompress_gz_bounded_rejects_decompression_bomb ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2167 filtered out; finished in 0.33s
+CARGO_RC=0
