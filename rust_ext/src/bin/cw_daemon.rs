@@ -98,6 +98,306 @@ mod server_cert_expiry_tests {
     }
 }
 
+// ============================================
+// T6 / REQ-RG-03：启动恢复逐 ws 状态判定与日志格式
+// （纯函数，unix/windows 两平台生产路径共用；AC-RG-03-2）
+// ============================================
+
+/// 启动恢复逐 ws 状态判定（C6：built/reused/skipped）。
+///
+/// 判定优先级（互斥且全覆盖）：
+/// 1. `cache_has`（dispatch 前 `SnapshotCache::get` 已有该 ws 条目）→ `"reused"`
+///    （durable 恢复仍照常执行，保证 staging/retry 日志一致；仅内存 snapshot 复用）
+/// 2. handler 成功且本次有构建产出（`applied_count` / `retry_recovered_count` /
+///    `retry_snapshot_published` 任一 > 0）→ `"built"`
+/// 3. 其余（0-pending 快路径、deferred、dispatch 失败）→ `"skipped"`
+///    （0-pending 即 workspace.rs handle_workspace_recover L4110-4115 的
+///    空 ReplicationResult 快路径——不构建 snapshot，锁住懒加载语义）
+fn classify_startup_recover(
+    cache_has: bool,
+    handler_success: bool,
+    applied_count: u64,
+    retry_recovered_count: u64,
+    retry_snapshot_published: u64,
+) -> &'static str {
+    if cache_has {
+        return "reused";
+    }
+    if handler_success
+        && (applied_count > 0 || retry_recovered_count > 0 || retry_snapshot_published > 0)
+    {
+        return "built";
+    }
+    "skipped"
+}
+
+/// 逐 ws 启动恢复日志行（C6：逐 ws built/reused/skipped）。
+fn format_startup_recover_ws_line(
+    workspace_id: &str,
+    status: &str,
+    applied_count: u64,
+    retry_recovered_count: u64,
+    pending_count: u64,
+) -> String {
+    format!(
+        "[cw_daemon] [INFO] startup recover: ws={} status={} applied={} \
+         retry_recovered={} pending={}",
+        workspace_id, status, applied_count, retry_recovered_count, pending_count
+    )
+}
+
+/// 启动恢复汇总日志行（三类计数，AC-RG-03-2）。
+fn format_startup_recover_summary_line(
+    total: usize,
+    built: usize,
+    reused: usize,
+    skipped: usize,
+) -> String {
+    format!(
+        "[cw_daemon] [INFO] startup recover summary: total={} built={} reused={} skipped={}",
+        total, built, reused, skipped
+    )
+}
+
+// ============================================
+// T6 / REQ-RG-03 单元测试
+// （平台无关：unix/windows 两份生产副本共用同一测试集；
+//   通过 cfg 切换被测副本，Windows/Linux CI 均可执行）
+// ============================================
+
+#[cfg(test)]
+mod startup_recover_tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    use callwarden_core::daemon::replicator::SnapshotCachePublisher;
+    use callwarden_core::daemon::staging_log::{StagingEntry, StagingLog};
+    use callwarden_core::daemon::workspace::WorkspaceRegistry;
+    use callwarden_core::snapshot::SnapshotCache;
+    use super::{
+        classify_startup_recover, format_startup_recover_summary_line,
+        format_startup_recover_ws_line,
+    };
+
+    #[cfg(unix)]
+    use super::unix::recover_all_workspaces_with_snapshot;
+    #[cfg(windows)]
+    use super::windows::recover_all_workspaces_with_snapshot;
+
+    /// 轻量 fixture：临时 registry DB + data_root
+    /// （对齐 unix mod tests::RecoverFixture，平台无关复刻）
+    struct StartupRecoverFixture {
+        _tmp: TempDir,
+        registry_db: PathBuf,
+        data_root: PathBuf,
+        registry: WorkspaceRegistry,
+    }
+
+    impl StartupRecoverFixture {
+        fn new() -> Self {
+            let tmp = tempfile::tempdir().unwrap();
+            let registry_db = tmp.path().join("registry.db");
+            let data_root = tmp.path().join("data");
+            fs::create_dir_all(&data_root).unwrap();
+            let registry = WorkspaceRegistry::open(registry_db.to_str().unwrap()).unwrap();
+            Self {
+                _tmp: tmp,
+                registry_db,
+                data_root,
+                registry,
+            }
+        }
+
+        /// 注册一个 workspace，返回 workspace_instance_id
+        fn register_workspace(&self, ws_root: &Path) -> String {
+            // register_workspace 要求 client_view_root 真实存在
+            fs::create_dir_all(ws_root).unwrap();
+            let result = self
+                .registry
+                .register_workspace(
+                    1000, // owner_uid
+                    ws_root.to_str().unwrap(),
+                    ws_root.to_str().unwrap(), // host_real_root
+                    "",                        // git_remote_url
+                    "",                        // git_head_commit_sha
+                    "",                        // toolchain_fingerprint
+                )
+                .unwrap();
+            result["workspace_instance_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+
+        /// 在 data_root 下创建 staging.log 并写入 pending entries
+        fn write_pending_entries(&self, ws_id: &str, entries: &[(&str, &str)]) {
+            let ws_dir = self.data_root.join(ws_id);
+            fs::create_dir_all(&ws_dir).unwrap();
+            let log_path = ws_dir.join("staging.log");
+            let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+            for (file_path, content_hash) in entries {
+                let mut entry = StagingEntry::new(ws_id, file_path, content_hash, "python");
+                log.append(&mut entry).unwrap();
+            }
+        }
+
+        /// 获取 workspace 的 staging.log pending 数量
+        fn count_pending(&self, ws_id: &str) -> usize {
+            let log_path = self.data_root.join(ws_id).join("staging.log");
+            if !log_path.exists() {
+                return 0;
+            }
+            let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+            log.read_pending().unwrap().len()
+        }
+    }
+
+    fn recover(
+        fixture: &StartupRecoverFixture,
+        cache: &std::sync::Arc<SnapshotCache>,
+    ) -> usize {
+        let publisher = std::sync::Arc::new(SnapshotCachePublisher::new(std::sync::Arc::clone(
+            cache,
+        )));
+        recover_all_workspaces_with_snapshot(
+            &fixture.registry_db,
+            &fixture.data_root,
+            std::sync::Arc::clone(cache),
+            publisher,
+            String::new(),
+        )
+    }
+
+    // ---- AC-RG-03-2：状态判定优先级（互斥且全覆盖） ----
+
+    #[test]
+    fn classify_startup_recover_states_and_priority() {
+        // 0-pending 快路径（workspace.rs L4110-4115 空成功结果的真实形态）
+        assert_eq!(classify_startup_recover(false, true, 0, 0, 0), "skipped");
+        // 有 pending 构建（applied_count > 0）
+        assert_eq!(classify_startup_recover(false, true, 3, 0, 0), "built");
+        // retry 重放构建（retry_recovered / retry_snapshot_published > 0）
+        assert_eq!(classify_startup_recover(false, true, 0, 2, 2), "built");
+        // cache 已有条目优先 → reused（durable 恢复仍执行）
+        assert_eq!(classify_startup_recover(true, true, 0, 0, 0), "reused");
+        assert_eq!(classify_startup_recover(true, true, 5, 0, 0), "reused");
+        // deferred / dispatch 失败 → skipped（未构建）
+        assert_eq!(classify_startup_recover(false, false, 0, 0, 0), "skipped");
+        // handler 失败时即使返回了计数也不记 built（防御：失败不是构建）
+        assert_eq!(classify_startup_recover(false, false, 7, 0, 0), "skipped");
+    }
+
+    #[test]
+    fn startup_recover_log_line_formats() {
+        let line = format_startup_recover_ws_line("ws-abc", "skipped", 0, 0, 0);
+        assert!(line.contains("ws=ws-abc"), "line: {}", line);
+        assert!(line.contains("status=skipped"), "line: {}", line);
+        assert!(line.contains("applied=0"), "line: {}", line);
+        assert!(line.contains("retry_recovered=0"), "line: {}", line);
+        assert!(line.contains("pending=0"), "line: {}", line);
+
+        let built_line = format_startup_recover_ws_line("ws-built", "built", 3, 1, 4);
+        assert!(built_line.contains("status=built"), "line: {}", built_line);
+        assert!(built_line.contains("applied=3"), "line: {}", built_line);
+
+        let summary = format_startup_recover_summary_line(6, 1, 2, 3);
+        assert!(summary.contains("total=6"), "summary: {}", summary);
+        assert!(summary.contains("built=1"), "summary: {}", summary);
+        assert!(summary.contains("reused=2"), "summary: {}", summary);
+        assert!(summary.contains("skipped=3"), "summary: {}", summary);
+    }
+
+    // ---- AC-RG-03-1：0-pending 回归锁（端到端行为） ----
+
+    #[test]
+    fn ac_rg_03_1_zero_pending_workspace_no_snapshot_build() {
+        let fixture = StartupRecoverFixture::new();
+        // 注册 workspace 但不写任何 staging entry（0-pending）
+        let ws_root = fixture.data_root.join("ws_zero_root");
+        let ws_id = fixture.register_workspace(&ws_root);
+
+        let cache = std::sync::Arc::new(SnapshotCache::new(8));
+        let recovered = recover(&fixture, &cache);
+
+        // 启动恢复不产生任何 applied/retry 计数
+        assert_eq!(recovered, 0);
+        // 核心断言：SnapshotCache 中该 ws 无 snapshot（懒加载语义未被劣化）
+        assert!(
+            cache.get(&ws_id).is_none(),
+            "0-pending workspace must not be built into SnapshotCache at startup"
+        );
+        assert_eq!(cache.len(), 0, "cache must stay empty for 0-pending startup");
+    }
+
+    #[test]
+    fn ac_rg_03_1b_empty_staging_log_zero_pending() {
+        let fixture = StartupRecoverFixture::new();
+        let ws_root = fixture.data_root.join("ws_empty_root");
+        let ws_id = fixture.register_workspace(&ws_root);
+
+        // staging.log 存在但无任何 entry（0-pending 的另一形态）
+        let ws_dir = fixture.data_root.join(&ws_id);
+        fs::create_dir_all(&ws_dir).unwrap();
+        StagingLog::new(ws_dir.join("staging.log").to_str().unwrap()).unwrap();
+
+        let cache = std::sync::Arc::new(SnapshotCache::new(8));
+        let recovered = recover(&fixture, &cache);
+
+        assert_eq!(recovered, 0);
+        assert!(
+            cache.get(&ws_id).is_none(),
+            "empty staging.log workspace must not be built into SnapshotCache"
+        );
+    }
+
+    #[test]
+    fn ac_rg_03_2_cache_prepopulated_is_reused_not_rebuilt() {
+        let fixture = StartupRecoverFixture::new();
+        let ws_root = fixture.data_root.join("ws_reused_root");
+        let ws_id = fixture.register_workspace(&ws_root);
+
+        // 预置 cache 条目（模拟 cache 已有该 ws）
+        let cache = std::sync::Arc::new(SnapshotCache::new(8));
+        let _ = cache.get_or_create(&ws_id);
+
+        let recovered = recover(&fixture, &cache);
+
+        // 0-pending：无构建计数；cache 条目保持（不驱逐、不重建）
+        assert_eq!(recovered, 0);
+        assert!(
+            cache.get(&ws_id).is_some(),
+            "prepopulated cache entry must survive startup recover"
+        );
+    }
+
+    #[test]
+    fn ac_rg_03_1c_pending_without_publisher_deferred_no_build() {
+        let fixture = StartupRecoverFixture::new();
+        let ws_root = fixture.data_root.join("ws_deferred_root");
+        let ws_id = fixture.register_workspace(&ws_root);
+
+        // 有 pending entries，但 codegraph_db_path_template 为空（publisher 不可用）
+        // → handler 走 deferred 分支（workspace.rs L4126-4137）：不构建 snapshot
+        fixture.write_pending_entries(
+            &ws_id,
+            &[("a.py", "hash_a1"), ("b.py", "hash_b1"), ("c.py", "hash_c1")],
+        );
+
+        let cache = std::sync::Arc::new(SnapshotCache::new(8));
+        let recovered = recover(&fixture, &cache);
+
+        // deferred 不产生构建计数，也不在 cache 留下 snapshot
+        assert_eq!(recovered, 0);
+        assert!(
+            cache.get(&ws_id).is_none(),
+            "deferred recovery must not build snapshot into cache"
+        );
+        // durable pending 保留，等下一次恢复（不丢数据）
+        assert_eq!(fixture.count_pending(&ws_id), 3);
+    }
+}
+
 #[cfg(unix)]
 mod unix {
     use std::io;
@@ -121,6 +421,10 @@ mod unix {
     use callwarden_core::daemon::SCHEMA_VERSION;
     use callwarden_core::daemon::task_loop::capability_control::CapabilityMutationGate;
     use callwarden_core::snapshot::SnapshotCache;
+    use super::{
+        classify_startup_recover, format_startup_recover_summary_line,
+        format_startup_recover_ws_line,
+    };
     use tokio::sync::Mutex as TokioMutex;
     use serde_json::json;
 
@@ -1167,7 +1471,10 @@ mod unix {
     /// CodeGraph merge、generation commit、snapshot publish 和 durable log
     /// 状态转换都由同一个 handler 完成。这里使用 workspace owner 的 UID
     /// 作为内部 peer，仍然经过与真实请求相同的 ACL 检查。
-    fn recover_all_workspaces_with_snapshot(
+    ///
+    /// T6/AC-RG-03-2：逐 ws 打印启动恢复日志（status ∈ built/reused/skipped）
+    /// 并在结束时输出三类计数汇总。
+    pub(crate) fn recover_all_workspaces_with_snapshot(
         registry_db_path: &std::path::Path,
         data_root: &std::path::Path,
         snapshot_cache: Arc<SnapshotCache>,
@@ -1188,6 +1495,9 @@ mod unix {
                 return 0;
             }
         };
+        // T6/AC-RG-03-2：reused 判定需要在 state 构造（拿走 cache Arc）
+        // 之后仍能查询 cache——先克隆一份留作判定引用。
+        let cache_for_status = std::sync::Arc::clone(&snapshot_cache);
         let mut state = SnapshotDaemonState::with_registry_and_data_root(
             registry,
             snapshot_cache,
@@ -1197,6 +1507,9 @@ mod unix {
         .with_codegraph_db_path_template(codegraph_db_path_template);
 
         let mut recovered = 0usize;
+        let mut built = 0usize;
+        let mut reused = 0usize;
+        let mut skipped = 0usize;
         for workspace in workspaces {
             let Some(workspace_id) = workspace
                 .get("workspace_instance_id")
@@ -1209,13 +1522,17 @@ mod unix {
                 .get("owner_uid")
                 .and_then(|value| value.as_u64())
                 .unwrap_or(0) as u32;
+            // T6/AC-RG-03-2：reused 判定——cache 已有该 ws 条目则复用内存
+            // snapshot；durable 恢复仍照常执行，保证 staging/retry 日志一致性。
+            let cache_has = cache_for_status.get(workspace_id).is_some();
             let response = dispatch(
                 &mut state,
                 PeerCredential::new_unix(owner_uid, 0, 0),
                 "workspace.recover",
                 &json!({ "workspace_instance_id": workspace_id }),
             );
-            if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+            let ok = response.get("ok").and_then(|value| value.as_bool()) == Some(true);
+            let (status, applied, retry_recovered, pending) = if ok {
                 let result = response.get("result").unwrap_or(&serde_json::Value::Null);
                 let applied = result
                     .get("applied_count")
@@ -1225,14 +1542,48 @@ mod unix {
                     .get("retry_recovered_count")
                     .and_then(|value| value.as_u64())
                     .unwrap_or(0);
+                let retry_published = result
+                    .get("retry_snapshot_published")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let pending = result
+                    .get("pending_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let handler_success =
+                    result.get("status").and_then(|value| value.as_str()) == Some("recovered");
                 recovered += (applied + retry_recovered) as usize;
+                let status = classify_startup_recover(
+                    cache_has,
+                    handler_success,
+                    applied,
+                    retry_recovered,
+                    retry_published,
+                );
+                (status, applied, retry_recovered, pending)
             } else {
                 eprintln!(
                     "[cw_daemon] [WARN] durable recovery deferred for ws={}: {}",
                     workspace_id, response
                 );
+                ("skipped", 0, 0, 0)
+            };
+            match status {
+                "built" => built += 1,
+                "reused" => reused += 1,
+                _ => skipped += 1,
             }
+            eprintln!(
+                "{}",
+                format_startup_recover_ws_line(
+                    workspace_id, status, applied, retry_recovered, pending
+                )
+            );
         }
+        eprintln!(
+            "{}",
+            format_startup_recover_summary_line(built + reused + skipped, built, reused, skipped)
+        );
         recovered
     }
 
@@ -2167,6 +2518,10 @@ mod windows {
     use callwarden_core::daemon::SCHEMA_VERSION;
     use callwarden_core::daemon::task_loop::capability_control::CapabilityMutationGate;
     use callwarden_core::snapshot::SnapshotCache;
+    use super::{
+        classify_startup_recover, format_startup_recover_summary_line,
+        format_startup_recover_ws_line,
+    };
     use tokio::sync::Mutex as TokioMutex;
     use serde_json::json;
 
@@ -2844,7 +3199,10 @@ mod windows {
     }
 
     /// 在完整 daemon state 已构造后恢复所有 workspace（与 Unix 分支同一生产路径）。
-    fn recover_all_workspaces_with_snapshot(
+    ///
+    /// T6/AC-RG-03-2：逐 ws 打印启动恢复日志（status ∈ built/reused/skipped）
+    /// 并在结束时输出三类计数汇总。
+    pub(crate) fn recover_all_workspaces_with_snapshot(
         registry_db_path: &std::path::Path,
         data_root: &std::path::Path,
         snapshot_cache: Arc<SnapshotCache>,
@@ -2865,6 +3223,9 @@ mod windows {
                 return 0;
             }
         };
+        // T6/AC-RG-03-2：reused 判定需要在 state 构造（拿走 cache Arc）
+        // 之后仍能查询 cache——先克隆一份留作判定引用。
+        let cache_for_status = std::sync::Arc::clone(&snapshot_cache);
         let mut state = SnapshotDaemonState::with_registry_and_data_root(
             registry,
             snapshot_cache,
@@ -2874,6 +3235,9 @@ mod windows {
         .with_codegraph_db_path_template(codegraph_db_path_template);
 
         let mut recovered = 0usize;
+        let mut built = 0usize;
+        let mut reused = 0usize;
+        let mut skipped = 0usize;
         for workspace in workspaces {
             let Some(workspace_id) = workspace
                 .get("workspace_instance_id")
@@ -2886,13 +3250,17 @@ mod windows {
                 .get("owner_uid")
                 .and_then(|value| value.as_u64())
                 .unwrap_or(0) as u32;
+            // T6/AC-RG-03-2：reused 判定——cache 已有该 ws 条目则复用内存
+            // snapshot；durable 恢复仍照常执行，保证 staging/retry 日志一致性。
+            let cache_has = cache_for_status.get(workspace_id).is_some();
             let response = dispatch(
                 &mut state,
                 PeerCredential::new_unix(owner_uid, 0, 0),
                 "workspace.recover",
                 &json!({ "workspace_instance_id": workspace_id }),
             );
-            if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+            let ok = response.get("ok").and_then(|value| value.as_bool()) == Some(true);
+            let (status, applied, retry_recovered, pending) = if ok {
                 let result = response.get("result").unwrap_or(&serde_json::Value::Null);
                 let applied = result
                     .get("applied_count")
@@ -2902,14 +3270,48 @@ mod windows {
                     .get("retry_recovered_count")
                     .and_then(|value| value.as_u64())
                     .unwrap_or(0);
+                let retry_published = result
+                    .get("retry_snapshot_published")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let pending = result
+                    .get("pending_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let handler_success =
+                    result.get("status").and_then(|value| value.as_str()) == Some("recovered");
                 recovered += (applied + retry_recovered) as usize;
+                let status = classify_startup_recover(
+                    cache_has,
+                    handler_success,
+                    applied,
+                    retry_recovered,
+                    retry_published,
+                );
+                (status, applied, retry_recovered, pending)
             } else {
                 eprintln!(
                     "[cw_daemon] [WARN] durable recovery deferred for ws={}: {}",
                     workspace_id, response
                 );
+                ("skipped", 0, 0, 0)
+            };
+            match status {
+                "built" => built += 1,
+                "reused" => reused += 1,
+                _ => skipped += 1,
             }
+            eprintln!(
+                "{}",
+                format_startup_recover_ws_line(
+                    workspace_id, status, applied, retry_recovered, pending
+                )
+            );
         }
+        eprintln!(
+            "{}",
+            format_startup_recover_summary_line(built + reused + skipped, built, reused, skipped)
+        );
         recovered
     }
 }
