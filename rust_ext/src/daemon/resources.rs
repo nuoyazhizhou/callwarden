@@ -761,6 +761,177 @@ pub fn apply_profile(cfg: &mut ResourceConfig, profile: &HostProfile) -> Vec<Str
     covered
 }
 
+// ============================== C1.5 write-once 写回 ==============================
+
+/// [`write_resources_section_once`] 的写回结果（C1.5）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteOutcome {
+    /// 成功写入（首次启动，daemon.toml 此前无 `[resources]` 段）。
+    Written,
+    /// 已有 `[resources]` 段（含空段）——write-once 跳过，用户值神圣。
+    SkippedExisting,
+    /// 写回失败（文件损坏无法判定 / io 失败 / HOME 缺失等）——函数内已
+    /// WARN，调用方**不阻断启动**（C1.5 异常路径）。
+    Failed,
+}
+
+/// 把生效后的 [`ResourceConfig`] 写回 `~/.callwarden/daemon.toml`
+/// （write-once，contracts.md C1.5）。
+///
+/// 行为：
+/// - 文件不存在或无 `[resources]` 段 → **追加写入**（临时文件 + rename
+///   原子替换，防半写，O4）
+/// - 已有 `[resources]` 段（含空段）→ [`WriteOutcome::SkippedExisting`]，
+///   不触碰用户值（AC-RG-01-5 write-once）
+/// - 失败（文件损坏无法判定 / 读取或写入 io 失败 / HOME 缺失）→
+///   [`WriteOutcome::Failed`] + 内部 WARN，**不阻断启动**
+///
+/// `Err` 语义：当前实现的所有可预期失败都归 `Ok(Failed)`（含 io 失败），
+/// `Err` 仅保留给意外中的意外（当前无产生点）——调用方对 `Err` 分支同样
+/// 按 WARN 不阻断处理即可。
+///
+/// 竞态窗：判定（读文件）与写入之间无锁；写前重读判定只为缩小窗口，
+/// 不声称完全防并发（O4）。
+pub fn write_resources_section_once(cfg: &ResourceConfig) -> std::io::Result<WriteOutcome> {
+    let Some(path) = ResourceConfig::config_path() else {
+        eprintln!(
+            "[cw_daemon] [WARN] resources 写回: HOME/USERPROFILE 未设置，无法定位 daemon.toml，跳过写回（不阻断启动）"
+        );
+        return Ok(WriteOutcome::Failed);
+    };
+    write_resources_section_at(&path, cfg)
+}
+
+/// 路径注入版写回（测试注入点；生产走 [`write_resources_section_once`]）。
+///
+/// 独立于 HOME 环境变量，测试可直接指向临时文件，避免并行测试的
+/// 环境变量竞态。
+fn write_resources_section_at(
+    path: &PathBuf,
+    cfg: &ResourceConfig,
+) -> std::io::Result<WriteOutcome> {
+    // 1) 读现有内容（不存在 = 空串，走首次写入）
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            eprintln!(
+                "[cw_daemon] [WARN] resources 写回: 读取 {} 失败（{e}），跳过写回（不阻断启动）",
+                path.display()
+            );
+            return Ok(WriteOutcome::Failed);
+        }
+    };
+
+    // 2) 写前重读判定（缩小竞态窗，O4）：已有 [resources] 段 → write-once
+    if !content.is_empty() {
+        match toml::from_str::<toml::Value>(&content) {
+            Ok(doc) => match doc.get("resources") {
+                Some(toml::Value::Table(_)) => {
+                    // 空段也算已有段：用户建了空 [resources] 可能想手动填，
+                    // write-once 尊重其存在
+                    return Ok(WriteOutcome::SkippedExisting);
+                }
+                Some(_) => {
+                    eprintln!(
+                        "[cw_daemon] [WARN] resources 写回: {} 的 `resources` 键不是表，跳过写回（不阻断启动）",
+                        path.display()
+                    );
+                    return Ok(WriteOutcome::Failed);
+                }
+                None => {} // 无段 → 追加
+            },
+            Err(e) => {
+                eprintln!(
+                    "[cw_daemon] [WARN] resources 写回: {} 解析失败（{e}），跳过写回避免破坏用户文件（不阻断启动）",
+                    path.display()
+                );
+                return Ok(WriteOutcome::Failed);
+            }
+        }
+    }
+
+    // 3) 组装新内容：原内容保留 + 追加 [resources] 段
+    let section = render_resources_section(cfg);
+    let mut new_content = content;
+    if !new_content.is_empty() {
+        if !new_content.ends_with('\n') {
+            new_content.push('\n');
+        }
+        new_content.push('\n'); // 段前空行分隔
+    }
+    new_content.push_str(&section);
+
+    // 4) 原子写：同目录临时文件 + rename（防半写，O4）
+    let Some(parent) = path.parent() else {
+        eprintln!(
+            "[cw_daemon] [WARN] resources 写回: {} 无父目录，跳过写回（不阻断启动）",
+            path.display()
+        );
+        return Ok(WriteOutcome::Failed);
+    };
+    if let Err(e) = std::fs::create_dir_all(parent) {
+        eprintln!(
+            "[cw_daemon] [WARN] resources 写回: 创建目录 {} 失败（{e}），跳过写回（不阻断启动）",
+            parent.display()
+        );
+        return Ok(WriteOutcome::Failed);
+    }
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "daemon.toml".to_string());
+    let tmp = parent.join(format!("{file_name}.tmp"));
+    if let Err(e) = std::fs::write(&tmp, &new_content) {
+        eprintln!(
+            "[cw_daemon] [WARN] resources 写回: 写临时文件 {} 失败（{e}），跳过写回（不阻断启动）",
+            tmp.display()
+        );
+        let _ = std::fs::remove_file(&tmp);
+        return Ok(WriteOutcome::Failed);
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        eprintln!(
+            "[cw_daemon] [WARN] resources 写回: rename {} → {} 失败（{e}），跳过写回（不阻断启动）",
+            tmp.display(),
+            path.display()
+        );
+        let _ = std::fs::remove_file(&tmp);
+        return Ok(WriteOutcome::Failed);
+    }
+    Ok(WriteOutcome::Written)
+}
+
+/// 渲染 `[resources]` TOML 段（纯函数，便于测试）。
+///
+/// 写入**全部生效值**（含未参与档位映射的 idle_evict_secs /
+/// build_priority_low / disk_type），保证「写回后下次启动读回相同生效值」。
+/// `cache_max_bytes` 等数值写纯整数字节数（AC-RG-01-1 断言口径 536870912）。
+fn render_resources_section(cfg: &ResourceConfig) -> String {
+    let mut s = String::with_capacity(256);
+    s.push_str("[resources]\n");
+    s.push_str(&format!("cache_max_bytes = {}\n", cfg.cache_max_bytes));
+    s.push_str(&format!(
+        "cache_max_workspaces = {}\n",
+        cfg.cache_max_workspaces
+    ));
+    s.push_str(&format!("idle_evict_secs = {}\n", cfg.idle_evict_secs));
+    s.push_str(&format!(
+        "memory_soft_limit_bytes = {}\n",
+        cfg.memory_soft_limit_bytes
+    ));
+    s.push_str(&format!(
+        "build_parse_threads = {}\n",
+        cfg.build_parse_threads
+    ));
+    s.push_str(&format!(
+        "build_priority_low = {}\n",
+        cfg.build_priority_low
+    ));
+    s.push_str(&format!("disk_type = \"{}\"\n", cfg.disk_type.as_str()));
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1209,5 +1380,169 @@ build_parse_threads = 6
         );
         assert!(cfg.explicit_keys.contains("cache_max_bytes"));
         assert!(cfg.explicit_keys.contains("build_parse_threads"));
+    }
+
+    // ---------- C1.5 write_resources_section_once（T2 step#0）----------
+
+    /// 16GB 档生效配置（mock HostProfile，AC-RG-01-1 注入口径）。
+    fn tier1_config() -> ResourceConfig {
+        let mut cfg = ResourceConfig::default();
+        let profile = HostProfile {
+            total_ram_bytes: 16 * GB,
+            cpu_cores: 8,
+            disk_type: DiskType::Ssd,
+        };
+        apply_profile(&mut cfg, &profile);
+        cfg
+    }
+
+    /// AC-RG-01-1：首次写入（文件不存在）→ Written，内容含 [resources] 与
+    /// 16GB 档值（cache_max_bytes=536870912、build_parse_threads=2），
+    /// 且 from_toml_str 读回值与生效配置一致（roundtrip）。
+    #[test]
+    fn write_once_writes_section_on_missing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+        let cfg = tier1_config();
+
+        let outcome = write_resources_section_at(&path, &cfg).expect("io");
+        assert_eq!(outcome, WriteOutcome::Written, "首次写入应返回 Written");
+
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert!(content.contains("[resources]"), "content: {content}");
+        assert!(
+            content.contains("cache_max_bytes = 536870912"),
+            "AC-RG-01-1 断言值 536870912，content: {content}"
+        );
+        assert!(
+            content.contains("build_parse_threads = 2"),
+            "16GB 档 build_parse_threads=2，content: {content}"
+        );
+        // roundtrip：写回内容可被 from_toml_str 解析回相同生效值
+        let parsed = ResourceConfig::from_toml_str(&content);
+        assert_eq!(parsed.cache_max_bytes, cfg.cache_max_bytes);
+        assert_eq!(parsed.cache_max_workspaces, cfg.cache_max_workspaces);
+        assert_eq!(parsed.idle_evict_secs, cfg.idle_evict_secs);
+        assert_eq!(parsed.memory_soft_limit_bytes, cfg.memory_soft_limit_bytes);
+        assert_eq!(parsed.build_parse_threads, cfg.build_parse_threads);
+        assert_eq!(parsed.build_priority_low, cfg.build_priority_low);
+        assert_eq!(parsed.disk_type, cfg.disk_type);
+    }
+
+    /// AC-RG-01-5：已有 [resources] 段 → SkippedExisting，内容与 mtime 均不变。
+    #[test]
+    fn write_once_skips_existing_section_content_and_mtime_unchanged() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+        let existing = "[resources]\ncache_max_bytes = \"1G\"\n";
+        std::fs::write(&path, existing).expect("seed");
+        let before_content = std::fs::read_to_string(&path).expect("read");
+        let before_mtime = std::fs::metadata(&path).expect("meta").modified().expect("mtime");
+
+        let cfg = tier1_config();
+        let outcome = write_resources_section_at(&path, &cfg).expect("io");
+        assert_eq!(outcome, WriteOutcome::SkippedExisting, "write-once 跳过已有段");
+
+        let after_content = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(after_content, before_content, "内容不变（用户值神圣）");
+        let after_mtime = std::fs::metadata(&path).expect("meta").modified().expect("mtime");
+        assert_eq!(after_mtime, before_mtime, "mtime 不变（未触碰文件）");
+    }
+
+    /// 追加写保留原内容：已有 [build] 段（无 [resources]）→ Written 且
+    /// 原 [build] 文本原样保留、[resources] 追加在末尾。
+    #[test]
+    fn write_once_appends_preserving_existing_content() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+        let existing = "[build]\nparse_threads = 4\n";
+        std::fs::write(&path, existing).expect("seed");
+
+        let cfg = tier1_config();
+        let outcome = write_resources_section_at(&path, &cfg).expect("io");
+        assert_eq!(outcome, WriteOutcome::Written);
+
+        let content = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            content.starts_with("[build]\nparse_threads = 4\n"),
+            "原 [build] 段保留在文件头，content: {content}"
+        );
+        assert!(content.contains("[resources]"), "content: {content}");
+        assert!(content.contains("cache_max_bytes = 536870912"), "content: {content}");
+    }
+
+    /// 损坏文件 → Failed（不写、内容不变），不 panic。
+    #[test]
+    fn write_once_fails_on_corrupt_file_without_touching_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+        let corrupt = "resources = [[[";
+        std::fs::write(&path, corrupt).expect("seed");
+
+        let cfg = tier1_config();
+        let outcome = write_resources_section_at(&path, &cfg).expect("io");
+        assert_eq!(outcome, WriteOutcome::Failed, "损坏文件判定失败 → Failed");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            corrupt,
+            "失败时不得改动用户文件"
+        );
+    }
+
+    /// 空 [resources] 段（只有段头）也算已有段 → SkippedExisting（write-once
+    /// 尊重用户手动建的空段）。
+    #[test]
+    fn write_once_treats_empty_resources_table_as_existing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+        std::fs::write(&path, "[resources]\n").expect("seed");
+
+        let cfg = tier1_config();
+        let outcome = write_resources_section_at(&path, &cfg).expect("io");
+        assert_eq!(outcome, WriteOutcome::SkippedExisting);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "[resources]\n",
+            "空段不被改写"
+        );
+    }
+
+    /// 渲染段含全部 7 键（写回全部生效值，保证下次启动读回一致）。
+    #[test]
+    fn render_resources_section_contains_all_keys() {
+        let cfg = tier1_config();
+        let section = render_resources_section(&cfg);
+        for key in [
+            "cache_max_bytes",
+            "cache_max_workspaces",
+            "idle_evict_secs",
+            "memory_soft_limit_bytes",
+            "build_parse_threads",
+            "build_priority_low",
+            "disk_type",
+        ] {
+            assert!(
+                section.contains(&format!("{key} = ")),
+                "段必须包含 {key}，section: {section}"
+            );
+        }
+        assert!(section.starts_with("[resources]\n"));
+    }
+
+    /// resources = 非表（如整数）→ Failed（无法判定为段，保守不写）。
+    #[test]
+    fn write_once_fails_when_resources_key_is_not_a_table() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+        std::fs::write(&path, "resources = 5\n").expect("seed");
+
+        let cfg = tier1_config();
+        let outcome = write_resources_section_at(&path, &cfg).expect("io");
+        assert_eq!(outcome, WriteOutcome::Failed);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "resources = 5\n",
+            "失败时不得改动用户文件"
+        );
     }
 }
