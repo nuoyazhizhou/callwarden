@@ -508,6 +508,9 @@ class DaemonClient:
             endpoint = self._rpc.discover()
         except Exception:
             endpoint = ""
+        # F2：非权威的请求期去重锁（按 endpoint 派生）。本 legacy 路径只做
+        # ensure 不直接 spawn；防双实例权威守卫统一在 spawn_http_daemon 的
+        # host 级锁内，勿依赖本锁判断 daemon 是否已在别处启动。
         mutex = DaemonMutex(endpoint)
         if mutex.try_acquire():
             try:
@@ -1912,6 +1915,17 @@ class HttpDaemonRpcClient:
         - 不改删 manifest：stale manifest 只由 daemon 写新 manifest 翻新；
         - 治理写 fail-closed 不变：本方法只做「拉起 + 重试原请求」，无任何
           本地回退。
+
+        D3/F2 双锁职责（不得混为一谈）：
+        - 下方 ``DaemonMutex(endpoint)`` 是 **非权威** 的请求期去重锁，仅避免
+          同一 endpoint 的并发请求同时进入自愈流程；它按 endpoint 派生，两个
+          不同 endpoint 的会话可以各自持有——**不是** 防双实例守卫。
+        - 真正的防双实例权威守卫在 ``spawn_http_daemon`` 内部：所有拉起路径
+          最终汇聚该函数，用 host 级锁（authority+task_db，同机所有 endpoint
+          共享一把）串行化「判活→bind→Popen→注册→health」全临界区。即便两个
+          会话各自通过 endpoint 锁走到 spawn，也只有一个拿到 host 锁真正
+          spawn，第二个在 spawn 内退避。因此不存在「两套锁各自放行第二个
+          daemon」的路径。
         """
         try:
             return self.call(method, params)
@@ -1928,6 +1942,8 @@ class HttpDaemonRpcClient:
             endpoint = self.discover()
         except Exception:
             endpoint = ""
+        # F2：非权威的请求期去重锁（按 endpoint 派生）。防双实例的唯一权威
+        # 守卫是 spawn_http_daemon 内部的 host 级锁——本锁不保证单实例，勿依赖。
         mutex = DaemonMutex(endpoint)
         if mutex.try_acquire():
             try:
@@ -1937,7 +1953,9 @@ class HttpDaemonRpcClient:
                     readiness_check=lambda ep: self.verify_health(ep),
                 )
                 if ready is None:
-                    # daemon 未运行：显式拉起（spawn 内部轮询容忍 stale manifest）
+                    # daemon 未运行：显式拉起。spawn 内部先拿 host 级权威锁
+                    # (acquire_host_daemon_mutex) 再做二次判活，两会话不同
+                    # endpoint 各自通过本锁后，也只会有一个真正 spawn。
                     ready = spawn_http_daemon()
                 if ready is not None:
                     self.reset_endpoint_cache()
