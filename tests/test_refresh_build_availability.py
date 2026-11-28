@@ -22,6 +22,10 @@ RPC 探活约 15 分钟（/health 与 /v1/rpc TLS 握手超时）。
 resolve）在后台线程执行，dispatch 占用被 CALLWARDEN_BUILD_WAIT_MS 约束
 （测试压到 1.2s < 探测超时 5s）。构建调用超时返回 accepted=true 转后台，
 dry_run 轮询对账 lastBuild（构建结果不丢），构建全程探活零失败。
+
+根修卡 step#4 验收硬线（D1）：全仓构建期间 /api/health 与只读 RPC **<2s**。
+故探测除「零超时」外，逐次记录端到端延迟，断言最大延迟 <2s（_AVAILABILITY_
+BOUND_SECS）；探测客户端超时（5s）仅作兜底，不作为 <2s 的替身证据。
 """
 
 import hashlib
@@ -56,6 +60,8 @@ _FNS_PER_TARGET = 50
 # 探测节奏与超时（对齐 watchdog 口径：探活超时必须显著小于阻塞窗口才有区分度）。
 _PROBE_INTERVAL_SECS = 0.25
 _PROBE_TIMEOUT_SECS = 5.0
+# 根修卡 step#4 / D1 验收硬线：构建期间 health 与只读 RPC 端到端延迟 <2s。
+_AVAILABILITY_BOUND_SECS = 2.0
 _REFRESH_PER_FILE_BOUND_SECS = 5.0
 
 # 全仓构建测试：磁盘大仓规模（全新文件，mtime 快路径不命中 → 全量解析 +
@@ -194,17 +200,45 @@ def _probe_loop(stop_evt, endpoint, stats):
                                      validate_manifest=False,
                                      timeout=_PROBE_TIMEOUT_SECS)
     while not stop_evt.is_set():
+        t_h = time.monotonic()
         try:
             rpc_client.verify_health(endpoint=endpoint)
             stats["health_ok"] += 1
+            stats["health_latencies"].append(time.monotonic() - t_h)
         except Exception as exc:  # noqa: BLE001 探测失败即记录（含超时/握手失败）
             stats["health_fail"].append(f"{time.time():.3f} {exc}")
+        t_r = time.monotonic()
         try:
             rpc_client.call("task.list", {"status": "", "limit": 10, "workspace_id": 1})
             stats["rpc_ok"] += 1
+            stats["rpc_latencies"].append(time.monotonic() - t_r)
         except Exception as exc:  # noqa: BLE001
             stats["rpc_fail"].append(f"{time.time():.3f} {exc}")
         stop_evt.wait(_PROBE_INTERVAL_SECS)
+
+
+def _assert_availability(stats, phase):
+    """统一断言：探测零失败 + health/只读 RPC 最大端到端延迟 <2s（D1 硬线）。
+
+    返回 (health_max, rpc_max) 便于调用方打印实测数据。延迟列表为空视为
+    探测线程未真正运行（假绿），单独断言。
+    """
+    assert not stats["health_fail"], (
+        f"{phase} /health 探测失败 {len(stats['health_fail'])} 次: "
+        f"{stats['health_fail'][:3]}")
+    assert not stats["rpc_fail"], (
+        f"{phase} /v1/rpc 探测失败 {len(stats['rpc_fail'])} 次: {stats['rpc_fail'][:3]}")
+    assert stats["health_ok"] >= 4, f"{phase} /health 探测次数过少: {stats}"
+    assert stats["rpc_ok"] >= 4, f"{phase} /v1/rpc 探测次数过少: {stats}"
+    health_max = max(stats["health_latencies"])
+    rpc_max = max(stats["rpc_latencies"])
+    assert health_max < _AVAILABILITY_BOUND_SECS, (
+        f"{phase} /health 最大延迟 {health_max:.3f}s >= 验收硬线 "
+        f"{_AVAILABILITY_BOUND_SECS}s: {stats['health_latencies']}")
+    assert rpc_max < _AVAILABILITY_BOUND_SECS, (
+        f"{phase} /v1/rpc 最大延迟 {rpc_max:.3f}s >= 验收硬线 "
+        f"{_AVAILABILITY_BOUND_SECS}s: {stats['rpc_latencies']}")
+    return health_max, rpc_max
 
 
 def test_refresh_large_repo_probes_stay_alive(w3_live):
@@ -235,7 +269,8 @@ def test_refresh_large_repo_probes_stay_alive(w3_live):
     assert probe.get("ok") is True, f"probe refresh 失败: {probe!r}"
     _seed_heavy_repo(cg_db, root, _daemon_ws_id(cg_db, root))
 
-    stats = {"health_ok": 0, "rpc_ok": 0, "health_fail": [], "rpc_fail": []}
+    stats = {"health_ok": 0, "rpc_ok": 0, "health_fail": [], "rpc_fail": [],
+             "health_latencies": [], "rpc_latencies": []}
     stop_evt = threading.Event()
     prober = threading.Thread(target=_probe_loop, args=(stop_evt, endpoint, stats),
                               daemon=True)
@@ -259,15 +294,10 @@ def test_refresh_large_repo_probes_stay_alive(w3_live):
         stop_evt.set()
         prober.join(timeout=15)
 
-    # 探测零失败（/health 与 /v1/rpc 各自独立计数）。
-    assert not stats["health_fail"], (
-        f"/health 探测失败 {len(stats['health_fail'])} 次: "
-        f"{stats['health_fail'][:3]}")
-    assert not stats["rpc_fail"], (
-        f"/v1/rpc 探测失败 {len(stats['rpc_fail'])} 次: {stats['rpc_fail'][:3]}")
-    # 探测确有发生（防止探测线程静默死亡造成假绿）。
-    assert stats["health_ok"] >= 4, f"/health 探测次数过少: {stats}"
-    assert stats["rpc_ok"] >= 4, f"/v1/rpc 探测次数过少: {stats}"
+    # 探测零失败 + health/只读 RPC 最大延迟 <2s（D1 验收硬线）。
+    h_max, r_max = _assert_availability(stats, "大仓 refresh")
+    print(f"[D1 实测/refresh] /health max={h_max:.3f}s /v1/rpc max={r_max:.3f}s "
+          f"(health_ok={stats['health_ok']} rpc_ok={stats['rpc_ok']})")
 
 
 def _build_source(file_idx):
@@ -322,7 +352,8 @@ def test_build_graph_timeout_background_probes_stay_alive(w3_live):
                   encoding="utf-8", newline="\n") as f:
             f.write(_build_source(i))
 
-    stats = {"health_ok": 0, "rpc_ok": 0, "health_fail": [], "rpc_fail": []}
+    stats = {"health_ok": 0, "rpc_ok": 0, "health_fail": [], "rpc_fail": [],
+             "health_latencies": [], "rpc_latencies": []}
     stop_evt = threading.Event()
     prober = threading.Thread(target=_probe_loop, args=(stop_evt, endpoint, stats),
                               daemon=True)
@@ -345,11 +376,8 @@ def test_build_graph_timeout_background_probes_stay_alive(w3_live):
         stop_evt.set()
         prober.join(timeout=15)
 
-    # 探测零失败（构建调用窗口 ~1.2s < 探测超时 5s；后台构建不占 dispatch）。
-    assert not stats["health_fail"], (
-        f"/health 探测失败 {len(stats['health_fail'])} 次: "
-        f"{stats['health_fail'][:3]}")
-    assert not stats["rpc_fail"], (
-        f"/v1/rpc 探测失败 {len(stats['rpc_fail'])} 次: {stats['rpc_fail'][:3]}")
-    assert stats["health_ok"] >= 4, f"/health 探测次数过少: {stats}"
-    assert stats["rpc_ok"] >= 4, f"/v1/rpc 探测次数过少: {stats}"
+    # 探测零失败 + health/只读 RPC 最大延迟 <2s（D1 验收硬线）；
+    # 构建调用窗口 ~1.2s < 探测超时 5s，后台构建不占 dispatch。
+    h_max, r_max = _assert_availability(stats, "全仓 build_graph")
+    print(f"[D1 实测/build] /health max={h_max:.3f}s /v1/rpc max={r_max:.3f}s "
+          f"(health_ok={stats['health_ok']} rpc_ok={stats['rpc_ok']})")
