@@ -364,13 +364,23 @@ impl SnapshotManager {
 /// 按 workspace_instance_id 索引，每个 workspace 独立维护 generation。
 /// LRU 淘汰策略：超过 max_workspaces 时淘汰最久未访问的 workspace。
 ///
-/// 内部使用 HashMap 做 O(1) 查找 + Vec 维护插入顺序（供 list_workspaces
+/// 内部使用 HashMap 做 O(1) 查找 + Vec 维护**访问顺序**（供 list_workspaces
 /// 返回稳定顺序 + LRU eviction 取最旧条目）。
+///
+/// T3（REQ-RG-02）修正：此前命中路径不更新顺序，注释称 LRU 实为 FIFO；
+/// 现命中路径调用 [`Self::touch`] 更新 last_access 并把条目移到 order 尾部，
+/// 驱逐按**真实访问序**（AC-RG-02-3）。
+///
+/// 锁序约定（防交叉死锁，所有路径必须一致）：
+/// `managers` → `order` → `last_access`。
 pub struct SnapshotCache {
     managers: parking_lot::RwLock<HashMap<WorkspaceInstanceId, Arc<SnapshotManager>>>,
-    /// 插入顺序队列：与 managers 同步（insert push_back，evict 按值移除）
+    /// 访问顺序队列：最旧在前（touch 把条目移到尾部）。
     /// 用于 list_workspaces 返回稳定顺序 + LRU eviction 取队首（最旧）
     order: parking_lot::RwLock<Vec<WorkspaceInstanceId>>,
+    /// 各 workspace 最近访问时刻（T3：touch/get_or_create 维护，
+    /// evict_idle 依此驱逐；与 managers 同步增删）
+    last_access: parking_lot::RwLock<HashMap<WorkspaceInstanceId, Instant>>,
     max_workspaces: usize,
 }
 
@@ -379,6 +389,7 @@ impl SnapshotCache {
         Self {
             managers: parking_lot::RwLock::new(HashMap::new()),
             order: parking_lot::RwLock::new(Vec::new()),
+            last_access: parking_lot::RwLock::new(HashMap::new()),
             max_workspaces,
         }
     }
@@ -387,9 +398,14 @@ impl SnapshotCache {
     pub fn get_or_create(&self, workspace_id: &str) -> Arc<SnapshotManager> {
         let mut mgrs = self.managers.write();
         if let Some(mgr) = mgrs.get(workspace_id) {
-            return mgr.clone();
+            let mgr = mgr.clone();
+            drop(mgrs);
+            // 命中路径：touch（FIFO→真 LRU，AC-RG-02-3）。
+            // 锁序 managers(已释放) → order → last_access，与创建路径一致。
+            self.touch(workspace_id);
+            return mgr;
         }
-        // LRU 淘汰：超过 max_workspaces 时取 order 队首（最旧的 workspace）
+        // LRU 淘汰：超过 max_workspaces 时取 order 队首（最久未访问的 workspace）
         if mgrs.len() >= self.max_workspaces {
             let mut order = self.order.write();
             // 找到第一个仍然存在于 managers 中的 order 条目（兜底处理
@@ -397,6 +413,7 @@ impl SnapshotCache {
             while let Some(first_key) = order.first().cloned() {
                 if mgrs.contains_key(&first_key) {
                     mgrs.remove(&first_key);
+                    self.last_access.write().remove(&first_key);
                     order.remove(0);
                     break;
                 }
@@ -407,7 +424,28 @@ impl SnapshotCache {
         let mgr = Arc::new(SnapshotManager::new(workspace_id.to_string()));
         mgrs.insert(workspace_id.to_string(), mgr.clone());
         self.order.write().push(workspace_id.to_string());
+        // 插入即访问：新条目 last_access=now（否则会被 evict_idle 立即驱逐）
+        self.last_access
+            .write()
+            .insert(workspace_id.to_string(), Instant::now());
         mgr
+    }
+
+    /// 更新指定 workspace 的最近访问时刻（T3，C2）。
+    ///
+    /// 不存在则无操作（不创建）；存在则 last_access=now 并把条目移到
+    /// order 尾部（访问序）。锁序：order → last_access。
+    pub fn touch(&self, workspace_id: &str) {
+        let mut order = self.order.write();
+        let mut last = self.last_access.write();
+        if !last.contains_key(workspace_id) {
+            return; // 不存在则无操作（不创建）
+        }
+        last.insert(workspace_id.to_string(), Instant::now());
+        if let Some(pos) = order.iter().position(|k| k == workspace_id) {
+            order.remove(pos);
+            order.push(workspace_id.to_string());
+        }
     }
 
     /// 获取已存在的 manager（不创建）
@@ -415,7 +453,7 @@ impl SnapshotCache {
         self.managers.read().get(workspace_id).cloned()
     }
 
-    /// 列出所有 workspace_id（按插入顺序，最旧在前）
+    /// 列出所有 workspace_id（按访问顺序，最旧在前）
     pub fn list_workspaces(&self) -> Vec<WorkspaceInstanceId> {
         let mgrs = self.managers.read();
         let order = self.order.read();
@@ -433,6 +471,8 @@ impl SnapshotCache {
         if removed.is_some() {
             // 从 order 队列中移除（保留其余条目顺序）
             self.order.write().retain(|k| k != workspace_id);
+            // 同步清理 last_access（防泄漏 + touch 语义一致）
+            self.last_access.write().remove(workspace_id);
         }
         removed
     }
@@ -1173,5 +1213,89 @@ mod tests {
         // wal_checkpoint 应成功（即便未启用 WAL 也是 no-op）
         let result = wal_checkpoint_passive(db_path.to_str().unwrap());
         assert!(result.is_ok(), "checkpoint 应成功: {:?}", result);
+    }
+
+    // ---------- T3: SnapshotCache 真 LRU（C2 / AC-RG-02-3）----------
+
+    /// touch 更新访问序：list_workspaces 由插入序变为访问序（最旧在前）。
+    #[test]
+    fn touch_updates_access_order() {
+        let cache = SnapshotCache::new(8);
+        cache.get_or_create("A");
+        cache.get_or_create("B");
+        cache.get_or_create("C");
+        // 插入序 = [A, B, C]
+        assert_eq!(cache.list_workspaces(), vec!["A", "B", "C"]);
+        // touch A → 访问序 [B, C, A]
+        cache.touch("A");
+        assert_eq!(cache.list_workspaces(), vec!["B", "C", "A"]);
+        // len 不变（touch 不创建不删除）
+        assert_eq!(cache.len(), 3);
+    }
+
+    /// AC-RG-02-3：驱逐按**访问序**（修正 FIFO）——
+    /// A 插入后持续 touch，B/C 插入后不访问 → B（最久未访问）先被驱逐。
+    #[test]
+    fn ac_rg_02_3_eviction_by_access_order_not_insertion() {
+        let cache = SnapshotCache::new(3);
+        cache.get_or_create("A");
+        cache.get_or_create("B");
+        cache.get_or_create("C");
+        // A 持续访问（B/C 插入后不访问）——FIFO 下 A 最旧会被驱逐，LRU 下 B 应被驱逐
+        cache.touch("A");
+        cache.touch("A");
+        assert_eq!(cache.list_workspaces(), vec!["B", "C", "A"]);
+        // 插入第 4 个 → 驱逐最久未访问的 B（FIFO 会错杀 A）
+        cache.get_or_create("D");
+        assert_eq!(cache.len(), 3);
+        let names = cache.list_workspaces();
+        assert!(!names.contains(&"B".to_string()), "B 应被驱逐（最久未访问）: {:?}", names);
+        assert!(names.contains(&"A".to_string()), "A 持续访问不应被驱逐: {:?}", names);
+        assert!(names.contains(&"C".to_string()) && names.contains(&"D".to_string()));
+    }
+
+    /// touch 不存在的 workspace 无操作（不创建、不 panic）。
+    #[test]
+    fn touch_unknown_workspace_is_noop() {
+        let cache = SnapshotCache::new(8);
+        cache.get_or_create("A");
+        cache.touch("ghost");
+        assert_eq!(cache.len(), 1, "touch 不得创建条目");
+        assert_eq!(cache.list_workspaces(), vec!["A"]);
+        // 空缓存上 touch 也不 panic
+        let empty = SnapshotCache::new(8);
+        empty.touch("nobody");
+        assert_eq!(empty.len(), 0);
+    }
+
+    /// get_or_create 命中路径自身也维护访问序（不显式 touch 的调用方也拿到 LRU）。
+    #[test]
+    fn get_or_create_hit_path_updates_access_order() {
+        let cache = SnapshotCache::new(3);
+        cache.get_or_create("A");
+        cache.get_or_create("B");
+        cache.get_or_create("C");
+        // 命中 A（内部 touch）→ [B, C, A]
+        let _ = cache.get_or_create("A");
+        assert_eq!(cache.list_workspaces(), vec!["B", "C", "A"]);
+        // 插入 D → 驱逐 B
+        cache.get_or_create("D");
+        let names = cache.list_workspaces();
+        assert!(!names.contains(&"B".to_string()), "命中路径未更新访问序: {:?}", names);
+    }
+
+    /// evict 同步清理 last_access（touch 后 evict，再 touch 原 ws 无操作）。
+    #[test]
+    fn evict_cleans_last_access() {
+        let cache = SnapshotCache::new(8);
+        cache.get_or_create("A");
+        cache.touch("A");
+        assert!(cache.evict("A").is_some());
+        cache.touch("A"); // last_access 已清理 → 无操作
+        assert_eq!(cache.len(), 0);
+        // 重新 get_or_create 后 touch 恢复正常
+        cache.get_or_create("A");
+        cache.touch("A");
+        assert_eq!(cache.list_workspaces(), vec!["A"]);
     }
 }
