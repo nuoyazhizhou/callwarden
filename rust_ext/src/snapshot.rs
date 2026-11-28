@@ -1543,4 +1543,96 @@ mod tests {
         drop(guard); // 查询结束才释放
         drop(mgr);
     }
+
+    /// F2 TOCTOU 单测：候选选定后 touch 该 ws，第 2 步重验命中后不驱逐。
+    ///
+    /// 用私有字段注入旧 last_access 构造「候选会入选」的状态；touch 把
+    /// last_access 更新为 now 后，驱逐时重验（写锁内重读）应命中新值并
+    /// 跳过。断言条目仍在 cache 且 last_access 为新值。
+    #[test]
+    fn evict_idle_revalidation_skips_touched_entry() {
+        let cache = SnapshotCache::new(8);
+        cache.get_or_create("A");
+        // 注入 last_access[A] = 30ms 前（若无 touch，候选判定会入选）
+        let old = Instant::now()
+            .checked_sub(Duration::from_millis(30))
+            .expect("30ms 回退可用");
+        cache.last_access.write().insert("A".to_string(), old);
+        // 候选选定后 touch（last_access 更新为 now）
+        cache.touch("A");
+        // 驱逐：重验读到 last_access=now（0 < 10ms）→ 跳过
+        let evicted = cache.evict_idle(Duration::from_millis(10));
+        assert!(evicted.is_empty(), "touch 后重验应跳过驱逐: {:?}", evicted);
+        assert_eq!(cache.len(), 1, "条目仍在 cache");
+        assert_eq!(cache.list_workspaces(), vec!["A"]);
+        // last_access 为新值（距 now < 100ms，非注入的 old）
+        let la = *cache.last_access.read().get("A").unwrap();
+        assert!(
+            la > old,
+            "last_access 应为 touch 更新后的新值"
+        );
+        // 对照：同样注入旧值但不 touch → 重验通过，正常驱逐
+        let old2 = Instant::now()
+            .checked_sub(Duration::from_millis(30))
+            .expect("30ms 回退可用");
+        cache.last_access.write().insert("A".to_string(), old2);
+        let evicted = cache.evict_idle(Duration::from_millis(10));
+        assert_eq!(evicted, vec!["A".to_string()], "未 touch 时重验通过照常驱逐");
+        assert_eq!(cache.len(), 0);
+    }
+
+    /// F1 并发冒烟：双线程循环 evict_idle(10ms) × get_or_create（含 touch）
+    /// 持续 1.5s 不挂起——堵 AB-BA 死锁回归面（修复前 evict_idle 第 1 步
+    /// last_access.read→managers.read 与 get_or_create 反向嵌套，此测试会
+    /// 永久挂起直到 cargo 60s 超时 kill）。
+    #[test]
+    fn concurrent_evict_idle_get_or_create_smoke() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let cache = Arc::new(SnapshotCache::new(64));
+        for i in 0..32 {
+            cache.get_or_create(&format!("ws_{:02}", i));
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let evicter = {
+            let cache = cache.clone();
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut rounds = 0usize;
+                while !stop.load(Ordering::Relaxed) {
+                    cache.evict_idle(Duration::from_millis(10));
+                    rounds += 1;
+                }
+                rounds
+            })
+        };
+        let creator = {
+            let cache = cache.clone();
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut rounds = 0usize;
+                let mut i = 32usize;
+                while !stop.load(Ordering::Relaxed) {
+                    let key = format!("ws_{:02}", i % 64);
+                    let _ = cache.get_or_create(&key);
+                    cache.touch(&key);
+                    i += 1;
+                    rounds += 1;
+                }
+                rounds
+            })
+        };
+        std::thread::sleep(Duration::from_millis(1500));
+        stop.store(true, Ordering::Relaxed);
+        let evict_rounds = evicter
+            .join()
+            .expect("evict_idle 线程不得挂起（AB-BA 死锁回归）");
+        let create_rounds = creator
+            .join()
+            .expect("get_or_create 线程不得挂起");
+        assert!(evict_rounds > 10, "evict 线程应实际运转: {}", evict_rounds);
+        assert!(create_rounds > 10, "get_or_create 线程应实际运转: {}", create_rounds);
+        // 状态一致性：managers 与 order 同步；容量上限未破
+        assert_eq!(cache.len(), cache.list_workspaces().len());
+        assert!(cache.len() <= 64);
+    }
 }
