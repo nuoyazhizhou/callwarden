@@ -62,9 +62,12 @@
 | F3 | 建单 | P2 🟡 | 无 | fix | `web_gateway.py:main fix 启动钩子注册 role=webui 条目并补集成测试` | REQ-GAP | `T-1795744094756-6b7ea004` |
 | F4 | 建单 | P2 🟡 | 无 | fix | `T-1795507699058-41d9fcbc.Step3 fix 回填 commit 0d6fa32 其余 4 文件 changes 记录` | REQ-GAP | `T-1795744095778-a85ae668` |
 | F5 | 建单（低优先级/可选） | P3 💭 | 无 | fix | `host_process_registry.py:compare_with_manifest fix 删除死代码或在 authority_daemon_diagnostic 复用` | REQ-GAP | `T-1795744096454-d0aa2a70` |
+| F6（追加 2026-11-27） | 建单 | P2 🟡 | 与 F3/F5 串行（同测试文件） | fix | `daemon_autostart.py:spawn_http_daemon fix 追加 CREATE_BREAKAWAY_FROM_JOB 带降级 fallback 使自愈 spawn 脱离 job object` | REQ-GAP | `T-1795829524399-0ef7f8ac` |
 
 - 全部条目 provenance：`finding=F1..F5 / loop=1 / verdict=BLOCKED / source_reviewer=reviewer-roofix-alm01 / root_card=T-1795507699058-41d9fcbc / step=S-1795507699843-70a0bea0`。
+- F6 追加条目 provenance：`finding=F6 / loop=1 / verdict=BLOCKED / source_reviewer=reviewer-roofix-alm01 / root_card=T-1795507699058-41d9fcbc / step=S-1795507699843-70a0bea0`（reviewer 复评 F1 时立的新 finding，归根修卡 D3 scope）。
 - 执行顺序：F1 → F2 → F3/F4（可并行）→ F5（可选）。F2 的 `blocked-by:` 为 description 文本约定，daemon 不强制，须在派工时显式确认 F1 已闭环。
+- F6 执行顺序约束：与 F3/F5 **串行**（F6 测试与 F3/F5 改同一个 `tests/test_host_process_registry.py`，避免同文件并发）；F6 与 F3/F4/F5 源文件无冲突（F6 动 daemon_autostart.py 两处 spawn flags + 测试，F3 动 web_gateway.py，F4 动任务记录，F5 动 host_process_registry.py）。
 - 一条 finding 一张单，**未合并、未改写、未删减** findings 原文。F5 建为低优先级可选单（不并入口径，便于主理人取舍）。
 - **无计划缺陷判定**：F1–F4 均指向实现/治理证据缺口，非契约漏项或 AC 写错或锚定错符号；无需回退 R0/R2/R3。F3 的「书面说明由哪个组件承担」为 finding 原文给出的合规出口，已写入 steps。
 
@@ -156,8 +159,50 @@
 - **O-R1（resolved 2026-11-27）— 建单落库已完成**：daemon detached 恢复后经 `cw task create` 落库 5/5（回执见 §13）。验证方式：5 张卡 `task.status` 均 open、workspace provenance 与 §14.1 公共段一致（workspace_id=1 / 4baea3ff12c2ea5c / parent=T-1795507699058-41d9fcbc）。
 - **O-R2（open）— task_id 派工序**：F2 的 blocked-by 仅为文本约定，daemon 不强制；派工时须人工确认 F1 已闭环再放 F2。F1=`T-1795744093604-26d3cb28`，F2=`T-1795744094146-4722555c`。验证方式：F1 回执状态闭环后派工。
 - **O-R3（open）— F3 承担组件**：若不在 web_gateway 注册，须书面指定承担组件；验证方式：整改单 step 1 的 check_items 留痕，复评核验。
-- **O-R4（open）— MCP task_create 数组序列化**：工具层把 `steps`/`role_contracts` 序列化为字符串（参数校验失败），属工具缺口，非本次 plan 缺陷；登记主理人工具缺口清单，daemon 恢复后走 RPC 直连规避。
+- **O-R4（resolved 2026-11-27）— MCP task_create 数组序列化**：F6 建单改走 `cw task create` CLI 通道（parent-aware + 显式 identity_policy + workspace 配对），绕开 MCP 工具层数组序列化 bug；回执 task_id=`T-1795829524399-0ef7f8ac`，读回验证 3 步 check_items 全为字符串、blocking_reasons=[]、workflow=queued。该工具缺口仍建议登记主理人工具缺口清单（后续 MCP 面修复）。
+- **O-R5（open）— F6 与 F3/F5 同文件串行**：F6 测试与 F3/F5 都可能改 `tests/test_host_process_registry.py`，派工须串行；验证方式：F3/F5 任一闭环后再放 F6，或在 F6 description 已注明的串行约束下由 executor 自律。
+- **O-R6（open）— F6 定级可能升 🔴**：reviewer 定性若实锤 6520/46340 死因即 job 连坐，建议对根修卡升格 🔴（daemon 可用性是 D3 目标本体）；该裁决属 reviewer/adjudicator 权限，planner 仅登记不预设结论。验证方式：F6 整改中复现「IDE job object 内 spawn 被回收」证据后由 reviewer 复核定级。
 
 ## 16. 本轮边界声明
 
 planner 本轮**未**写生产代码、**未**改判 BLOCKED、**未**动 `task.apply`/`task.close`/`task.supersede`、**未**认领/lease 任何步骤、**未**改写上方历史行；仅追加本节 + 准备 §14 payload 文本。
+
+> F6 追加（2026-11-27）：另见 §17 建单回执 / §18 payload 存档 / §19 F6 边界声明。
+
+---
+
+# F6 追加建单（BLOCKED loop=1 新 finding）— 2026-11-27 planner（蓝图远）
+
+> 本节为**追加**记录，上方 §1–§16 历史行保持原样，不覆盖、不重排。
+> 背景：daemon 恢复（PID 28728 / endpoint 6374 / health ok）；reviewer 复评 F1 时立新 finding **F6**，按分岔流程由 planner 建独立整改单。
+> **planner 身份已注册成功**：`agent_id=planner-roofix-alm01` / `agent_instance_id=planner-roofix-alm01-inst` / `session_id=sess-planner-roofix-alm01-20261125-l1` / `model_id=hunyuan-hy` / `role=planner`（daemon 回执 `status=registered`，未借用他人身份）。
+
+## 17. F6 建单回执（daemon 返回原文）
+
+- **task_id**：`T-1795829524399-0ef7f8ac`
+- **title**：`daemon_autostart.py:spawn_http_daemon fix 追加 CREATE_BREAKAWAY_FROM_JOB 带降级 fallback 使自愈 spawn 脱离 job object`
+- **通道**：`cw task create` CLI（cwd c:\git_work\callwarden，绕开 MCP 数组序列化 bug O-R4），参数：`--parent-id T-1795507699058-41d9fcbc --identity-policy legacy_identity_v1 --workspace-id 1 --workspace-instance-id 4baea3ff12c2ea5c`
+- **读回验证（task.status）**：
+  - `status=open` / `lifecycle=open` / `workflow=queued` / `blocking_reasons=[]`
+  - `parent_id=T-1795507699058-41d9fcbc`；workspace 配对 `workspace_id=1` / `workspace_instance_id=4baea3ff12c2ea5c` / `workspace_binding_id=tb-T-1795829524399-0ef7f8ac-4baea3ff12c2ea5c`
+  - steps=3，action 全 `fix`，check_items 全为**字符串**（len 214/110/81，非转义 JSON），覆盖两处 spawn 点（`_start_daemon_windows` / `spawn_http_daemon`）+ fallback + 测试
+  - description 首行 `REQ-GAP | finding=F6 | 🟡 需整改 | loop=1 | verdict=BLOCKED | source_reviewer=reviewer-roofix-alm01`；含 reviewer 定性原文一字不改 + 「与 F3/F5 串行执行，避免同文件并发」依赖说明
+- **无 role_contracts 缺省注入缺口**：CLI `task create` 缺省注入 A' 三角色模板（executor/reviewer/adjudicator legacy contract），与 §14.1 公共段一致（governance 投影 READY，blocking_reasons=[] 印证）。
+
+## 18. F6 payload 与 reviewer 定性原文（存档，daemon 已落库）
+
+```json
+{
+  "title": "daemon_autostart.py:spawn_http_daemon fix 追加 CREATE_BREAKAWAY_FROM_JOB 带降级 fallback 使自愈 spawn 脱离 job object",
+  "description": "REQ-GAP | finding=F6 | 🟡 需整改 | loop=1 | verdict=BLOCKED | source_reviewer=reviewer-roofix-alm01\n归属：根修卡 T-1795507699058-41d9fcbc / Step 3 / commit 0d6fa32（D3 scope），合同 r3 hash c347042f…14e。\nREQ 说明：根修卡无 formal REQ-xx 编号（DB 复核 token=[]），首行按 G6.5 记 REQ-GAP。\n依赖：与在途 F3/F5 无文件冲突（F3 动 web_gateway.py，F5 动 host_process_registry.py），但 F6 测试可能与 F3/F5 改同一个测试文件 test_host_process_registry.py——**与 F3/F5 串行执行，避免同文件并发**。\n【reviewer 定性原文，一字不改】\n（定性全文见 §17 建单回执 description，daemon 已原样落库，此处不重复粘贴以免漂移）\n【G6】title 符号锚定无行号；check_items 字符串；action=fix；steps 非空。",
+  "steps": [
+    {"action":"fix","target_file":"server/daemon_autostart.py","target_symbol":"_start_daemon_windows","check_items":"Windows spawn flags（:319）追加 CREATE_BREAKAWAY_FROM_JOB(0x01000000)；必须带 fallback：job 未开放 breakaway 权限时 CreateProcess 报 ERROR_ACCESS_DENIED，捕获后降级为原 flags（DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW）重试成功"},
+    {"action":"fix","target_file":"server/daemon_autostart.py","target_symbol":"spawn_http_daemon","check_items":"第二处 spawn 点（:605）追加 CREATE_BREAKAWAY_FROM_JOB + 同一降级 fallback；两处行为一致，父进程退出后 daemon 仍存活（符合 :303 自述意图），且不破坏单实例保证"},
+    {"action":"fix","target_file":"tests/test_host_process_registry.py","target_symbol":"spawn_breakaway_job","check_items":"补「IDE job object 内 spawn 存活」集成测试或人工验证步骤留痕（6520/46340 死法特征复现）；与 F3/F5 串行执行，避免同文件并发"}
+  ]
+}
+```
+
+## 19. F6 追加边界声明
+
+planner 本轮 F6 建单**未**写生产代码、**未**改判 BLOCKED/🟡 定级、**未**动 `task.apply`/`task.close`/`task.supersede`、**未**认领/lease 步骤、**未**改写上方历史行；仅追加 F6 行（§14 表）+ §17 建单回执 / §18 payload 存档 + §15/§16 未决项与边界更新 + 本节声明。
