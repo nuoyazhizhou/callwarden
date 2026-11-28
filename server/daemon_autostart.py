@@ -551,6 +551,13 @@ def spawn_http_daemon(wait_window: float = 15.0) -> Optional[str]:
         return None
 
     # ---- 2) host 级互斥：临界区内再做一次判活，消除 TOCTOU ----
+    # D3/F2 唯一权威守卫：本机所有活跃 daemon 拉起路径（mcp_server / cli
+    # `cw daemon start` / daemon_client.call_with_autostart）最终都汇聚本函数，
+    # 只有此处 acquire_host_daemon_mutex() 用 host 级锁（authority+task_db，同机
+    # 所有 endpoint 共享一把）串行化「判活→bind→Popen→注册→health」全临界区。
+    # 外层 call_with_autostart 的 endpoint 级 DaemonMutex 只是请求期去重，
+    # **非权威**——两会话不同 endpoint 各自持锁也能走到这里，但只会有一个
+    # 拿到 host 锁真正 spawn，第二个在此退避（见 step#1 注释与并发负向测试）。
     from .daemon_mutex import acquire_host_daemon_mutex
     mutex = acquire_host_daemon_mutex()
     if mutex is None:
