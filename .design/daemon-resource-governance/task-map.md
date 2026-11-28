@@ -62,3 +62,26 @@ executor 用自身注册身份领取，身份不跨会话借用；评审/执行�
 - O5（open，IO 优先级）——v1 范围已收敛，无阻塞
 - O6（open，history 自动 GC）——v1 明确不动（T5 只驱逐 current）
 - O7（confirmed）——配置落点/驱逐粒度/软限动作/低优先级默认
+
+---
+
+# 整改回路追加（BLOCKED，loop_count=1）— 2026-11-28 planner（蓝图远）
+
+> 本节为**追加**记录，上方 §批次与任务表/§REQ↔AC↔任务覆盖/§建单回执核验/§交接包清单/§未决项回执（原 1–64 行）保持原样，不覆盖、不重排。
+> **评审对象**：T3 原单 `T-1795832915536-9e838eec`（REQ-RG-02，SnapshotCache 真 LRU）独立评审结论 **BLOCKED**（1 🔴 / 1 🟡 / 4 💭），loop_count=1，findings 由主理人原文转交。
+> **REQ 首行**：沿用原单 `REQ-RG-02`。
+> **scope 冻结**（主理人指定）：evict_idle 锁序（评审建议方案 b）+ 并发冒烟测试 + TOCTOU 重验（🟡 同批顺手修）+ 证据行修正；不得扩大到其他符号。
+
+## 整改单（1 张，4 steps）
+
+| finding | 处置 | 优先级 | action | title（符号锚定，无行号） | 落库 task_id |
+|---|---|---|---|---|---|
+| F1（🔴 锁序 AB-BA） | 建单 | 🔴 | fix | `rust_ext/src/snapshot.rs:SnapshotCache.evict_idle fix 锁序 AB-BA 死锁与候选驱逐 TOCTOU 重验` | `T-1795860336241-ffddc8e8` |
+| F2（🟡 TOCTOU） | 建单（与 F1 **同文件同函数合并**） | 🟡 | fix | 同上（并入 F1 单） | `T-1795860336241-ffddc8e8` |
+
+- **合并关系**：F1 与 F2 均指向 `SnapshotCache::evict_idle` 同一函数的候选判定/驱逐两步语义，同根因（第 1 步与第 2 步的锁与重验边界），按「同文件同根因可合并」规则并入一张单；F1 修锁序（方案 b：第 1 步删 managers 交集判定，只持 last_access 单锁）、F2 修 TOCTOU（第 2 步 remove 前重验空闲超限），steps 内分步独立可 commit。
+- **证据行修正**：🔴 finding 附带证据完整性问题（`evidence/T-1795832915536-9e838eec/t3-evidence.md:42`「evict_idle 的并发正确性由锁序约定保证」与代码事实不符）——作为第 4 步 fix 并入本单（非符号扩围，属 finding 原文指出的闭环项）。
+- **steps**（4 步，短任务模式）：①fix F1 锁序（方案 b）②fix F2 TOCTOU 重验 ③test 并发冒烟（双线程 evict_idle×get_or_create 1-2s 不挂）+TOCTOU 单测 ④fix 证据文档 L42 表述。
+- **依赖约束**：本单无前置（原单已交付 evict_idle，本单在其上修复）；**T5（`T-1795832992065-7000fb9c`，resource tick）接线前必须先闭环本单**——findings 指出 evict_idle 当前无生产调用方，T5 接线即踩 AB-BA 死锁，死锁挂住整个查询面。T5 的 blocked-by 在原批次表（T2 T3）基础上追加本整改单。
+- provenance：`finding=F1,F2 / loop=1 / verdict=BLOCKED / source_task=T-1795832915536-9e838eec / 转交=team-lead（findings 原文一字不改并入 description）`。
+- G6 核验：title 符号锚定无行号；description 首行 REQ-RG-02；check_items 字符串；action=fix；steps 非空；workspace 配对 1/4baea3ff12c2ea5c（legacy_identity_v1）。

@@ -1,0 +1,6 @@
+[
+  {"action":"fix","target_file":"rust_ext/src/snapshot.rs","target_symbol":"SnapshotCache.evict_idle","check_items":"修复 🔴F1 锁序违反（评审方案 b）：第 1 步候选判定删去 managers 交集判定（let mgrs = self.managers.read() 及 contains_key 过滤），只持 last_access.read 单锁——stale 防护由第 2 步 mgrs.remove(&k).is_some() 写锁内重验承担（L512 已有）；修复后第 1 步无反向嵌套，与 get_or_create（managers→order→last_access）及第 2 步（同序）不再构成 AB-BA 循环等待；注释同步更正（L494『与 managers 交集，防 stale』表述删除）；不得改动 get_or_create/touch/evict 等其他符号"},
+  {"action":"fix","target_file":"rust_ext/src/snapshot.rs","target_symbol":"SnapshotCache.evict_idle","check_items":"修复 🟡F2 候选判定与驱逐之间 TOCTOU：第 2 步循环内 remove 前重读 last.get(&k) 并重验 now - last_access > idle，不满足（刚被 touch）则跳过不驱逐（continue），保证契约 C2『驱逐 now-last_access > idle』字面语义；重验在已持有的 last 写锁内进行，不引入新锁序"},
+  {"action":"test","target_file":"rust_ext/src/snapshot.rs","target_symbol":"SnapshotCache.evict_idle","check_items":"补并发冒烟测试：双线程循环 evict_idle(10ms) × get_or_create（含 touch 路径）持续 1-2s 不挂起（堵 AB-BA 回归面）；补 TOCTOU 单测：候选选定后 touch 该 ws，第 2 步重验命中后不驱逐（断言条目仍在 cache 且 last_access 为新值）；既有 evict_idle/touch/evict 单测零回归"},
+  {"action":"fix","target_file":"evidence/T-1795832915536-9e838eec/t3-evidence.md","target_symbol":"t3-evidence","check_items":"修正第 42 行证据表述：『evict_idle 的并发正确性由锁序约定保证』与修复前代码事实不符（第 1 步曾 last_access→managers 反向嵌套）；改为与修复后一致的事实：第 1 步仅持 last_access 单锁（无嵌套），第 2 步写锁内重验存在性与空闲超限；证据完整性问题随本单闭环"}
+]
