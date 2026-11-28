@@ -334,6 +334,31 @@ pub(crate) fn canonical_claim_role(role: &str) -> &str {
     }
 }
 
+/// evidence.append 按证据类型推断所需的治理 lease 角色。
+///
+/// ADJ-EVIDAPP（adjacent 独立单）：evidence.append 原硬编码校验
+/// `validate_lease_for_mutation(role="implementer")`，该字面量经
+/// `canonical_claim_role` 归一为 executor，导致 reviewer 角色结构性无法写入
+/// reviewer_pass 证据（E_LEASE_NOT_FOUND）。
+///
+/// 规则（card 口径）：
+/// - `reviewer_` 前缀类型（reviewer_pass / reviewer_blocked 及后续 reviewer 域类型）
+///   → 校验 reviewer lease；
+/// - 其余类型 → 保留既有 executor（implementer）lease 校验，不放宽
+///   executor 写 executor 证据的约束。
+///
+/// 返回值传给 `validate_lease_for_mutation`，再由其 `canonical_claim_role` 归一；
+/// 这里返回 runtime 角色名（"implementer"/"reviewer"）以兼容历史 lease 行。
+/// 注意：adjudicator 域证据（adjudicator_accepted/returned）当前经 handoff 绑定
+/// 落账，不在本单范围，仍归"其余"→ executor。
+pub(crate) fn evidence_append_lease_role(evidence_type: &str) -> &'static str {
+    if evidence_type.trim().starts_with("reviewer_") {
+        "reviewer"
+    } else {
+        "implementer"
+    }
+}
+
 /// 为治理角色列出 task_leases 中可能出现的全部等价角色名（治理角色本身 +
 /// runtime 别名）。历史行可能以 runtime 名称（implementer/independent_reviewer
 /// 等）落库；C-24 存储侧归一后新行恒为治理角色。查找侧按此变体集匹配，

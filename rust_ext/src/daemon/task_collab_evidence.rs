@@ -82,10 +82,13 @@ impl TaskCollabStore {
         })?;
         let (token, counter) = Self::require_lease_params(params)?;
         let conn = self.conn.lock().unwrap();
+        // ADJ-EVIDAPP：按证据类型选 lease 角色——reviewer_pass 等 reviewer 域证据
+        // 由 reviewer lease 写入；其余类型保留既有 executor（implementer）约束。
+        let lease_role = evidence_append_lease_role(evidence_type);
         self.validate_lease_for_mutation(
             &conn,
             task_id,
-            "implementer",
+            lease_role,
             &token,
             counter,
             Some(&identity),

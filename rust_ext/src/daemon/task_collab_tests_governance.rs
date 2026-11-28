@@ -1201,6 +1201,192 @@ fn test_task_bound_evidence_and_gate_are_idempotent() {
     assert_eq!(gate_count, 1);
 }
 
+/// ADJ-EVIDAPP 带头测试：evidence.append 的 lease 角色必须按证据类型匹配。
+///
+/// - reviewer lease 可写 reviewer_pass 证据并落 task_evidence_events；
+/// - executor lease 仍可写既有 executor 域类型（回归零破坏）；
+/// - 负向 fail-closed：executor lease 写 reviewer_pass 被拒、reviewer lease 写
+///   非 reviewer 域类型被拒（角色与证据类型不匹配 → E_LEASE_NOT_FOUND）。
+#[test]
+fn test_evidence_append_role_matches_evidence_type() {
+    let (_dir, db_path) = temp_db();
+    let store = TaskCollabStore::new(&db_path)
+        .unwrap()
+        .with_clock(Arc::new(AuthoritativeClock::new()));
+    let peer = PeerCredential::new_unix(1000, 1000, 1234);
+    seed_workspace(&store);
+    store
+        .handle_task_create(
+            peer.clone(),
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                "task_id": "T-EVID-ROLE", "title": "evidence role match",
+                "steps": [{"action": "review", "target_file": "rust_ext/src/daemon/task_collab_evidence.rs"}]
+            }),
+        )
+        .unwrap();
+    let step_id: String = {
+        let conn = store.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id FROM task_steps WHERE task_id='T-EVID-ROLE'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+
+    // 同 task 下 reviewer lease 与 executor lease 按 role 分两行，可共存。
+    let reviewer_ident = lease_identity("agent-reviewer", "reviewer-sess", "model", "reviewer");
+    let executor_ident = lease_identity("agent-executor", "executor-sess", "model", "implementer");
+    let reviewer_lease = store
+        .handle_lease_acquire(
+            peer.clone(),
+            &serde_json::json!({
+                "task_id": "T-EVID-ROLE", "role": "reviewer", "ttl_seconds": 3600.0,
+                "identity": reviewer_ident
+            }),
+        )
+        .unwrap();
+    let executor_lease = store
+        .handle_lease_acquire(
+            peer.clone(),
+            &serde_json::json!({
+                "task_id": "T-EVID-ROLE", "role": "implementer", "ttl_seconds": 3600.0,
+                "identity": executor_ident
+            }),
+        )
+        .unwrap();
+
+    let make_params = |evidence_id: &str, evidence_type: &str, request_id: &str,
+                       ident: &serde_json::Value, lease: &serde_json::Value| {
+        serde_json::json!({
+            "task_id": "T-EVID-ROLE", "step_id": step_id,
+            "evidence_id": evidence_id, "evidence_type": evidence_type,
+            "manifest_path": format!("docs/evidence/{}.json", evidence_id),
+            "payload_hash": "sha256:role-test", "request_id": request_id,
+            "evidence_json": {"case": evidence_type}, "identity": ident,
+            "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"]
+        })
+    };
+
+    // ① reviewer lease 写 reviewer_pass → 成功入账。
+    let reviewer_params = make_params(
+        "EV-ROLE-REVIEWER", "reviewer_pass", "req-reviewer-pass",
+        &reviewer_ident, &reviewer_lease);
+    let appended = store
+        .handle_evidence_append(peer.clone(), &reviewer_params)
+        .unwrap();
+    assert_eq!(appended["evidence_id"], "EV-ROLE-REVIEWER");
+
+    // ② executor lease 写 executor 域类型（test_run）→ 成功（回归零破坏）。
+    let executor_params = make_params(
+        "EV-ROLE-EXECUTOR", "test_run", "req-executor-test-run",
+        &executor_ident, &executor_lease);
+    let appended = store
+        .handle_evidence_append(peer.clone(), &executor_params)
+        .unwrap();
+    assert_eq!(appended["evidence_id"], "EV-ROLE-EXECUTOR");
+
+    // ③ 负向：只有 executor lease 的 task 写 reviewer_pass → 查不到 reviewer
+    // active lease（按类型选 reviewer role）→ E_LEASE_NOT_FOUND。用独立 task
+    // 隔离 target role 的 lease，确保错误码精确为 LEASE_NOT_FOUND 而非 TOKEN_MISMATCH。
+    store
+        .handle_task_create(
+            peer.clone(),
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                "task_id": "T-EVID-EXECONLY", "title": "executor only",
+                "steps": [{"action": "review", "target_file": "x"}]
+            }),
+        )
+        .unwrap();
+    let execonly_step: String = {
+        let conn = store.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id FROM task_steps WHERE task_id='T-EVID-EXECONLY'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    let execonly_lease = store
+        .handle_lease_acquire(
+            peer.clone(),
+            &serde_json::json!({
+                "task_id": "T-EVID-EXECONLY", "role": "implementer", "ttl_seconds": 3600.0,
+                "identity": executor_ident
+            }),
+        )
+        .unwrap();
+    let wrong_exec = serde_json::json!({
+        "task_id": "T-EVID-EXECONLY", "step_id": execonly_step,
+        "evidence_id": "EV-ROLE-WRONG-1", "evidence_type": "reviewer_pass",
+        "manifest_path": "docs/evidence/EV-ROLE-WRONG-1.json",
+        "payload_hash": "sha256:role-test", "request_id": "req-exec-writes-reviewer",
+        "evidence_json": {"case": "negative"}, "identity": executor_ident,
+        "lease_token": execonly_lease["token"],
+        "fencing_counter": execonly_lease["fencing_counter"]
+    });
+    let err = store
+        .handle_evidence_append(peer.clone(), &wrong_exec)
+        .unwrap_err();
+    assert_eq!(err.code, "E_LEASE_NOT_FOUND", "{err:?}");
+
+    // ④ 负向：只有 reviewer lease 的 task 写非 reviewer 域类型（test_run）→
+    // 查不到 executor active lease → E_LEASE_NOT_FOUND。
+    store
+        .handle_task_create(
+            peer.clone(),
+            &serde_json::json!({"identity_policy": "legacy_identity_v1", "role_contracts": p0l_governance_roles(), "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                "task_id": "T-EVID-REVONLY", "title": "reviewer only",
+                "steps": [{"action": "test", "target_file": "x"}]
+            }),
+        )
+        .unwrap();
+    let revonly_step: String = {
+        let conn = store.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id FROM task_steps WHERE task_id='T-EVID-REVONLY'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    let revonly_lease = store
+        .handle_lease_acquire(
+            peer.clone(),
+            &serde_json::json!({
+                "task_id": "T-EVID-REVONLY", "role": "reviewer", "ttl_seconds": 3600.0,
+                "identity": reviewer_ident
+            }),
+        )
+        .unwrap();
+    let wrong_rev = serde_json::json!({
+        "task_id": "T-EVID-REVONLY", "step_id": revonly_step,
+        "evidence_id": "EV-ROLE-WRONG-2", "evidence_type": "test_run",
+        "manifest_path": "docs/evidence/EV-ROLE-WRONG-2.json",
+        "payload_hash": "sha256:role-test", "request_id": "req-rev-writes-executor",
+        "evidence_json": {"case": "negative"}, "identity": reviewer_ident,
+        "lease_token": revonly_lease["token"],
+        "fencing_counter": revonly_lease["fencing_counter"]
+    });
+    let err = store
+        .handle_evidence_append(peer.clone(), &wrong_rev)
+        .unwrap_err();
+    assert_eq!(err.code, "E_LEASE_NOT_FOUND", "{err:?}");
+
+    // 落账断言：仅两条合法证据入 task_evidence_events，负向两条未落库。
+    let conn = store.conn.lock().unwrap();
+    let (count, reviewer_rows): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), SUM(CASE WHEN evidence_type='reviewer_pass' THEN 1 ELSE 0 END)
+             FROM task_evidence_events WHERE task_id='T-EVID-ROLE'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(count, 2, "合法证据应恰好两条入账");
+    assert_eq!(reviewer_rows, 1, "reviewer_pass 证据应入账一条");
+}
+
 #[test]
 fn test_verdict_submit_appends_replays_and_rejects_conflicts() {
     let (_dir, db_path) = temp_db();

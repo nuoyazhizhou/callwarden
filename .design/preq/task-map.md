@@ -306,3 +306,14 @@ planner 本轮 F7 建单**未**写生产代码、**未**改判 BLOCKED/🟡 定�
 ## 27. 本轮边界声明
 
 本节为**纯文档追加**：零生产代码、零 daemon 写操作（建单 daemon 写动作发生于建单轮，本节仅存档回执）；未改写上方 §1–§22 任何历史行；未触碰主工作树在途改动；preq 线→master 合并（Option A）与 daemon 部署刷新仍按裁定暂缓，等用户确认时机。
+
+## 28. ADJ-EVIDAPP adjacent 独立单登记（附录，append-only）
+
+- **task_id**：`T-1795835014164-3e755900`
+- **title**：`task_collab_evidence.rs:handle_evidence_append fix 按证据类型区分 lease 角色放行 reviewer_pass 证据入账`
+- **谱系定位**：**adjacent 独立单，不挂根修卡** `T-1795507699058-41d9fcbc`（无 parent_id）。reviewer 柯明察发现 + adjudicator 裴定论口径裁定：finding=ADJ-EVIDAPP / loop=1 / verdict=BLOCKED / 🟡 机制缺口，裁定**不阻塞本轮 F5-F7 主线**，与根修卡及 F1-F7 谱系隔离；executor 派工待主线（F5-F7 + 根修卡 step#4）闭环后执行。
+- **finding 原文要点**：`handle_evidence_append` 在 Rust 侧硬编码校验 `validate_lease_for_mutation(role="implementer")`，该字面量经 `canonical_claim_role` 归一为 executor，导致 reviewer 角色结构性无法写 `reviewer_pass` 证据（E_LEASE_NOT_FOUND）；当前由 handoff 事件 evidence_path/evidence_hash 绑定落账（绕行，adjudicator 已裁定口径核验通过，非修复）。
+- **修复落地**：按证据类型区分 lease 角色——`reviewer_` 前缀类型（reviewer_pass / reviewer_blocked 及后续 reviewer 域类型）→ reviewer lease；其余类型保留 executor（implementer）lease 校验。角色映射 helper `evidence_append_lease_role` 落 `task_collab_shared.rs`。带头测试 `test_evidence_append_role_matches_evidence_type`（4 类断言：正向 2 + 负向 fail-closed 2）。
+- **同型清单备注**（reviewer 柯明察补充）：`handle_gate_decision_append`（task_collab_evidence.rs）有同型 "implementer" 硬编码，但**不另立单**——该 RPC 未入 route_matrix（无 MCP/CLI 暴露），库中实际行全为 event_type=runtime_task_gate 的自动验证器产物（executor 侧工具链写），无 reviewer/adjudicator 合法写入场景，executor-only 语义属设计正确。task_loop 侧对齐副本 verdict_evidence_gate.rs / report_handoff.rs 无同型硬编码调用（仅注释 + role 归一 match），不在本单 target_file 白名单、未改。adjudicator 域证据（adjudicator_accepted/returned）当前经 handoff 绑定落账，归"其余"→ executor，不在本单范围。
+- **F4 防复发**：step target_file 逗号分隔全量声明实际改动文件（task_collab_evidence.rs + task_collab_shared.rs + task_collab_tests_governance.rs + 本文件），changes-json 按白名单登记。
+- **边界**：本节为纯文档追加，零生产代码改动在此发生；未改写 §1–§27 任何历史行。
