@@ -211,3 +211,49 @@
 ### 暂缓项（主理人裁定）
 
 - preq 线 → 本地 master 合并（Option A）与共享 daemon 部署刷新：**等用户确认时机后再动**；主工作树由另一功能线持有且有未提交改动，禁止触碰。
+
+---
+
+## 追加记录 ⑦ — T10 复跑新发现 T10-01（2026-11-28，主理人转交建单）
+
+- 来源: T10（`T-1795837042787-91db8edc`）tester 独立复跑最终报告 + manifest `docs/evidence/prerequisite_rerun_manifest.md`（sha256 145c411b…843303）。T10 三项复跑在 T6 全量环节暴露**新稳定性缺陷**，主理人裁定批次 3 注入建单。
+- **T10-01（🔴 稳定性缺陷）**: 全量 `cargo test --lib` 可复现间歇病态——5 次尝试 3 次异常（STATUS_STACK_OVERFLOW 0xc00000fd / RSS 14.1GB / RSS 39 秒 35MB→18.6GB 看门狗终止）；模块隔离 `cargo test snapshot_state --lib` 同样爆炸（21.1GB，16 个 test_query_*/gc/health 挂起）；病灶锁定 **snapshot_state 注册路径**（tempdir + workspace.register + validate_owned_path_any），非跨测试干扰；与 T6-02 flaky（os error 10055/1450 资源耗尽族）疑似同根因升级版。证据日志：docs/evidence/prerequisite-rerun-t6-full-lib-attempt{1,2,3}*.log + -snapshot-state-isolated.log + 看门狗日志。
+- **处置**: 已建单 **T10-01 = `T-1795847624350-48202e98`**（action=fix，3 steps：① tester 单线程定位首挂测试（与 executor T8 并行）→ ② executor 审查修复 validate_owned_path_any/tempdir 生命周期竞态 → ③ 全量回归稳定性验证 ≥3 次不复现）。REQ-GAP（无对应需求条目）；基线基于主仓 master 独立分支（避开另一功能线 resources.rs 在途改动，主工作树禁碰）；与 preq 交付线 78d7ddc 无关，不影响 T8 卡序（T8 仍等 T11 回执）。
+- 状态: 已登记，已建单（批次 3）。findings 总数 26 条。
+
+---
+
+## 追加记录 ⑧ — T10 评审 findings（2026-11-28，主理人转交）
+
+- 来源: T10（`T-1795837042787-91db8edc`）评审 **PASS**（reviewer-t1-t7，五项重点独立核验），2 条 💭 findings 入账。
+- **治理收尾记录**: tester 五报未带 step_id 致任务未进 review——已按 reviewer 配方补 report（step `S-1795837042794-923c0f8c` + evidence 三元组与事件 18394 一致），流程缺口已闭合，T10 进入正常评审闭环。
+
+### Findings 台账（T10 评审批次）
+
+| # | 等级 | 原文摘要（主理人转交） | 状态 | 处置去向 | 时机 |
+|---|---|---|---|---|---|
+| T10-02 | 💭 | attempt2 RSS 14.1GB 数字仅 manifest 文字记载、日志无采样，不可由日志独立重建（attempt1/attempt3/隔离诊断三路已落盘，病态结论不单独依赖该数字） | 已登记，记录性不阻断 | 处置：**T10-01 定位 manifest 标注来源为 tester 外部监控**（T10-01 = `T-1795847624350-48202e98` 执行时落实） | T10-01 步骤① 执行时 |
+| T10-03 | 💭 | manifest 行 17/55「projection 测试」命名欠精确（实为 `task_collab::tests::prerequisites` 模块，计数正确 194=190+4） | 已登记，记录性不阻断 | 处置：**T10 manifest 追加勘误注记**（append-only） | T10 manifest 维护时 |
+
+- 两条均 💭 不阻断，T10 PASS 结论不受影响；处置动作分别落在 T10-01 执行期与 T10 manifest 维护期，非本台账范围（本台账仅记账）。
+- findings 总数 26 → **28 条**（T10-01 稳定性缺陷 + T10-02/T10-03 评审记录性 findings）。
+
+---
+
+## 追加记录 ⑨ — T10 关单回执 + 三项治理观察（2026-11-28，主理人转交）
+
+### T10 关单回执
+
+- adjudicator（全新身份 `adjudicator-t10-dc8227bf`，fencing=3）以 verdict `V-e578422ed60d1e4087dde9be`（pass）执行 task.apply → task.close（事件 18420/18421），投影 status=closed / workflow=completed / next_role=complete。
+- **批次 1 七单 + T10 全部闭环**；F-1 / T3-04 / T6-02 三项原 finding 以独立复跑证据关闭（对应 T10 单项核销）。
+
+### 治理观察（均不阻断，登记待裁）
+
+| # | 等级 | 内容（主理人转交） | 状态 | 处置去向 | 时机 |
+|---|---|---|---|---|---|
+| G-1 | 💭 governance adjacent | 证据管理流程瑕疵：manifest v1（145c411b，事件流引用值）在 verdict 提交前以 append-only 勘误追加 §9 两段（对 reviewer 两条 nit 的闭环响应），现文件 sha256=02557c4b 与事件流不一致——adjudicator 查明后采信 PASS（v1 完整保留、日志哈希不受影响、实质依据未受损） | 已登记，**已并入流程备忘** | **已升格为第四条流程备忘**（与 T3-02/T6-01/T6-04 并列），表述见追加记录 ⑩：证据文件任何变更（含 append-only 勘误）须重新 task.report 声明新哈希，或以新文件版本追加并在 report 中指明版本号；禁止静默改写已 report 引用的证据文件 | 已执行（2026-11-28 主理人裁定） |
+| G-2 | 💭 daemon 基础设施缺陷候选 | daemon WAL 陈旧读：verdict 首提三度被拒（E_VERDICT_TASK_NOT_IN_REVIEW），根因 tester 收尾报落 WAL 未 checkpoint、verdict 写事务读主文件旧状态，而 autocommit 读路径可见 WAL 新帧——同 daemon 两读路径结果相悖；reviewer 以 PRAGMA wal_checkpoint(PASSIVE) 处置 | 已登记，**批次 4 候选** | **批次 4 候选，preq 收尾后与部署刷新统一裁定**（与 G-3 合并登记为 daemon 基础设施候选单，暂不立单；属 daemon 基础设施线，非 preq scope，见追加记录 ⑩） | 批次 4 候选，preq 收尾后与部署刷新统一裁定 |
+| G-3 | 💭 daemon 卫生 | tester 的 executor lease 已过期（1795844589）但 lease.status 仍显示 active | 已登记，**批次 4 候选** | daemon 卫生问题；**批次 4 候选，preq 收尾后与部署刷新统一裁定**（与 G-2 合并登记为 daemon 基础设施候选单，暂不立单）；不影响裁决 | 批次 4 候选，preq 收尾后与部署刷新统一裁定 |
+
+- 三项均不阻断，T10 闭环不受影响。G-2/G-3 属 daemon 基础设施/卫生问题（非 preq scope）；G-1 为治理流程教训（候选流程备忘第四条）。
+- 本记录为纯文档追加：零 daemon 写操作、零生产代码。
