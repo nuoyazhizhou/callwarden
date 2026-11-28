@@ -1667,6 +1667,18 @@ impl GraphStore {
 // ============================================
 
 impl GraphStore {
+    /// 测试专用：直接装配 SymbolTable/CallGraph（生产路径走 load_from_sqlite）。
+    ///
+    /// 仅 cfg(test) 编译，供 snapshot.rs 的 SnapshotCache::approx_bytes 聚合
+    /// 单测构造带已知数据的 store（T3 / REQ-RG-02）。
+    #[cfg(test)]
+    pub(crate) fn with_tables(symbols: SymbolTable, calls: CallGraph) -> Self {
+        GraphStore {
+            symbols: Some(Arc::new(symbols)),
+            calls: Some(Arc::new(calls)),
+        }
+    }
+
     /// 内部共享加载路径，`include_calls=false` 时在符号索引完成后返回。
     ///
     /// P0-2 整改（2026-07-22 复审整改-v2）：`workspace_id` 参数过滤用户级
@@ -3427,7 +3439,6 @@ mod tests {
         let name = "sym_000000"; // 10 字节
         let qname = "mod::sym_000000"; // 15 字节
         let module = "mod"; // 3 字节
-        let pool_per_sym = name.len() + qname.len() + module.len() + name.len() + 1; // +\0
 
         let mut by_id = Vec::with_capacity(n_symbols);
         let mut by_qname_sorted_ids = Vec::with_capacity(n_symbols);

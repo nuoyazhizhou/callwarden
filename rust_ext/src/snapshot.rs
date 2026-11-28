@@ -17,7 +17,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // ============================================
 // 类型别名
@@ -480,6 +480,62 @@ impl SnapshotCache {
     /// 当前缓存数量
     pub fn len(&self) -> usize {
         self.managers.read().len()
+    }
+
+    /// 驱逐空闲超过 `idle` 的 workspace（T3，C2；AC-RG-02-1）。
+    ///
+    /// 判定：`now - last_access > idle` 的条目逐出 cache；返回被驱逐列表
+    /// （供日志/指标）。`Duration::ZERO` = 全量清冷（C6 内存压力路径用）。
+    ///
+    /// Arc 语义（AC-RG-02-5）：驱逐只把 manager 从 cache 移除；in-flight
+    /// 查询持有的 `load()` Guard 引用计数仍存活，数据可读到查询结束。
+    pub fn evict_idle(&self, idle: Duration) -> Vec<String> {
+        let now = Instant::now();
+        // 1) last_access 读锁内判定候选（与 managers 交集，防 stale）
+        let candidates: Vec<WorkspaceInstanceId> = {
+            let last = self.last_access.read();
+            let mgrs = self.managers.read();
+            last.iter()
+                .filter(|(k, v)| mgrs.contains_key(*k) && now.duration_since(**v) > idle)
+                .map(|(k, _)| k.clone())
+                .collect()
+        };
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+        // 2) 写锁内统一移除（锁序 managers → order → last_access）
+        let mut evicted: Vec<String> = Vec::with_capacity(candidates.len());
+        let mut mgrs = self.managers.write();
+        let mut order = self.order.write();
+        let mut last = self.last_access.write();
+        for k in candidates {
+            if mgrs.remove(&k).is_some() {
+                order.retain(|x| x != &k);
+                last.remove(&k);
+                evicted.push(k);
+            }
+        }
+        if !evicted.is_empty() {
+            eprintln!(
+                "[snapshot_cache] evict_idle: evicted {} idle workspace(s): {}",
+                evicted.len(),
+                evicted.join(",")
+            );
+        }
+        evicted
+    }
+
+    /// 当前驻留 snapshot 的近似字节总和（T3，C2；AC-RG-02-4 前置）。
+    ///
+    /// 各 ws 当前已发布 snapshot 的 `GraphStore::approximate_bytes()` 求和；
+    /// 未发布的 ws 计 0（跳过）。历史 generation 不计（只算 current）。
+    pub fn approx_bytes(&self) -> u64 {
+        let mgrs = self.managers.read();
+        mgrs
+            .values()
+            .filter_map(|mgr| mgr.current_store())
+            .map(|store| store.approximate_bytes() as u64)
+            .sum()
     }
 }
 
@@ -1297,5 +1353,186 @@ mod tests {
         cache.get_or_create("A");
         cache.touch("A");
         assert_eq!(cache.list_workspaces(), vec!["A"]);
+    }
+
+    // ---------- T3-S3: evict_idle + approx_bytes + Arc 语义 ----------
+
+    use crate::graph::{CallEdge, CallGraph, GraphSymbol, SymbolKind, SymbolTable};
+
+    /// 构造带已知数据的 snapshot（approx_bytes > 0）。
+    fn make_loaded_snapshot(generation: Generation, ws_id: &str) -> Arc<GraphSnapshot> {
+        let n = 100usize;
+        let name = "sym_000000";
+        let mut by_id = Vec::with_capacity(n);
+        let mut name_pool = String::with_capacity(name.len() * n);
+        let mut qname_pool = String::with_capacity(name.len() * n);
+        let mut module_pool = String::with_capacity(3 * n);
+        let mut by_qname_sorted_ids = Vec::with_capacity(n);
+        let mut by_simple_name_sorted_ids = Vec::with_capacity(n);
+        let mut search_pool_lower = String::with_capacity((name.len() + 1) * n);
+        let mut search_entry_offsets = Vec::with_capacity(n);
+        let mut search_entry_sym_ids = Vec::with_capacity(n);
+        for i in 0..n {
+            let off = name_pool.len() as u32;
+            name_pool.push_str(name);
+            let qoff = qname_pool.len() as u32;
+            qname_pool.push_str(name);
+            let moff = module_pool.len() as u32;
+            module_pool.push_str("mod");
+            by_id.push(GraphSymbol {
+                id: i as u32,
+                file_instance_id: 0,
+                kind: SymbolKind::Fn,
+                name_offset: off,
+                name_len: name.len() as u32,
+                qname_offset: qoff,
+                qname_len: name.len() as u32,
+                module_offset: moff,
+                module_len: 3,
+                start_line: 1,
+                end_line: 2,
+                depth: 0,
+            });
+            by_qname_sorted_ids.push(i as u32);
+            by_simple_name_sorted_ids.push(i as u32);
+            search_entry_offsets.push(search_pool_lower.len() as u32);
+            search_entry_sym_ids.push(i as u32);
+            search_pool_lower.push_str(name);
+            search_pool_lower.push('\0');
+        }
+        let symbols = SymbolTable {
+            by_id,
+            by_qname_sorted_ids,
+            by_simple_name_sorted_ids,
+            file_paths_pool: "src/lib.rs".to_string(),
+            file_paths_offsets: vec![0, 10],
+            name_pool,
+            qname_pool,
+            module_pool,
+            search_pool_lower,
+            search_entry_offsets,
+            search_entry_sym_ids,
+        };
+        let calls = CallGraph {
+            forward_edges: (0..50)
+                .map(|i| CallEdge {
+                    caller_id: i as u32,
+                    callee_id: (i + 1) as u32,
+                    call_line_packed: CallEdge::pack_call_line(10, false),
+                    callee_name_idx: 0,
+                })
+                .collect(),
+            forward_offsets: vec![0, 50],
+            backward_positions: (0..50).map(|i| i as u32).collect(),
+            backward_offsets: vec![0, 50],
+            callee_position_offsets: vec![0, 1],
+            callee_positions: vec![0],
+            callee_names_pool: "sym_000000".to_string(),
+            callee_names_offsets: vec![0, 10],
+            callee_name_sorted_idxs: vec![0],
+            roots: vec![0],
+        };
+        let store = GraphStore::with_tables(symbols, calls);
+        Arc::new(GraphSnapshot::new(
+            ws_id.to_string(),
+            None,
+            generation,
+            "ctx_hash".to_string(),
+            "/tmp/test.db".to_string(),
+            Arc::new(store),
+            SnapshotHealth {
+                symbol_count: 0,
+                call_count: 0,
+                file_count: 0,
+                build_duration_ms: 0,
+                last_error: None,
+            },
+        ))
+    }
+
+    /// AC-RG-02-1：空闲超过短超时后被驱逐，cache.len() 下降，返回列表含该 ws。
+    #[test]
+    fn ac_rg_02_1_evict_idle_short_timeout() {
+        let cache = SnapshotCache::new(8);
+        cache.get_or_create("A");
+        std::thread::sleep(Duration::from_millis(30));
+        let evicted = cache.evict_idle(Duration::from_millis(10));
+        assert_eq!(evicted, vec!["A".to_string()], "空闲 30ms > 10ms 应被驱逐");
+        assert_eq!(cache.len(), 0, "驱逐后 cache.len() 下降");
+    }
+
+    /// evict_idle 保留最近访问的条目（只逐空闲超限的）。
+    #[test]
+    fn evict_idle_preserves_recently_touched() {
+        let cache = SnapshotCache::new(8);
+        cache.get_or_create("A");
+        std::thread::sleep(Duration::from_millis(30));
+        cache.get_or_create("B"); // B 插入即访问（新）
+        cache.touch("B");
+        let evicted = cache.evict_idle(Duration::from_millis(10));
+        assert_eq!(evicted, vec!["A".to_string()], "只驱逐空闲超限的 A");
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.list_workspaces(), vec!["B"]);
+    }
+
+    /// Duration::ZERO 全量清冷（C6 内存压力路径语义）。
+    #[test]
+    fn evict_idle_zero_clears_all() {
+        let cache = SnapshotCache::new(8);
+        for k in ["A", "B", "C"] {
+            cache.get_or_create(k);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+        let evicted = cache.evict_idle(Duration::ZERO);
+        assert_eq!(evicted.len(), 3, "ZERO 全量清冷: {:?}", evicted);
+        assert_eq!(cache.len(), 0);
+    }
+
+    /// approx_bytes：未发布的 ws 计 0（跳过）；空 cache = 0。
+    #[test]
+    fn approx_bytes_unpublished_is_zero() {
+        let cache = SnapshotCache::new(8);
+        assert_eq!(cache.approx_bytes(), 0, "空 cache");
+        cache.get_or_create("A"); // 创建但未发布
+        assert_eq!(cache.approx_bytes(), 0, "未发布 = 0");
+    }
+
+    /// approx_bytes 聚合：各 ws 已发布 snapshot 的 estimate 求和（AC-RG-02-4 前置）。
+    #[test]
+    fn approx_bytes_sums_published_stores() {
+        let cache = SnapshotCache::new(8);
+        let mgr_a = cache.get_or_create("A");
+        mgr_a.publish(make_loaded_snapshot(1, "A"));
+        let single = cache.approx_bytes();
+        assert!(single > 0, "已发布带数据 snapshot 应 >0");
+        let mgr_b = cache.get_or_create("B");
+        mgr_b.publish(make_loaded_snapshot(2, "B"));
+        let total = cache.approx_bytes();
+        assert_eq!(total, single * 2, "聚合 = 各 ws 之和（同规模 store）");
+        // 驱逐 A 后只剩 B 的份额
+        cache.evict("A");
+        assert_eq!(cache.approx_bytes(), single);
+    }
+
+    /// AC-RG-02-5：驱逐不破坏 in-flight 查询——Guard 存活期间数据可读，
+    /// 查询结束（drop Guard）后才释放。
+    #[test]
+    fn ac_rg_02_5_guard_survives_evict() {
+        let cache = SnapshotCache::new(8);
+        let mgr = cache.get_or_create("A");
+        mgr.publish(make_loaded_snapshot(1, "A"));
+        let guard = mgr.load(); // in-flight 查询持有 Guard
+        // 驱逐（cache 移除 manager；测试侧 mgr Arc 仍存活）
+        let removed = cache.evict("A");
+        assert!(removed.is_some());
+        assert_eq!(cache.len(), 0);
+        // Guard 存活：查询正常返回（驱逐未破坏 in-flight 数据）
+        assert_eq!(
+            guard.as_ref().as_ref().unwrap().generation,
+            1,
+            "驱逐后 in-flight Guard 仍可读"
+        );
+        drop(guard); // 查询结束才释放
+        drop(mgr);
     }
 }
