@@ -489,6 +489,147 @@ mod startup_recover_tests {
     }
 }
 
+// ============================================
+// T2 / REQ-RG-01 集成测试（AC-RG-01-1 / 01-5 / 01-2 端到端 + E8）
+// （平台无关：unix/windows 两份 serve 装配链共用同一测试集；
+//   路径注入避免 HOME 环境变量竞态）
+// ============================================
+
+#[cfg(test)]
+mod resources_assembly_tests {
+    use std::fs;
+
+    use callwarden_core::daemon::resources::{
+        DiskType, HostProfile, ResourceConfig, WriteOutcome,
+    };
+    use super::{assemble_resources_at, resources_reload_diff_message};
+
+    /// mock 16GB 档 HostProfile（AC-RG-01-1 注入口径，与 resources.rs
+    /// tier1_config 同源：total_ram=16GB / 8 核 / SSD）。
+    fn tier1_profile() -> HostProfile {
+        HostProfile {
+            total_ram_bytes: 16 * 1024 * 1024 * 1024,
+            cpu_cores: 8,
+            disk_type: DiskType::Ssd,
+        }
+    }
+
+    /// AC-RG-01-1：首次启动（daemon.toml 不存在）→ 16GB 档写入 [resources]，
+    /// cache_max_bytes=536870912、build_parse_threads=2，生效值与档位一致。
+    #[test]
+    fn ac_rg_01_1_assembly_writes_tier1_resources_to_daemon_toml() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+
+        let assembly = assemble_resources_at(Some(&path), &tier1_profile());
+
+        assert_eq!(
+            assembly.write_outcome,
+            WriteOutcome::Written,
+            "首次启动应写入 [resources]"
+        );
+        let content = fs::read_to_string(&path).expect("read back");
+        assert!(content.contains("[resources]"), "content: {content}");
+        assert!(
+            content.contains("cache_max_bytes = 536870912"),
+            "AC-RG-01-1 断言 16GB 档 536870912，content: {content}"
+        );
+        assert!(
+            content.contains("build_parse_threads = 2"),
+            "16GB 档 build_parse_threads=2，content: {content}"
+        );
+        // 生效值：档位映射后的 16GB 档
+        assert_eq!(assembly.effective.cache_max_bytes, 536870912);
+        assert_eq!(assembly.effective.build_parse_threads, 2);
+        // 首次启动文件不存在 → file_config 为默认值
+        assert_eq!(assembly.file_config, ResourceConfig::default());
+    }
+
+    /// AC-RG-01-5：连续二次启动 → 第二次 SkippedExisting，内容与 mtime 均不变
+    /// （write-once：用户值神圣）。
+    #[test]
+    fn ac_rg_01_5_second_start_skips_rewrite() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+
+        let first = assemble_resources_at(Some(&path), &tier1_profile());
+        assert_eq!(first.write_outcome, WriteOutcome::Written);
+        let before_content = fs::read_to_string(&path).expect("read");
+        let before_mtime = fs::metadata(&path).expect("meta").modified().expect("mtime");
+
+        let second = assemble_resources_at(Some(&path), &tier1_profile());
+
+        assert_eq!(
+            second.write_outcome,
+            WriteOutcome::SkippedExisting,
+            "第二次启动不重写"
+        );
+        let after_content = fs::read_to_string(&path).expect("read");
+        assert_eq!(after_content, before_content, "内容不变");
+        let after_mtime = fs::metadata(&path).expect("meta").modified().expect("mtime");
+        assert_eq!(after_mtime, before_mtime, "mtime 不变（未触碰文件）");
+    }
+
+    /// AC-RG-01-2 端到端：显式预置 cache_max_bytes="1G" → 启动不改写
+    /// （SkippedExisting + 文件保持 1G），且生效值 = 1G（显式键神圣）。
+    #[test]
+    fn ac_rg_01_2_explicit_1g_preserved_and_effective() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("daemon.toml");
+        fs::write(&path, "[resources]\ncache_max_bytes = \"1G\"\n").expect("seed");
+
+        let assembly = assemble_resources_at(Some(&path), &tier1_profile());
+
+        assert_eq!(
+            assembly.write_outcome,
+            WriteOutcome::SkippedExisting,
+            "显式预置段不被改写"
+        );
+        let content = fs::read_to_string(&path).expect("read");
+        assert!(
+            content.contains("cache_max_bytes = \"1G\""),
+            "用户显式值 1G 保持，content: {content}"
+        );
+        assert!(
+            !content.contains("536870912"),
+            "不得写入档位值覆盖用户值，content: {content}"
+        );
+        // 显式键不被档位映射覆盖 → 生效值 = 1G
+        assert_eq!(
+            assembly.effective.cache_max_bytes,
+            1024 * 1024 * 1024,
+            "显式 1G 生效"
+        );
+        // 非显式键仍被档位映射（covered_keys 非空）
+        assert!(
+            !assembly.covered_keys.is_empty(),
+            "非显式键应被档位映射覆盖"
+        );
+    }
+
+    /// E8：SIGHUP reload [resources] 变更 WARN——相等 → None；变更 → Some
+    /// 含「需重启生效」（与 snapshot_cache_capacity 同口径）。
+    #[test]
+    fn resources_reload_diff_warns_only_on_change() {
+        let startup = ResourceConfig::default();
+        let same = ResourceConfig::default();
+        assert!(
+            resources_reload_diff_message(&startup, &same).is_none(),
+            "无变更不告警"
+        );
+
+        let mut changed = ResourceConfig::default();
+        changed.cache_max_bytes = 1024 * 1024 * 1024;
+        let msg = resources_reload_diff_message(&startup, &changed)
+            .expect("变更应返回 Some");
+        assert!(msg.contains("[WARN]"), "应为 WARN 级别，msg: {msg}");
+        assert!(
+            msg.contains("需重启生效"),
+            "WARN 应含「需重启生效」，msg: {msg}"
+        );
+    }
+}
+
 #[cfg(unix)]
 mod unix {
     use std::io;
