@@ -123,4 +123,4 @@ task workspace_id = 1      workspace_instance_id = 4baea3ff12c2ea5c      daemon 
 | 3) governance_blocked 卡可见且显示 blocking_reason | §4 可见性规则 |
 | 4) 明示 workspace_id / workspace_instance_id | §5 绑定横幅（双命名空间） |
 | 5) daemon 与 rust_ext 零改动、无新增依赖 | §1 I3；全部经既有 `route_rpc` / `route_task_read` |
-| 6) 前端无构建步骤 | §2 单文件 `index.html` + 原生 JS，静态目录入 pyproject package-data |
+| 6) 前端无构建步骤 | §2 单文件 `index.html` + 原生 JS；静态资源由 `[tool.setuptools.package-data]`（`callwarden` 包键）的 `server/web_static/*.html` 条目声明，随 wheel 发布（路径相对包根，包根 = 仓库根） |

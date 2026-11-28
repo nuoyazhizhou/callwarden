@@ -147,6 +147,9 @@ ext-modules = [
 [tool.setuptools.package-data]
 callwarden = [
     "i18n/*.json",
+    # Web 观测面（F-3）：静态看板单文件随 wheel 发布，路径相对包根
+    # （package-dir 已把 callwarden 映射到仓库根，故写成 server/web_static/...）
+    "server/web_static/*.html",
 ]
 
 [tool.pyrefly]
