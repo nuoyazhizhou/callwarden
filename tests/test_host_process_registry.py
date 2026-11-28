@@ -187,6 +187,58 @@ def test_no_conflict_when_manifest_alone_is_authority(monkeypatch, registry_tmp)
 
 
 # ---------------------------------------------------------------------------
+# 3b) F5：compare_with_manifest 在 authority_daemon_diagnostic 生产复用
+# ---------------------------------------------------------------------------
+
+
+def test_authority_diagnostic_reuses_manifest_comparison(monkeypatch, tmp_path):
+    """F5 复用：诊断必须带 manifest_comparison（权威比对），且向后兼容原字段。
+
+    注意：daemon_autostart 内 `from .host_process_registry` 加载的是
+    callwarden.server.host_process_registry，与测试顶部的 server.host_process_registry
+    是两个独立模块实例，故本测试必须 patch 生产侧那个实例，否则 mock 落空。
+    """
+    import callwarden.config as cfg
+    import callwarden.server.daemon_autostart as da
+    import callwarden.server.host_process_registry as hpr_prod
+
+    monkeypatch.setattr(hpr_prod, "_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        hpr_prod, "_UNIX_LOCK_FILE", str(tmp_path / "registry.lock"))
+    monkeypatch.setattr(hpr_prod, "_process_start_time", lambda pid: 1_700_000_000)
+    monkeypatch.setattr(cfg, "get_http_manifest_path", lambda aid: str(tmp_path / "m.json"))
+
+    # manifest 权威声明活 daemon pid=4242；注册表另登记 pid=1111 → 应判冲突。
+    manifest = {
+        "pid": 4242,
+        "process_start_time": 1_700_000_000,
+        "endpoint": "https://127.0.0.1:4523",
+    }
+    monkeypatch.setattr(da, "read_http_manifest", lambda path: dict(manifest))
+    hpr_prod.register_process(authority_id="auth-A", role="daemon", pid=1111)
+
+    diag = da.authority_daemon_diagnostic("auth-A")
+
+    # 原字段全部保留（向后兼容：spawn / mcp 只读这些 key）。
+    assert diag["code"] == "E_DAEMON_ALREADY_RUNNING"
+    assert diag["alive"] is True
+    assert diag["pid"] == 4242
+    assert diag["process_start_time"] == 1_700_000_000
+    assert diag["endpoint"] == "https://127.0.0.1:4523"
+    assert "restart_hint" in diag
+
+    # F5 新增：复用 compare_with_manifest 的权威比对结论落地。
+    cmp = diag["manifest_comparison"]
+    assert cmp["authority"] == "manifest"
+    assert cmp["conflict"] is True
+    assert cmp["manifest_pid"] == 4242
+    assert cmp["manifest_alive"] is True
+    assert cmp["manifest_process_start_time"] == 1_700_000_000
+    # 规范化副本口径一致：比对结论与外层 alive 同判。
+    assert cmp["manifest_alive"] == diag["alive"]
+
+
+# ---------------------------------------------------------------------------
 # 4) spawn_http_daemon 守卫：探活抖动不得拉第二实例 / 无参 fail-closed
 # ---------------------------------------------------------------------------
 

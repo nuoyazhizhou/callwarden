@@ -456,6 +456,7 @@ def authority_daemon_diagnostic(authority_id: str = "") -> Dict[str, Any]:
     """
     from callwarden.config import get_http_manifest_path
     from .host_process_registry import (
+        compare_with_manifest,
         is_process_alive,
         read_all,
     )
@@ -482,6 +483,16 @@ def authority_daemon_diagnostic(authority_id: str = "") -> Dict[str, Any]:
     endpoint = manifest.get("endpoint", "") or ""
     alive = is_process_alive(pid, start_time) if (pid and start_time) else False
 
+    # F5：复用 host_process_registry.compare_with_manifest 的权威比对结论，
+    # 让 E_DAEMON_ALREADY_RUNNING 诊断带上「manifest vs 注册表」的结构化对比
+    # （conflict / authority=manifest / manifest_alive / registry_active_daemons）。
+    # 传规范化副本（pid/start_time 已转 int），与外层 alive 判定保持同一双键口径。
+    cmp_manifest = dict(manifest)
+    cmp_manifest["pid"] = pid
+    cmp_manifest["process_start_time"] = start_time
+    cmp_manifest["endpoint"] = endpoint
+    manifest_comparison = compare_with_manifest(authority_id, cmp_manifest)
+
     return {
         "code": E_DAEMON_ALREADY_RUNNING,
         "authority_id": authority_id,
@@ -492,6 +503,8 @@ def authority_daemon_diagnostic(authority_id: str = "") -> Dict[str, Any]:
         "endpoint": endpoint,
         "manifest": manifest,
         "registry_entries": read_all(authority_id),
+        # F5：manifest 权威比对（原 compare_with_manifest 生产死代码，此处复用）。
+        "manifest_comparison": manifest_comparison,
         # 作业状态：全量构建拥塞期 health 超时但 daemon/作业仍活，故标 busy。
         # 这只是一句结构化说明，不伪造 daemon 内部实时进度。
         "job_status": ("alive_but_unresponsive_probe" if alive else "not_running"),
